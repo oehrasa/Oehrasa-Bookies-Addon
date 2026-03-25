@@ -33,7 +33,7 @@ public class Addon extends MeteorAddon {
 		
         // Modules
         Modules.get().add(new FileAutoLogin(CATEGORY));
-        Modules.get().add(new BookshelfFiller(CATEGORY));
+        Modules.get().add(new BookshelfFiller());
     }
 
     @Override

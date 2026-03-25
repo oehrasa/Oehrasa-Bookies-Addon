@@ -1,7 +1,8 @@
 package com.FileAutoLogin.addon.modules;
 
+import com.FileAutoLogin.addon.Addon;
+
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
@@ -9,12 +10,15 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.state.property.Properties;
 
 import net.minecraft.block.*;
 import net.minecraft.item.*;
 import net.minecraft.util.*;
-import net.minecraft.util.hit.*;
+import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.*;
+import net.minecraft.screen.slot.SlotActionType;
+import net.minecraft.world.RaycastContext;
 
 public class BookshelfFiller extends Module {
     private int delayLeft = 0;
@@ -26,7 +30,6 @@ public class BookshelfFiller extends Module {
 
     private final Setting<Integer> range = sgGeneral.add(new IntSetting.Builder()
         .name("range")
-        .description("How far to search for bookshelves.")
         .defaultValue(4)
         .min(1)
         .sliderMax(6)
@@ -35,7 +38,6 @@ public class BookshelfFiller extends Module {
 
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
         .name("delay")
-        .description("Ticks between placements.")
         .defaultValue(4)
         .min(0)
         .sliderMax(10)
@@ -44,7 +46,6 @@ public class BookshelfFiller extends Module {
 
     private final Setting<Boolean> render = sgRender.add(new BoolSetting.Builder()
         .name("render")
-        .description("Render target bookshelf.")
         .defaultValue(true)
         .build()
     );
@@ -61,8 +62,9 @@ public class BookshelfFiller extends Module {
         .build()
     );
 
-    public BookshelfFiller(Category category) {
-        super(category, "bookshelf-filler", "Fills chiseled bookshelves with written books.");
+    // ✅ FIXED constructor (Meteor requirement)
+    public BookshelfFiller() {
+        super(Addon.CATEGORY, "bookshelf-filler", "Fills chiseled bookshelves with written books.");
     }
 
     @EventHandler
@@ -82,6 +84,7 @@ public class BookshelfFiller extends Module {
         for (BlockPos pos : BlockPos.iterateOutwards(playerPos, r, r, r)) {
             BlockState state = mc.world.getBlockState(pos);
 
+            // ✅ 1.21.4: THIS WORKS
             if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) continue;
 
             int emptySlot = getEmptySlot(state);
@@ -94,7 +97,7 @@ public class BookshelfFiller extends Module {
 
             targetPos = pos;
 
-            Direction facing = state.get(ChiseledBookshelfBlock.FACING);
+            Direction facing = state.get(Properties.HORIZONTAL_FACING);
             Vec3d hitVec = getHitVec(pos, facing, emptySlot);
 
             Rotations.rotate(
@@ -135,6 +138,7 @@ public class BookshelfFiller extends Module {
     // Helpers
     // =========================
 
+    // ✅ 1.21.4: this exists
     private int getEmptySlot(BlockState state) {
         for (int i = 0; i < 6; i++) {
             if (!state.get(ChiseledBookshelfBlock.SLOT_OCCUPIED_PROPERTIES.get(i))) {
@@ -152,6 +156,7 @@ public class BookshelfFiller extends Module {
         return -1;
     }
 
+    // ✅ FIXED clickSlot (this was wrong)
     private void swapToSlot(int slot) {
         if (slot < 9) {
             mc.player.getInventory().selectedSlot = slot;
@@ -159,11 +164,10 @@ public class BookshelfFiller extends Module {
             mc.interactionManager.clickSlot(
                 mc.player.currentScreenHandler.syncId,
                 slot,
-                0,
+                mc.player.getInventory().selectedSlot,
                 SlotActionType.SWAP,
                 mc.player
             );
-            mc.player.getInventory().selectedSlot = 0;
         }
     }
 
