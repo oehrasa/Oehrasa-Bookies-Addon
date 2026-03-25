@@ -1,5 +1,6 @@
 package com.FileAutoLogin.addon;
 
+import com.FileAutoLogin.addon.modules.BookshelfFiller;
 import com.FileAutoLogin.addon.modules.FileAutoLogin;
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
@@ -32,6 +33,7 @@ public class Addon extends MeteorAddon {
 		
         // Modules
         Modules.get().add(new FileAutoLogin(CATEGORY));
+        Modules.get().add(new BookshelfFiller(CATEGORY));
     }
 
     @Override
