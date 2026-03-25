@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "file-auto-login",
   "version": "${version}",
-  "name": "FileAutoLogin",
-  "description": "Meteor Addon for Craked MC account automated login via file",
+  "name": "FileAutoLoginv2",
+  "description": "Meteor Addon for Yuri enjoyer",
   "authors": [
-    "Dorty"
+    "Dorty/oehSkid"
   ],
   "contact": {
     "repo": "https://github.com/MeteorDevelopment/meteor-addon-template"
