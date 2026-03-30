@@ -1,4 +1,4 @@
-package com.FileAutoLogin.addon.modules;
+package com.AutoBookshelf.addon.modules;
 
 import meteordevelopment.meteorclient.systems.modules.Category;
 
@@ -18,7 +18,7 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 
-public class FileAutoLogin extends Module {
+public class AutoLogin extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 	
 	private final Setting<Boolean> fromFile = sgGeneral.add(new BoolSetting.Builder()
@@ -79,8 +79,8 @@ public class FileAutoLogin extends Module {
     boolean work;
     private int timer;
 
-    public FileAutoLogin(Category cat) {
-        super(cat, "file-auto-login", "Automatically logs in your account via file data.");
+    public AutoLogin(Category cat) {
+        super(cat, "Auto-Login", "Automatically logs in your account via file data.");
     }
 
     @Override

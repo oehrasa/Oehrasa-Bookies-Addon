@@ -1,9 +1,10 @@
 {
   "required": false,
-  "package": "com.FileAutoLogin.addon.mixin",
+  "package": "com.AutoBookshelf.addon.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "ExampleMixin"
+    "ExampleMixin",
+    "ClientPlayerEntityMixin"
   ],
   "injectors": {
     "defaultRequire": 1

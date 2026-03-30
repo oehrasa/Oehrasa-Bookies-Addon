@@ -1,28 +1,39 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
-
-import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.settings.*;
-import meteordevelopment.meteorclient.utils.render.color.SettingColor;
-import meteordevelopment.meteorclient.renderer.ShapeMode;
-import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
+import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
+import meteordevelopment.meteorclient.renderer.ShapeMode;
+import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.Rotations;
+import meteordevelopment.meteorclient.utils.render.color.Color;
+import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-
-import net.minecraft.block.*;
-import net.minecraft.item.*;
-import net.minecraft.util.*;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.*;
+import net.minecraft.block.BlockState;
+import net.minecraft.block.Blocks;
+import net.minecraft.block.ChiseledBookshelfBlock;
+import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.WrittenBookContentComponent;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
+import net.minecraft.item.Items;
 import net.minecraft.screen.slot.SlotActionType;
-import net.minecraft.world.RaycastContext;
 import net.minecraft.state.property.Properties;
-import net.minecraft.registry.Registries;
+import net.minecraft.text.Text;
+import net.minecraft.util.Hand;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
+import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.RaycastContext;
 
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class BookshelfFiller extends Module {
     private int delayLeft = 0;
@@ -38,20 +49,83 @@ public class BookshelfFiller extends Module {
     private boolean selecting = true;
     private boolean allFull = false;
     
-    // Selection tool state
     private boolean wandModeActive = false;
     private boolean pendingReset = false;
     
-    // Track current position
     private int currentRow = 0;
     private int currentCol = 0;
     private int currentSlot = 0;
     private boolean fillingBottomHalf = false;
     private List<List<BlockPos>> rows = new ArrayList<>();
+    
+    private List<Integer> sortedBookSlots = new ArrayList<>();
+    private int currentBookIndex = 0;
+    
+    // Current book being processed (for status display)
+    private String currentBookTitle = "";
+    private String currentBookAuthor = "";
+    private int currentBookSlot = -1;
+    
+    // Track last displayed book to avoid spam
+    private String lastDisplayedBookKey = "";
+    private int lastDisplayedTick = 0;
+    
+    // Track if we're waiting for a retry (continuous checking)
+    private boolean waitingForRetry = false;
+    private int retryWaitCounter = 0;
+    private static final int RETRY_WAIT_TICKS = 20;
+    private boolean hasShownNoBooksMessage = false;
+    
+    // Extraction state
+    private boolean extracting = false;
+    private List<ExtractTarget> extractQueue = new ArrayList<>();
+    private int extractIndex = 0;
+    private int extractDelay = 0;
+    private int extractCount = 0;
+    private int extractTotal = 0;
+    private int originalSlot = -1;
+    private boolean extractingSingleBlock = false;
+    private BlockPos singleBlockPos = null;
+    private List<Integer> singleBlockSlots = new ArrayList<>();
+    private int singleBlockSlotIndex = 0;
+    private int extractionRetryCount = 0;
+    private static final int MAX_EXTRACTION_RETRIES = 3;
+    
+    // Dedicated swap slot for filling
+    private int dedicatedSwapSlot = -1;
+    
+    // On-screen display text
+    private String displayText = "";
+    private int displayTimer = 0;
+
+    private static class BookInfo {
+        final String title;
+        final String author;
+        final List<Integer> numbers;
+        
+        BookInfo(String title, String author, List<Integer> numbers) {
+            this.title = title;
+            this.author = author;
+            this.numbers = numbers;
+        }
+    }
+    
+    private static class ExtractTarget {
+        BlockPos pos;
+        int slot;
+        ExtractTarget(BlockPos pos, int slot) {
+            this.pos = pos;
+            this.slot = slot;
+        }
+    }
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgSelection = settings.createGroup("Selection");
+    private final SettingGroup sgExtract = settings.createGroup("Extract");
+    private final SettingGroup sgFilter = settings.createGroup("Filter");
+    private final SettingGroup sgDisplay = settings.createGroup("Display");
     private final SettingGroup sgRender = settings.createGroup("Render");
+    private final SettingGroup sgProtection = settings.createGroup("Protection");
 
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
         .name("delay")
@@ -71,6 +145,13 @@ public class BookshelfFiller extends Module {
         .build()
     );
 
+    private final Setting<Boolean> continuousChecking = sgGeneral.add(new BoolSetting.Builder()
+        .name("continuous-checking")
+        .description("Never stop checking for books - continuously monitor inventory for new books")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<Item> selectionToolSetting = sgSelection.add(new ItemSetting.Builder()
         .name("selection-tool")
         .description("Which item to use for making selections")
@@ -82,6 +163,171 @@ public class BookshelfFiller extends Module {
         .name("require-tool-in-hand")
         .description("Require the selection tool to be held in hand to make selections")
         .defaultValue(true)
+        .build()
+    );
+
+    // Extract settings
+    private final Setting<Item> extractTool = sgExtract.add(new ItemSetting.Builder()
+        .name("extract-tool")
+        .description("Tool to use for extracting books (right-click on bookshelf)")
+        .defaultValue(Items.ENCHANTED_GOLDEN_APPLE)
+        .build()
+    );
+
+    private final Setting<Boolean> requireExtractTool = sgExtract.add(new BoolSetting.Builder()
+        .name("require-extract-tool")
+        .description("Require the extract tool to be held to extract books")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> extractDelayTicks = sgExtract.add(new IntSetting.Builder()
+        .name("extract-delay")
+        .description("Delay between extracting each book in ticks")
+        .defaultValue(8)
+        .min(2)
+        .max(40)
+        .build()
+    );
+
+    private final Setting<ExtractMode> extractMode = sgExtract.add(new EnumSetting.Builder<ExtractMode>()
+        .name("extract-mode")
+        .description("Which books to extract from a single bookshelf")
+        .defaultValue(ExtractMode.ALL)
+        .build()
+    );
+
+    private final Setting<Integer> maxExtractBooks = sgExtract.add(new IntSetting.Builder()
+        .name("max-extract-books")
+        .description("Maximum number of books to extract from a single bookshelf (0 = unlimited)")
+        .defaultValue(0)
+        .min(0)
+        .max(6)
+        .sliderMax(6)
+        .visible(() -> extractMode.get() == ExtractMode.LIMITED)
+        .build()
+    );
+
+    private final Setting<Boolean> showExtractMessages = sgExtract.add(new BoolSetting.Builder()
+        .name("show-extract-messages")
+        .description("Show messages when extracting books")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> enableFilter = sgFilter.add(new BoolSetting.Builder()
+        .name("enable-filter")
+        .description("Enable book title filtering (extracts numbers from titles)")
+        .defaultValue(true)
+        .build()
+    );
+
+    // Protection settings
+    private final Setting<List<Item>> protectedItems = sgProtection.add(new ItemListSetting.Builder()
+        .name("protected-items")
+        .description("Items that will never be replaced (will use dedicated swap slot instead)")
+        .defaultValue(new ArrayList<>(Arrays.asList(
+            Items.NETHERITE_PICKAXE,
+            Items.NETHERITE_AXE,
+            Items.NETHERITE_SHOVEL,
+            Items.NETHERITE_SWORD,
+            Items.TOTEM_OF_UNDYING,
+            Items.ENCHANTED_GOLDEN_APPLE,
+            Items.SHULKER_BOX,
+            Items.WHITE_SHULKER_BOX,
+            Items.ORANGE_SHULKER_BOX,
+            Items.MAGENTA_SHULKER_BOX,
+            Items.LIGHT_BLUE_SHULKER_BOX,
+            Items.YELLOW_SHULKER_BOX,
+            Items.LIME_SHULKER_BOX,
+            Items.PINK_SHULKER_BOX,
+            Items.GRAY_SHULKER_BOX,
+            Items.LIGHT_GRAY_SHULKER_BOX,
+            Items.CYAN_SHULKER_BOX,
+            Items.PURPLE_SHULKER_BOX,
+            Items.BLUE_SHULKER_BOX,
+            Items.BROWN_SHULKER_BOX,
+            Items.GREEN_SHULKER_BOX,
+            Items.RED_SHULKER_BOX,
+            Items.BLACK_SHULKER_BOX
+        )))
+        .build()
+    );
+
+    private final Setting<Integer> dedicatedSwapSlotIndex = sgProtection.add(new IntSetting.Builder()
+        .name("dedicated-swap-slot")
+        .description("Hotbar slot (0-8) to use for swapping books (will be overwritten)")
+        .defaultValue(8)
+        .min(0)
+        .max(8)
+        .sliderMax(8)
+        .build()
+    );
+
+    private final Setting<Boolean> useDedicatedSlot = sgProtection.add(new BoolSetting.Builder()
+        .name("use-dedicated-slot")
+        .description("Use a dedicated hotbar slot for book swapping (recommended)")
+        .defaultValue(true)
+        .build()
+    );
+
+    // Display settings
+    private final Setting<Boolean> showBookInChat = sgDisplay.add(new BoolSetting.Builder()
+        .name("show-book-in-chat")
+        .description("Show the book title and author in chat when placing")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Boolean> showBookCooldown = sgDisplay.add(new BoolSetting.Builder()
+        .name("show-book-cooldown")
+        .description("Show book info chat with a cooldown to prevent spam")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> chatCooldownTicks = sgDisplay.add(new IntSetting.Builder()
+        .name("chat-cooldown-ticks")
+        .description("Minimum ticks between showing book info in chat")
+        .defaultValue(20)
+        .min(0)
+        .sliderMax(100)
+        .visible(showBookCooldown::get)
+        .build()
+    );
+
+    private final Setting<Boolean> showOnScreen = sgDisplay.add(new BoolSetting.Builder()
+        .name("show-on-screen")
+        .description("Show current book status on screen")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> onScreenDuration = sgDisplay.add(new IntSetting.Builder()
+        .name("on-screen-duration")
+        .description("How many ticks to show messages on screen (20 ticks = 1 second)")
+        .defaultValue(40)
+        .min(10)
+        .sliderMax(100)
+        .visible(showOnScreen::get)
+        .build()
+    );
+
+    private final Setting<Integer> retryCheckInterval = sgDisplay.add(new IntSetting.Builder()
+        .name("retry-check-interval")
+        .description("How many ticks to wait between checking for books when none are found (20 ticks = 1 second)")
+        .defaultValue(20)
+        .min(5)
+        .sliderMax(100)
+        .visible(() -> continuousChecking.get())
+        .build()
+    );
+
+    private final Setting<Boolean> verboseChecking = sgDisplay.add(new BoolSetting.Builder()
+        .name("verbose-checking")
+        .description("Show messages when waiting for and finding new books")
+        .defaultValue(true)
+        .visible(() -> continuousChecking.get())
         .build()
     );
 
@@ -120,51 +366,315 @@ public class BookshelfFiller extends Module {
         .build()
     );
 
+    private enum ExtractMode {
+        ALL("All Books"),
+        LIMITED("Limited Amount");
+        
+        private final String title;
+        ExtractMode(String title) { this.title = title; }
+        @Override public String toString() { return title; }
+    }
+
     public BookshelfFiller() {
-        super(Addon.CATEGORY, "bookshelf-filler", "oeh Yuri doujin bookshelf restocker");
+        super(Addon.CATEGORY, "Bookshelf-Filler", "oeh Yuri romcom bookshelves restocker");
+    }
+
+    private void setDisplayText(String text) {
+        if (showOnScreen.get()) {
+            this.displayText = text;
+            this.displayTimer = onScreenDuration.get();
+        }
+    }
+    
+    private boolean isProtectedItem(ItemStack stack) {
+        if (stack.isEmpty()) return false;
+        return protectedItems.get().contains(stack.getItem());
+    }
+    
+    private int findSwapSlot() {
+        if (useDedicatedSlot.get()) {
+            return dedicatedSwapSlotIndex.get();
+        }
+        
+        for (int i = 0; i < 9; i++) {
+            ItemStack stack = mc.player.getInventory().getStack(i);
+            if (!isProtectedItem(stack)) {
+                return i;
+            }
+        }
+        return 0;
+    }
+    
+    private void fullReset() {
+        // Reset extraction
+        extractingSingleBlock = false;
+        singleBlockPos = null;
+        singleBlockSlots.clear();
+        singleBlockSlotIndex = 0;
+        originalSlot = -1;
+        extractionRetryCount = 0;
+        
+        // Reset selection
+        pos1 = null;
+        pos2 = null;
+        selecting = true;
+        targetPos = null;
+        
+        // Reset filling
+        allFull = false;
+        fillingBottomHalf = false;
+        currentRow = 0;
+        currentCol = 0;
+        currentSlot = 0;
+        retryCount = 0;
+        stuckCounter = 0;
+        lastPos = null;
+        lastSlot = -1;
+        isFilling = false;
+        waitingForRetry = false;
+        retryWaitCounter = 0;
+        hasShownNoBooksMessage = false;
+        rows.clear();
+        sortedBookSlots.clear();
+        currentBookIndex = 0;
+        currentBookTitle = "";
+        currentBookAuthor = "";
+        currentBookSlot = -1;
+        
+        // Reset display
+        displayText = "";
+        displayTimer = 0;
     }
 
     @EventHandler
     private void onInteract(InteractBlockEvent event) {
         if (mc.player == null || mc.world == null) return;
         if (event.hand != Hand.MAIN_HAND) return;
-        if (!selecting) return;
-
-        // Check if we're using selection tool mode
-        if (selectionToolSetting.get() != null && requireToolInHand.get()) {
-            ItemStack mainHand = mc.player.getMainHandStack();
-            Item expectedTool = selectionToolSetting.get();
-            
-            if (mainHand.isEmpty() || mainHand.getItem() != expectedTool) {
-                return; // Not holding the correct tool
-            }
-        }
-
+        
+        ItemStack hand = mc.player.getMainHandStack();
         BlockHitResult hitResult = event.result;
         if (hitResult == null) return;
         
         BlockPos pos = hitResult.getBlockPos();
         BlockState state = mc.world.getBlockState(pos);
-
         if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) return;
-
-        if (pos1 == null) {
-            pos1 = pos;
-            info("§aPos1 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + 
-                 " §7(using " + selectionToolSetting.get().getName().getString() + ")");
-        } else if (pos2 == null) {
-            pos2 = pos;
-            selecting = false;
-            wandModeActive = false;
-            info("§aPos2 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + 
-                 " §7(using " + selectionToolSetting.get().getName().getString() + ")");
-            info("§aSelection complete! Filling will now begin");
-            initializeGrid();
+        
+        // Check for extract tool first (priority)
+        if (extractTool.get() != null && !hand.isEmpty() && hand.getItem() == extractTool.get()) {
+            // Clear everything first, then extract
+            fullReset();
+            startSingleBlockExtract(pos);
+            event.cancel();
+            return;
         }
-
-        event.cancel();
+        
+        // Selection tool for area selection
+        if (selectionToolSetting.get() != null && !hand.isEmpty() && hand.getItem() == selectionToolSetting.get()) {
+            if (selecting) {
+                if (pos1 == null) {
+                    pos1 = pos;
+                    info("§aPos1 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
+                } else if (pos2 == null) {
+                    pos2 = pos;
+                    selecting = false;
+                    wandModeActive = false;
+                    info("§aPos2 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
+                    info("§aSelection complete! now filling");
+                    initializeGrid();
+                }
+                event.cancel();
+                return;
+            } else {
+                fullReset();
+                info("§eSelection reset");
+                event.cancel();
+                return;
+            }
+        }
     }
     
+    private void startSingleBlockExtract(BlockPos pos) {
+        BlockState state = mc.world.getBlockState(pos);
+        if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) return;
+        
+        singleBlockSlots.clear();
+        for (int slot = 0; slot < 6; slot++) {
+            boolean occupied = state.get(ChiseledBookshelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot));
+            if (occupied) {
+                singleBlockSlots.add(slot);
+            }
+        }
+        
+        if (singleBlockSlots.isEmpty()) {
+            sendMessage("§eNo books found in this bookshelf!");
+            return;
+        }
+        
+        int targetCount = singleBlockSlots.size();
+        if (extractMode.get() == ExtractMode.LIMITED && maxExtractBooks.get() > 0) {
+            targetCount = Math.min(maxExtractBooks.get(), targetCount);
+            Collections.shuffle(singleBlockSlots);
+            singleBlockSlots = singleBlockSlots.subList(0, targetCount);
+        } else {
+            // Sort in order (0-5) to ensure all books are extracted
+            Collections.sort(singleBlockSlots);
+        }
+        
+        singleBlockPos = pos;
+        singleBlockSlotIndex = 0;
+        extractingSingleBlock = true;
+        originalSlot = mc.player.getInventory().selectedSlot;
+        extractionRetryCount = 0;
+        
+        String modeText = extractMode.get() == ExtractMode.LIMITED ? 
+            String.format(" (extracting %d of %d books)", targetCount, singleBlockSlots.size()) : "";
+        sendMessage(String.format("§aExtracting §f%d §abooks from bookshelf%s...", targetCount, modeText));
+        setDisplayText(String.format("Extracting %d books...", targetCount));
+    }
+    
+    private void updateExtract() {
+        if (!extractingSingleBlock) return;
+        if (extractDelay > 0) {
+            extractDelay--;
+            return;
+        }
+        
+        if (singleBlockSlotIndex >= singleBlockSlots.size()) {
+            // Check if any books are left (retry mechanism)
+            BlockState state = mc.world.getBlockState(singleBlockPos);
+            if (state.getBlock() == Blocks.CHISELED_BOOKSHELF && extractionRetryCount < MAX_EXTRACTION_RETRIES) {
+                // Check if any slots are still occupied
+                boolean hasBooksLeft = false;
+                for (int slot = 0; slot < 6; slot++) {
+                    if (state.get(ChiseledBookshelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot))) {
+                        hasBooksLeft = true;
+                        break;
+                    }
+                }
+                
+                if (hasBooksLeft) {
+                    extractionRetryCount++;
+                    // Rescan for remaining books
+                    singleBlockSlots.clear();
+                    for (int slot = 0; slot < 6; slot++) {
+                        if (state.get(ChiseledBookshelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot))) {
+                            singleBlockSlots.add(slot);
+                        }
+                    }
+                    Collections.sort(singleBlockSlots);
+                    singleBlockSlotIndex = 0;
+                    sendMessage("§eRetrying extraction for remaining books... (" + extractionRetryCount + "/" + MAX_EXTRACTION_RETRIES + ")");
+                    setDisplayText("Retrying extraction...");
+                    return;
+                }
+            }
+            
+            // Extraction complete
+            extractingSingleBlock = false;
+            singleBlockPos = null;
+            singleBlockSlots.clear();
+            
+            if (originalSlot != -1 && originalSlot != mc.player.getInventory().selectedSlot) {
+                mc.player.getInventory().selectedSlot = originalSlot;
+            }
+            
+            sendMessage("§aExtraction are complete!");
+            setDisplayText("Extraction now complete!");
+            return;
+        }
+        
+        int slot = singleBlockSlots.get(singleBlockSlotIndex);
+        
+        BlockState state = mc.world.getBlockState(singleBlockPos);
+        if (state.getBlock() != Blocks.CHISELED_BOOKSHELF || 
+            !state.get(ChiseledBookshelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot))) {
+            // Slot is empty, move to next
+            singleBlockSlotIndex++;
+            extractDelay = 2;
+            return;
+        }
+        
+        int emptySlot = -1;
+        for (int i = 0; i < 36; i++) {
+            if (mc.player.getInventory().getStack(i).isEmpty()) {
+                emptySlot = i;
+                break;
+            }
+        }
+        
+        if (emptySlot == -1) {
+            sendMessage("§cInventory so fucked");
+            setDisplayText("§cInventory full!");
+            extractingSingleBlock = false;
+            return;
+        }
+        
+        extractBook(singleBlockPos, slot, emptySlot);
+        singleBlockSlotIndex++;
+        extractDelay = extractDelayTicks.get();
+    }
+    
+    private void extractBook(BlockPos pos, int slot, int targetSlot) {
+        BlockState state = mc.world.getBlockState(pos);
+        Direction facing = state.get(Properties.HORIZONTAL_FACING);
+        Vec3d hitVec = getHitVec(pos, facing, slot);
+        
+        int previousSlot = mc.player.getInventory().selectedSlot;
+        
+        Rotations.rotate(Rotations.getYaw(hitVec), Rotations.getPitch(hitVec), () -> {
+            if (targetSlot >= 9) {
+                int tempHotbarSlot = -1;
+                for (int i = 0; i < 9; i++) {
+                    if (mc.player.getInventory().getStack(i).isEmpty()) {
+                        tempHotbarSlot = i;
+                        break;
+                    }
+                }
+                
+                if (tempHotbarSlot == -1) {
+                    tempHotbarSlot = findSwapSlot();
+                    mc.interactionManager.clickSlot(
+                        mc.player.currentScreenHandler.syncId,
+                        targetSlot,
+                        tempHotbarSlot,
+                        SlotActionType.SWAP,
+                        mc.player
+                    );
+                } else {
+                    mc.interactionManager.clickSlot(
+                        mc.player.currentScreenHandler.syncId,
+                        targetSlot,
+                        tempHotbarSlot,
+                        SlotActionType.SWAP,
+                        mc.player
+                    );
+                }
+                
+                mc.player.getInventory().selectedSlot = tempHotbarSlot;
+            } else {
+                mc.player.getInventory().selectedSlot = targetSlot;
+            }
+            
+            mc.interactionManager.interactBlock(
+                mc.player,
+                Hand.MAIN_HAND,
+                new BlockHitResult(hitVec, facing, pos, false)
+            );
+            
+            mc.player.swingHand(Hand.MAIN_HAND);
+            
+            if (previousSlot != mc.player.getInventory().selectedSlot) {
+                mc.player.getInventory().selectedSlot = previousSlot;
+            }
+        });
+        
+        extractCount++;
+        if (showExtractMessages.get()) {
+            sendMessage("§aExtracted book from slot §f" + (slot + 1));
+        }
+        setDisplayText(String.format("Extracted book from slot %d", slot + 1));
+    }
+
     private void initializeGrid() {
         rows = getSortedRows();
         currentRow = 0;
@@ -177,43 +687,208 @@ public class BookshelfFiller extends Module {
         lastPos = null;
         lastSlot = -1;
         isFilling = true;
+        currentBookTitle = "";
+        currentBookAuthor = "";
+        currentBookSlot = -1;
+        waitingForRetry = false;
+        retryWaitCounter = 0;
+        hasShownNoBooksMessage = false;
+        
+        dedicatedSwapSlot = dedicatedSwapSlotIndex.get();
+        
+        if (enableFilter.get()) {
+            refreshBookList();
+        }
         
         if (!rows.isEmpty()) {
             int totalBookshelves = rows.stream().mapToInt(List::size).sum();
             info("§aFound §f" + rows.size() + " §arows with §f" + totalBookshelves + " §abookshelves total");
+            if (enableFilter.get()) {
+                info("§7Filter enabled - sorting by first number interator first");
+                info("§7Books found: §f" + sortedBookSlots.size());
+            }
             info("§7Filling from pos1 to pos2: left to right, top to bottom");
+            if (useDedicatedSlot.get()) {
+                info("§7Using dedicated swap slot: §f" + (dedicatedSwapSlot + 1));
+            }
         }
+    }
+    
+    private void refreshBookList() {
+        sortedBookSlots.clear();
+        currentBookIndex = 0;
+        
+        Pattern numberPattern = Pattern.compile("\\d+");
+        Map<Integer, BookInfo> slotBookInfoMap = new HashMap<>();
+        
+        for (int i = 0; i < 36; i++) {
+            ItemStack stack = mc.player.getInventory().getStack(i);
+            if (stack.getItem() == Items.WRITTEN_BOOK && !stack.isEmpty()) {
+                String title = getBookTitle(stack);
+                String author = getBookAuthor(stack);
+                if (title != null) {
+                    List<Integer> numbers = new ArrayList<>();
+                    Matcher matcher = numberPattern.matcher(title);
+                    while (matcher.find()) {
+                        numbers.add(Integer.parseInt(matcher.group()));
+                    }
+                    
+                    if (!numbers.isEmpty() || !enableFilter.get()) {
+                        slotBookInfoMap.put(i, new BookInfo(title, author, numbers));
+                        if (verboseChecking.get() && !waitingForRetry) {
+                            if (enableFilter.get()) {
+                                info("§7Found: §f" + title + " §7by §f" + (author != null ? author : "Unknown") + " §7in slot §f" + i + " §7(numbers: §f" + numbers + "§7)");
+                            } else {
+                                info("§7Found: §f" + title + " §7by §f" + (author != null ? author : "Unknown") + " §7in slot §f" + i);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (slotBookInfoMap.isEmpty()) {
+            if (verboseChecking.get() && !hasShownNoBooksMessage && continuousChecking.get()) {
+                if (enableFilter.get()) {
+                    info("§eNo numbers found in books! Waiting");
+                } else {
+                    info("§eNo books found in inventory! Waiting");
+                }
+                hasShownNoBooksMessage = true;
+            }
+            return;
+        }
+        
+        hasShownNoBooksMessage = false;
+        
+        if (enableFilter.get()) {
+            sortedBookSlots = slotBookInfoMap.entrySet().stream()
+                .sorted((a, b) -> {
+                    List<Integer> numsA = a.getValue().numbers;
+                    List<Integer> numsB = b.getValue().numbers;
+                    
+                    for (int i = 0; i < Math.min(numsA.size(), numsB.size()); i++) {
+                        int cmp = Integer.compare(numsA.get(i), numsB.get(i));
+                        if (cmp != 0) return cmp;
+                    }
+                    return Integer.compare(numsA.size(), numsB.size());
+                })
+                .map(Map.Entry::getKey)
+                .collect(ArrayList::new, ArrayList::add, ArrayList::addAll);
+        } else {
+            sortedBookSlots = new ArrayList<>(slotBookInfoMap.keySet());
+        }
+        
+        if (verboseChecking.get() && waitingForRetry) {
+            info("§aFound §f" + sortedBookSlots.size() + " §anew books! Resuming");
+        } else if (verboseChecking.get()) {
+            info("§aFound §f" + sortedBookSlots.size() + " §abooks");
+        }
+        
+        if (enableFilter.get() && verboseChecking.get()) {
+            info("§7Sorting order:");
+            for (int idx = 0; idx < Math.min(10, sortedBookSlots.size()); idx++) {
+                int slot = sortedBookSlots.get(idx);
+                BookInfo info = slotBookInfoMap.get(slot);
+                if (info != null) {
+                    info("§7  " + (idx + 1) + ". §f" + info.title + " §7by §f" + (info.author != null ? info.author : "Unknown") + " §7(numbers: §f" + info.numbers + "§7)");
+                }
+            }
+            if (sortedBookSlots.size() > 10) {
+                info("§7  ... and " + (sortedBookSlots.size() - 10) + " more");
+            }
+        }
+    }
+    
+    private String getBookTitle(ItemStack bookStack) {
+        try {
+            if (bookStack.getItem() == Items.WRITTEN_BOOK) {
+                WrittenBookContentComponent content = bookStack.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+                if (content != null) {
+                    return content.title().raw();
+                }
+            }
+        } catch (Exception e) {
+            // Silent fail
+        }
+        return null;
+    }
+    
+    private String getBookAuthor(ItemStack bookStack) {
+        try {
+            if (bookStack.getItem() == Items.WRITTEN_BOOK) {
+                WrittenBookContentComponent content = bookStack.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+                if (content != null) {
+                    return content.author();
+                }
+            }
+        } catch (Exception e) {
+            // Silent fail
+        }
+        return null;
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.world == null) return;
         
-        // Handle pending reset
-        if (pendingReset) {
-            pendingReset = false;
-            performReset();
+        // Update display timer
+        if (displayTimer > 0) {
+            displayTimer--;
+            if (displayTimer == 0) {
+                displayText = "";
+            }
         }
         
-        // Handle wand mode activation/deactivation
+        // Handle extraction first (higher priority)
+        updateExtract();
+        
+        // Don't process filling if extracting
+        if (extractingSingleBlock) {
+            return;
+        }
+        
+        if (pendingReset) {
+            pendingReset = false;
+            fullReset();
+        }
+        
+        // Handle retry waiting - continuous checking
+        if (waitingForRetry) {
+            retryWaitCounter++;
+            if (retryWaitCounter >= retryCheckInterval.get()) {
+                waitingForRetry = false;
+                retryWaitCounter = 0;
+                refreshBookList();
+                if (sortedBookSlots.isEmpty() && continuousChecking.get()) {
+                    waitingForRetry = true;
+                } else if (!sortedBookSlots.isEmpty()) {
+                    if (verboseChecking.get()) {
+                        info("§aBooks found! filling...");
+                    }
+                    setDisplayText("Books found! Resuming...");
+                }
+            }
+            return;
+        }
+        
+        // Wand mode tracking without debug messages
         if (selecting && selectionToolSetting.get() != null && requireToolInHand.get()) {
             ItemStack mainHand = mc.player.getMainHandStack();
             Item expectedTool = selectionToolSetting.get();
             boolean hasTool = !mainHand.isEmpty() && mainHand.getItem() == expectedTool;
-            
-            if (hasTool && !wandModeActive) {
-                wandModeActive = true;
-                info("§7Selection tool equipped: §f" + expectedTool.getName().getString());
-            } else if (!hasTool && wandModeActive) {
-                wandModeActive = false;
-                info("§7Selection tool unequipped");
-            }
+            wandModeActive = hasTool;
         }
         
         if (selecting || pos1 == null || pos2 == null) return;
         if (allFull) {
             if (isFilling) {
                 isFilling = false;
+                currentBookTitle = "";
+                currentBookAuthor = "";
+                currentBookSlot = -1;
+                info("§aAll bookshelves are full!");
+                setDisplayText("All bookshelves are full!");
             }
             return;
         }
@@ -237,6 +912,7 @@ public class BookshelfFiller extends Module {
             allFull = true;
             isFilling = false;
             info("§aAll bookshelves are completely full!");
+            setDisplayText("All bookshelves full!");
             return;
         }
         
@@ -250,6 +926,7 @@ public class BookshelfFiller extends Module {
                 retryCount = 0;
                 stuckCounter = 0;
                 info("§aFinished top half of row " + (currentRow + 1) + ", now filling bottom half...");
+                setDisplayText("Filling bottom half...");
                 delayLeft = delay.get();
                 return;
             } else {
@@ -268,7 +945,7 @@ public class BookshelfFiller extends Module {
         BlockState state = mc.world.getBlockState(pos);
         
         if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) {
-            info("§cWarning: Block at " + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + " is no longer a bookshelf! Skipping.");
+            info("§cWarning: Block at " + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + " is no longer a bookshelf! Skipping");
             currentCol++;
             retryCount = 0;
             stuckCounter = 0;
@@ -281,7 +958,7 @@ public class BookshelfFiller extends Module {
         if (lastPos != null && lastPos.equals(pos) && lastSlot == slotToFill) {
             stuckCounter++;
             if (stuckCounter >= maxRetries.get()) {
-                info("§cStuck on slot " + slotToFill + " at " + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + ". Skipping.");
+                info("§cStuck on slot " + slotToFill + " at " + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + " Skipping");
                 currentSlot++;
                 if (currentSlot >= 3) {
                     currentSlot = 0;
@@ -301,16 +978,51 @@ public class BookshelfFiller extends Module {
         boolean isSlotEmpty = !state.get(ChiseledBookshelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slotToFill));
         
         if (isSlotEmpty) {
-            int bookSlot = findWrittenBook();
+            int bookSlot = findNextBookToPlace();
             if (bookSlot == -1) {
+                if (continuousChecking.get()) {
+                    if (!waitingForRetry) {
+                        if (verboseChecking.get()) {
+                            if (enableFilter.get()) {
+                                info("§eNo more books with numbers found! Waiting for books...");
+                            } else {
+                                info("§eNo written books found! Waiting for books...");
+                            }
+                        }
+                        waitingForRetry = true;
+                        retryWaitCounter = 0;
+                        hasShownNoBooksMessage = true;
+                        setDisplayText("Waiting for books...");
+                    }
+                } else {
+                    if (enableFilter.get()) {
+                        info("§cNo more numbers found in books, Stopping. Enable 'continuous-checking' to continue");
+                    } else {
+                        info("§cNo written books found! Stopping. Enable 'continuous-checking' to continue");
+                    }
+                    allFull = true;
+                    isFilling = false;
+                }
                 delayLeft = delay.get();
                 return;
+            }
+            
+            updateCurrentBookStatus(bookSlot);
+            
+            if (showOnScreen.get()) {
+                String authorText = (currentBookAuthor != null && !currentBookAuthor.isEmpty()) ? " by " + currentBookAuthor : "";
+                String displayMsg = String.format("Put: %s%s to slot %d", currentBookTitle, authorText, slotToFill + 1);
+                setDisplayText(displayMsg);
+            }
+            
+            if (showBookInChat.get()) {
+                displayBookInfoInChat(currentBookTitle, currentBookAuthor);
             }
             
             if (!canSee(pos)) {
                 retryCount++;
                 if (retryCount >= maxRetries.get()) {
-                    info("§cCannot see bookshelf at " + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + ". Skipping.");
+                    info("§cCannot see bookshelf at " + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + " Skipping");
                     currentCol++;
                     retryCount = 0;
                     stuckCounter = 0;
@@ -328,12 +1040,27 @@ public class BookshelfFiller extends Module {
             lastPos = pos;
             lastSlot = slotToFill;
             
+            int finalBookSlot = bookSlot;
+            int previousSlot = mc.player.getInventory().selectedSlot;
+            
             Rotations.rotate(
                 Rotations.getYaw(hitVec),
                 Rotations.getPitch(hitVec),
                 () -> {
-                    int previousSlot = mc.player.getInventory().selectedSlot;
-                    swapToSlot(bookSlot);
+                    int swapSlot = findSwapSlot();
+                    
+                    if (finalBookSlot >= 9) {
+                        mc.interactionManager.clickSlot(
+                            mc.player.currentScreenHandler.syncId,
+                            finalBookSlot,
+                            swapSlot,
+                            SlotActionType.SWAP,
+                            mc.player
+                        );
+                        mc.player.getInventory().selectedSlot = swapSlot;
+                    } else {
+                        mc.player.getInventory().selectedSlot = finalBookSlot;
+                    }
                     
                     mc.interactionManager.interactBlock(
                         mc.player,
@@ -343,8 +1070,8 @@ public class BookshelfFiller extends Module {
                     
                     mc.player.swingHand(Hand.MAIN_HAND);
                     
-                    if (bookSlot != previousSlot) {
-                        swapToSlot(previousSlot);
+                    if (previousSlot != mc.player.getInventory().selectedSlot) {
+                        mc.player.getInventory().selectedSlot = previousSlot;
                     }
                 }
             );
@@ -355,6 +1082,10 @@ public class BookshelfFiller extends Module {
             if (currentSlot >= 3) {
                 currentSlot = 0;
                 currentCol++;
+            }
+            
+            if (enableFilter.get() && currentBookIndex < sortedBookSlots.size()) {
+                currentBookIndex++;
             }
             
             lastPos = null;
@@ -377,12 +1108,148 @@ public class BookshelfFiller extends Module {
             return;
         }
     }
+    
+    @EventHandler
+    private void onRender2D(Render2DEvent event) {
+        if (!showOnScreen.get()) return;
+        if (displayText.isEmpty()) return;
+        
+        int screenWidth = event.screenWidth;
+        int screenHeight = event.screenHeight;
+        double scale = 1.2; // change this number to adjust size
+        
+        int x = (int) (screenWidth / 2 - (mc.textRenderer.getWidth(displayText) * scale) / 2);
+        int y = screenHeight - 50;
+        
+        event.drawContext.getMatrices().push();
+        event.drawContext.getMatrices().translate(x, y, 0);
+        event.drawContext.getMatrices().scale((float) scale, (float) scale, 1);
+        
+        event.drawContext.drawText(
+            mc.textRenderer,
+            displayText,
+            0,
+            0,
+            0xFFFFD700,
+            true
+        );
+        
+        event.drawContext.getMatrices().pop();
+    }
+    
+    private void displayBookInfoInChat(String title, String author) {
+        if (!showBookInChat.get()) return;
+        
+        if (title == null || title.isEmpty()) return;
+        
+        String bookKey = title + "|" + author;
+        int currentTick = mc.player.age;
+        
+        if (showBookCooldown.get()) {
+            if (bookKey.equals(lastDisplayedBookKey) && 
+                (currentTick - lastDisplayedTick) < chatCooldownTicks.get()) {
+                return;
+            }
+        }
+        
+        lastDisplayedBookKey = bookKey;
+        lastDisplayedTick = currentTick;
+        
+        String authorText = (author != null && !author.isEmpty()) ? " by §f" + author : "";
+        info("§7Placing: §f" + title + "§7" + authorText);
+    }
+    
+    private void updateCurrentBookStatus(int slot) {
+        currentBookSlot = slot;
+        ItemStack stack = mc.player.getInventory().getStack(slot);
+        if (stack.getItem() == Items.WRITTEN_BOOK) {
+            currentBookTitle = getBookTitle(stack);
+            currentBookAuthor = getBookAuthor(stack);
+            if (currentBookTitle == null) currentBookTitle = "Unknown";
+            if (currentBookAuthor == null) currentBookAuthor = "Unknown";
+        } else {
+            currentBookTitle = "";
+            currentBookAuthor = "";
+        }
+    }
+    
+    public String getCurrentBookTitle() {
+        return currentBookTitle;
+    }
+    
+    public String getCurrentBookAuthor() {
+        return currentBookAuthor;
+    }
+    
+    public int getCurrentBookSlot() {
+        return currentBookSlot;
+    }
+    
+    public boolean isFilling() {
+        return isFilling;
+    }
+    
+    public int getCurrentRow() {
+        return currentRow;
+    }
+    
+    public int getCurrentCol() {
+        return currentCol;
+    }
+    
+    public int getTotalRows() {
+        return rows.size();
+    }
+    
+    public int getTotalBooks() {
+        return sortedBookSlots.size();
+    }
+    
+    public int getCurrentBookIndex() {
+        return currentBookIndex;
+    }
+    
+    public boolean isWaitingForBooks() {
+        return waitingForRetry;
+    }
+    
+    public boolean isContinuousCheckingEnabled() {
+        return continuousChecking.get();
+    }
+    
+    public boolean shouldShowBookInfo() {
+        return isFilling() && currentBookTitle != null && !currentBookTitle.isEmpty();
+    }
+    
+    private int findNextBookToPlace() {
+        if (!enableFilter.get()) {
+            for (int i = 0; i < 36; i++) {
+                ItemStack stack = mc.player.getInventory().getStack(i);
+                if (stack.getItem() == Items.WRITTEN_BOOK && !stack.isEmpty()) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+        
+        if (currentBookIndex < sortedBookSlots.size()) {
+            int slot = sortedBookSlots.get(currentBookIndex);
+            ItemStack stack = mc.player.getInventory().getStack(slot);
+            if (stack.getItem() == Items.WRITTEN_BOOK && !stack.isEmpty()) {
+                return slot;
+            } else {
+                refreshBookList();
+                return currentBookIndex < sortedBookSlots.size() ? sortedBookSlots.get(currentBookIndex) : -1;
+            }
+        }
+        
+        return -1;
+    }
 
     private List<List<BlockPos>> getSortedRows() {
         List<BlockPos> all = getSelectedBlocks();
         if (all.isEmpty()) return Collections.emptyList();
         
-        // Get the direction from pos1 to pos2
         int minX = Math.min(pos1.getX(), pos2.getX());
         int maxX = Math.max(pos1.getX(), pos2.getX());
         int minY = Math.min(pos1.getY(), pos2.getY());
@@ -390,12 +1257,10 @@ public class BookshelfFiller extends Module {
         int minZ = Math.min(pos1.getZ(), pos2.getZ());
         int maxZ = Math.max(pos1.getZ(), pos2.getZ());
         
-        // Determine if we're going positive or negative direction
         boolean increasingX = pos2.getX() >= pos1.getX();
         boolean increasingZ = pos2.getZ() >= pos1.getZ();
         boolean increasingY = pos2.getY() >= pos1.getY();
         
-        // Sort by Y (top to bottom based on pos1 to pos2 direction)
         all.sort((a, b) -> {
             if (increasingY) {
                 return Integer.compare(a.getY(), b.getY());
@@ -404,7 +1269,6 @@ public class BookshelfFiller extends Module {
             }
         });
         
-        // Group by Y level
         Map<Integer, List<BlockPos>> yLevels = new LinkedHashMap<>();
         for (BlockPos pos : all) {
             yLevels.computeIfAbsent(pos.getY(), k -> new ArrayList<>()).add(pos);
@@ -413,18 +1277,14 @@ public class BookshelfFiller extends Module {
         List<List<BlockPos>> rows = new ArrayList<>();
         
         for (List<BlockPos> row : yLevels.values()) {
-            // Sort each row left to right based on pos1 to pos2 direction
             row.sort((a, b) -> {
-                // Determine primary axis (X or Z) based on which has larger range
                 int xRange = Math.abs(pos2.getX() - pos1.getX());
                 int zRange = Math.abs(pos2.getZ() - pos1.getZ());
                 
                 if (xRange >= zRange) {
-                    // Sort by X first
                     if (increasingX) {
                         int compare = Integer.compare(a.getX(), b.getX());
                         if (compare != 0) return compare;
-                        // Then sort by Z if X is same
                         if (increasingZ) {
                             return Integer.compare(a.getZ(), b.getZ());
                         } else {
@@ -440,7 +1300,6 @@ public class BookshelfFiller extends Module {
                         }
                     }
                 } else {
-                    // Sort by Z first
                     if (increasingZ) {
                         int compare = Integer.compare(a.getZ(), b.getZ());
                         if (compare != 0) return compare;
@@ -494,28 +1353,14 @@ public class BookshelfFiller extends Module {
     private void onRender(Render3DEvent event) {
         if (!render.get()) return;
         
-        // Render pos1 and pos2 markers
         if (pos1 != null) {
-            event.renderer.box(
-                pos1,
-                pos1Color.get(),
-                pos1Color.get(),
-                ShapeMode.Both,
-                0
-            );
+            event.renderer.box(pos1, pos1Color.get(), pos1Color.get(), ShapeMode.Both, 0);
         }
         
         if (pos2 != null) {
-            event.renderer.box(
-                pos2,
-                pos2Color.get(),
-                pos2Color.get(),
-                ShapeMode.Both,
-                0
-            );
+            event.renderer.box(pos2, pos2Color.get(), pos2Color.get(), ShapeMode.Both, 0);
         }
         
-        // Render selection area
         if (pos1 != null && pos2 != null) {
             int minX = Math.min(pos1.getX(), pos2.getX());
             int minY = Math.min(pos1.getY(), pos2.getY());
@@ -524,47 +1369,12 @@ public class BookshelfFiller extends Module {
             int maxY = Math.max(pos1.getY(), pos2.getY());
             int maxZ = Math.max(pos1.getZ(), pos2.getZ());
             
-            event.renderer.box(
-                new Box(minX, minY, minZ, maxX + 1, maxY + 1, maxZ + 1),
-                sideColor.get(),
-                lineColor.get(),
-                ShapeMode.Both,
-                0
-            );
+            event.renderer.box(new Box(minX, minY, minZ, maxX + 1, maxY + 1, maxZ + 1),
+                sideColor.get(), lineColor.get(), ShapeMode.Both, 0);
         }
         
         if (targetPos != null) {
-            event.renderer.box(
-                targetPos,
-                sideColor.get(),
-                lineColor.get(),
-                ShapeMode.Both,
-                0
-            );
-        }
-    }
-
-    private int findWrittenBook() {
-        for (int i = 0; i < 36; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
-            if (stack.getItem() == Items.WRITTEN_BOOK && !stack.isEmpty()) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    private void swapToSlot(int slot) {
-        if (slot < 9) {
-            mc.player.getInventory().selectedSlot = slot;
-        } else {
-            mc.interactionManager.clickSlot(
-                mc.player.currentScreenHandler.syncId,
-                slot,
-                mc.player.getInventory().selectedSlot,
-                SlotActionType.SWAP,
-                mc.player
-            );
+            event.renderer.box(targetPos, sideColor.get(), lineColor.get(), ShapeMode.Both, 0);
         }
     }
 
@@ -606,31 +1416,21 @@ public class BookshelfFiller extends Module {
         };
     }
     
+    private void sendMessage(String msg) {
+        info(msg);
+        mc.player.sendMessage(Text.literal(msg), true);
+    }
+    
     public void resetSelection() {
         if (isFilling) {
             pendingReset = true;
         } else {
-            performReset();
+            fullReset();
         }
     }
     
     private void performReset() {
-        pos1 = null;
-        pos2 = null;
-        selecting = true;
-        targetPos = null;
-        allFull = false;
-        fillingBottomHalf = false;
-        currentRow = 0;
-        currentCol = 0;
-        currentSlot = 0;
-        retryCount = 0;
-        stuckCounter = 0;
-        lastPos = null;
-        lastSlot = -1;
-        isFilling = false;
-        rows.clear();
-        info("§aSelection reset");
+        fullReset();
     }
     
     public void setPos1(BlockPos pos) {
@@ -645,18 +1445,36 @@ public class BookshelfFiller extends Module {
 
     @Override
     public void onActivate() {
-        resetSelection();
+        fullReset();
         String toolName = selectionToolSetting.get().getName().getString();
-        info("§aBookshelf Filler activated.");
+        String extractToolName = extractTool.get().getName().getString();
+        info("§aBookshelf Filler activated");
+        info("§7- §f" + toolName + " §7= select area & fill");
+        info("§7- §f" + extractToolName + " §7= extract books from a bookshelf");
         if (requireToolInHand.get()) {
-            info("§7Hold a §f" + toolName + " §7and right-click two chiseled bookshelves corner to set area.");
-        } else {
-            info("§7Right-click two chiseled bookshelves corner to set area");
+            info("§7Hold the tool to use it");
+        }
+        if (enableFilter.get()) {
+            info("§7Filter enabled - automatically sort numbers from titles");
+        }
+        if (showOnScreen.get()) {
+            info("§7Status will be shown on screen");
+        }
+        if (continuousChecking.get()) {
+            info("§7Continuous checking §aENABLED §7- will wait for books if no books are found");
+        }
+        if (useDedicatedSlot.get()) {
+            info("§7Using dedicated swap slot: §f" + (dedicatedSwapSlotIndex.get() + 1));
         }
     }
 
     @Override
     public void onDeactivate() {
-        resetSelection();
+        fullReset();
+        extractingSingleBlock = false;
+        singleBlockPos = null;
+        singleBlockSlots.clear();
+        displayText = "";
+        displayTimer = 0;
     }
 }

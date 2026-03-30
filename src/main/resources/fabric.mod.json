@@ -1,20 +1,20 @@
 {
   "schemaVersion": 1,
-  "id": "file-auto-login",
+  "id": "autobookshelf-addon",
   "version": "${version}",
-  "name": "FileAutoLoginv2",
+  "name": "AutoBookshelf-addon",
   "description": "Meteor Addon for Yuri enjoyer",
   "authors": [
-    "Dorty/oehSkid"
+    "oehrasa" 
   ],
   "contact": {
-    "repo": "https://github.com/MeteorDevelopment/meteor-addon-template"
+    "repo": "https://github.com/oehrasa"
   },
-  "icon": "assets/template/icon.png",
+  "icon": "assets/oehrasa/textures/icon.png",
   "environment": "client",
   "entrypoints": {
     "meteor": [
-      "com.FileAutoLogin.addon.Addon"
+      "com.AutoBookshelf.addon.Addon"
     ]
   },
   "mixins": [
