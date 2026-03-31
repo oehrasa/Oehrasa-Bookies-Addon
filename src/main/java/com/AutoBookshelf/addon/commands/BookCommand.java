@@ -7,12 +7,9 @@ import meteordevelopment.meteorclient.commands.Command;
 import net.minecraft.command.CommandSource;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.WrittenBookContentComponent;
-import net.minecraft.entity.decoration.ItemFrameEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.text.Text;
-import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.hit.HitResult;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -20,33 +17,19 @@ import java.util.List;
 import static com.mojang.brigadier.Command.SINGLE_SUCCESS;
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
-public class IfpeekCommand extends Command {
+public class BookCommand extends Command {
 
-    public IfpeekCommand() {
-        super("ifpeek", "Shows book information from an item frame.");
+    public BookCommand() {
+        super("book", "Shows book information from your held item");
     }
 
     @Override
     public void build(LiteralArgumentBuilder<CommandSource> builder) {
         builder.executes(ctx -> {
-            if (mc.crosshairTarget == null || mc.crosshairTarget.getType() != HitResult.Type.ENTITY) {
-                error("You have to point at an item frame first.");
-                return SINGLE_SUCCESS;
-            }
-
-            if (!(mc.crosshairTarget instanceof EntityHitResult hitResult)) {
-                error("You have to point at an item frame first.");
-                return SINGLE_SUCCESS;
-            }
-
-            if (!(hitResult.getEntity() instanceof ItemFrameEntity itemFrame)) {
-                error("You have to point at an item frame first.");
-                return SINGLE_SUCCESS;
-            }
-
-            ItemStack item = itemFrame.getHeldItemStack();
-            if (item.isEmpty()) {
-                error("There is no item on the item frame.");
+            ItemStack item = getHeldBook();
+            
+            if (item == null) {
+                error("You must hold a book in your hand!");
                 return SINGLE_SUCCESS;
             }
 
@@ -56,15 +39,14 @@ public class IfpeekCommand extends Command {
             }
             
             if (item.isOf(Items.WRITABLE_BOOK)) {
-                info("This is a writable book (book and quill) Not yet signed");
+                info("This is a writable book (book and quill), Not yet signed");
                 return SINGLE_SUCCESS;
             }
 
-            error("This item is not a written book!");
+            error("You are not holding a written book!");
             return SINGLE_SUCCESS;
         });
         
-        // Search sublarp
         builder.then(literal("search")
             .then(argument("word", StringArgumentType.word())
                 .executes(ctx -> {
@@ -93,6 +75,22 @@ public class IfpeekCommand extends Command {
                 return SINGLE_SUCCESS;
             })
         );
+    }
+    
+    private ItemStack getHeldBook() {
+        // Check main hand first
+        ItemStack mainHand = mc.player.getMainHandStack();
+        if (mainHand.isOf(Items.WRITTEN_BOOK) || mainHand.isOf(Items.WRITABLE_BOOK)) {
+            return mainHand;
+        }
+        
+        // Check offhand
+        ItemStack offHand = mc.player.getOffHandStack();
+        if (offHand.isOf(Items.WRITTEN_BOOK) || offHand.isOf(Items.WRITABLE_BOOK)) {
+            return offHand;
+        }
+        
+        return null;
     }
     
     private void inspectBook(ItemStack book) {
@@ -132,8 +130,10 @@ public class IfpeekCommand extends Command {
         info("§6=== Book Info ===");
         info("§7Title: §f" + title);
         info("§7Author: §f" + (author != null && !author.isEmpty() ? author : "Unknown"));
-        info("§7Generated: §f" + generationText);
+        info("§7Generation: §f" + generationText);
         info("§7Pages: §f" + pages.size() + " §7(§f" + emptyPages + " §7empty)");
+        info("§7Characters: §f" + String.format("%,d", totalChars));
+        info("§7Words: §f" + String.format("%,d", totalWords));
         info("§6================");
         
         // Show first 3 pages
@@ -156,8 +156,17 @@ public class IfpeekCommand extends Command {
     }
     
     private void searchInBook(String searchWord) {
-        WrittenBookContentComponent content = getBookFromItemFrame();
-        if (content == null) return;
+        ItemStack book = getHeldBook();
+        if (book == null || !book.isOf(Items.WRITTEN_BOOK)) {
+            error("You must hold a written book!");
+            return;
+        }
+        
+        WrittenBookContentComponent content = book.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+        if (content == null) {
+            error("This book has no content!");
+            return;
+        }
         
         List<Text> pages = content.getPages(true);
         List<Integer> foundPages = new ArrayList<>();
@@ -180,12 +189,21 @@ public class IfpeekCommand extends Command {
     }
     
     private void viewSpecificPage(int pageNum) {
-        WrittenBookContentComponent content = getBookFromItemFrame();
-        if (content == null) return;
+        ItemStack book = getHeldBook();
+        if (book == null || !book.isOf(Items.WRITTEN_BOOK)) {
+            error("You must hold a written book!");
+            return;
+        }
+        
+        WrittenBookContentComponent content = book.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+        if (content == null) {
+            error("This book has no content!");
+            return;
+        }
         
         List<Text> pages = content.getPages(true);
         if (pageNum < 1 || pageNum > pages.size()) {
-            error("Page " + pageNum + " doesn't exist, The Book has " + pages.size() + " pages");
+            error("Page " + pageNum + " does not exist. Book has " + pages.size() + " pages.");
             return;
         }
         
@@ -203,12 +221,21 @@ public class IfpeekCommand extends Command {
                 info("§f" + line);
             }
         }
-        info("§6====================");
+        info("§6===================");
     }
     
     private void showBookStats() {
-        WrittenBookContentComponent content = getBookFromItemFrame();
-        if (content == null) return;
+        ItemStack book = getHeldBook();
+        if (book == null || !book.isOf(Items.WRITTEN_BOOK)) {
+            error("You must hold a written book!");
+            return;
+        }
+        
+        WrittenBookContentComponent content = book.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+        if (content == null) {
+            error("This book has no content!");
+            return;
+        }
         
         List<Text> pages = content.getPages(true);
         
@@ -245,27 +272,16 @@ public class IfpeekCommand extends Command {
             default -> "Unknown";
         };
         
-        info("§6=== Book Statistic ===");
+        info("§6=== Book Statistics ===");
         info("§7Title: §f" + title);
         info("§7Author: §f" + (author != null && !author.isEmpty() ? author : "Unknown"));
-        info("§7Generated: §f" + generationText);
+        info("§7Generation: §f" + generationText);
         info("§7Total Pages: §f" + pages.size());
         info("§7Empty Pages: §f" + emptyPages);
         info("§7Total Characters: §f" + String.format("%,d", totalChars));
         info("§7Total Words: §f" + String.format("%,d", totalWords));
         info("§7Longest Page: §f" + longestPage + " §7characters");
         info("§7Shortest Page: §f" + shortestPage + " §7characters");
-        info("§6===================");
-    }
-    
-    private WrittenBookContentComponent getBookFromItemFrame() {
-        if (mc.crosshairTarget instanceof EntityHitResult hitResult &&
-            hitResult.getEntity() instanceof ItemFrameEntity itemFrame) {
-            ItemStack item = itemFrame.getHeldItemStack();
-            if (item.isOf(Items.WRITTEN_BOOK)) {
-                return item.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
-            }
-        }
-        return null;
+        info("§6=========================");
     }
 }

@@ -3,6 +3,8 @@ package com.AutoBookshelf.addon;
 import com.AutoBookshelf.addon.hud.MayaChan;
 import com.AutoBookshelf.addon.hud.ElytraTime;
 import com.AutoBookshelf.addon.commands.IfpeekCommand;
+import com.AutoBookshelf.addon.commands.BookCommand;
+import com.AutoBookshelf.addon.commands.ShelfCommand;
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
@@ -19,8 +21,6 @@ public class Addon extends MeteorAddon {
     public static final Logger LOG = LogUtils.getLogger();
     public static final HudGroup HUD_GROUP = new HudGroup("MayaChan");
     public static Category CATEGORY = new Category("DortyAddons", Items.DRIED_KELP.getDefaultStack());
-	
-	
 	
     @Override
     public void onInitialize() {
@@ -43,7 +43,8 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new AutoChestAura());
         Modules.get().add(new ProjectilePredict());
         Modules.get().add(new BetterBoatFly());
-        Modules.get().add(new BeaconRangeModule());
+        Modules.get().add(new BeaconRange());
+        Modules.get().add(new ShulkBookRestock());
 
         // HUD
         Hud.get().register(MayaChan.INFO);
@@ -51,6 +52,8 @@ public class Addon extends MeteorAddon {
 
         // COMMANDS
         Commands.add(new IfpeekCommand());
+        Commands.add(new BookCommand());
+        Commands.add(new ShelfCommand());
 
     }
 
