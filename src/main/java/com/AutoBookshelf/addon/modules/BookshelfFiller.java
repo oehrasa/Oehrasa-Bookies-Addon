@@ -889,6 +889,7 @@ public class BookshelfFiller extends Module {
                 currentBookSlot = -1;
                 info("§aAll bookshelves are full!");
                 setDisplayText("All bookshelves are full!");
+                fullReset();
             }
             return;
         }
@@ -955,20 +956,13 @@ public class BookshelfFiller extends Module {
         
         int slotToFill = fillingBottomHalf ? currentSlot + 3 : currentSlot;
         
+        // Don't skip on stuck - just wait and retry
         if (lastPos != null && lastPos.equals(pos) && lastSlot == slotToFill) {
             stuckCounter++;
             if (stuckCounter >= maxRetries.get()) {
-                info("§cStuck on slot " + slotToFill + " at " + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + " Skipping");
-                currentSlot++;
-                if (currentSlot >= 3) {
-                    currentSlot = 0;
-                    currentCol++;
-                }
+                // Reset counter and wait longer instead of skipping
                 stuckCounter = 0;
-                retryCount = 0;
-                lastPos = null;
-                lastSlot = -1;
-                delayLeft = delay.get();
+                delayLeft = Math.max(delay.get(), 20);
                 return;
             }
         } else {
@@ -992,8 +986,10 @@ public class BookshelfFiller extends Module {
                         waitingForRetry = true;
                         retryWaitCounter = 0;
                         hasShownNoBooksMessage = true;
-                        setDisplayText("Waiting for books...");
+                        sendMessage("Waiting for books...");
                     }
+                    delayLeft = delay.get();
+                    return;
                 } else {
                     if (enableFilter.get()) {
                         info("§cNo more numbers found in books, Stopping. Enable 'continuous-checking' to continue");
@@ -1002,9 +998,8 @@ public class BookshelfFiller extends Module {
                     }
                     allFull = true;
                     isFilling = false;
+                    return;
                 }
-                delayLeft = delay.get();
-                return;
             }
             
             updateCurrentBookStatus(bookSlot);
@@ -1012,6 +1007,9 @@ public class BookshelfFiller extends Module {
             if (showOnScreen.get()) {
                 String authorText = (currentBookAuthor != null && !currentBookAuthor.isEmpty()) ? " by " + currentBookAuthor : "";
                 String displayMsg = String.format("Put: %s%s to slot %d", currentBookTitle, authorText, slotToFill + 1);
+                if (!showBookInChat.get()) {
+                    sendMessage("§a" + displayMsg);
+                }
                 setDisplayText(displayMsg);
             }
             
@@ -1019,15 +1017,13 @@ public class BookshelfFiller extends Module {
                 displayBookInfoInChat(currentBookTitle, currentBookAuthor);
             }
             
+            // Changed: Don't skip if can't see - just wait and retry
             if (!canSee(pos)) {
                 retryCount++;
                 if (retryCount >= maxRetries.get()) {
-                    info("§cCannot see bookshelf at " + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + " Skipping");
-                    currentCol++;
                     retryCount = 0;
-                    stuckCounter = 0;
-                    lastPos = null;
-                    lastSlot = -1;
+                    delayLeft = Math.max(delay.get(), 20);
+                    return;
                 }
                 delayLeft = delay.get();
                 return;
@@ -1108,7 +1104,7 @@ public class BookshelfFiller extends Module {
             return;
         }
     }
-    
+  
     @EventHandler
     private void onRender2D(Render2DEvent event) {
         if (!showOnScreen.get()) return;

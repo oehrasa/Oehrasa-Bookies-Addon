@@ -4,15 +4,17 @@ import com.AutoBookshelf.addon.hud.MayaChan;
 import com.AutoBookshelf.addon.hud.ElytraTime;
 import com.AutoBookshelf.addon.commands.IfpeekCommand;
 import com.AutoBookshelf.addon.commands.BookCommand;
-import com.AutoBookshelf.addon.commands.ShelfCommand;
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
 import meteordevelopment.meteorclient.commands.Commands;
+import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.systems.hud.Hud;
 import meteordevelopment.meteorclient.systems.hud.HudGroup;
 import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.orbit.EventHandler;
+
 import com.AutoBookshelf.addon.modules.*;
 import net.minecraft.item.Items;
 import org.slf4j.Logger;
@@ -43,8 +45,11 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new AutoChestAura());
         Modules.get().add(new ProjectilePredict());
         Modules.get().add(new BetterBoatFly());
+        Modules.get().add(new BoatPhase());
+        Modules.get().add(new BoatGlitch());
         Modules.get().add(new BeaconRange());
         Modules.get().add(new ShulkBookRestock());
+        Modules.get().add(new AutoSex());
 
         // HUD
         Hud.get().register(MayaChan.INFO);
@@ -53,7 +58,6 @@ public class Addon extends MeteorAddon {
         // COMMANDS
         Commands.add(new IfpeekCommand());
         Commands.add(new BookCommand());
-        Commands.add(new ShelfCommand());
 
     }
 
