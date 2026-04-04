@@ -2,8 +2,9 @@ package com.AutoBookshelf.addon;
 
 import com.AutoBookshelf.addon.hud.MayaChan;
 import com.AutoBookshelf.addon.hud.ElytraTime;
+import com.AutoBookshelf.addon.hud.OnlineFriendsHUD;
 import com.AutoBookshelf.addon.commands.IfpeekCommand;
-import com.AutoBookshelf.addon.commands.BookCommand;
+import com.AutoBookshelf.addon.commands.ShelfCommand;
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
@@ -50,14 +51,16 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new BeaconRange());
         Modules.get().add(new ShulkBookRestock());
         Modules.get().add(new AutoSex());
+        Modules.get().add(new AutoMoss());
 
         // HUD
         Hud.get().register(MayaChan.INFO);
         Hud.get().register(ElytraTime.INFO);
+        Hud.get().register(OnlineFriendsHUD.INFO);
 
         // COMMANDS
         Commands.add(new IfpeekCommand());
-        Commands.add(new BookCommand());
+        Commands.add(new ShelfCommand());
 
     }
 

@@ -619,6 +619,14 @@ public class BookshelfFiller extends Module {
         Direction facing = state.get(Properties.HORIZONTAL_FACING);
         Vec3d hitVec = getHitVec(pos, facing, slot);
         
+        // Create BlockHitResult with insideBlock = false
+        BlockHitResult hitResult = new BlockHitResult(
+            hitVec,
+            facing,
+            pos,
+            false
+        );
+        
         int previousSlot = mc.player.getInventory().selectedSlot;
         
         Rotations.rotate(Rotations.getYaw(hitVec), Rotations.getPitch(hitVec), () -> {
@@ -658,7 +666,7 @@ public class BookshelfFiller extends Module {
             mc.interactionManager.interactBlock(
                 mc.player,
                 Hand.MAIN_HAND,
-                new BlockHitResult(hitVec, facing, pos, false)
+                hitResult  // Use the hitResult with insideBlock = false
             );
             
             mc.player.swingHand(Hand.MAIN_HAND);
@@ -889,8 +897,8 @@ public class BookshelfFiller extends Module {
                 currentBookSlot = -1;
                 info("§aAll bookshelves are full!");
                 setDisplayText("All bookshelves are full!");
-                fullReset();
             }
+            fullReset();
             return;
         }
         
@@ -960,7 +968,6 @@ public class BookshelfFiller extends Module {
         if (lastPos != null && lastPos.equals(pos) && lastSlot == slotToFill) {
             stuckCounter++;
             if (stuckCounter >= maxRetries.get()) {
-                // Reset counter and wait longer instead of skipping
                 stuckCounter = 0;
                 delayLeft = Math.max(delay.get(), 20);
                 return;
@@ -1017,21 +1024,18 @@ public class BookshelfFiller extends Module {
                 displayBookInfoInChat(currentBookTitle, currentBookAuthor);
             }
             
-            // Changed: Don't skip if can't see - just wait and retry
-            if (!canSee(pos)) {
-                retryCount++;
-                if (retryCount >= maxRetries.get()) {
-                    retryCount = 0;
-                    delayLeft = Math.max(delay.get(), 20);
-                    return;
-                }
-                delayLeft = delay.get();
-                return;
-            }
-            
+            // FIX: Removed canSee check - using insideBlock = false instead
             targetPos = pos;
             Direction facing = state.get(Properties.HORIZONTAL_FACING);
             Vec3d hitVec = getHitVec(pos, facing, slotToFill);
+            
+            // Create BlockHitResult with insideBlock = false to bypass visibility
+            BlockHitResult hitResult = new BlockHitResult(
+                hitVec,
+                facing,
+                pos,
+                false  // insideBlock = false - allows clicking without line of sight
+            );
             
             lastPos = pos;
             lastSlot = slotToFill;
@@ -1061,7 +1065,7 @@ public class BookshelfFiller extends Module {
                     mc.interactionManager.interactBlock(
                         mc.player,
                         Hand.MAIN_HAND,
-                        new BlockHitResult(hitVec, facing, pos, false)
+                        hitResult
                     );
                     
                     mc.player.swingHand(Hand.MAIN_HAND);
@@ -1374,21 +1378,6 @@ public class BookshelfFiller extends Module {
         }
     }
 
-    private boolean canSee(BlockPos pos) {
-        Vec3d eyes = mc.player.getEyePos();
-        Vec3d target = Vec3d.ofCenter(pos);
-        
-        BlockHitResult result = mc.world.raycast(new RaycastContext(
-            eyes,
-            target,
-            RaycastContext.ShapeType.OUTLINE,
-            RaycastContext.FluidHandling.NONE,
-            mc.player
-        ));
-        
-        return result.getBlockPos().equals(pos);
-    }
-
     private Vec3d getHitVec(BlockPos pos, Direction facing, int slot) {
         double x = 0, y = 0;
         
@@ -1423,10 +1412,6 @@ public class BookshelfFiller extends Module {
         } else {
             fullReset();
         }
-    }
-    
-    private void performReset() {
-        fullReset();
     }
     
     public void setPos1(BlockPos pos) {
