@@ -15,7 +15,10 @@ import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.hit.HitResult;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static com.mojang.brigadier.Command.SINGLE_SUCCESS;
 import static meteordevelopment.meteorclient.MeteorClient.mc;
@@ -208,7 +211,10 @@ public class IfpeekCommand extends Command {
     
     private void showBookStats() {
         WrittenBookContentComponent content = getBookFromItemFrame();
-        if (content == null) return;
+        if (content == null) {
+            error("This book has no content!");
+            return;
+        }
         
         List<Text> pages = content.getPages(true);
         
@@ -218,20 +224,50 @@ public class IfpeekCommand extends Command {
         int longestPage = 0;
         int shortestPage = Integer.MAX_VALUE;
         
+        Map<String, Integer> wordFrequency = new HashMap<>();
+        String mostCommonWord = "";
+        int mostCommonWordCount = 0;
+        
         for (Text page : pages) {
             String text = page.getString();
             int length = text.length();
+            int words = text.split("\\s+").length;
             
             if (text.trim().isEmpty()) {
                 emptyPages++;
             }
             totalChars += length;
-            totalWords += text.split("\\s+").length;
+            totalWords += words;
             
             if (length > longestPage) longestPage = length;
             if (length < shortestPage) shortestPage = length;
+            
+            String[] wordsArray = text.toLowerCase().replaceAll("[^a-zA-Z0-9\\s]", "").split("\\s+");
+            for (String word : wordsArray) {
+                if (word.length() > 0 && !isStopWord(word)) {
+                    int count = wordFrequency.getOrDefault(word, 0) + 1;
+                    wordFrequency.put(word, count);
+                    if (count > mostCommonWordCount) {
+                        mostCommonWordCount = count;
+                        mostCommonWord = word;
+                    }
+                }
+            }
         }
         if (shortestPage == Integer.MAX_VALUE) shortestPage = 0;
+        
+        // Reading time: 200 words per minute
+        int readingTimeMinutes = totalWords / 200;
+        int readingTimeSeconds = (totalWords % 200) * 3 / 10;
+        String readingTime = readingTimeMinutes > 0 ? 
+            readingTimeMinutes + "m " + readingTimeSeconds + "s" : 
+            readingTimeSeconds + "s";
+        
+        // Reading level using Flesch-Kincaid simplified
+        double avgWordsPerSentence = 15.0;
+        double avgSyllablesPerWord = totalWords > 0 ? (double) totalChars / totalWords / 3.5 : 1.0;
+        double readingLevel = 0.39 * avgWordsPerSentence + 11.8 * avgSyllablesPerWord - 15.59;
+        readingLevel = Math.max(1, Math.min(20, readingLevel));
         
         String title = content.title().raw();
         String author = content.author();
@@ -245,17 +281,39 @@ public class IfpeekCommand extends Command {
             default -> "Unknown";
         };
         
-        info("§6=== Book Statistic ===");
+        info("§6=== Book Statistics ===");
         info("§7Title: §f" + title);
         info("§7Author: §f" + (author != null && !author.isEmpty() ? author : "Unknown"));
-        info("§7Generated: §f" + generationText);
-        info("§7Total Pages: §f" + pages.size());
-        info("§7Empty Pages: §f" + emptyPages);
-        info("§7Total Characters: §f" + String.format("%,d", totalChars));
-        info("§7Total Words: §f" + String.format("%,d", totalWords));
-        info("§7Longest Page: §f" + longestPage + " §7characters");
-        info("§7Shortest Page: §f" + shortestPage + " §7characters");
-        info("§6===================");
+        info("§7Generation: §f" + generationText);
+        info("§7Pages: §f" + pages.size() + " §7(§f" + emptyPages + " §7empty)");
+        info("§7Characters: §f" + String.format("%,d", totalChars));
+        info("§7Words: §f" + String.format("%,d", totalWords));
+        info("§7Longest Page: §f" + longestPage + " §7chars");
+        info("§7Shortest Page: §f" + shortestPage + " §7chars");
+        info("§7Reading Time: §f" + readingTime);
+        info("§7Reading Level: §f" + String.format("%.1f", readingLevel) + " §7(" + getReadingLevelDescription((int) readingLevel) + ")");
+        if (!mostCommonWord.isEmpty()) {
+            info("§7Most Common Word: §f" + mostCommonWord + " §7(x§f" + mostCommonWordCount + "§7)");
+        }
+        info("§6=========================");
+    }
+
+    private boolean isStopWord(String word) {
+        return Set.of(
+            "the", "be", "to", "of", "and", "a", "in", "that", "have", "i",
+            "it", "for", "not", "on", "with", "he", "as", "you", "do", "at",
+            "this", "but", "his", "by", "from", "they", "we", "say", "her", "she",
+            "or", "an", "will", "my", "one", "all", "would", "there", "their", "what",
+            "so", "up", "out", "if", "about", "who", "get", "which", "go", "me"
+        ).contains(word);
+    }
+
+    private String getReadingLevelDescription(int level) {
+        if (level <= 5) return "Very Easy";
+        if (level <= 8) return "Easy";
+        if (level <= 12) return "Medium";
+        if (level <= 16) return "Hard";
+        return "Very Hard";
     }
     
     private WrittenBookContentComponent getBookFromItemFrame() {

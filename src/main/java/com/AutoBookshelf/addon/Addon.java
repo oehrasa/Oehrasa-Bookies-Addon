@@ -5,9 +5,11 @@ import com.AutoBookshelf.addon.hud.ElytraTime;
 import com.AutoBookshelf.addon.hud.OnlineFriendsHUD;
 import com.AutoBookshelf.addon.commands.IfpeekCommand;
 import com.AutoBookshelf.addon.commands.ShelfCommand;
+import com.AutoBookshelf.addon.commands.BookCommand;
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
+import meteordevelopment.meteorclient.pathing.BaritoneUtils;
 import meteordevelopment.meteorclient.commands.Commands;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.systems.hud.Hud;
@@ -23,18 +25,12 @@ import org.slf4j.Logger;
 public class Addon extends MeteorAddon {
     public static final Logger LOG = LogUtils.getLogger();
     public static final HudGroup HUD_GROUP = new HudGroup("MayaChan");
-    public static Category CATEGORY = new Category("DortyAddons", Items.DRIED_KELP.getDefaultStack());
+
+    public static final Category CATEGORY = new Category("Bookshelf", Items.WRITTEN_BOOK.getDefaultStack());
 	
     @Override
     public void onInitialize() {
         LOG.info("Honey, dinner's ready, Identified AutoBookshelf");
-		
-		for (Category category : Modules.loopCategories()) {
-			if (category.name == "DortyAddons"){
-				CATEGORY = category;
-				break;
-			}
-		}
 		
         // Modules
         Modules.get().add(new AutoLogin(CATEGORY));
@@ -50,8 +46,9 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new BoatGlitch());
         Modules.get().add(new BeaconRange());
         Modules.get().add(new ShulkBookRestock());
-        Modules.get().add(new AutoSex());
         Modules.get().add(new AutoMoss());
+        Modules.get().add(new AutoSex());
+        Modules.get().add(new PlatformBuilder());
 
         // HUD
         Hud.get().register(MayaChan.INFO);
@@ -61,6 +58,7 @@ public class Addon extends MeteorAddon {
         // COMMANDS
         Commands.add(new IfpeekCommand());
         Commands.add(new ShelfCommand());
+        Commands.add(new BookCommand());
 
     }
 

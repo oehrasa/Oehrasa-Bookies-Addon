@@ -17,7 +17,11 @@ repositories {
         name = "meteor-maven-snapshots"
         url = uri("https://maven.meteordev.org/snapshots")
     }
-	maven { url = uri("https://jitpack.io") }
+    maven {
+        name = "baritone"
+        url = uri("https://raw.githubusercontent.com/cabaletta/baritone/master/build/maven")
+    }
+    maven { url = uri("https://jitpack.io") }
 }
 
 dependencies {
@@ -28,7 +32,9 @@ dependencies {
 
     // Meteor
     modImplementation("meteordevelopment:meteor-client:${properties["minecraft_version"] as String}-SNAPSHOT")
-
+    
+    // Baritone - use the same version as meteor-client
+    modImplementation("meteordevelopment:baritone:${properties["minecraft_version"] as String}-SNAPSHOT")
 }
 
 tasks {

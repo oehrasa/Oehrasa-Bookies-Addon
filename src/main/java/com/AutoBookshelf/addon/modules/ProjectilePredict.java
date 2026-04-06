@@ -37,6 +37,9 @@ public class ProjectilePredict extends Module {
     }
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgTrail = settings.createGroup("Trail");
+    private final SettingGroup sgBox = settings.createGroup("Box");
+    private final SettingGroup sgEntity = settings.createGroup("Entity Highlight");
 
     private final Setting<Mode> updateMode = sgGeneral.add(new EnumSetting.Builder<Mode>()
         .name("mode")
@@ -45,32 +48,86 @@ public class ProjectilePredict extends Module {
         .build()
     );
 
-    private final Setting<SettingColor> lineColor = sgGeneral.add(new ColorSetting.Builder()
-        .name("line-color")
-        .defaultValue(new SettingColor(255, 255, 255, 200))
-        .build()
-    );
-
-    private final Setting<SettingColor> targetColor = sgGeneral.add(new ColorSetting.Builder()
-        .name("target-color")
-        .description("Color when the path hits an entity.")
-        .defaultValue(new SettingColor(255, 0, 0, 200))
-        .build()
-    );
-
-    private final Setting<SettingColor> projectileColor = sgGeneral.add(new ColorSetting.Builder()
-        .name("projectile-color")
-        .description("Color for existing projectile trails and block hits.")
+    // Trail settings
+    private final Setting<SettingColor> trailColor = sgTrail.add(new ColorSetting.Builder()
+        .name("trail-color")
+        .description("Color of the projectile trail lines.")
         .defaultValue(new SettingColor(0, 255, 255, 200))
         .build()
     );
 
-    private final Setting<Integer> trailLength = sgGeneral.add(new IntSetting.Builder()
+    private final Setting<Integer> trailLength = sgTrail.add(new IntSetting.Builder()
         .name("trail-length")
         .description("How many points to keep in the projectile trail.")
         .defaultValue(20)
         .min(5)
         .max(100)
+        .build()
+    );
+
+    private final Setting<Boolean> renderTrail = sgTrail.add(new BoolSetting.Builder()
+        .name("render-trail")
+        .description("Render the projectile trail.")
+        .defaultValue(true)
+        .build()
+    );
+
+    // Box settings (for block hit predictions)
+    private final Setting<SettingColor> boxColor = sgBox.add(new ColorSetting.Builder()
+        .name("box-color")
+        .description("Color of the prediction box when hitting blocks.")
+        .defaultValue(new SettingColor(255, 255, 255, 200))
+        .build()
+    );
+
+    private final Setting<ShapeMode> boxShapeMode = sgBox.add(new EnumSetting.Builder<ShapeMode>()
+        .name("box-shape-mode")
+        .description("How the prediction box is rendered.")
+        .defaultValue(ShapeMode.Lines)
+        .build()
+    );
+
+    private final Setting<Boolean> renderBox = sgBox.add(new BoolSetting.Builder()
+        .name("render-box")
+        .description("Render the prediction box for block hits.")
+        .defaultValue(true)
+        .build()
+    );
+
+    // Entity highlight settings
+    private final Setting<SettingColor> entityHighlightColor = sgEntity.add(new ColorSetting.Builder()
+        .name("entity-highlight-color")
+        .description("Color when the path hits an entity.")
+        .defaultValue(new SettingColor(255, 0, 0, 200))
+        .build()
+    );
+
+    private final Setting<ShapeMode> entityShapeMode = sgEntity.add(new EnumSetting.Builder<ShapeMode>()
+        .name("entity-shape-mode")
+        .description("How the entity highlight is rendered.")
+        .defaultValue(ShapeMode.Both)
+        .build()
+    );
+
+    private final Setting<Boolean> renderEntityHighlight = sgEntity.add(new BoolSetting.Builder()
+        .name("render-entity-highlight")
+        .description("Render highlight on entities that will be hit.")
+        .defaultValue(true)
+        .build()
+    );
+
+    // Existing projectile settings
+    private final Setting<SettingColor> existingProjectileColor = sgGeneral.add(new ColorSetting.Builder()
+        .name("existing-projectile-color")
+        .description("Color for existing projectile trails and boxes.")
+        .defaultValue(new SettingColor(0, 200, 200, 150))
+        .build()
+    );
+
+    private final Setting<Boolean> renderExistingProjectiles = sgGeneral.add(new BoolSetting.Builder()
+        .name("render-existing-projectiles")
+        .description("Render prediction for existing projectiles.")
+        .defaultValue(true)
         .build()
     );
 
@@ -94,7 +151,9 @@ public class ProjectilePredict extends Module {
         predictPlayerProjectile(event);
 
         // Always track existing projectiles
-        trackExistingProjectiles(event);
+        if (renderExistingProjectiles.get()) {
+            trackExistingProjectiles(event);
+        }
     }
 
     private void predictPlayerProjectile(Render3DEvent event) {
@@ -113,6 +172,7 @@ public class ProjectilePredict extends Module {
         path.add(pos);
 
         boolean hitEntity = false;
+        Entity hitEntityObj = null;
         Vec3d currentPos = pos;
         Vec3d currentVel = vel;
 
@@ -127,12 +187,14 @@ public class ProjectilePredict extends Module {
 
             if (entityHit != null) {
                 path.add(entityHit.getPos());
-                event.renderer.box(entityHit.getEntity().getBoundingBox(), targetColor.get(), targetColor.get(), ShapeMode.Both, 0);
+                hitEntityObj = entityHit.getEntity();
                 hitEntity = true;
                 break;
             } else if (blockHit.getType() != HitResult.Type.MISS) {
                 path.add(blockHit.getPos());
-                event.renderer.box(blockHit.getBlockPos(), lineColor.get(), lineColor.get(), ShapeMode.Lines, 0);
+                if (renderBox.get()) {
+                    event.renderer.box(blockHit.getBlockPos(), boxColor.get(), boxColor.get(), boxShapeMode.get(), 0);
+                }
                 break;
             }
 
@@ -144,11 +206,19 @@ public class ProjectilePredict extends Module {
             currentVel = currentVel.multiply(drag).subtract(0, gravity, 0);
         }
 
-        SettingColor finalColor = hitEntity ? targetColor.get() : lineColor.get();
-        for (int i = 0; i < path.size() - 1; i++) {
-            event.renderer.line(path.get(i).x, path.get(i).y, path.get(i).z, 
-                               path.get(i+1).x, path.get(i+1).y, path.get(i+1).z, 
-                               finalColor);
+        // Render trail
+        if (renderTrail.get()) {
+            SettingColor finalColor = hitEntity ? entityHighlightColor.get() : trailColor.get();
+            for (int i = 0; i < path.size() - 1; i++) {
+                event.renderer.line(path.get(i).x, path.get(i).y, path.get(i).z, 
+                                   path.get(i+1).x, path.get(i+1).y, path.get(i+1).z, 
+                                   finalColor);
+            }
+        }
+
+        // Render entity highlight
+        if (hitEntity && renderEntityHighlight.get() && hitEntityObj != null) {
+            event.renderer.box(hitEntityObj.getBoundingBox(), entityHighlightColor.get(), entityHighlightColor.get(), entityShapeMode.get(), 0);
         }
     }
 
@@ -167,13 +237,19 @@ public class ProjectilePredict extends Module {
                 
                 predictProjectilePath(event, entity);
                 
-                for (int i = 0; i < trail.size() - 1; i++) {
-                    event.renderer.line(trail.get(i).x, trail.get(i).y, trail.get(i).z, 
-                                       trail.get(i+1).x, trail.get(i+1).y, trail.get(i+1).z, 
-                                       projectileColor.get());
+                // Render trail for existing projectiles
+                if (renderTrail.get()) {
+                    for (int i = 0; i < trail.size() - 1; i++) {
+                        event.renderer.line(trail.get(i).x, trail.get(i).y, trail.get(i).z, 
+                                           trail.get(i+1).x, trail.get(i+1).y, trail.get(i+1).z, 
+                                           existingProjectileColor.get());
+                    }
                 }
                 
-                event.renderer.box(entity.getBoundingBox(), projectileColor.get(), projectileColor.get(), ShapeMode.Both, 0);
+                // Render box for existing projectiles
+                if (renderBox.get()) {
+                    event.renderer.box(entity.getBoundingBox(), existingProjectileColor.get(), existingProjectileColor.get(), boxShapeMode.get(), 0);
+                }
             }
         }
         
@@ -191,6 +267,7 @@ public class ProjectilePredict extends Module {
         path.add(pos);
         
         boolean hitEntity = false;
+        Entity hitEntityObj = null;
         Vec3d currentPos = pos;
         Vec3d currentVel = vel;
         
@@ -205,13 +282,14 @@ public class ProjectilePredict extends Module {
             
             if (entityHit != null) {
                 path.add(entityHit.getPos());
-                event.renderer.box(entityHit.getEntity().getBoundingBox(), targetColor.get(), targetColor.get(), ShapeMode.Both, 0);
+                hitEntityObj = entityHit.getEntity();
                 hitEntity = true;
                 break;
             } else if (blockHit.getType() != HitResult.Type.MISS) {
                 path.add(blockHit.getPos());
-                // Block indicator for tracked projectiles
-                event.renderer.box(blockHit.getBlockPos(), projectileColor.get(), projectileColor.get(), ShapeMode.Lines, 0);
+                if (renderBox.get()) {
+                    event.renderer.box(blockHit.getBlockPos(), existingProjectileColor.get(), existingProjectileColor.get(), boxShapeMode.get(), 0);
+                }
                 break;
             }
             
@@ -223,11 +301,19 @@ public class ProjectilePredict extends Module {
             currentVel = currentVel.multiply(drag).subtract(0, gravity, 0);
         }
         
-        SettingColor finalColor = hitEntity ? targetColor.get() : projectileColor.get();
-        for (int i = 0; i < path.size() - 1; i++) {
-            event.renderer.line(path.get(i).x, path.get(i).y, path.get(i).z, 
-                               path.get(i+1).x, path.get(i+1).y, path.get(i+1).z, 
-                               finalColor);
+        // Render prediction trail for existing projectile
+        if (renderTrail.get()) {
+            SettingColor finalColor = hitEntity ? entityHighlightColor.get() : existingProjectileColor.get();
+            for (int i = 0; i < path.size() - 1; i++) {
+                event.renderer.line(path.get(i).x, path.get(i).y, path.get(i).z, 
+                                   path.get(i+1).x, path.get(i+1).y, path.get(i+1).z, 
+                                   finalColor);
+            }
+        }
+        
+        // Render entity highlight for existing projectile prediction
+        if (hitEntity && renderEntityHighlight.get() && hitEntityObj != null) {
+            event.renderer.box(hitEntityObj.getBoundingBox(), entityHighlightColor.get(), entityHighlightColor.get(), entityShapeMode.get(), 0);
         }
     }
     
