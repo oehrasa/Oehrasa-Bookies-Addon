@@ -48,7 +48,10 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new ShulkBookRestock());
         Modules.get().add(new AutoMoss());
         Modules.get().add(new AutoSex());
+        Modules.get().add(new AudiobookReader());
         Modules.get().add(new PlatformBuilder());
+        Modules.get().add(new UnwaxAura());
+        Modules.get().add(new ClearDespawn());
 
         // HUD
         Hud.get().register(MayaChan.INFO);
