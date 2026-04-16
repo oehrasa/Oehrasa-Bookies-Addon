@@ -35,7 +35,7 @@ public class B36 extends Module {
     // General settings
     private final Setting<Double> radius = sgGeneral.add(new DoubleSetting.Builder()
         .name("radius")
-        .description("The radius to place and light TNT.")
+        .description("The radius to place and light TNT")
         .defaultValue(4)
         .min(1)
         .sliderMax(6)
@@ -44,7 +44,7 @@ public class B36 extends Module {
 
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
         .name("delay")
-        .description("Delay between placing TNT in ticks.")
+        .description("Delay between placing TNT in ticks")
         .defaultValue(6)
         .min(0)
         .sliderMax(20)
@@ -54,14 +54,14 @@ public class B36 extends Module {
     // Placement settings
     private final Setting<Boolean> airPlace = sgPlacement.add(new BoolSetting.Builder()
         .name("air-place")
-        .description("Use packet-based airplace for TNT placement.")
+        .description("Use packet-based airplace for TNT placement")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> onlyAirPlace = sgPlacement.add(new BoolSetting.Builder()
         .name("only-air-place")
-        .description("Only place TNT on air blocks.")
+        .description("Only place TNT on air blocks")
         .defaultValue(true)
         .visible(() -> !airPlace.get())
         .build()
@@ -70,7 +70,7 @@ public class B36 extends Module {
     // Inventory settings
     private final Setting<Boolean> autoMoveToHotbar = sgInventory.add(new BoolSetting.Builder()
         .name("auto-move-to-hotbar")
-        .description("Automatically moves TNT from inventory to hotbar if none is found.")
+        .description("Automatically moves TNT from inventory to hotbar if none is found")
         .defaultValue(true)
         .build()
     );
@@ -84,7 +84,7 @@ public class B36 extends Module {
 
     private final Setting<Integer> maxAttempts = sgInventory.add(new IntSetting.Builder()
         .name("max-attempts")
-        .description("Maximum number of placement attempts before disabling.")
+        .description("Maximum number of placement attempts before disabling")
         .defaultValue(100)
         .min(10)
         .sliderMax(200)
@@ -99,7 +99,7 @@ public class B36 extends Module {
     private BlockPos lastPos = null;
 
     public B36() {
-        super(Addon.CATEGORY, "B36", "Automatically places and lights TNT around you. Created this to make peace. Named after Convair B-36 Peacemaker");
+        super(Addon.CATEGORY, "B36", "Automatically places and lights TNT around you, Created this to make peace. Named after Convair B-36 Peacemaker");
     }
 
     @Override

@@ -104,7 +104,7 @@ public class AutoLogin extends Module {
     private int originalSlot = -1;
 
     public AutoLogin(Category cat) {
-        super(cat, "Auto-Login", "Automatically logs in your account via file data.");
+        super(cat, "Auto-Login", "Automatically logs in your account via file Data.");
     }
 
     @Override
@@ -299,10 +299,10 @@ public class AutoLogin extends Module {
             String line;
  
             while ((line = bufferedReader.readLine()) != null) {
-                String[] dataa = line.split(" ");
+                String[] Dataa = line.split(" ");
                 
-                if (dataa[0].equals(Utils.getWorldName()) && dataa[1].equals((mc.player.getName().getString()))){
-                    ChatUtils.sendPlayerMsg("/login " + dataa[2]);
+                if (Dataa[0].equals(Utils.getWorldName()) && Dataa[1].equals((mc.player.getName().getString()))){
+                    ChatUtils.sendPlayerMsg("/login " + Dataa[2]);
                     reader.close();
                     return;
                 }

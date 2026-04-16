@@ -91,7 +91,7 @@ public class AutoChestAura extends Module {
     private boolean isPending = false;
 
     public AutoChestAura() {
-        super(Addon.CATEGORY, "Auto-ChestAura", "High-speed automatic container opener");
+        super(Addon.CATEGORY, "ChestAura", "High-speed automatic container opener");
     }
 
     @Override

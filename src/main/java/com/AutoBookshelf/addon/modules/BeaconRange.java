@@ -73,7 +73,7 @@ public class BeaconRange extends Module {
     }
 
     public BeaconRange() {
-        super(Addon.CATEGORY, "beacon-range", "Renders the range of powered beacons.");
+        super(Addon.CATEGORY, "Beacon-Range", "Renders the range of powered beacons.");
     }
 
     @EventHandler

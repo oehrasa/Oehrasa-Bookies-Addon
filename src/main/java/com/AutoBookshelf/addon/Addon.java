@@ -52,6 +52,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new PlatformBuilder());
         Modules.get().add(new UnwaxAura());
         Modules.get().add(new ClearDespawn());
+        Modules.get().add(new TntFuseEsp());
 
         // HUD
         Hud.get().register(MayaChan.INFO);

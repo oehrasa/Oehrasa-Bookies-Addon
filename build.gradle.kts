@@ -35,6 +35,7 @@ dependencies {
     
     // Baritone - use the same version as meteor-client
     modImplementation("meteordevelopment:baritone:${properties["minecraft_version"] as String}-SNAPSHOT")
+
 }
 
 tasks {

@@ -11,13 +11,12 @@ import meteordevelopment.meteorclient.systems.friends.Friends;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.entity.SortPriority;
-import meteordevelopment.meteorclient.utils.entity.TargetUtils;
 import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.meteorclient.utils.misc.input.KeyAction;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
+import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
-import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
@@ -35,7 +34,7 @@ public class AutoSex extends Module {
 
     public enum ApproachMode {
         Direct("Direct - Go straight to target"),
-        Behind("Behind - Stand behind target before twerking"),
+        Behind("Behind - Stand behind target"),
         Side("Side - Stand to the side of target");
 
         private final String title;
@@ -43,10 +42,21 @@ public class AutoSex extends Module {
         @Override public String toString() { return title; }
     }
 
+    public enum FriendFilter {
+        ALL("All Players"),
+        ONLY_FRIENDS("Only Friends"),
+        ONLY_NON_FRIENDS("Only Non-Friends");
+
+        private final String title;
+        FriendFilter(String title) { this.title = title; }
+        @Override public String toString() { return title; }
+    }
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgSex = settings.createGroup("Auto Sex");
     private final SettingGroup sgMovement = settings.createGroup("Movement");
 
+    // Target selection
     private final Setting<Mode> targetMode = sgGeneral.add(new EnumSetting.Builder<Mode>()
         .name("target-mode")
         .description("The mode at which to follow the player.")
@@ -89,18 +99,10 @@ public class AutoSex extends Module {
         .build()
     );
 
-    private final Setting<Boolean> onlyFriend = sgGeneral.add(new BoolSetting.Builder()
-        .name("only-friends")
-        .description("Whether or not to only follow friends")
-        .defaultValue(false)
-        .build()
-    );
-
-    private final Setting<Boolean> onlyOther = sgGeneral.add(new BoolSetting.Builder()
-        .name("ignore-friends")
-        .description("Whether or not to follow friends")
-        .defaultValue(false)
-        .visible(() -> targetMode.get() != Mode.Automatic)
+    private final Setting<FriendFilter> friendFilter = sgGeneral.add(new EnumSetting.Builder<FriendFilter>()
+        .name("friend-filter")
+        .description("Which players to target based on friend status")
+        .defaultValue(FriendFilter.ALL)
         .build()
     );
 
@@ -114,28 +116,18 @@ public class AutoSex extends Module {
     // Movement settings
     private final Setting<ApproachMode> approachMode = sgMovement.add(new EnumSetting.Builder<ApproachMode>()
         .name("approach-mode")
-        .description("How to approach the target before twerking")
+        .description("How to approach the target")
         .defaultValue(ApproachMode.Behind)
-        .build()
-    );
-
-    private final Setting<Double> followDistance = sgMovement.add(new DoubleSetting.Builder()
-        .name("follow-distance")
-        .description("How close to get to the target before stopping (in blocks)")
-        .defaultValue(0.5)
-        .min(0.5)
-        .max(5.0)
-        .sliderRange(0.5, 5.0)
         .build()
     );
 
     private final Setting<Double> behindOffset = sgMovement.add(new DoubleSetting.Builder()
         .name("behind-offset")
-        .description("How awkward behind the target to stand")
-        .defaultValue(1.0)
+        .description("How many blocks behind the target to stand")
+        .defaultValue(1.5)
         .min(1.0)
-        .max(1.5)
-        .sliderRange(1.0, 1.5)
+        .max(3.0)
+        .sliderRange(1.0, 3.0)
         .visible(() -> approachMode.get() == ApproachMode.Behind)
         .build()
     );
@@ -143,10 +135,10 @@ public class AutoSex extends Module {
     private final Setting<Double> sideOffset = sgMovement.add(new DoubleSetting.Builder()
         .name("side-offset")
         .description("How many blocks to the side of the target to stand")
-        .defaultValue(1.0)
+        .defaultValue(2.0)
         .min(1.0)
-        .max(1.5)
-        .sliderRange(1.0, 1.5)
+        .max(4.0)
+        .sliderRange(1.0, 4.0)
         .visible(() -> approachMode.get() == ApproachMode.Side)
         .build()
     );
@@ -154,13 +146,21 @@ public class AutoSex extends Module {
     private final Setting<Integer> maxFollowRange = sgMovement.add(new IntSetting.Builder()
         .name("max-follow-range")
         .description("Maximum range to follow the target (blocks)")
-        .defaultValue(30)
+        .defaultValue(100)
         .min(10)
         .max(500)
         .sliderRange(10, 500)
         .build()
     );
 
+    private final Setting<Boolean> autoLook = sgMovement.add(new BoolSetting.Builder()
+        .name("auto-look")
+        .description("Continuously look at the back of the target's head when in position")
+        .defaultValue(true)
+        .build()
+    );
+
+    // Sex settings
     private final Setting<Boolean> twerkWhenClose = sgSex.add(new BoolSetting.Builder()
         .name("auto-hump")
         .description("Crouch against the target to give the appearance of sex OwO")
@@ -171,7 +171,7 @@ public class AutoSex extends Module {
     private final Setting<Integer> twerkSpeed = sgSex.add(new IntSetting.Builder()
         .name("twerk-speed")
         .description("How many times per second to spam crouch (1-20)")
-        .defaultValue(10)
+        .defaultValue(8)
         .min(1)
         .max(20)
         .visible(twerkWhenClose::get)
@@ -196,7 +196,7 @@ public class AutoSex extends Module {
         .build()
     );
 
-    private final Setting<Boolean> dm = sgGeneral.add(new BoolSetting.Builder()
+    private final Setting<Boolean> dm = sgSex.add(new BoolSetting.Builder()
         .name("private-msg")
         .description("Sends a private chat msg to the person")
         .defaultValue(false)
@@ -204,7 +204,7 @@ public class AutoSex extends Module {
         .build()
     );
 
-    private final Setting<Boolean> pm = sgGeneral.add(new BoolSetting.Builder()
+    private final Setting<Boolean> pm = sgSex.add(new BoolSetting.Builder()
         .name("public-msg")
         .description("Sends a public chat msg")
         .defaultValue(false)
@@ -248,14 +248,17 @@ public class AutoSex extends Module {
         .build()
     );
 
-    public AutoSex() {
-        super(Addon.CATEGORY, "auto-Sex", "Tries to have sex with the player in different ways.");
-    }
+    private final Setting<Boolean> debugMode = sgMovement.add(new BoolSetting.Builder()
+        .name("debug-mode")
+        .description("Show debug information.")
+        .defaultValue(false)
+        .build()
+    );
 
     private int messageI, timer;
     private boolean isFollowing = false;
     private String playerName;
-    private Entity playerEntity;
+    private PlayerEntity playerEntity;
     private int iPublic;
     private boolean pressed = false;
     private boolean alternate = true;
@@ -266,7 +269,10 @@ public class AutoSex extends Module {
     private BlockPos lastTargetPos = null;
     private boolean isInPosition = false;
     private int positionStableTimer = 0;
-    private boolean isTwerking = false;
+
+    public AutoSex() {
+        super(Addon.CATEGORY, "auto-Sex", "Tries to have sex with the player in different ways.");
+    }
 
     @Override
     public void onActivate() {
@@ -277,7 +283,6 @@ public class AutoSex extends Module {
         crouchState = false;
         isInPosition = false;
         positionStableTimer = 0;
-        isTwerking = false;
         
         try {
             baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
@@ -294,21 +299,49 @@ public class AutoSex extends Module {
         playerName = null;
         isFollowing = false;
         
+        // Reset crouch state
+        if (wasCrouching) {
+            mc.options.sneakKey.setPressed(false);
+            wasCrouching = false;
+            crouchState = false;
+        }
+        
         if (baritone != null) {
             baritone.getPathingBehavior().cancelEverything();
         }
+    }
+
+    private boolean isPlayerAllowed(PlayerEntity player) {
+        if (player == null) return false;
+        if (player == mc.player) return false;
+        
+        boolean isFriend = Friends.get().isFriend(player);
+        
+        return switch (friendFilter.get()) {
+            case ALL -> true;
+            case ONLY_FRIENDS -> isFriend;
+            case ONLY_NON_FRIENDS -> !isFriend;
+        };
     }
 
     @EventHandler
     private void onMouseButton(MouseButtonEvent event) {
         if (targetMode.get() == Mode.MiddleClick) {
             if (event.action == KeyAction.Press && event.button == GLFW_MOUSE_BUTTON_MIDDLE && mc.currentScreen == null && mc.targetedEntity != null && mc.targetedEntity instanceof PlayerEntity) {
+                PlayerEntity target = (PlayerEntity) mc.targetedEntity;
+                
+                if (!isPlayerAllowed(target)) {
+                    if (friendFilter.get() == FriendFilter.ONLY_FRIENDS) {
+                        error("§cThat player is not your friend!");
+                    } else if (friendFilter.get() == FriendFilter.ONLY_NON_FRIENDS) {
+                        error("§cThat player is your friend!");
+                    }
+                    return;
+                }
+                
                 if (!isFollowing) {
-                    if (!Friends.get().isFriend((PlayerEntity) mc.targetedEntity) && onlyFriend.get()) return;
-                    if (Friends.get().isFriend((PlayerEntity) mc.targetedEntity) && onlyOther.get()) return;
-
-                    playerName = mc.targetedEntity.getName().getString();
-                    playerEntity = mc.targetedEntity;
+                    playerName = target.getName().getString();
+                    playerEntity = target;
 
                     if (message.get()) {
                         startMsg();
@@ -353,12 +386,20 @@ public class AutoSex extends Module {
             }
 
             if (keybind.get().isPressed() && !pressed && alternate && mc.currentScreen == null && mc.targetedEntity != null && mc.targetedEntity instanceof PlayerEntity) {
+                PlayerEntity target = (PlayerEntity) mc.targetedEntity;
+                
+                if (!isPlayerAllowed(target)) {
+                    if (friendFilter.get() == FriendFilter.ONLY_FRIENDS) {
+                        error("§cThat player is not your friend!");
+                    } else if (friendFilter.get() == FriendFilter.ONLY_NON_FRIENDS) {
+                        error("§cThat player is your friend!");
+                    }
+                    return;
+                }
+                
                 if (!isFollowing) {
-                    if (!Friends.get().isFriend((PlayerEntity) mc.targetedEntity) && onlyFriend.get()) return;
-                    if (Friends.get().isFriend((PlayerEntity) mc.targetedEntity) && onlyOther.get()) return;
-
-                    playerName = mc.targetedEntity.getName().getString();
-                    playerEntity = mc.targetedEntity;
+                    playerName = target.getName().getString();
+                    playerEntity = target;
 
                     if (message.get()) {
                         startMsg();
@@ -375,11 +416,28 @@ public class AutoSex extends Module {
         // Handle automatic mode
         if (targetMode.get() == Mode.Automatic) {
             if (!isFollowing) {
-                playerEntity = TargetUtils.getPlayerTarget(targetRange.get(), priority.get());
-                if (playerEntity == null) return;
+                PlayerEntity potentialTarget = null;
+                double closestDistance = targetRange.get();
+                
+                for (PlayerEntity player : mc.world.getPlayers()) {
+                    if (isPlayerAllowed(player)) {
+                        double dist = mc.player.distanceTo(player);
+                        if (dist <= closestDistance) {
+                            closestDistance = dist;
+                            potentialTarget = player;
+                        }
+                    }
+                }
+                
+                if (potentialTarget == null) {
+                    if (friendFilter.get() == FriendFilter.ONLY_FRIENDS && debugMode.get()) {
+                        error("§cNo friends found in range!");
+                    }
+                    return;
+                }
+                
+                playerEntity = potentialTarget;
                 playerName = playerEntity.getName().getString();
-
-                if (!Friends.get().isFriend((PlayerEntity) playerEntity) && onlyFriend.get()) return;
 
                 if (message.get()) {
                     startMsg();
@@ -400,55 +458,43 @@ public class AutoSex extends Module {
             }
         }
 
-        // Handle following with Baritone
+        // Handle following
         if (isFollowing && playerEntity != null && baritone != null) {
-            double distance = mc.player.distanceTo(playerEntity);
             BlockPos targetPos = getApproachPosition();
             
-            // Calculate distance to goal position
-            double distanceToGoal = Math.sqrt(mc.player.getBlockPos().getSquaredDistance(targetPos));
-            boolean wasInPosition = isInPosition;
-            isInPosition = (distanceToGoal <= followDistance.get()) || (distance <= followDistance.get());
+            // Check if we've reached the goal block
+            boolean reachedGoal = mc.player.getBlockPos().equals(targetPos);
             
-            // Track how long we've been in position (stability timer)
-            if (isInPosition) {
-                if (!wasInPosition) {
-                    positionStableTimer = 0;
-                } else if (positionStableTimer < twerkDelay.get()) {
-                    positionStableTimer++;
-                }
-            } else {
+            // Handle position state changes
+            if (reachedGoal && !isInPosition) {
+                isInPosition = true;
                 positionStableTimer = 0;
-                isTwerking = false;
+                if (autoLook.get() && debugMode.get()) {
+                    info("§aReached target position!");
+                }
+            } else if (!reachedGoal && isInPosition) {
+                isInPosition = false;
+                positionStableTimer = 0;
+                // Stop twerking when leaving position
+                if (wasCrouching) {
+                    mc.options.sneakKey.setPressed(false);
+                    wasCrouching = false;
+                    crouchState = false;
+                    twerkTimer = 0;
+                }
             }
             
-            // Only pathfind when NOT in position
-            if (!isInPosition) {
-                // Cancel twerking if we were
-                if (isTwerking) {
-                    isTwerking = false;
-                    if (wasCrouching) {
-                        mc.options.sneakKey.setPressed(false);
-                        wasCrouching = false;
-                        crouchState = false;
-                        twerkTimer = 0;
-                    }
-                }
-                
-                // Update pathfinding if target moved
-                if (lastTargetPos == null || !lastTargetPos.equals(targetPos)) {
-                    lastTargetPos = targetPos;
-                    baritone.getCustomGoalProcess().setGoalAndPath(new GoalBlock(targetPos));
-                }
-            } else {
-                // In position - stop pathfinding
-                if (baritone.getPathingBehavior().isPathing()) {
-                    baritone.getPathingBehavior().cancelEverything();
-                }
-                
-                // Start twerking only after stable in position
-                if (twerkWhenClose.get() && positionStableTimer >= twerkDelay.get()) {
-                    isTwerking = true;
+            // Continuous auto-look when in position
+            if (isInPosition && autoLook.get()) {
+                updateLookAtBackOfHead();
+            }
+            
+            // Handle twerking with delay
+            if (isInPosition && twerkWhenClose.get()) {
+                if (positionStableTimer < twerkDelay.get()) {
+                    positionStableTimer++;
+                } else {
+                    // Twerking logic
                     if (twerkTimer <= 0) {
                         int ticksBetween = Math.max(1, 20 / twerkSpeed.get());
                         twerkTimer = ticksBetween;
@@ -458,19 +504,31 @@ public class AutoSex extends Module {
                     } else {
                         twerkTimer--;
                     }
-                } else if (!isTwerking && wasCrouching) {
-                    // Ensure crouch is off if not twerking
-                    mc.options.sneakKey.setPressed(false);
-                    wasCrouching = false;
-                    crouchState = false;
-                    twerkTimer = 0;
                 }
+            } else if (!isInPosition && wasCrouching) {
+                // Ensure crouch is off if not in position
+                mc.options.sneakKey.setPressed(false);
+                wasCrouching = false;
+                crouchState = false;
+                twerkTimer = 0;
+            }
+            
+            // Pathfinding - only when not at goal
+            if (!reachedGoal) {
+                if (lastTargetPos == null || !lastTargetPos.equals(targetPos)) {
+                    lastTargetPos = targetPos;
+                    baritone.getCustomGoalProcess().setGoalAndPath(new GoalBlock(targetPos));
+                    if (debugMode.get()) {
+                        info("§7Pathfinding to: §f" + targetPos.getX() + ", " + targetPos.getY() + ", " + targetPos.getZ());
+                    }
+                }
+            } else if (baritone.getPathingBehavior().isPathing()) {
+                // Cancel pathfinding if we've reached the goal
+                baritone.getPathingBehavior().cancelEverything();
             }
 
             // Dirty talk messages (only when in position)
-            if (isInPosition && dirtyTalk.get() && message.get()) {
-                if (messages.get().isEmpty()) return;
-
+            if (isInPosition && dirtyTalk.get() && message.get() && !messages.get().isEmpty()) {
                 if (timer <= 0) {
                     int i;
                     if (random.get()) {
@@ -494,7 +552,6 @@ public class AutoSex extends Module {
         if (playerEntity == null) return mc.player.getBlockPos();
         
         Vec3d playerPos = playerEntity.getPos();
-        float playerYaw = playerEntity.getYaw();
         
         return switch (approachMode.get()) {
             case Direct -> {
@@ -505,19 +562,32 @@ public class AutoSex extends Module {
                 );
             }
             case Behind -> {
-                double rad = Math.toRadians(playerYaw);
-                double offsetX = -Math.sin(rad) * behindOffset.get();
-                double offsetZ = -Math.cos(rad) * behindOffset.get();
+                // Get the direction the player is FACING
+                float yaw = playerEntity.getBodyYaw();
+                double rad = Math.toRadians(yaw);
+                
+                // Calculate facing direction (0° = South, 90° = West, etc.)
+                double facingX = -Math.sin(rad);
+                double facingZ = Math.cos(rad);
+                
+                // Behind is OPPOSITE direction
+                double behindX = playerPos.x - (facingX * behindOffset.get());
+                double behindZ = playerPos.z - (facingZ * behindOffset.get());
+                
                 yield new BlockPos(
-                    (int) Math.floor(playerPos.x + offsetX),
+                    (int) Math.floor(behindX),
                     (int) Math.floor(playerPos.y),
-                    (int) Math.floor(playerPos.z + offsetZ)
+                    (int) Math.floor(behindZ)
                 );
             }
             case Side -> {
-                double rad = Math.toRadians(playerYaw + 90);
-                double offsetX = Math.sin(rad) * sideOffset.get();
+                // Side = perpendicular to facing direction (+90° for right side)
+                float yaw = playerEntity.getBodyYaw();
+                double rad = Math.toRadians(yaw + 90);
+                
+                double offsetX = -Math.sin(rad) * sideOffset.get();
                 double offsetZ = Math.cos(rad) * sideOffset.get();
+                
                 yield new BlockPos(
                     (int) Math.floor(playerPos.x + offsetX),
                     (int) Math.floor(playerPos.y),
@@ -527,18 +597,51 @@ public class AutoSex extends Module {
         };
     }
 
+    private void updateLookAtBackOfHead() {
+        if (playerEntity == null) return;
+        
+        // Get the direction the player is facing
+        float yaw = playerEntity.getBodyYaw();
+        double rad = Math.toRadians(yaw);
+        
+        // Calculate facing direction
+        double facingX = -Math.sin(rad);
+        double facingZ = Math.cos(rad);
+        
+        // Position behind the head (0.5 blocks back, at eye height)
+        Vec3d headPos = playerEntity.getPos().add(
+            facingX * 0.5,
+            playerEntity.getEyeHeight(playerEntity.getPose()),
+            facingZ * 0.5
+        );
+        
+        // Calculate rotation to look at that position
+        double dx = headPos.x - mc.player.getX();
+        double dy = headPos.y - (mc.player.getY() + mc.player.getEyeHeight(mc.player.getPose()));
+        double dz = headPos.z - mc.player.getZ();
+        
+        double dh = Math.sqrt(dx * dx + dz * dz);
+        double targetYaw = Math.toDegrees(Math.atan2(dz, dx)) - 90;
+        double targetPitch = -Math.toDegrees(Math.atan2(dy, dh));
+        
+        // Apply rotation
+        Rotations.rotate(targetYaw, targetPitch, 50);
+    }
+
     private void startFollowing() {
         if (baritone != null && playerEntity != null) {
             info("§aNow following §f" + playerName);
+            info("§7Friend filter: §f" + friendFilter.get());
             info("§7Mode: §f" + approachMode.get());
-            info("§7Distance: §f" + followDistance.get() + " §7blocks");
+            if (autoLook.get()) {
+                info("§7Auto-look: §aON §7- Continuously looking at back of head");
+            }
             if (twerkWhenClose.get()) {
                 info("§7Twerk delay: §f" + twerkDelay.get() / 20.0 + " §7seconds");
             }
             lastTargetPos = null;
             isInPosition = false;
             positionStableTimer = 0;
-            isTwerking = false;
         } else {
             error("§cBaritone is not available!");
         }
@@ -557,7 +660,6 @@ public class AutoSex extends Module {
         lastTargetPos = null;
         isInPosition = false;
         positionStableTimer = 0;
-        isTwerking = false;
         info("§aStopped following");
     }
 
@@ -605,11 +707,4 @@ public class AutoSex extends Module {
             }
         }
     }
-    
-    private final Setting<Boolean> debugMode = sgMovement.add(new BoolSetting.Builder()
-        .name("debug-mode")
-        .description("Show debug information.")
-        .defaultValue(false)
-        .build()
-    );
 }

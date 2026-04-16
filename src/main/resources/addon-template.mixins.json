@@ -4,7 +4,8 @@
   "compatibilityLevel": "JAVA_21",
   "client": [
     "ExampleMixin",
-    "ClientPlayerEntityMixin"
+    "ClientPlayerEntityMixin",
+    "tntEntityRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -3,20 +3,17 @@ package com.AutoBookshelf.addon.modules;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.player.FindItemResult;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
+import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.Block;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
+import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
-import net.minecraft.item.Items;
-import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
-import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
-import net.minecraft.util.Hand;
-import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.block.FluidBlock;
+import net.minecraft.item.ItemStack;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
 import com.AutoBookshelf.addon.Addon;
 
 import java.util.ArrayList;
@@ -24,10 +21,12 @@ import java.util.HashSet;
 import java.util.List;
 
 public class PlatformBuilder extends Module {
-    
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgPlacement = settings.createGroup("Placement");
     private final SettingGroup sgBlocks = settings.createGroup("Blocks");
 
+    // General settings
     private final Setting<Integer> yLevel = sgGeneral.add(new IntSetting.Builder()
         .name("y-level")
         .description("Y-level to build the platform at.")
@@ -39,9 +38,9 @@ public class PlatformBuilder extends Module {
 
     private final Setting<Integer> maxPlacementsPerTick = sgGeneral.add(new IntSetting.Builder()
         .name("max-placements-per-tick")
-        .description("Maximum number of blocks to place per tick. Set to 0 for unlimited.")
+        .description("Maximum number of blocks to place per tick.")
         .defaultValue(8)
-        .min(0)
+        .min(1)
         .max(8)
         .build()
     );
@@ -52,6 +51,28 @@ public class PlatformBuilder extends Module {
         .defaultValue(10)
         .min(0)
         .max(20)
+        .build()
+    );
+
+    // Placement settings (add these!)
+    private final Setting<Boolean> airPlace = sgPlacement.add(new BoolSetting.Builder()
+        .name("air-place")
+        .description("Allow placing blocks in mid-air.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> ignoreLiquids = sgPlacement.add(new BoolSetting.Builder()
+        .name("ignore-liquids")
+        .description("Allow placing blocks in water/lava.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> replaceBlocks = sgPlacement.add(new BoolSetting.Builder()
+        .name("replace-blocks")
+        .description("Replace grass, tall grass, flowers, etc.")
+        .defaultValue(true)
         .build()
     );
 
@@ -94,7 +115,7 @@ public class PlatformBuilder extends Module {
     }
 
     int delay = 0;
-    
+
     @EventHandler
     public void onTick(TickEvent.Post event) {
         if (delay > 0) {
@@ -140,10 +161,12 @@ public class PlatformBuilder extends Module {
         int targetY = yLevel.get();
         int playerY = (int) mc.player.getY();
 
+        // Only build when within 4 blocks of target Y-level
         if (Math.abs(playerY - targetY) > maxReach) {
             return new BlockPos[0];
         }
 
+        // Build in a 9x9 area around the player
         for (int x = -maxReach; x <= maxReach; x++) {
             for (int z = -maxReach; z <= maxReach; z++) {
                 var pos = new BlockPos(mc.player.getBlockPos().getX() + x, targetY, mc.player.getBlockPos().getZ() + z);
@@ -153,37 +176,69 @@ public class PlatformBuilder extends Module {
             }
         }
 
+        // FIXED: Better position filtering that respects settings
         positions.removeIf(pos -> {
-            var state = mc.world.getBlockState(pos);
-            return !state.isAir() || recentPlacements.contains(pos);
+            BlockState state = mc.world.getBlockState(pos);
+
+            // Check if we can place here based on settings
+            if (!canPlaceAtPosition(state)) {
+                return true;
+            }
+
+            return recentPlacements.contains(pos);
         });
 
         return positions.toArray(new BlockPos[0]);
     }
 
-    private boolean isAllowedBlock(Item item) {
-        if (item == null) return false;
-        for (Block block : allowedBlocks.get()) {
-            if (block.asItem() == item) return true;
+    // New method to check if a position is valid for placement
+    private boolean canPlaceAtPosition(BlockState state) {
+        // Air is always allowed
+        if (state.isAir()) return true;
+
+        // Check for liquids (water, lava)
+        if (state.getFluidState().isStill() || state.getBlock() instanceof FluidBlock) {
+            return ignoreLiquids.get();
+        }
+
+        // Check for replaceable blocks (grass, tall grass, flowers, ferns, etc.)
+        if (state.isReplaceable() || state.getBlock() == Blocks.GRASS_BLOCK) {
+            return replaceBlocks.get();
+        }
+
+        // For air-place mode, we can place in anything that's not a solid block
+        if (airPlace.get()) {
+            // Allow placing in non-solid blocks
+            return !state.isFullCube(mc.world, BlockPos.ORIGIN);
+        }
+
+        // Default: only place in air
+        return state.isAir();
+    }
+
+    private boolean isAllowedBlock(Block block) {
+        for (Block allowedBlock : allowedBlocks.get()) {
+            if (allowedBlock == block) return true;
         }
         return false;
     }
 
-    private boolean isAllowedBlock(Block block) {
-        return isAllowedBlock(block.asItem());
-    }
-
     private boolean switchToBuildMat() {
         var current = mc.player.getMainHandStack().getItem();
-        if (isAllowedBlock(current)) return true;
+        if (current instanceof net.minecraft.item.BlockItem && isAllowedBlock(((net.minecraft.item.BlockItem) current).getBlock())) {
+            return true;
+        }
 
-        // Find the best block in inventory based on allowed blocks
+        // Find the best block in hotbar
         int bestSlot = -1;
         for (int i = 0; i < 9; i++) {
             ItemStack stack = mc.player.getInventory().getStack(i);
-            if (!stack.isEmpty() && isAllowedBlock(stack.getItem())) {
-                bestSlot = i;
-                break;
+            if (!stack.isEmpty() && stack.getItem() instanceof net.minecraft.item.BlockItem) {
+                Block block = ((net.minecraft.item.BlockItem) stack.getItem()).getBlock();
+                if (isAllowedBlock(block)) {
+                    bestSlot = i;
+                    break;
+                }
             }
         }
 
@@ -192,19 +247,22 @@ public class PlatformBuilder extends Module {
             if (refillFromInventory.get()) {
                 for (int i = 9; i < 36; i++) {
                     ItemStack stack = mc.player.getInventory().getStack(i);
-                    if (!stack.isEmpty() && isAllowedBlock(stack.getItem())) {
-                        // Find empty hotbar slot
-                        int emptySlot = -1;
-                        for (int j = 0; j < 9; j++) {
-                            if (mc.player.getInventory().getStack(j).isEmpty()) {
-                                emptySlot = j;
+                    if (!stack.isEmpty() && stack.getItem() instanceof net.minecraft.item.BlockItem) {
+                        Block block = ((net.minecraft.item.BlockItem) stack.getItem()).getBlock();
+                        if (isAllowedBlock(block)) {
+                            // Find empty hotbar slot
+                            int emptySlot = -1;
+                            for (int j = 0; j < 9; j++) {
+                                if (mc.player.getInventory().getStack(j).isEmpty()) {
+                                    emptySlot = j;
+                                    break;
+                                }
+                            }
+                            if (emptySlot != -1) {
+                                InvUtils.move().from(i).toHotbar(emptySlot);
+                                bestSlot = emptySlot;
                                 break;
                             }
-                        }
-                        if (emptySlot != -1) {
-                            InvUtils.move().from(i).toHotbar(emptySlot);
-                            bestSlot = emptySlot;
-                            break;
                         }
                     }
                 }
@@ -220,27 +278,24 @@ public class PlatformBuilder extends Module {
     private boolean placeBlock(BlockPos pos) {
         if (!PlayerUtils.isWithinReach(pos)) return false;
         if (recentPlacements.contains(pos)) return false;
-        
-        // Check if block is already placed
-        if (!mc.world.getBlockState(pos).isAir()) return false;
-        
+
+        // Check if we can place here (using the new method)
+        BlockState state = mc.world.getBlockState(pos);
+        if (!canPlaceAtPosition(state)) return false;
+
+        // Find the block in hotbar
+        FindItemResult item = InvUtils.findInHotbar(itemStack -> {
+            if (!(itemStack.getItem() instanceof net.minecraft.item.BlockItem)) return false;
+            Block block = ((net.minecraft.item.BlockItem) itemStack.getItem()).getBlock();
+            return isAllowedBlock(block);
+        });
+
+        if (!item.found()) return false;
+
         recentPlacements.add(pos);
 
-        Direction dir = Direction.UP;
-        BlockHitResult blockHitResult = new BlockHitResult(
-            pos.toCenterPos(),
-            dir,
-            pos,
-            false
-        );
-
-        // Place the block from main hand
-        mc.player.networkHandler.sendPacket(
-            new PlayerInteractBlockC2SPacket(Hand.MAIN_HAND, blockHitResult, 0)
-        );
-        
-        mc.player.swingHand(Hand.MAIN_HAND);
-
-        return true;
+        // Use Meteor's BlockUtils.place() with proper rotation and packet handling
+        // Note: BlockUtils.place already handles air-place, liquid placement, etc.
+        return BlockUtils.place(pos, item, true, 50, true, true);
     }
 }

@@ -136,15 +136,6 @@ public class BookshelfFiller extends Module {
         .build()
     );
 
-    private final Setting<Integer> maxRetries = sgGeneral.add(new IntSetting.Builder()
-        .name("max-retries")
-        .description("Maximum retries for failed placements")
-        .defaultValue(3)
-        .min(1)
-        .sliderMax(5)
-        .build()
-    );
-
     private final Setting<Boolean> continuousChecking = sgGeneral.add(new BoolSetting.Builder()
         .name("continuous-checking")
         .description("Never stop checking for books - continuously monitor inventory for new books")
@@ -199,9 +190,9 @@ public class BookshelfFiller extends Module {
 
     private final Setting<Integer> maxExtractBooks = sgExtract.add(new IntSetting.Builder()
         .name("max-extract-books")
-        .description("Maximum number of books to extract from a single bookshelf (0 = unlimited)")
-        .defaultValue(0)
-        .min(0)
+        .description("Maximum number of books to extract from a single bookshelf")
+        .defaultValue(3)
+        .min(1)
         .max(6)
         .sliderMax(6)
         .visible(() -> extractMode.get() == ExtractMode.LIMITED)
@@ -493,6 +484,7 @@ public class BookshelfFiller extends Module {
         }
     }
     
+    // FIXED: maxExtractBooks logic
     private void startSingleBlockExtract(BlockPos pos) {
         BlockState state = mc.world.getBlockState(pos);
         if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) return;
@@ -510,14 +502,25 @@ public class BookshelfFiller extends Module {
             return;
         }
         
-        int targetCount = singleBlockSlots.size();
-        if (extractMode.get() == ExtractMode.LIMITED && maxExtractBooks.get() > 0) {
-            targetCount = Math.min(maxExtractBooks.get(), targetCount);
-            Collections.shuffle(singleBlockSlots);
-            singleBlockSlots = singleBlockSlots.subList(0, targetCount);
+        int originalSize = singleBlockSlots.size();
+        int targetCount = originalSize;
+        
+        // FIXED: Proper limited extraction logic
+        if (extractMode.get() == ExtractMode.LIMITED) {
+            if (maxExtractBooks.get() > 0) {
+                targetCount = Math.min(maxExtractBooks.get(), originalSize);
+                Collections.shuffle(singleBlockSlots);
+                singleBlockSlots = singleBlockSlots.subList(0, targetCount);
+                sendMessage("§aLIMITED mode: extracting §f" + targetCount + " §aof §f" + originalSize + " §abooks");
+            } else {
+                // If maxExtractBooks is 0 but LIMITED mode is selected, extract all
+                Collections.sort(singleBlockSlots);
+                sendMessage("§aLIMITED mode with max=0: extracting all §f" + originalSize + " §abooks");
+            }
         } else {
-            // Sort in order (0-5) to ensure all books are extracted
+            // ALL mode - extract all books in order
             Collections.sort(singleBlockSlots);
+            sendMessage("§aALL mode: extracting all §f" + originalSize + " §abooks");
         }
         
         singleBlockPos = pos;
@@ -526,10 +529,7 @@ public class BookshelfFiller extends Module {
         originalSlot = mc.player.getInventory().selectedSlot;
         extractionRetryCount = 0;
         
-        String modeText = extractMode.get() == ExtractMode.LIMITED ? 
-            String.format(" (extracting %d of %d books)", targetCount, singleBlockSlots.size()) : "";
-        sendMessage(String.format("§aExtracting §f%d §abooks from bookshelf%s...", targetCount, modeText));
-        setDisplayText(String.format("Extracting %d books...", targetCount));
+        setDisplayText(String.format("Extracting %d books...", singleBlockSlots.size()));
     }
     
     private void updateExtract() {
@@ -872,9 +872,9 @@ public class BookshelfFiller extends Module {
                     waitingForRetry = true;
                 } else if (!sortedBookSlots.isEmpty()) {
                     if (verboseChecking.get()) {
-                        info("§aBooks found! filling...");
+                        setDisplayText("Books found! Filling");
                     }
-                    setDisplayText("Books found! Resuming...");
+                    setDisplayText("Books found! Resuming");
                 }
             }
             return;
@@ -935,7 +935,6 @@ public class BookshelfFiller extends Module {
                 retryCount = 0;
                 stuckCounter = 0;
                 info("§aFinished top half of row " + (currentRow + 1) + ", now filling bottom half...");
-                setDisplayText("Filling bottom half...");
                 delayLeft = delay.get();
                 return;
             } else {
@@ -964,14 +963,20 @@ public class BookshelfFiller extends Module {
         
         int slotToFill = fillingBottomHalf ? currentSlot + 3 : currentSlot;
         
-        // Don't skip on stuck - just wait and retry
+        // Distance check - wait silently if too far
+        double distance = mc.player.getEyePos().distanceTo(Vec3d.ofCenter(pos));
+        if (distance > 5.0) {
+            // Too far, just wait silently without changing anything
+            delayLeft = 10; // Wait 10 ticks before checking again
+            return;
+        }
+        
+        // Silent retry - never skip, just wait and try again
         if (lastPos != null && lastPos.equals(pos) && lastSlot == slotToFill) {
             stuckCounter++;
-            if (stuckCounter >= maxRetries.get()) {
-                stuckCounter = 0;
-                delayLeft = Math.max(delay.get(), 20);
-                return;
-            }
+            // Just wait longer, never skip
+            delayLeft = Math.max(delay.get(), 20);
+            return;
         } else {
             stuckCounter = 0;
         }
@@ -985,15 +990,14 @@ public class BookshelfFiller extends Module {
                     if (!waitingForRetry) {
                         if (verboseChecking.get()) {
                             if (enableFilter.get()) {
-                                info("§eNo more books with numbers found! Waiting for books...");
+                                setDisplayText("§eNo more books with numbers found! Waiting");
                             } else {
-                                info("§eNo written books found! Waiting for books...");
+                                setDisplayText("§eNo written books found! Waiting");
                             }
                         }
                         waitingForRetry = true;
                         retryWaitCounter = 0;
                         hasShownNoBooksMessage = true;
-                        sendMessage("Waiting for books...");
                     }
                     delayLeft = delay.get();
                     return;
@@ -1024,7 +1028,6 @@ public class BookshelfFiller extends Module {
                 displayBookInfoInChat(currentBookTitle, currentBookAuthor);
             }
             
-            // FIX: Removed canSee check - using insideBlock = false instead
             targetPos = pos;
             Direction facing = state.get(Properties.HORIZONTAL_FACING);
             Vec3d hitVec = getHitVec(pos, facing, slotToFill);
@@ -1034,7 +1037,7 @@ public class BookshelfFiller extends Module {
                 hitVec,
                 facing,
                 pos,
-                false  // insideBlock = false - allows clicking without line of sight
+                false
             );
             
             lastPos = pos;
@@ -1137,23 +1140,25 @@ public class BookshelfFiller extends Module {
         event.drawContext.getMatrices().pop();
     }
     
+    // FIXED: showBookCooldown - skip cooldown when disabled
     private void displayBookInfoInChat(String title, String author) {
         if (!showBookInChat.get()) return;
         
         if (title == null || title.isEmpty()) return;
         
-        String bookKey = title + "|" + author;
-        int currentTick = mc.player.age;
-        
+        // Skip cooldown entirely if showBookCooldown is false
         if (showBookCooldown.get()) {
+            String bookKey = title + "|" + author;
+            int currentTick = mc.player.age;
+            
             if (bookKey.equals(lastDisplayedBookKey) && 
                 (currentTick - lastDisplayedTick) < chatCooldownTicks.get()) {
                 return;
             }
+            
+            lastDisplayedBookKey = bookKey;
+            lastDisplayedTick = currentTick;
         }
-        
-        lastDisplayedBookKey = bookKey;
-        lastDisplayedTick = currentTick;
         
         String authorText = (author != null && !author.isEmpty()) ? " by §f" + author : "";
         info("§7Placing: §f" + title + "§7" + authorText);
