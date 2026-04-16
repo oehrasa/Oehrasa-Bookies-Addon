@@ -57,7 +57,7 @@ public class IfpeekCommand extends Command {
                 inspectBook(item);
                 return SINGLE_SUCCESS;
             }
-            
+
             if (item.isOf(Items.WRITABLE_BOOK)) {
                 info("This is a writable book (book and quill) Not yet signed");
                 return SINGLE_SUCCESS;
@@ -66,7 +66,7 @@ public class IfpeekCommand extends Command {
             error("This item is not a written book!");
             return SINGLE_SUCCESS;
         });
-        
+
         // Search sublarp
         builder.then(literal("search")
             .then(argument("word", StringArgumentType.word())
@@ -77,7 +77,7 @@ public class IfpeekCommand extends Command {
                 })
             )
         );
-        
+
         // Page subcommand
         builder.then(literal("page")
             .then(argument("number", IntegerArgumentType.integer(1, 100))
@@ -88,7 +88,7 @@ public class IfpeekCommand extends Command {
                 })
             )
         );
-        
+
         // Stats subcommand
         builder.then(literal("stats")
             .executes(ctx -> {
@@ -97,20 +97,20 @@ public class IfpeekCommand extends Command {
             })
         );
     }
-    
+
     private void inspectBook(ItemStack book) {
         WrittenBookContentComponent content = book.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
-        
+
         if (content == null) {
             error("This book has no content!");
             return;
         }
-        
+
         String title = content.title().raw();
         String author = content.author();
         int generation = content.generation();
         List<Text> pages = content.getPages(true);
-        
+
         String generationText = switch (generation) {
             case 0 -> "Original";
             case 1 -> "Copy of Original";
@@ -118,11 +118,11 @@ public class IfpeekCommand extends Command {
             case 3 -> "Tattered";
             default -> "Unknown";
         };
-        
+
         int totalChars = 0;
         int totalWords = 0;
         int emptyPages = 0;
-        
+
         for (Text page : pages) {
             String text = page.getString();
             if (text.trim().isEmpty()) {
@@ -131,14 +131,14 @@ public class IfpeekCommand extends Command {
             totalChars += text.length();
             totalWords += text.split("\\s+").length;
         }
-        
+
         info("§6=== Book Info ===");
         info("§7Title: §f" + title);
         info("§7Author: §f" + (author != null && !author.isEmpty() ? author : "Unknown"));
         info("§7Generated: §f" + generationText);
         info("§7Pages: §f" + pages.size() + " §7(§f" + emptyPages + " §7empty)");
         info("§6================");
-        
+
         // Show first 3 pages
         int pagesToShow = Math.min(3, pages.size());
         if (pagesToShow > 0) {
@@ -152,26 +152,26 @@ public class IfpeekCommand extends Command {
                 info("§7Page " + (i + 1) + ": §f" + pageContent);
             }
         }
-        
+
         if (pages.size() > pagesToShow) {
             info("§7... and §f" + (pages.size() - pagesToShow) + " §7more page(s)");
         }
     }
-    
+
     private void searchInBook(String searchWord) {
         WrittenBookContentComponent content = getBookFromItemFrame();
         if (content == null) return;
-        
+
         List<Text> pages = content.getPages(true);
         List<Integer> foundPages = new ArrayList<>();
-        
+
         for (int i = 0; i < pages.size(); i++) {
             String pageText = pages.get(i).getString().toLowerCase();
             if (pageText.contains(searchWord.toLowerCase())) {
                 foundPages.add(i + 1);
             }
         }
-        
+
         if (foundPages.isEmpty()) {
             info("§cNo pages found containing: §f" + searchWord);
         } else {
@@ -181,20 +181,20 @@ public class IfpeekCommand extends Command {
             }
         }
     }
-    
+
     private void viewSpecificPage(int pageNum) {
         WrittenBookContentComponent content = getBookFromItemFrame();
         if (content == null) return;
-        
+
         List<Text> pages = content.getPages(true);
         if (pageNum < 1 || pageNum > pages.size()) {
             error("Page " + pageNum + " doesn't exist, The Book has " + pages.size() + " pages");
             return;
         }
-        
+
         String pageContent = pages.get(pageNum - 1).getString();
         info("§6=== Page " + pageNum + " of " + pages.size() + " ===");
-        
+
         String[] lines = pageContent.split("\n");
         for (String line : lines) {
             if (line.length() > 60) {
@@ -208,40 +208,40 @@ public class IfpeekCommand extends Command {
         }
         info("§6====================");
     }
-    
+
     private void showBookStats() {
         WrittenBookContentComponent content = getBookFromItemFrame();
         if (content == null) {
             error("This book has no content!");
             return;
         }
-        
+
         List<Text> pages = content.getPages(true);
-        
+
         int totalChars = 0;
         int totalWords = 0;
         int emptyPages = 0;
         int longestPage = 0;
         int shortestPage = Integer.MAX_VALUE;
-        
+
         Map<String, Integer> wordFrequency = new HashMap<>();
         String mostCommonWord = "";
         int mostCommonWordCount = 0;
-        
+
         for (Text page : pages) {
             String text = page.getString();
             int length = text.length();
             int words = text.split("\\s+").length;
-            
+
             if (text.trim().isEmpty()) {
                 emptyPages++;
             }
             totalChars += length;
             totalWords += words;
-            
+
             if (length > longestPage) longestPage = length;
             if (length < shortestPage) shortestPage = length;
-            
+
             String[] wordsArray = text.toLowerCase().replaceAll("[^a-zA-Z0-9\\s]", "").split("\\s+");
             for (String word : wordsArray) {
                 if (word.length() > 0 && !isStopWord(word)) {
@@ -255,24 +255,24 @@ public class IfpeekCommand extends Command {
             }
         }
         if (shortestPage == Integer.MAX_VALUE) shortestPage = 0;
-        
+
         // Reading time: 200 words per minute
         int readingTimeMinutes = totalWords / 200;
         int readingTimeSeconds = (totalWords % 200) * 3 / 10;
-        String readingTime = readingTimeMinutes > 0 ? 
-            readingTimeMinutes + "m " + readingTimeSeconds + "s" : 
+        String readingTime = readingTimeMinutes > 0 ?
+            readingTimeMinutes + "m " + readingTimeSeconds + "s" :
             readingTimeSeconds + "s";
-        
+
         // Reading level using Flesch-Kincaid simplified
         double avgWordsPerSentence = 15.0;
         double avgSyllablesPerWord = totalWords > 0 ? (double) totalChars / totalWords / 3.5 : 1.0;
         double readingLevel = 0.39 * avgWordsPerSentence + 11.8 * avgSyllablesPerWord - 15.59;
         readingLevel = Math.max(1, Math.min(20, readingLevel));
-        
+
         String title = content.title().raw();
         String author = content.author();
         int generation = content.generation();
-        
+
         String generationText = switch (generation) {
             case 0 -> "Original";
             case 1 -> "Copy of Original";
@@ -280,22 +280,46 @@ public class IfpeekCommand extends Command {
             case 3 -> "Tattered";
             default -> "Unknown";
         };
-        
+
         info("§6=== Book Statistics ===");
         info("§7Title: §f" + title);
         info("§7Author: §f" + (author != null && !author.isEmpty() ? author : "Unknown"));
         info("§7Generation: §f" + generationText);
         info("§7Pages: §f" + pages.size() + " §7(§f" + emptyPages + " §7empty)");
-        info("§7Characters: §f" + String.format("%,d", totalChars));
-        info("§7Words: §f" + String.format("%,d", totalWords));
+        info("§7Characters: §f" + addCommas(totalChars));
+        info("§7Words: §f" + addCommas(totalWords));
         info("§7Longest Page: §f" + longestPage + " §7chars");
         info("§7Shortest Page: §f" + shortestPage + " §7chars");
         info("§7Reading Time: §f" + readingTime);
-        info("§7Reading Level: §f" + String.format("%.1f", readingLevel) + " §7(" + getReadingLevelDescription((int) readingLevel) + ")");
+        info("§7Reading Level: §f" + formatDecimal(readingLevel) + " §7(" + getReadingLevelDescription((int) readingLevel) + ")");
         if (!mostCommonWord.isEmpty()) {
             info("§7Most Common Word: §f" + mostCommonWord + " §7(x§f" + mostCommonWordCount + "§7)");
         }
         info("§6=========================");
+    }
+
+    // Helper methods to avoid String.format() issues
+    private String addCommas(int number) {
+        StringBuilder result = new StringBuilder();
+        String numStr = String.valueOf(number);
+        int length = numStr.length();
+        for (int i = 0; i < length; i++) {
+            if (i > 0 && (length - i) % 3 == 0) {
+                result.append(",");
+            }
+            result.append(numStr.charAt(i));
+        }
+        return result.toString();
+    }
+
+    private String formatDecimal(double value) {
+        // Round to 1 decimal place
+        double rounded = Math.round(value * 10) / 10.0;
+        String str = String.valueOf(rounded);
+        if (str.endsWith(".0")) {
+            str = str.substring(0, str.length() - 2);
+        }
+        return str;
     }
 
     private boolean isStopWord(String word) {
@@ -315,7 +339,7 @@ public class IfpeekCommand extends Command {
         if (level <= 16) return "Hard";
         return "Very Hard";
     }
-    
+
     private WrittenBookContentComponent getBookFromItemFrame() {
         if (mc.crosshairTarget instanceof EntityHitResult hitResult &&
             hitResult.getEntity() instanceof ItemFrameEntity itemFrame) {

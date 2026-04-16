@@ -35,7 +35,7 @@ public class MayaChan extends HudElement {
     );
 
     public static final HudElementInfo<MayaChan> INFO = new HudElementInfo<>(
-        Addon.HUD_GROUP, "MayaChan", "Renders oehrasa beloved OC's : Nishizumi Maya", MayaChan::new);
+        Addon.HUD_GROUP, "MayaChan", "Render oehrasa beloved OC's : Nishizumi Maya", MayaChan::new);
     // Credit to Kodack for the drawing
 
     public MayaChan() {
@@ -46,7 +46,7 @@ public class MayaChan extends HudElement {
     public void render(HudRenderer renderer) {
         double w = width.get();
         double h = height.get();
-        
+
         // Set the HUD element size
         setSize(w, h);
 

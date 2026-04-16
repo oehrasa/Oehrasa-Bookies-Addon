@@ -100,7 +100,7 @@ public class AudiobookReader extends Module {
     private List<String> currentPages = new ArrayList<>();
     private int currentPage = 0;
     private String currentBookTitle = "";
-    
+
     // Page progress tracking
     private String currentPageText = "";
     private int totalCharsInPage = 0;
@@ -116,7 +116,7 @@ public class AudiobookReader extends Module {
     private float pageProgress = 0;
 
     public AudiobookReader() {
-        super(Addon.CATEGORY, "Audiobook", "Reads books aloud with synchronized page tracking");
+        super(Addon.CATEGORY, "Audio-book", "Reads books aloud with synchronized page tracking");
     }
 
     @Override
@@ -145,18 +145,18 @@ public class AudiobookReader extends Module {
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.player == null) return;
-        
+
         // Update progress based on elapsed time
         if (isReading && pageStartTime > 0 && estimatedPageDuration > 0) {
             long elapsed = System.currentTimeMillis() - pageStartTime;
             pageProgress = Math.min(1.0f, (float) elapsed / estimatedPageDuration);
-            
+
             // Update display timer to refresh progress bar
             if (displayTimer < 5) {
                 displayTimer = 5; // Keep display active
             }
         }
-        
+
         // Update display timer
         if (displayTimer > 0) {
             displayTimer--;
@@ -164,14 +164,14 @@ public class AudiobookReader extends Module {
                 displayText = "";
             }
         }
-        
+
         if (playKey.get().isPressed() && !isReading) {
             ItemStack stack = mc.player.getMainHandStack();
             if (isReadableBook(stack)) {
                 startReadingBook(stack);
             }
         }
-        
+
         if (stopKey.get().isPressed() && isReading) {
             stopReading();
         }
@@ -180,34 +180,34 @@ public class AudiobookReader extends Module {
     @EventHandler
     private void onRender2D(Render2DEvent event) {
         if (displayMode.get() == DisplayMode.NONE) return;
-        
+
         int screenWidth = event.screenWidth;
         int screenHeight = event.screenHeight;
         double scale = screenScale.get();
-        
+
         int x = (int) (screenWidth / 2 - (mc.textRenderer.getWidth(displayText) * scale) / 2);
         int y = screenHeight - 70;
-        
+
         event.drawContext.getMatrices().push();
         event.drawContext.getMatrices().translate(x, y, 0);
         event.drawContext.getMatrices().scale((float) scale, (float) scale, 1);
-        
+
         // Draw text
         event.drawContext.drawText(mc.textRenderer, displayText, 0, 0, 0xFFFFD700, true);
-        
+
         // Draw progress bar if enabled
         if (showProgressBar.get() && isReading && pageProgress > 0 && pageProgress < 1.0f) {
             int barWidth = mc.textRenderer.getWidth(displayText);
             int barHeight = 3;
             int barY = mc.textRenderer.fontHeight + 2;
-            
+
             // Background
             event.drawContext.fill(0, barY, barWidth, barY + barHeight, 0x44000000);
             // Progress
             int progressWidth = (int) (barWidth * pageProgress);
             event.drawContext.fill(0, barY, progressWidth, barY + barHeight, 0xFFFFD700);
         }
-        
+
         event.drawContext.getMatrices().pop();
     }
 
@@ -223,26 +223,26 @@ public class AudiobookReader extends Module {
             sendMessage("§cThis book has no content to read!");
             return;
         }
-        
+
         currentPages = pages;
         currentPage = 0;
         currentBookTitle = getBookTitle(stack);
         isReading = true;
-        
+
         sendMessage("§aNow reading: §f" + currentBookTitle);
-        
+
         readNextPage();
     }
-    
+
     private void updateDisplayForCurrentPage() {
         int pageNumber = currentPage + 1;
         int totalPages = currentPages.size();
         String progressText = String.format("Reading page %d/%d", pageNumber, totalPages);
-        
+
         if (displayMode.get() == DisplayMode.CHAT || displayMode.get() == DisplayMode.BOTH) {
             info("§7" + progressText);
         }
-        
+
         if (displayMode.get() == DisplayMode.SCREEN || displayMode.get() == DisplayMode.BOTH) {
             displayText = progressText;
             displayTimer = (int) (estimatedPageDuration / 50) + 20; // Keep visible during page
@@ -254,26 +254,26 @@ public class AudiobookReader extends Module {
             finishReading();
             return;
         }
-        
+
         currentPageText = stripMinecraftFormatting(currentPages.get(currentPage));
         totalCharsInPage = currentPageText.length();
-        
+
         // Estimate page duration based on words and speaking rate
         int wordCount = currentPageText.split("\\s+").length;
         estimatedPageDuration = (long) (wordCount * 60000.0 / wordsPerMinute.get());
-        
+
         pageStartTime = System.currentTimeMillis();
         pageProgress = 0;
-        
+
         updateDisplayForCurrentPage();
-        
+
         // Speak the page
         if (narrator != null && !currentPageText.isEmpty()) {
             narrator.say(currentPageText, false);
         }
-        
+
         currentPage++;
-        
+
         // Schedule next page based on estimated duration
         if (currentPage < currentPages.size()) {
             currentTask = executor.schedule(() -> {
@@ -314,27 +314,27 @@ public class AudiobookReader extends Module {
 
     private List<String> getPagesFromBook(ItemStack stack) {
         List<String> pages = new ArrayList<>();
-        
+
         WrittenBookContentComponent writtenContent = stack.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
         if (writtenContent != null) {
             for (Text page : writtenContent.getPages(false)) {
                 pages.add(page.getString());
             }
         }
-        
+
         WritableBookContentComponent writableContent = stack.get(DataComponentTypes.WRITABLE_BOOK_CONTENT);
         if (writableContent != null) {
             for (RawFilteredPair<String> pair : writableContent.pages()) {
                 pages.add(pair.get(false));
             }
         }
-        
+
         return pages;
     }
 
     private boolean isReadableBook(ItemStack stack) {
         if (stack.isEmpty()) return false;
-        return stack.getItem() == Items.WRITTEN_BOOK || 
+        return stack.getItem() == Items.WRITTEN_BOOK ||
                stack.getItem() == Items.WRITABLE_BOOK;
     }
 

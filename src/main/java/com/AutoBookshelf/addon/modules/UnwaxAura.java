@@ -285,7 +285,7 @@ public class UnwaxAura extends Module {
     private int currentStage = 0; // 0 = unwax, 1 = break
 
     public UnwaxAura() {
-        super(Addon.CATEGORY, "UnwaxAura", "Automatically removes wax from waxed copper blocks and optionally breaks them");
+        super(Addon.CATEGORY, "Unwax Aura", "Automatically removes wax from waxed copper blocks and optionally breaks them");
     }
 
     @Override
@@ -305,7 +305,7 @@ public class UnwaxAura extends Module {
         unwaxTimer = 0;
         breakTimer = 0;
         currentStage = 0;
-        
+
         if (returnSlot.get() && originalSlot != -1 && originalSlot != mc.player.getInventory().selectedSlot) {
             InvUtils.swap(originalSlot, false);
             originalSlot = -1;
@@ -314,7 +314,7 @@ public class UnwaxAura extends Module {
 
     private boolean isWaxedCopper(BlockState state) {
         Block block = state.getBlock();
-        
+
         return switch (copperFilter.get()) {
             case ONLY_OXIDIZED -> OXIDIZED_WAXED.contains(block);
             case ONLY_WEATHERED -> WEATHERED_WAXED.contains(block);
@@ -374,7 +374,7 @@ public class UnwaxAura extends Module {
 
         for (BlockPos pos : BlockPos.iterateOutwards(playerPos, r, r, r)) {
             BlockState state = mc.world.getBlockState(pos);
-            
+
             if (currentStage == 0) {
                 if (isWaxedCopper(state)) {
                     if (mc.player.getBlockPos().getSquaredDistance(pos) <= r * r) {
@@ -398,7 +398,7 @@ public class UnwaxAura extends Module {
         if (!isWaxedCopper(state)) return;
 
         mc.options.sneakKey.setPressed(true);
-        
+
         mc.execute(() -> {
             Vec3d hitVec = Vec3d.ofCenter(pos);
             BlockHitResult hitResult = new BlockHitResult(hitVec, Direction.UP, pos, false);
@@ -407,7 +407,7 @@ public class UnwaxAura extends Module {
                 FindItemResult axe = InvUtils.findInHotbar(
                     Items.NETHERITE_AXE, Items.DIAMOND_AXE, Items.IRON_AXE, Items.STONE_AXE, Items.WOODEN_AXE
                 );
-                
+
                 if (axe.found()) {
                     if (originalSlot == -1) originalSlot = mc.player.getInventory().selectedSlot;
                     InvUtils.swap(axe.slot(), true);
@@ -439,7 +439,7 @@ public class UnwaxAura extends Module {
                 FindItemResult pick = InvUtils.findInHotbar(
                     Items.NETHERITE_PICKAXE, Items.DIAMOND_PICKAXE, Items.IRON_PICKAXE, Items.STONE_PICKAXE, Items.WOODEN_PICKAXE
                 );
-                
+
                 if (pick.found()) {
                     if (originalSlot == -1) originalSlot = mc.player.getInventory().selectedSlot;
                     InvUtils.swap(pick.slot(), true);
@@ -467,18 +467,18 @@ public class UnwaxAura extends Module {
         if (breakMode.get() == BreakMode.NONE) {
             currentStage = 0;
             findTargetBlocks();
-            
+
             if (targetBlocks.isEmpty()) return;
-            
+
             BlockPos closest = targetBlocks.stream()
                 .min((a, b) -> Double.compare(
                     mc.player.getBlockPos().getSquaredDistance(a),
                     mc.player.getBlockPos().getSquaredDistance(b)
                 ))
                 .orElse(null);
-            
+
             if (closest == null) return;
-            
+
             if (unwaxTimer >= unwaxDelay.get()) {
                 unwaxTimer = 0;
                 currentTarget = closest;
@@ -492,7 +492,7 @@ public class UnwaxAura extends Module {
         // Handle both unwaxing and breaking
         if (currentStage == 0) {
             findTargetBlocks();
-            
+
             if (targetBlocks.isEmpty()) {
                 if (breakMode.get() != BreakMode.NONE) {
                     currentStage = 1;
@@ -501,16 +501,16 @@ public class UnwaxAura extends Module {
                 }
                 return;
             }
-            
+
             BlockPos closest = targetBlocks.stream()
                 .min((a, b) -> Double.compare(
                     mc.player.getBlockPos().getSquaredDistance(a),
                     mc.player.getBlockPos().getSquaredDistance(b)
                 ))
                 .orElse(null);
-            
+
             if (closest == null) return;
-            
+
             if (unwaxTimer >= unwaxDelay.get()) {
                 unwaxTimer = 0;
                 currentTarget = closest;
@@ -520,7 +520,7 @@ public class UnwaxAura extends Module {
             }
         } else if (currentStage == 1) {
             findTargetBlocks();
-            
+
             if (targetBlocks.isEmpty()) {
                 if (breakMode.get() == BreakMode.BREAK && currentTarget != null && isUnwaxedCopper(mc.world.getBlockState(currentTarget))) {
                     breakBlock(currentTarget);
@@ -528,16 +528,16 @@ public class UnwaxAura extends Module {
                 currentStage = 0;
                 return;
             }
-            
+
             BlockPos closest = targetBlocks.stream()
                 .min((a, b) -> Double.compare(
                     mc.player.getBlockPos().getSquaredDistance(a),
                     mc.player.getBlockPos().getSquaredDistance(b)
                 ))
                 .orElse(null);
-            
+
             if (closest == null) return;
-            
+
             if (breakTimer >= breakDelay.get()) {
                 breakTimer = 0;
                 breakBlock(closest);

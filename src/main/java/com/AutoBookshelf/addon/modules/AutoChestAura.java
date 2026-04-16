@@ -55,7 +55,7 @@ public class AutoChestAura extends Module {
         .sliderMax(20)
         .build()
     );
-    
+
     private final Setting<Integer> waitTime = sgGeneral.add(new IntSetting.Builder()
         .name("wait-time")
         .description("How long to wait after receiving packet before closing (ticks)")
@@ -87,11 +87,11 @@ public class AutoChestAura extends Module {
     private int timer = 0;
     private int packetTimer = 0;
     private int stuckTimer = 0;
-    
+
     private boolean isPending = false;
 
     public AutoChestAura() {
-        super(Addon.CATEGORY, "ChestAura", "High-speed automatic container opener");
+        super(Addon.CATEGORY, "Chest-Aura", "High-speed automatic container opener");
     }
 
     @Override
@@ -114,10 +114,10 @@ public class AutoChestAura extends Module {
         if (mc.world == null || mc.player == null) return;
 
         // --- 1. Stuck detection and state management ---
-        
+
         if (isPending) {
             stuckTimer++;
-            
+
             // If player manually closed screen or screen auto-closed due to distance
             if (mc.currentScreen == null && stuckTimer > 5) {
                 resetState();
@@ -138,7 +138,7 @@ public class AutoChestAura extends Module {
                 forceClose();
                 return;
             }
-            
+
             return;
         }
 
@@ -154,17 +154,17 @@ public class AutoChestAura extends Module {
 
         for (BlockEntity block : Utils.blockEntities()) {
             if (!blocks.get().contains(block.getType())) continue;
-            
+
             if (mc.player.getEyePos().distanceTo(Vec3d.ofCenter(block.getPos())) >= range.get()) continue;
 
             BlockPos pos = block.getPos();
             if (openedBlocks.containsKey(pos)) continue;
 
             // --- 3. Execute opening ---
-            
-            Runnable click = () -> mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, 
+
+            Runnable click = () -> mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND,
                 new BlockHitResult(new Vec3d(pos.getX(), pos.getY(), pos.getZ()), Direction.UP, pos, false));
-            
+
             if (rotate.get()) {
                 Rotations.rotate(Rotations.getYaw(pos), Rotations.getPitch(pos), click);
             } else {
@@ -179,14 +179,14 @@ public class AutoChestAura extends Module {
             stuckTimer = 0;
             packetTimer = 0;
             timer = delay.get();
-            
+
             break;
         }
     }
 
     private void markOpened(BlockEntity block, BlockPos pos) {
         openedBlocks.put(pos, System.currentTimeMillis());
-        
+
         BlockState state = block.getCachedState();
         if (state.contains(ChestBlock.CHEST_TYPE)) {
             Direction direction = state.get(ChestBlock.FACING);
@@ -227,8 +227,8 @@ public class AutoChestAura extends Module {
             }
             // Fallback: sometimes container is empty or laggy, only OpenScreen packet is sent
             else if (event.packet instanceof OpenScreenS2CPacket packet) {
-                if (packetTimer == 0) { 
-                    packetTimer = timeout.get() - 5; 
+                if (packetTimer == 0) {
+                    packetTimer = timeout.get() - 5;
                 }
             }
         }

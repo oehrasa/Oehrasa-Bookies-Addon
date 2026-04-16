@@ -70,12 +70,12 @@ public class CrackMobOwner extends Module {
     );
 
     private final Vector3d pos = new Vector3d();
-    
+
     // Store mob UUID -> Owner UUID mapping
     private final Map<UUID, UUID> mobToOwner = new HashMap<>();
     // Store Owner UUID -> Name mapping
     private final Map<UUID, String> ownerNameCache = new HashMap<>();
-    
+
     private File cacheFile;
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private int tickCounter = 0;
@@ -109,7 +109,7 @@ public class CrackMobOwner extends Module {
             if (cacheFile.exists()) {
                 String json = new String(Files.readAllBytes(cacheFile.toPath()));
                 JsonObject root = JsonParser.parseString(json).getAsJsonObject();
-                
+
                 if (root.has("mobToOwner")) {
                     JsonObject mobMap = root.getAsJsonObject("mobToOwner");
                     for (Map.Entry<String, JsonElement> entry : mobMap.entrySet()) {
@@ -120,7 +120,7 @@ public class CrackMobOwner extends Module {
                         } catch (Exception ignored) {}
                     }
                 }
-                
+
                 if (root.has("ownerNames")) {
                     JsonObject nameMap = root.getAsJsonObject("ownerNames");
                     for (Map.Entry<String, JsonElement> entry : nameMap.entrySet()) {
@@ -131,7 +131,7 @@ public class CrackMobOwner extends Module {
                         } catch (Exception ignored) {}
                     }
                 }
-                
+
                 info("§aLoaded cache: §f" + mobToOwner.size() + " §amobs, §f" + ownerNameCache.size() + " §anames");
             }
         } catch (Exception e) {
@@ -143,29 +143,28 @@ public class CrackMobOwner extends Module {
         if (cacheFile == null) {
             cacheFile = new File(mc.runDirectory, "cracked_mob_owner_cache.json");
         }
-        
+
         try {
             JsonObject root = new JsonObject();
-            
+
             JsonObject mobMap = new JsonObject();
             for (Map.Entry<UUID, UUID> entry : mobToOwner.entrySet()) {
                 mobMap.addProperty(entry.getKey().toString(), entry.getValue().toString());
             }
             root.add("mobToOwner", mobMap);
-            
+
             JsonObject nameMap = new JsonObject();
             for (Map.Entry<UUID, String> entry : ownerNameCache.entrySet()) {
                 nameMap.addProperty(entry.getKey().toString(), entry.getValue());
             }
             root.add("ownerNames", nameMap);
-            
+
             Files.write(cacheFile.toPath(), gson.toJson(root).getBytes());
         } catch (Exception e) {
             error("Failed to save cache: " + e.getMessage());
         }
     }
 
-    // FIXED: Get owner UUID directly from entity using reflection or NBT
     private UUID getOwnerUuidFromEntity(Entity entity) {
         try {
             // Method 1: Try to get from EnderPearlEntity's internal field
@@ -181,22 +180,22 @@ public class CrackMobOwner extends Module {
                     if (debugMode.get()) info("§cReflection failed for pearl: " + e.getMessage());
                 }
             }
-            
+
             // Method 2: Read from NBT (works for both pearls and tamed mobs)
             NbtCompound nbt = new NbtCompound();
             entity.writeNbt(nbt);
-            
+
             if (debugMode.get()) {
                 info("§7[Debug] NBT keys for §f" + entity.getType().getName().getString() + "§7: §f" + String.join(", ", nbt.getKeys()));
             }
-            
+
             // Try all possible owner UUID formats
             if (nbt.containsUuid("Owner")) {
                 UUID uuid = nbt.getUuid("Owner");
                 if (debugMode.get()) info("§a[Debug] Found Owner UUID: §f" + uuid);
                 return uuid;
             }
-            
+
             if (nbt.contains("Owner", 8)) { // 8 = String type
                 try {
                     UUID uuid = UUID.fromString(nbt.getString("Owner"));
@@ -204,13 +203,13 @@ public class CrackMobOwner extends Module {
                     return uuid;
                 } catch (IllegalArgumentException ignored) {}
             }
-            
+
             if (nbt.containsUuid("owner")) {
                 UUID uuid = nbt.getUuid("owner");
                 if (debugMode.get()) info("§a[Debug] Found owner UUID: §f" + uuid);
                 return uuid;
             }
-            
+
             // Method 3: Try to get from TameableEntity's owner reference
             if (entity instanceof TameableEntity tameable) {
                 // Try to get owner UUID via reflection from the tameable's owner field
@@ -224,7 +223,7 @@ public class CrackMobOwner extends Module {
                     if (debugMode.get()) info("§cReflection failed for tameable: " + e.getMessage());
                 }
             }
-            
+
             if (debugMode.get()) {
                 info("§c[Debug] NO OWNER FOUND in NBT for §f" + entity.getType().getName().getString());
                 // Print all NBT contents for debugging
@@ -232,7 +231,7 @@ public class CrackMobOwner extends Module {
                     info("§7[Debug]   §f" + key + "§7: §f" + nbt.get(key).toString());
                 }
             }
-            
+
         } catch (Exception e) {
             if (debugMode.get()) {
                 error("§c[Debug] Failed to read owner: " + e.getMessage());
@@ -244,49 +243,49 @@ public class CrackMobOwner extends Module {
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.world == null) return;
-        
+
         tickCounter++;
         if (tickCounter < 20) return; // Scan every second
         tickCounter = 0;
-        
+
         int newMobs = 0;
-        
+
         for (Entity entity : mc.world.getEntities()) {
             // Process tamed animals and ender pearls
             boolean isTameable = entity instanceof TameableEntity;
             boolean isPearl = entity instanceof EnderPearlEntity;
-            
+
             if (!isTameable && !isPearl) continue;
-            
+
             UUID mobUuid = entity.getUuid();
-            
+
             // Skip if already cached
             if (mobToOwner.containsKey(mobUuid)) continue;
-            
+
             // Get owner UUID
             UUID ownerUuid = getOwnerUuidFromEntity(entity);
-            
+
             if (ownerUuid != null) {
                 mobToOwner.put(mobUuid, ownerUuid);
                 newMobs++;
-                
+
                 String entityName = entity.getType().getName().getString();
-                info("§a✓ Cached: §f" + entityName + 
+                info("§a✓ Cached: §f" + entityName +
                      " §7→ §f" + ownerUuid.toString().substring(0, 8) + "...");
-                
+
                 // Try to get name from tab list
                 String name = findNameInTabList(ownerUuid);
                 if (name != null) {
                     ownerNameCache.put(ownerUuid, name);
                     info("§a  └─ Name: §f" + name);
                 }
-                
+
                 if (persistentCache.get()) {
                     saveCache();
                 }
             }
         }
-        
+
         if (newMobs > 0 && debugMode.get()) {
             info("§aFound §f" + newMobs + " §anew mob(s) this scan");
         }
@@ -295,16 +294,16 @@ public class CrackMobOwner extends Module {
     @EventHandler
     private void onRender2D(Render2DEvent event) {
         if (mc.world == null) return;
-        
+
         for (Entity entity : mc.world.getEntities()) {
             boolean isTameable = entity instanceof TameableEntity;
             boolean isPearl = entity instanceof EnderPearlEntity;
-            
+
             if (!isTameable && !isPearl) continue;
-            
+
             UUID mobUuid = entity.getUuid();
             UUID ownerUuid = mobToOwner.get(mobUuid);
-            
+
             // Try to get on the fly if not cached
             if (ownerUuid == null) {
                 ownerUuid = getOwnerUuidFromEntity(entity);
@@ -312,14 +311,14 @@ public class CrackMobOwner extends Module {
                     mobToOwner.put(mobUuid, ownerUuid);
                 }
             }
-            
+
             if (ownerUuid != null) {
                 Utils.set(pos, entity, event.tickDelta);
                 pos.add(0, entity.getEyeHeight(entity.getPose()) + 0.75, 0);
-                
+
                 if (NametagUtils.to2D(pos, scale.get())) {
                     String displayText;
-                    
+
                     if (showUUID.get()) {
                         displayText = ownerUuid.toString();
                     } else {
@@ -331,10 +330,10 @@ public class CrackMobOwner extends Module {
                                 if (persistentCache.get()) saveCache();
                             }
                         }
-                        displayText = (name != null) ? name : 
+                        displayText = (name != null) ? name :
                                      (showUnknown.get() ? ownerUuid.toString().substring(0, 8) + "..." : null);
                     }
-                    
+
                     if (displayText != null) {
                         renderNametag(displayText);
                     }
@@ -367,10 +366,10 @@ public class CrackMobOwner extends Module {
         text.end();
         NametagUtils.end();
     }
-    
+
     private String findNameInTabList(UUID uuid) {
         if (mc.getNetworkHandler() == null) return null;
-        
+
         for (PlayerListEntry entry : mc.getNetworkHandler().getPlayerList()) {
             if (entry.getProfile().getId().equals(uuid)) {
                 Text displayName = entry.getDisplayName();
@@ -382,14 +381,14 @@ public class CrackMobOwner extends Module {
         }
         return null;
     }
-    
+
     public void showStatus() {
         info("§7=== CrackMobOwner Status ===");
         info("§aMobs mapped: §f" + mobToOwner.size());
         info("§aNames cached: §f" + ownerNameCache.size());
         info("§7Cache file: §f" + (cacheFile != null ? cacheFile.getPath() : "Not initialized"));
     }
-    
+
     public void clearCache() {
         mobToOwner.clear();
         ownerNameCache.clear();

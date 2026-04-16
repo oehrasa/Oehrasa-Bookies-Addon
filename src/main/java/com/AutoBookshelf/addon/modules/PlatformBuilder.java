@@ -101,7 +101,7 @@ public class PlatformBuilder extends Module {
     private HashSet<BlockPos> recentPlacements = new HashSet<>();
 
     public PlatformBuilder() {
-        super(Addon.CATEGORY, "platform-builder", "Build a platform at a given y-level once in range");
+        super(Addon.CATEGORY, "Platform-Builder", "Build a platform at a given y-level once in range");
     }
 
     @Override
@@ -176,7 +176,6 @@ public class PlatformBuilder extends Module {
             }
         }
 
-        // FIXED: Better position filtering that respects settings
         positions.removeIf(pos -> {
             BlockState state = mc.world.getBlockState(pos);
 

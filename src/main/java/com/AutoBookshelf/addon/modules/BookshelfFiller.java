@@ -552,7 +552,7 @@ public class BookshelfFiller extends Module {
     private void resetAllCounts() {
         savedCounts.clear();
         saveCache();
-        sendMessage("§c[Book Counter] All saved book counts have been reset!");
+        sendMessage("§cAll saved book counts have been reset!");
     }
 
     private int countBooksInShelf(BlockPos pos) {
@@ -672,7 +672,7 @@ public class BookshelfFiller extends Module {
                 }
                 sendMessage("§7Total tracked: §f" + worldCounts.size() + " §7bookshelves, §f" + totalBooks + " §7books");
             } else {
-                sendMessage("§e[Book Counter] No changes detected in this area");
+                info("§e[Book Counter] No changes detected in this area");
                 int totalBooks = worldCounts.values().stream().mapToInt(Integer::intValue).sum();
                 sendMessage("§eTotal tracked: §f" + worldCounts.size() + " §ebookshelves, §f" + totalBooks + " §ebooks");
             }
@@ -708,7 +708,6 @@ public class BookshelfFiller extends Module {
                 countPos1 = pos;
                 countingMode = true;
                 sendMessage("§a[Book Counter] First position set to §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
-                sendMessage("§7Right-click another bookshelf with the counter tool to complete selection");
                 event.cancel();
                 return;
             } else {

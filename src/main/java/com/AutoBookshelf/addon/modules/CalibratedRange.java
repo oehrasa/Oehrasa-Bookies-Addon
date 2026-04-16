@@ -183,7 +183,7 @@ public class CalibratedRange extends Module {
     }
 
     public CalibratedRange() {
-        super(Addon.CATEGORY, "Cal-Range", "Shows the detection range of calibrated sculk sensors");
+        super(Addon.CATEGORY, "Calib-Range", "Shows the detection range of calibrated sculk sensors");
     }
 
     @Override

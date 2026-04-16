@@ -95,7 +95,7 @@ public class ClearDespawn extends Module {
     private final ConcurrentHashMap<Integer, Integer> itemAges = new ConcurrentHashMap<>();
 
     public ClearDespawn() {
-        super(Addon.CATEGORY, "clear-despawn", "Highlights items that are about to despawn");
+        super(Addon.CATEGORY, "Clear-Despawn", "Highlights items that are about to despawn");
     }
 
     @Override
@@ -111,7 +111,7 @@ public class ClearDespawn extends Module {
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.world == null) return;
-        
+
         for (Entity entity : mc.world.getEntities()) {
             if (entity instanceof ItemEntity item) {
                 itemAges.put(entity.getId(), item.age);
@@ -123,38 +123,38 @@ public class ClearDespawn extends Module {
     @EventHandler
     private void onRender(Render3DEvent event) {
         if (mc.world == null || mc.player == null) return;
-        
+
         int rendered = 0;
         int max = maxRender.get();
         double rangeSq = renderRange.get() * renderRange.get();
-        
+
         for (Entity entity : mc.world.getEntities()) {
             if (!(entity instanceof ItemEntity)) continue;
-            
+
             if (mc.player.squaredDistanceTo(entity) > rangeSq) continue;
-            
+
             Integer age = itemAges.get(entity.getId());
             if (age == null) continue;
-            
+
             int timeLeft = despawnTime.get() - age;
             if (timeLeft <= 0) continue;
-            
+
             Color color;
-            
+
             if (computeColorFromTime.get()) {
                 // Smooth color transition like TntFuseEsp
                 color = despawnColor(timeLeft, despawnTime.get());
             } else {
                 color = customColor.get();
             }
-            
+
             // Apply opacity settings
             Color sideColor = new Color(color.r, color.g, color.b, sideOpacity.get());
             Color lineColor = new Color(color.r, color.g, color.b, lineOpacity.get());
-            
+
             Box box = entity.getBoundingBox();
             event.renderer.box(box, sideColor, lineColor, shapeMode.get(), 0);
-            
+
             rendered++;
             if (max > 0 && rendered >= max) break;
         }
@@ -164,11 +164,11 @@ public class ClearDespawn extends Module {
         // Calculate percentage of time remaining (0 = about to despawn, 1 = just dropped)
         double percent = (double) timeLeft / totalTime;
         percent = Math.max(0.0, Math.min(1.0, percent));
-        
+
         // Green (0,255,0) at 100% → Yellow (255,255,0) at 50% → Red (255,0,0) at 0%
         int r = (int) (255 * (1.0 - percent));
         int g = (int) (255 * percent);
-        
+
         return new Color(r, g, 0);
     }
 }
