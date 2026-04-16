@@ -14,11 +14,10 @@ import net.minecraft.block.Blocks;
 import net.minecraft.block.ComparatorBlock;
 import net.minecraft.block.ObserverBlock;
 import net.minecraft.block.SculkShriekerBlock;
-import net.minecraft.state.property.Properties;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.World;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -27,13 +26,12 @@ public class CalibratedRange extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRender = settings.createGroup("Render");
 
-    private static final double CALIBRATED_RANGE = 16.0;  // Exact range from Minecraft code
-    private static final double REGULAR_RANGE = 8.0;
+    private static final double SENSOR_RANGE = 16.0;
 
     // General settings
     private final Setting<Integer> renderDistance = sgGeneral.add(new IntSetting.Builder()
         .name("render-distance")
-        .description("How far away to render indicators (blocks)")
+        .description("How far away to render spheres (blocks)")
         .defaultValue(64)
         .min(16)
         .max(128)
@@ -73,15 +71,14 @@ public class CalibratedRange extends Module {
         .build()
     );
 
-    private final Setting<Boolean> showDirectionalBias = sgGeneral.add(new BoolSetting.Builder()
-        .name("show-directional-bias")
-        .description("Show the directional sensitivity bias of calibrated sensors")
+    // Render settings
+    private final Setting<Boolean> occlusion = sgRender.add(new BoolSetting.Builder()
+        .name("occlusion")
+        .description("Only render sphere blocks that are visible (not inside other blocks)")
         .defaultValue(true)
-        .visible(advancedView::get)
         .build()
     );
 
-    // Render settings
     private final Setting<ShapeType> shapeType = sgRender.add(new EnumSetting.Builder<ShapeType>()
         .name("shape-type")
         .description("What shape to render (when smart-rendering is off)")
@@ -96,6 +93,7 @@ public class CalibratedRange extends Module {
         .defaultValue(0.08)
         .min(0.02)
         .max(0.5)
+        .visible(() -> (!smartRendering.get() && shapeType.get() == ShapeType.Circle) || (smartRendering.get()))
         .build()
     );
 
@@ -105,6 +103,7 @@ public class CalibratedRange extends Module {
         .defaultValue(30)
         .min(8)
         .max(64)
+        .visible(() -> (!smartRendering.get() && shapeType.get() == ShapeType.Sphere) || (smartRendering.get()))
         .build()
     );
 
@@ -112,28 +111,28 @@ public class CalibratedRange extends Module {
         .name("render-circle-at-player-height")
         .description("Render circular range indicator at player height")
         .defaultValue(false)
-        .visible(() -> shapeType.get() == ShapeType.Circle)
+        .visible(() -> !smartRendering.get() && shapeType.get() == ShapeType.Circle)
         .build()
     );
 
     private final Setting<SettingColor> sphereColor = sgRender.add(new ColorSetting.Builder()
         .name("sphere-color")
         .description("Color of the sphere outline")
-        .defaultValue(new SettingColor(0, 255, 255, 100))
+        .defaultValue(new SettingColor(0, 255, 255, 200))
         .build()
     );
 
     private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
         .name("line-color")
         .description("Color of the sphere lines")
-        .defaultValue(new SettingColor(0, 255, 255, 200))
+        .defaultValue(new SettingColor(0, 255, 255, 255))
         .build()
     );
 
     private final Setting<SettingColor> redstoneColor = sgRender.add(new ColorSetting.Builder()
         .name("redstone-color")
         .description("Color for sensors with redstone output")
-        .defaultValue(new SettingColor(255, 0, 0, 150))
+        .defaultValue(new SettingColor(255, 0, 0, 200))
         .visible(advancedView::get)
         .build()
     );
@@ -141,7 +140,7 @@ public class CalibratedRange extends Module {
     private final Setting<SettingColor> shriekerColor = sgRender.add(new ColorSetting.Builder()
         .name("shrieker-color")
         .description("Color for sensors with shriekers in range")
-        .defaultValue(new SettingColor(255, 165, 0, 150))
+        .defaultValue(new SettingColor(255, 165, 0, 200))
         .visible(advancedView::get)
         .build()
     );
@@ -173,20 +172,18 @@ public class CalibratedRange extends Module {
 
     private static class SensorData {
         BlockPos pos;
-        Direction facing;
         boolean hasRedstoneOutput;
         boolean hasShriekerInRange;
 
-        SensorData(BlockPos pos, Direction facing, boolean hasRedstoneOutput, boolean hasShriekerInRange) {
+        SensorData(BlockPos pos, boolean hasRedstoneOutput, boolean hasShriekerInRange) {
             this.pos = pos;
-            this.facing = facing;
             this.hasRedstoneOutput = hasRedstoneOutput;
             this.hasShriekerInRange = hasShriekerInRange;
         }
     }
 
     public CalibratedRange() {
-        super(Addon.CATEGORY, "Calibrated-Range", "Shows the detection range of calibrated sculk sensors");
+        super(Addon.CATEGORY, "Cal-Range", "Shows the detection range of calibrated sculk sensors");
     }
 
     @Override
@@ -202,10 +199,10 @@ public class CalibratedRange extends Module {
         sphereBlocks.clear();
     }
 
-    private boolean hasRedstoneOutput(BlockPos sensorPos) {
+    private boolean hasRedstoneOutput(World world, BlockPos sensorPos) {
         for (Direction dir : Direction.values()) {
             BlockPos adjacentPos = sensorPos.offset(dir);
-            BlockState state = mc.world.getBlockState(adjacentPos);
+            BlockState state = world.getBlockState(adjacentPos);
             Block block = state.getBlock();
 
             if (block == Blocks.REDSTONE_WIRE) return true;
@@ -223,73 +220,13 @@ public class CalibratedRange extends Module {
         return false;
     }
 
-    private boolean hasShriekerInRange(BlockPos sensorPos) {
-        int range = 16; // Calibrated sensors can detect shriekers up to 16 blocks
+    private boolean hasShriekerInRange(World world, BlockPos sensorPos) {
+        int range = 8;
         for (BlockPos checkPos : BlockPos.iterateOutwards(sensorPos, range, range, range)) {
-            BlockState state = mc.world.getBlockState(checkPos);
+            BlockState state = world.getBlockState(checkPos);
             if (state.getBlock() instanceof SculkShriekerBlock) return true;
         }
         return false;
-    }
-
-    // Generate accurate sphere blocks based on actual Minecraft detection logic
-    private Set<BlockPos> generateDetectionSphere(BlockPos center, double radius) {
-        Set<BlockPos> positions = new HashSet<>();
-        int radiusCeil = (int) Math.ceil(radius);
-        double radiusSq = radius * radius;
-
-        // Use exact block position checking like Minecraft does
-        for (int x = -radiusCeil; x <= radiusCeil; x++) {
-            for (int y = -radiusCeil; y <= radiusCeil; y++) {
-                for (int z = -radiusCeil; z <= radiusCeil; z++) {
-                    BlockPos checkPos = center.add(x, y, z);
-                    // Check distance from the CENTER of the sensor block
-                    double dx = checkPos.getX() + 0.5 - (center.getX() + 0.5);
-                    double dy = checkPos.getY() + 0.5 - (center.getY() + 0.5);
-                    double dz = checkPos.getZ() + 0.5 - (center.getZ() + 0.5);
-                    double distSq = dx * dx + dy * dy + dz * dz;
-
-                    if (distSq <= radiusSq) {
-                        positions.add(checkPos);
-                    }
-                }
-            }
-        }
-        return positions;
-    }
-
-    // Check if a position is within the sensor's detection range (accurate to Minecraft)
-    private boolean isInDetectionRange(BlockPos sensorPos, BlockPos targetPos, Direction facing) {
-        Vec3d sensorCenter = new Vec3d(sensorPos.getX() + 0.5, sensorPos.getY() + 0.5, sensorPos.getZ() + 0.5);
-        Vec3d targetCenter = new Vec3d(targetPos.getX() + 0.5, targetPos.getY() + 0.5, targetPos.getZ() + 0.5);
-
-        double distance = sensorCenter.distanceTo(targetCenter);
-
-        // Base range check
-        if (distance > CALIBRATED_RANGE) return false;
-
-        // Directional bias for calibrated sensors (they are more sensitive in facing direction)
-        if (showDirectionalBias.get() && facing != null) {
-            Vec3d directionVec = getDirectionVector(facing);
-            Vec3d toTarget = targetCenter.subtract(sensorCenter).normalize();
-            double dot = directionVec.dotProduct(toTarget);
-
-            // If facing away from the target, detection is less likely
-            // (This is simplified - actual Minecraft code has more complex logic)
-            if (dot < -0.5) return false; // Behind the sensor, less sensitive
-        }
-
-        return true;
-    }
-
-    private Vec3d getDirectionVector(Direction facing) {
-        return switch (facing) {
-            case NORTH -> new Vec3d(0, 0, -1);
-            case SOUTH -> new Vec3d(0, 0, 1);
-            case WEST -> new Vec3d(-1, 0, 0);
-            case EAST -> new Vec3d(1, 0, 0);
-            default -> new Vec3d(0, 0, 1);
-        };
     }
 
     @EventHandler
@@ -301,8 +238,6 @@ public class CalibratedRange extends Module {
         tickCounter = 0;
 
         sensors.clear();
-        sphereBlocks.clear();
-
         int playerX = mc.player.getBlockX();
         int playerZ = mc.player.getBlockZ();
         int renderDist = renderDistance.get();
@@ -314,19 +249,65 @@ public class CalibratedRange extends Module {
             for (int z = playerZ - renderDist; z <= playerZ + renderDist; z++) {
                 for (int y = minY; y <= maxY; y++) {
                     BlockPos pos = new BlockPos(x, y, z);
-                    BlockState state = mc.world.getBlockState(pos);
-                    if (state.getBlock() == Blocks.CALIBRATED_SCULK_SENSOR) {
-                        Direction facing = state.contains(Properties.HORIZONTAL_FACING) ?
-                            state.get(Properties.HORIZONTAL_FACING) : Direction.SOUTH;
-                        boolean hasOutput = advancedView.get() ? hasRedstoneOutput(pos) : false;
-                        boolean hasShrieker = advancedView.get() ? hasShriekerInRange(pos) : false;
-                        SensorData sensor = new SensorData(pos.toImmutable(), facing, hasOutput, hasShrieker);
-                        sensors.add(sensor);
-                        sphereBlocks.addAll(generateDetectionSphere(sensor.pos, CALIBRATED_RANGE));
+                    if (mc.world.getBlockState(pos).getBlock() == Blocks.CALIBRATED_SCULK_SENSOR) {
+                        boolean hasOutput = advancedView.get() ? hasRedstoneOutput(mc.world, pos) : false;
+                        boolean hasShrieker = advancedView.get() ? hasShriekerInRange(mc.world, pos) : false;
+                        sensors.add(new SensorData(pos.toImmutable(), hasOutput, hasShrieker));
                     }
                 }
             }
         }
+
+        sphereBlocks.clear();
+        for (SensorData sensor : sensors) {
+            sphereBlocks.addAll(generateHollowSphere(sensor.pos, SENSOR_RANGE));
+        }
+    }
+
+    private Set<BlockPos> generateHollowSphere(BlockPos center, double radius) {
+        Set<BlockPos> positions = new HashSet<>();
+        int r = (int) Math.ceil(radius);
+        double invRadius = 1.0 / (radius + 0.5);
+
+        for (int x = 0; x <= r; x++) {
+            double xn = x * invRadius;
+            double nextXn = (x + 1) * invRadius;
+
+            for (int y = 0; y <= r; y++) {
+                double yn = y * invRadius;
+                double nextYn = (y + 1) * invRadius;
+
+                for (int z = 0; z <= r; z++) {
+                    double zn = z * invRadius;
+                    double nextZn = (z + 1) * invRadius;
+
+                    double distSq = xn * xn + yn * yn + zn * zn;
+                    if (distSq > 1) {
+                        if (z == 0) {
+                            if (y == 0) break;
+                            break;
+                        }
+                        break;
+                    }
+
+                    boolean isInterior = (nextXn * nextXn + yn * yn + zn * zn <= 1) &&
+                                         (xn * xn + nextYn * nextYn + zn * zn <= 1) &&
+                                         (xn * xn + yn * yn + nextZn * nextZn <= 1);
+
+                    if (!isInterior) {
+                        positions.add(center.add(x, y, z));
+                        if (x != 0) positions.add(center.add(-x, y, z));
+                        if (y != 0) positions.add(center.add(x, -y, z));
+                        if (z != 0) positions.add(center.add(x, y, -z));
+                        if (x != 0 && y != 0) positions.add(center.add(-x, -y, z));
+                        if (x != 0 && z != 0) positions.add(center.add(-x, y, -z));
+                        if (y != 0 && z != 0) positions.add(center.add(x, -y, -z));
+                        if (x != 0 && y != 0 && z != 0) positions.add(center.add(-x, -y, -z));
+                    }
+                }
+            }
+        }
+        return positions;
     }
 
     @EventHandler
@@ -339,8 +320,8 @@ public class CalibratedRange extends Module {
             }
 
             double distanceToSensor = mc.player.getPos().distanceTo(Vec3d.ofCenter(sensor.pos));
-            boolean useSphere = smartRendering.get() ? distanceToSensor <= smartRenderDistance.get() : shapeType.get() == ShapeType.Sphere;
-            boolean useCircle = smartRendering.get() ? distanceToSensor > smartRenderDistance.get() : shapeType.get() == ShapeType.Circle;
+            boolean useSphere = smartRendering.get() ? distanceToSensor <= smartRenderDistance.get() : shapeType.get() == ShapeType.Sphere || shapeType.get() == ShapeType.Both;
+            boolean useCircle = smartRendering.get() ? distanceToSensor > smartRenderDistance.get() : shapeType.get() == ShapeType.Circle || shapeType.get() == ShapeType.Both;
 
             SettingColor renderColor = sphereColor.get();
             if (advancedView.get()) {
@@ -354,20 +335,18 @@ public class CalibratedRange extends Module {
             }
 
             if (useSphere) {
-                // Render accurate sphere blocks
                 for (BlockPos pos : sphereBlocks) {
-                    if (pos.isWithinDistance(sensor.pos, CALIBRATED_RANGE + 0.5)) {
-                        event.renderer.box(pos, renderColor, lineColor.get(), shapeMode.get(), 0);
-                    }
+                    if (occlusion.get() && !mc.world.getBlockState(pos).isAir()) continue;
+                    event.renderer.box(pos, renderColor, lineColor.get(), shapeMode.get(), 0);
                 }
             }
 
             if (useCircle) {
                 double renderY = sensor.pos.getY() + 0.5;
-                if (renderAtPlayerHeight.get()) {
+                if (renderAtPlayerHeight.get() && shapeType.get() == ShapeType.Circle) {
                     renderY = mc.player.getY();
                 }
-                renderCircle(event, CALIBRATED_RANGE, circleThickness.get(), sensor.pos.getX() + 0.5, renderY, sensor.pos.getZ() + 0.5, renderColor);
+                renderCircle(event, SENSOR_RANGE, circleThickness.get(), sensor.pos.getX() + 0.5, renderY, sensor.pos.getZ() + 0.5, renderColor);
             }
         }
 
@@ -411,8 +390,5 @@ public class CalibratedRange extends Module {
         }
     }
 
-    private enum ShapeType {
-        Circle,
-        Sphere
-    }
+    private enum ShapeType { Circle, Sphere, Both }
 }
