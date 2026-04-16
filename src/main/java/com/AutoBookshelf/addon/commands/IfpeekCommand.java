@@ -67,7 +67,7 @@ public class IfpeekCommand extends Command {
             return SINGLE_SUCCESS;
         });
 
-        // Search sublarp
+        // Search subcommand
         builder.then(literal("search")
             .then(argument("word", StringArgumentType.word())
                 .executes(ctx -> {
@@ -98,6 +98,37 @@ public class IfpeekCommand extends Command {
         );
     }
 
+    // Helper to escape % symbols in strings to prevent format crashes
+    private String escapePercent(String input) {
+        if (input == null) return "";
+        return input.replace("%", "%%");
+    }
+
+    // Helper to add commas without String.format
+    private String addCommas(int number) {
+        if (number < 1000) return String.valueOf(number);
+        StringBuilder result = new StringBuilder();
+        String numStr = String.valueOf(number);
+        int length = numStr.length();
+        for (int i = 0; i < length; i++) {
+            if (i > 0 && (length - i) % 3 == 0) {
+                result.append(",");
+            }
+            result.append(numStr.charAt(i));
+        }
+        return result.toString();
+    }
+
+    // Helper to format decimal without String.format
+    private String formatDecimal(double value) {
+        double rounded = Math.round(value * 10) / 10.0;
+        String str = String.valueOf(rounded);
+        if (str.endsWith(".0")) {
+            str = str.substring(0, str.length() - 2);
+        }
+        return str;
+    }
+
     private void inspectBook(ItemStack book) {
         WrittenBookContentComponent content = book.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
 
@@ -106,8 +137,8 @@ public class IfpeekCommand extends Command {
             return;
         }
 
-        String title = content.title().raw();
-        String author = content.author();
+        String title = escapePercent(content.title().raw());
+        String author = escapePercent(content.author());
         int generation = content.generation();
         List<Text> pages = content.getPages(true);
 
@@ -137,6 +168,8 @@ public class IfpeekCommand extends Command {
         info("§7Author: §f" + (author != null && !author.isEmpty() ? author : "Unknown"));
         info("§7Generated: §f" + generationText);
         info("§7Pages: §f" + pages.size() + " §7(§f" + emptyPages + " §7empty)");
+        info("§7Characters: §f" + addCommas(totalChars));
+        info("§7Words: §f" + addCommas(totalWords));
         info("§6================");
 
         // Show first 3 pages
@@ -149,6 +182,7 @@ public class IfpeekCommand extends Command {
                     pageContent = pageContent.substring(0, 150) + "...";
                 }
                 pageContent = pageContent.replace("\n", " ").replace("\r", " ");
+                pageContent = escapePercent(pageContent);
                 info("§7Page " + (i + 1) + ": §f" + pageContent);
             }
         }
@@ -164,6 +198,7 @@ public class IfpeekCommand extends Command {
 
         List<Text> pages = content.getPages(true);
         List<Integer> foundPages = new ArrayList<>();
+        String escapedSearchWord = escapePercent(searchWord);
 
         for (int i = 0; i < pages.size(); i++) {
             String pageText = pages.get(i).getString().toLowerCase();
@@ -173,9 +208,9 @@ public class IfpeekCommand extends Command {
         }
 
         if (foundPages.isEmpty()) {
-            info("§cNo pages found containing: §f" + searchWord);
+            info("§cNo pages found containing: §f" + escapedSearchWord);
         } else {
-            info("§aFound §f" + foundPages.size() + " §apage(s) containing §f'" + searchWord + "§f':");
+            info("§aFound §f" + foundPages.size() + " §apage(s) containing §f'" + escapedSearchWord + "§f':");
             for (int page : foundPages) {
                 info("§7  Page §f" + page);
             }
@@ -192,7 +227,7 @@ public class IfpeekCommand extends Command {
             return;
         }
 
-        String pageContent = pages.get(pageNum - 1).getString();
+        String pageContent = escapePercent(pages.get(pageNum - 1).getString());
         info("§6=== Page " + pageNum + " of " + pages.size() + " ===");
 
         String[] lines = pageContent.split("\n");
@@ -269,8 +304,8 @@ public class IfpeekCommand extends Command {
         double readingLevel = 0.39 * avgWordsPerSentence + 11.8 * avgSyllablesPerWord - 15.59;
         readingLevel = Math.max(1, Math.min(20, readingLevel));
 
-        String title = content.title().raw();
-        String author = content.author();
+        String title = escapePercent(content.title().raw());
+        String author = escapePercent(content.author());
         int generation = content.generation();
 
         String generationText = switch (generation) {
@@ -296,30 +331,6 @@ public class IfpeekCommand extends Command {
             info("§7Most Common Word: §f" + mostCommonWord + " §7(x§f" + mostCommonWordCount + "§7)");
         }
         info("§6=========================");
-    }
-
-    // Helper methods to avoid String.format() issues
-    private String addCommas(int number) {
-        StringBuilder result = new StringBuilder();
-        String numStr = String.valueOf(number);
-        int length = numStr.length();
-        for (int i = 0; i < length; i++) {
-            if (i > 0 && (length - i) % 3 == 0) {
-                result.append(",");
-            }
-            result.append(numStr.charAt(i));
-        }
-        return result.toString();
-    }
-
-    private String formatDecimal(double value) {
-        // Round to 1 decimal place
-        double rounded = Math.round(value * 10) / 10.0;
-        String str = String.valueOf(rounded);
-        if (str.endsWith(".0")) {
-            str = str.substring(0, str.length() - 2);
-        }
-        return str;
     }
 
     private boolean isStopWord(String word) {
