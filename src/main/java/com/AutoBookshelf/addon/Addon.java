@@ -27,11 +27,11 @@ public class Addon extends MeteorAddon {
     public static final HudGroup HUD_GROUP = new HudGroup("MayaChan");
 
     public static final Category CATEGORY = new Category("Bookshelf", Items.WRITTEN_BOOK.getDefaultStack());
-	
+
     @Override
     public void onInitialize() {
-        LOG.info("Honey, dinner's ready, Identified AutoBookshelf");
-		
+        LOG.info("Honey, dinner's ready, Identified AutoBookshelf Addon");
+
         // Modules
         Modules.get().add(new AutoLogin(CATEGORY));
         Modules.get().add(new BookshelfFiller());
@@ -53,6 +53,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new UnwaxAura());
         Modules.get().add(new ClearDespawn());
         Modules.get().add(new TntFuseEsp());
+        Modules.get().add(new BookImporter());
 
         // HUD
         Hud.get().register(MayaChan.INFO);

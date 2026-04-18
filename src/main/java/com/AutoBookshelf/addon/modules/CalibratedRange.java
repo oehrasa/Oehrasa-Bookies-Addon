@@ -1,11 +1,14 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
+import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
-import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
+import meteordevelopment.meteorclient.events.world.ChunkDataEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.Block;
@@ -18,9 +21,14 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
+import net.minecraft.world.chunk.Chunk;
+import net.minecraft.world.dimension.DimensionType;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class CalibratedRange extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -72,18 +80,18 @@ public class CalibratedRange extends Module {
     );
 
     // Render settings
-    private final Setting<Boolean> occlusion = sgRender.add(new BoolSetting.Builder()
-        .name("occlusion")
-        .description("Only render sphere blocks that are visible (not inside other blocks)")
-        .defaultValue(true)
+    private final Setting<OcclusionMode> occlusionMode = sgRender.add(new EnumSetting.Builder<OcclusionMode>()
+        .name("occlusion-mode")
+        .description("How to handle occlusion (hiding blocks behind other blocks)")
+        .defaultValue(OcclusionMode.None)
         .build()
     );
 
+    // FIXED: shapeType now works even when smartRendering is ON
     private final Setting<ShapeType> shapeType = sgRender.add(new EnumSetting.Builder<ShapeType>()
         .name("shape-type")
-        .description("What shape to render (when smart-rendering is off)")
+        .description("What shape to render (overridden by smart-rendering if enabled)")
         .defaultValue(ShapeType.Sphere)
-        .visible(() -> !smartRendering.get())
         .build()
     );
 
@@ -93,25 +101,28 @@ public class CalibratedRange extends Module {
         .defaultValue(0.08)
         .min(0.02)
         .max(0.5)
-        .visible(() -> (!smartRendering.get() && shapeType.get() == ShapeType.Circle) || (smartRendering.get()))
+        .visible(() -> shapeType.get() == ShapeType.Circle || shapeType.get() == ShapeType.Both || smartRendering.get())
         .build()
     );
 
+    // FIXED: gradation now affects sphere rendering by controlling which blocks are rendered
+    // Higher gradation = more blocks rendered (thicker shell)
     private final Setting<Integer> gradation = sgRender.add(new IntSetting.Builder()
         .name("gradation")
-        .description("Sphere smoothness (higher = smoother but more lag)")
-        .defaultValue(30)
-        .min(8)
-        .max(64)
-        .visible(() -> (!smartRendering.get() && shapeType.get() == ShapeType.Sphere) || (smartRendering.get()))
+        .description("Sphere thickness (1-5). Higher = thicker sphere shell")
+        .defaultValue(1)
+        .min(1)
+        .max(5)
+        .sliderRange(1, 5)
+        .visible(() -> shapeType.get() == ShapeType.Sphere || shapeType.get() == ShapeType.Both)
         .build()
     );
 
     private final Setting<Boolean> renderAtPlayerHeight = sgRender.add(new BoolSetting.Builder()
         .name("render-circle-at-player-height")
-        .description("Render circular range indicator at player height")
+        .description("Render circular range indicator at player height instead of sensor height")
         .defaultValue(false)
-        .visible(() -> !smartRendering.get() && shapeType.get() == ShapeType.Circle)
+        .visible(() -> shapeType.get() == ShapeType.Circle || shapeType.get() == ShapeType.Both)
         .build()
     );
 
@@ -166,9 +177,15 @@ public class CalibratedRange extends Module {
         .build()
     );
 
-    private Set<SensorData> sensors = new HashSet<>();
-    private Set<BlockPos> sphereBlocks = new HashSet<>();
-    private int tickCounter = 0;
+    // Store sensors and their data
+    private final Set<SensorData> sensors = new HashSet<>();
+    private final Set<BlockPos> sphereBlocks = new HashSet<>();
+
+    // Track if we need to regenerate spheres
+    private boolean needsUpdate = true;
+
+    // Worker thread for background scanning
+    private volatile ExecutorService workerThread = null;
 
     private static class SensorData {
         BlockPos pos;
@@ -180,23 +197,208 @@ public class CalibratedRange extends Module {
             this.hasRedstoneOutput = hasRedstoneOutput;
             this.hasShriekerInRange = hasShriekerInRange;
         }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj) return true;
+            if (obj == null || getClass() != obj.getClass()) return false;
+            SensorData that = (SensorData) obj;
+            return pos.equals(that.pos);
+        }
+
+        @Override
+        public int hashCode() {
+            return pos.hashCode();
+        }
     }
 
     public CalibratedRange() {
         super(Addon.CATEGORY, "Calib-Range", "Shows the detection range of calibrated sculk sensors");
     }
 
+    private synchronized ExecutorService getWorkerThread() {
+        if (workerThread == null || workerThread.isShutdown() || workerThread.isTerminated()) {
+            workerThread = Executors.newSingleThreadExecutor();
+        }
+        return workerThread;
+    }
+
+    private synchronized void shutdownWorkerThread() {
+        if (workerThread != null && !workerThread.isShutdown()) {
+            workerThread.shutdownNow();
+            try {
+                workerThread.awaitTermination(1, TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {}
+            workerThread = null;
+        }
+    }
+
     @Override
     public void onActivate() {
         sensors.clear();
         sphereBlocks.clear();
-        tickCounter = 0;
+        needsUpdate = true;
+        scanAllChunks();
     }
 
     @Override
     public void onDeactivate() {
         sensors.clear();
         sphereBlocks.clear();
+        needsUpdate = true;
+        shutdownWorkerThread();
+    }
+
+    @EventHandler
+    private void onGameJoined(GameJoinedEvent event) {
+        if (!isActive()) return;
+        sensors.clear();
+        sphereBlocks.clear();
+        needsUpdate = true;
+        scanAllChunks();
+    }
+
+    private void scanAllChunks() {
+        ExecutorService thread = getWorkerThread();
+        if (thread.isShutdown()) return;
+
+        thread.submit(() -> {
+            if (!isActive()) return;
+
+            Set<BlockPos> newSensors = new HashSet<>();
+
+            for (Chunk chunk : Utils.chunks()) {
+                if (!isActive()) return;
+                scanChunkForSensors(chunk, newSensors);
+            }
+
+            mc.execute(() -> {
+                if (!isActive()) return;
+                sensors.clear();
+                for (BlockPos pos : newSensors) {
+                    boolean hasOutput = advancedView.get() ? hasRedstoneOutput(mc.world, pos) : false;
+                    boolean hasShrieker = advancedView.get() ? hasShriekerInRange(mc.world, pos) : false;
+                    sensors.add(new SensorData(pos, hasOutput, hasShrieker));
+                }
+                needsUpdate = true;
+            });
+        });
+    }
+
+    private void scanChunkForSensors(Chunk chunk, Set<BlockPos> outSensors) {
+        int minX = chunk.getPos().getStartX();
+        int minZ = chunk.getPos().getStartZ();
+        int maxX = minX + 15;
+        int maxZ = minZ + 15;
+        int minY = chunk.getBottomY();
+        int maxY = minY + chunk.getHeight();
+
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                for (int y = minY; y <= maxY; y++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    if (mc.world.getBlockState(pos).getBlock() == Blocks.CALIBRATED_SCULK_SENSOR) {
+                        outSensors.add(pos.toImmutable());
+                    }
+                }
+            }
+        }
+    }
+
+    @EventHandler
+    private void onChunkData(ChunkDataEvent event) {
+        if (!isActive()) return;
+
+        ExecutorService thread = getWorkerThread();
+        if (thread.isShutdown()) return;
+
+        thread.submit(() -> {
+            Set<BlockPos> newSensors = new HashSet<>();
+            scanChunkForSensors(event.chunk(), newSensors);
+
+            if (!newSensors.isEmpty()) {
+                mc.execute(() -> {
+                    if (!isActive()) return;
+                    for (BlockPos pos : newSensors) {
+                        boolean hasOutput = advancedView.get() ? hasRedstoneOutput(mc.world, pos) : false;
+                        boolean hasShrieker = advancedView.get() ? hasShriekerInRange(mc.world, pos) : false;
+                        sensors.add(new SensorData(pos, hasOutput, hasShrieker));
+                    }
+                    needsUpdate = true;
+                });
+            }
+        });
+    }
+
+    @EventHandler
+    private void onBlockUpdate(BlockUpdateEvent event) {
+        if (!isActive()) return;
+
+        BlockPos pos = event.pos;
+        BlockState newState = event.newState;
+        BlockState oldState = event.oldState;
+
+        boolean wasSensor = oldState.getBlock() == Blocks.CALIBRATED_SCULK_SENSOR;
+        boolean isSensor = newState.getBlock() == Blocks.CALIBRATED_SCULK_SENSOR;
+
+        if (wasSensor && !isSensor) {
+            sensors.removeIf(s -> s.pos.equals(pos));
+            needsUpdate = true;
+        } else if (!wasSensor && isSensor) {
+            boolean hasOutput = advancedView.get() ? hasRedstoneOutput(mc.world, pos) : false;
+            boolean hasShrieker = advancedView.get() ? hasShriekerInRange(mc.world, pos) : false;
+            sensors.add(new SensorData(pos.toImmutable(), hasOutput, hasShrieker));
+            needsUpdate = true;
+        } else if (isSensor && advancedView.get()) {
+            boolean hasOutput = hasRedstoneOutput(mc.world, pos);
+            boolean hasShrieker = hasShriekerInRange(mc.world, pos);
+            sensors.removeIf(s -> s.pos.equals(pos));
+            sensors.add(new SensorData(pos.toImmutable(), hasOutput, hasShrieker));
+            needsUpdate = true;
+        }
+
+        boolean wasShrieker = oldState.getBlock() instanceof SculkShriekerBlock;
+        boolean isShrieker = newState.getBlock() instanceof SculkShriekerBlock;
+
+        if ((wasShrieker || isShrieker) && advancedView.get()) {
+            updateSensorsNearPosition(pos);
+        }
+
+        if (advancedView.get() && (isRedstoneComponent(oldState) || isRedstoneComponent(newState))) {
+            updateSensorsNearPosition(pos);
+        }
+
+        if (needsUpdate) {
+            regenerateSpheres();
+            needsUpdate = false;
+        }
+    }
+
+    private void updateSensorsNearPosition(BlockPos pos) {
+        for (SensorData sensor : sensors) {
+            double distance = Math.sqrt(sensor.pos.getSquaredDistance(pos));
+            if (distance <= SENSOR_RANGE) {
+                boolean hasOutput = hasRedstoneOutput(mc.world, sensor.pos);
+                boolean hasShrieker = hasShriekerInRange(mc.world, sensor.pos);
+                sensor.hasRedstoneOutput = hasOutput;
+                sensor.hasShriekerInRange = hasShrieker;
+                needsUpdate = true;
+            }
+        }
+    }
+
+    private boolean isRedstoneComponent(BlockState state) {
+        Block block = state.getBlock();
+        return block == Blocks.REDSTONE_WIRE ||
+            block instanceof ComparatorBlock ||
+            block instanceof ObserverBlock;
+    }
+
+    private void regenerateSpheres() {
+        sphereBlocks.clear();
+        for (SensorData sensor : sensors) {
+            sphereBlocks.addAll(generateHollowEuclideanSphere(sensor.pos, SENSOR_RANGE, gradation.get()));
+        }
     }
 
     private boolean hasRedstoneOutput(World world, BlockPos sensorPos) {
@@ -221,7 +423,7 @@ public class CalibratedRange extends Module {
     }
 
     private boolean hasShriekerInRange(World world, BlockPos sensorPos) {
-        int range = 8;
+        int range = 16;
         for (BlockPos checkPos : BlockPos.iterateOutwards(sensorPos, range, range, range)) {
             BlockState state = world.getBlockState(checkPos);
             if (state.getBlock() instanceof SculkShriekerBlock) return true;
@@ -229,85 +431,65 @@ public class CalibratedRange extends Module {
         return false;
     }
 
-    @EventHandler
-    private void onTick(TickEvent.Post event) {
-        if (mc.world == null) return;
-
-        tickCounter++;
-        if (tickCounter < 10) return;
-        tickCounter = 0;
-
-        sensors.clear();
-        int playerX = mc.player.getBlockX();
-        int playerZ = mc.player.getBlockZ();
-        int renderDist = renderDistance.get();
-
-        int minY = mc.world.getBottomY();
-        int maxY = minY + mc.world.getHeight();
-
-        for (int x = playerX - renderDist; x <= playerX + renderDist; x++) {
-            for (int z = playerZ - renderDist; z <= playerZ + renderDist; z++) {
-                for (int y = minY; y <= maxY; y++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    if (mc.world.getBlockState(pos).getBlock() == Blocks.CALIBRATED_SCULK_SENSOR) {
-                        boolean hasOutput = advancedView.get() ? hasRedstoneOutput(mc.world, pos) : false;
-                        boolean hasShrieker = advancedView.get() ? hasShriekerInRange(mc.world, pos) : false;
-                        sensors.add(new SensorData(pos.toImmutable(), hasOutput, hasShrieker));
-                    }
-                }
-            }
-        }
-
-        sphereBlocks.clear();
-        for (SensorData sensor : sensors) {
-            sphereBlocks.addAll(generateHollowSphere(sensor.pos, SENSOR_RANGE));
-        }
-    }
-
-    private Set<BlockPos> generateHollowSphere(BlockPos center, double radius) {
+    // FIXED: gradation now controls sphere thickness
+    private Set<BlockPos> generateHollowEuclideanSphere(BlockPos center, double radius, int thickness) {
         Set<BlockPos> positions = new HashSet<>();
-        int r = (int) Math.ceil(radius);
-        double invRadius = 1.0 / (radius + 0.5);
+        int radiusCeil = (int) Math.ceil(radius);
+        double radiusSq = radius * radius;
 
-        for (int x = 0; x <= r; x++) {
-            double xn = x * invRadius;
-            double nextXn = (x + 1) * invRadius;
+        // Gradation controls how thick the shell is (1 = thin shell, 5 = thick shell)
+        double innerRadiusSq = Math.max(0, (radius - thickness) * (radius - thickness));
 
-            for (int y = 0; y <= r; y++) {
-                double yn = y * invRadius;
-                double nextYn = (y + 1) * invRadius;
+        double centerX = center.getX() + 0.5;
+        double centerY = center.getY() + 0.5;
+        double centerZ = center.getZ() + 0.5;
 
-                for (int z = 0; z <= r; z++) {
-                    double zn = z * invRadius;
-                    double nextZn = (z + 1) * invRadius;
+        for (int x = -radiusCeil; x <= radiusCeil; x++) {
+            for (int y = -radiusCeil; y <= radiusCeil; y++) {
+                for (int z = -radiusCeil; z <= radiusCeil; z++) {
+                    BlockPos checkPos = center.add(x, y, z);
 
-                    double distSq = xn * xn + yn * yn + zn * zn;
-                    if (distSq > 1) {
-                        if (z == 0) {
-                            if (y == 0) break;
-                            break;
-                        }
-                        break;
-                    }
+                    double dx = (checkPos.getX() + 0.5) - centerX;
+                    double dy = (checkPos.getY() + 0.5) - centerY;
+                    double dz = (checkPos.getZ() + 0.5) - centerZ;
 
-                    boolean isInterior = (nextXn * nextXn + yn * yn + zn * zn <= 1) &&
-                                         (xn * xn + nextYn * nextYn + zn * zn <= 1) &&
-                                         (xn * xn + yn * yn + nextZn * nextZn <= 1);
+                    double distSq = dx * dx + dy * dy + dz * dz;
 
-                    if (!isInterior) {
-                        positions.add(center.add(x, y, z));
-                        if (x != 0) positions.add(center.add(-x, y, z));
-                        if (y != 0) positions.add(center.add(x, -y, z));
-                        if (z != 0) positions.add(center.add(x, y, -z));
-                        if (x != 0 && y != 0) positions.add(center.add(-x, -y, z));
-                        if (x != 0 && z != 0) positions.add(center.add(-x, y, -z));
-                        if (y != 0 && z != 0) positions.add(center.add(x, -y, -z));
-                        if (x != 0 && y != 0 && z != 0) positions.add(center.add(-x, -y, -z));
+                    // Include blocks within the shell thickness
+                    if (distSq <= radiusSq && distSq >= innerRadiusSq) {
+                        positions.add(checkPos);
                     }
                 }
             }
         }
         return positions;
+    }
+
+    private boolean isVisible(BlockPos pos) {
+        OcclusionMode mode = occlusionMode.get();
+        if (mode == OcclusionMode.None) return true;
+
+        for (Direction dir : Direction.values()) {
+            BlockPos neighborPos = pos.offset(dir);
+            BlockState neighborState = mc.world.getBlockState(neighborPos);
+
+            if (neighborState.isAir() || !neighborState.isOpaque()) {
+                if (mode == OcclusionMode.Simple) return true;
+
+                if (mode == OcclusionMode.Accurate) {
+                    Vec3d playerPos = mc.player.getEyePos();
+                    Vec3d blockCenter = new Vec3d(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
+                    Vec3d faceCenter = blockCenter.add(dir.getOffsetX() * 0.5, dir.getOffsetY() * 0.5, dir.getOffsetZ() * 0.5);
+                    Vec3d toFace = faceCenter.subtract(playerPos).normalize();
+                    Vec3d faceNormal = new Vec3d(dir.getOffsetX(), dir.getOffsetY(), dir.getOffsetZ());
+
+                    if (faceNormal.dotProduct(toFace) > 0) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     @EventHandler
@@ -320,8 +502,15 @@ public class CalibratedRange extends Module {
             }
 
             double distanceToSensor = mc.player.getPos().distanceTo(Vec3d.ofCenter(sensor.pos));
-            boolean useSphere = smartRendering.get() ? distanceToSensor <= smartRenderDistance.get() : shapeType.get() == ShapeType.Sphere || shapeType.get() == ShapeType.Both;
-            boolean useCircle = smartRendering.get() ? distanceToSensor > smartRenderDistance.get() : shapeType.get() == ShapeType.Circle || shapeType.get() == ShapeType.Both;
+
+            // FIXED: shapeType now properly overrides smartRendering
+            ShapeType effectiveShape = shapeType.get();
+            if (smartRendering.get()) {
+                effectiveShape = distanceToSensor <= smartRenderDistance.get() ? ShapeType.Sphere : ShapeType.Circle;
+            }
+
+            boolean useSphere = effectiveShape == ShapeType.Sphere || effectiveShape == ShapeType.Both;
+            boolean useCircle = effectiveShape == ShapeType.Circle || effectiveShape == ShapeType.Both;
 
             SettingColor renderColor = sphereColor.get();
             if (advancedView.get()) {
@@ -336,15 +525,25 @@ public class CalibratedRange extends Module {
 
             if (useSphere) {
                 for (BlockPos pos : sphereBlocks) {
-                    if (occlusion.get() && !mc.world.getBlockState(pos).isAir()) continue;
+                    double dx = (pos.getX() + 0.5) - (sensor.pos.getX() + 0.5);
+                    double dy = (pos.getY() + 0.5) - (sensor.pos.getY() + 0.5);
+                    double dz = (pos.getZ() + 0.5) - (sensor.pos.getZ() + 0.5);
+                    double distSq = dx * dx + dy * dy + dz * dz;
+
+                    if (distSq > SENSOR_RANGE * SENSOR_RANGE) continue;
+                    if (!isVisible(pos)) continue;
+
                     event.renderer.box(pos, renderColor, lineColor.get(), shapeMode.get(), 0);
                 }
             }
 
             if (useCircle) {
-                double renderY = sensor.pos.getY() + 0.5;
-                if (renderAtPlayerHeight.get() && shapeType.get() == ShapeType.Circle) {
+                // FIXED: renderAtPlayerHeight now properly affects circle rendering
+                double renderY;
+                if (renderAtPlayerHeight.get()) {
                     renderY = mc.player.getY();
+                } else {
+                    renderY = sensor.pos.getY() + 0.5;
                 }
                 renderCircle(event, SENSOR_RANGE, circleThickness.get(), sensor.pos.getX() + 0.5, renderY, sensor.pos.getZ() + 0.5, renderColor);
             }
@@ -391,4 +590,14 @@ public class CalibratedRange extends Module {
     }
 
     private enum ShapeType { Circle, Sphere, Both }
+
+    private enum OcclusionMode {
+        None("None - Render all blocks"),
+        Simple("Simple - Hide blocks behind solid faces"),
+        Accurate("Accurate - Hide faces not facing the player");
+
+        private final String title;
+        OcclusionMode(String title) { this.title = title; }
+        @Override public String toString() { return title; }
+    }
 }

@@ -1222,9 +1222,9 @@ public class BookshelfFiller extends Module {
                     if (!waitingForRetry) {
                         if (verboseChecking.get()) {
                             if (enableFilter.get()) {
-                                setDisplayText("§eNo more books with numbers found! Waiting");
+                                info("§eNo more books with numbers found! Waiting");
                             } else {
-                                setDisplayText("§eNo written books found! Waiting");
+                                info("§eNo written books found! Waiting");
                             }
                         }
                         waitingForRetry = true;
