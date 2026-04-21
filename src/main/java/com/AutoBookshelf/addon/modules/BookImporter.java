@@ -177,7 +177,7 @@ public class BookImporter extends Module {
     private static class ProgressData {
         String fileName;
         int partNumber;
-        int fileIndex; // kept for fallback, but we use fileName primarily
+        int fileIndex;
         long lastUpdated;
 
         ProgressData(String fileName, int partNumber, int fileIndex) {
@@ -222,7 +222,6 @@ public class BookImporter extends Module {
         sendMessage("§7Manual override: " + (userOverride ? "YES" : "NO"));
 
         // Resume logic: use saved progress only if no override and persistent enabled
-        boolean usedSavedProgress = false;
         if (!userOverride && persistentProgress.get() && savedProgress != null) {
             // Try to find file by name first (most reliable)
             int foundIndex = -1;
@@ -236,13 +235,11 @@ public class BookImporter extends Module {
                 startIndex = foundIndex;
                 startPart = savedProgress.partNumber;
                 sendMessage("§aResuming from saved progress (by name): " + tasks.get(startIndex).file.getName() + " part " + startPart);
-                usedSavedProgress = true;
             } else if (savedProgress.fileIndex < tasks.size()) {
                 // Fallback to index (if file was renamed, but unlikely)
                 startIndex = savedProgress.fileIndex;
                 startPart = savedProgress.partNumber;
                 sendMessage("§aResuming from saved progress (by index): " + tasks.get(startIndex).file.getName() + " part " + startPart);
-                usedSavedProgress = true;
             } else {
                 sendMessage("§eSaved file not found, starting from beginning.");
             }
@@ -298,7 +295,7 @@ public class BookImporter extends Module {
         tasks.clear();
         currentTask = null;
         tickDelay = 0;
-        saveProgress();
+        saveProgress(); // Save on deactivation
     }
 
     private void saveProgress() {
@@ -307,7 +304,6 @@ public class BookImporter extends Module {
             try {
                 Path progressPath = Paths.get(mc.runDirectory.getPath(), PROGRESS_FILE);
                 Files.createDirectories(progressPath.getParent());
-                // Save by file name (not index) for robustness
                 ProgressData data = new ProgressData(currentTask.file.getName(), currentPart, currentFileIndex);
                 String json = gson.toJson(data);
                 Files.writeString(progressPath, json);
@@ -595,7 +591,7 @@ public class BookImporter extends Module {
     private void finishImport() {
         isImporting = false;
         waitingForConfirm = false;
-        resetProgressData();
+        // Do NOT reset progress – keep it for future runs
         sendMessage("§aImport complete! Created " + totalBooksCreated + " book(s)");
         toggle();
     }
