@@ -4,6 +4,7 @@ import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.entity.EquipmentSlot;
@@ -74,11 +75,38 @@ public class AutoTakeOff extends Module {
         .build()
     );
 
+    // NEW: Rotation mode
+    private final Setting<RotationMode> rotationMode = sgGeneral.add(new EnumSetting.Builder<RotationMode>()
+        .name("rotation-mode")
+        .description("How to handle rotation during takeoff.")
+        .defaultValue(RotationMode.Normal)
+        .build()
+    );
+
+    // NEW: Auto disable after takeoff
+    private final Setting<Boolean> disableAfterTakeoff = sgGeneral.add(new BoolSetting.Builder()
+        .name("disable-after-takeoff")
+        .description("Automatically disable the module after a successful takeoff.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Integer> disableDelay = sgGeneral.add(new IntSetting.Builder()
+        .name("disable-delay")
+        .description("Ticks to wait after takeoff before disabling the module.")
+        .defaultValue(20)
+        .min(0)
+        .max(200)
+        .visible(disableAfterTakeoff::get)
+        .build()
+    );
+
     private int cooldownTimer = 0;
     private int takeOffDelay = 0;
     private boolean restoring = false;
     private float originalPitch;
     private float originalYaw;
+    private int disableTimer = 0;  // for delayed disable
 
     public AutoTakeOff() {
         super(Addon.CATEGORY, "auto-take-off", "Automatically starts elytra flight when on ground, in lava, or falling.");
@@ -89,20 +117,45 @@ public class AutoTakeOff extends Module {
         cooldownTimer = 0;
         takeOffDelay = 0;
         restoring = false;
+        disableTimer = 0;
     }
 
     private boolean isElytraUsable(ItemStack chest) {
         if (chest.getItem() != Items.ELYTRA) return false;
         if (!chest.contains(DataComponentTypes.GLIDER)) return false;
-        // Check durability: if damage >= max damage, it's broken
         int damage = chest.getDamage();
         int maxDamage = chest.getMaxDamage();
         return damage < maxDamage;
     }
 
+    private void sendStartFlyingPacket() {
+        mc.player.networkHandler.sendPacket(new ClientCommandC2SPacket(mc.player, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
+    }
+
+    private void setRotation(float yaw, float pitch, boolean silent) {
+        if (rotationMode.get() == RotationMode.Silent) {
+            // Silent rotation: client‑side only, no packets
+            Rotations.rotate(yaw, pitch, 50, true, null);
+        } else {
+            // Normal rotation: send packets to server
+            mc.player.setYaw(yaw);
+            mc.player.setPitch(pitch);
+            mc.player.networkHandler.sendPacket(new PlayerMoveC2SPacket.LookAndOnGround(yaw, pitch, mc.player.isOnGround(), mc.player.horizontalCollision));
+        }
+    }
+
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.player == null) return;
+
+        // Handle delayed disable
+        if (disableTimer > 0) {
+            disableTimer--;
+            if (disableTimer == 0 && disableAfterTakeoff.get()) {
+                toggle();
+                return;
+            }
+        }
 
         if (cooldownTimer > 0) {
             cooldownTimer--;
@@ -119,8 +172,7 @@ public class AutoTakeOff extends Module {
 
         if (restoring) {
             if (setPitch.get()) {
-                mc.player.setPitch(originalPitch);
-                mc.player.networkHandler.sendPacket(new PlayerMoveC2SPacket.LookAndOnGround(originalYaw, originalPitch, mc.player.isOnGround(), mc.player.horizontalCollision));
+                setRotation(originalYaw, originalPitch, rotationMode.get() == RotationMode.Silent);
             }
             restoring = false;
             return;
@@ -131,19 +183,22 @@ public class AutoTakeOff extends Module {
             if (takeOffDelay == 0) {
                 if (setPitch.get()) {
                     float targetPitch = takeoffPitch.get().floatValue();
-                    mc.player.setPitch(targetPitch);
-                    mc.player.networkHandler.sendPacket(new PlayerMoveC2SPacket.LookAndOnGround(originalYaw, targetPitch, mc.player.isOnGround(), mc.player.horizontalCollision));
+                    setRotation(originalYaw, targetPitch, rotationMode.get() == RotationMode.Silent);
                 }
-                mc.player.networkHandler.sendPacket(new ClientCommandC2SPacket(mc.player, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
+                sendStartFlyingPacket();
                 cooldownTimer = cooldown.get();
                 if (setPitch.get()) {
                     restoring = true;
+                }
+                // Start disable timer if needed
+                if (disableAfterTakeoff.get()) {
+                    disableTimer = disableDelay.get();
                 }
             }
             return;
         }
 
-        // Ground takeoff: need to jump and then wait 2 ticks
+        // Ground takeoff
         if (takeOffOnGround.get() && mc.player.isOnGround()) {
             if (setPitch.get()) {
                 originalYaw = mc.player.getYaw();
@@ -154,38 +209,40 @@ public class AutoTakeOff extends Module {
             return;
         }
 
-        // Lava takeoff: immediate
+        // Lava takeoff (immediate)
         if (takeOffInLava.get() && mc.player.isInLava()) {
             if (setPitch.get()) {
                 originalYaw = mc.player.getYaw();
                 originalPitch = mc.player.getPitch();
                 float targetPitch = takeoffPitch.get().floatValue();
-                mc.player.setPitch(targetPitch);
-                mc.player.networkHandler.sendPacket(new PlayerMoveC2SPacket.LookAndOnGround(originalYaw, targetPitch, mc.player.isOnGround(), mc.player.horizontalCollision));
+                setRotation(originalYaw, targetPitch, rotationMode.get() == RotationMode.Silent);
             }
-            mc.player.networkHandler.sendPacket(new ClientCommandC2SPacket(mc.player, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
+            sendStartFlyingPacket();
             cooldownTimer = cooldown.get();
             if (setPitch.get()) {
                 restoring = true;
+            }
+            if (disableAfterTakeoff.get()) {
+                disableTimer = disableDelay.get();
             }
             return;
         }
 
-        // Falling takeoff: immediate (no jump needed)
+        // Falling takeoff – FIXED: now also jumps and waits 2 ticks
         if (takeOffWhenFalling.get() && !mc.player.isOnGround() && mc.player.getVelocity().y < fallingVelocityThreshold.get()) {
             if (setPitch.get()) {
                 originalYaw = mc.player.getYaw();
                 originalPitch = mc.player.getPitch();
-                float targetPitch = takeoffPitch.get().floatValue();
-                mc.player.setPitch(targetPitch);
-                mc.player.networkHandler.sendPacket(new PlayerMoveC2SPacket.LookAndOnGround(originalYaw, targetPitch, mc.player.isOnGround(), mc.player.horizontalCollision));
             }
-            mc.player.networkHandler.sendPacket(new ClientCommandC2SPacket(mc.player, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
-            cooldownTimer = cooldown.get();
-            if (setPitch.get()) {
-                restoring = true;
-            }
+            // Perform a jump (even though falling) to simulate double‑jump
+            mc.player.jump();
+            takeOffDelay = 2;
             return;
         }
+    }
+
+    public enum RotationMode {
+        Normal,
+        Silent
     }
 }
