@@ -33,17 +33,17 @@ public class IfpeekCommand extends Command {
     public void build(LiteralArgumentBuilder<CommandSource> builder) {
         builder.executes(ctx -> {
             if (mc.crosshairTarget == null || mc.crosshairTarget.getType() != HitResult.Type.ENTITY) {
-                error("You have to point at an item frame first.");
+                error("You have to point at an item frame first");
                 return SINGLE_SUCCESS;
             }
 
             if (!(mc.crosshairTarget instanceof EntityHitResult hitResult)) {
-                error("You have to point at an item frame first.");
+                error("You have to point at an item frame first");
                 return SINGLE_SUCCESS;
             }
 
             if (!(hitResult.getEntity() instanceof ItemFrameEntity itemFrame)) {
-                error("You have to point at an item frame first.");
+                error("You have to point at an item frame first");
                 return SINGLE_SUCCESS;
             }
 

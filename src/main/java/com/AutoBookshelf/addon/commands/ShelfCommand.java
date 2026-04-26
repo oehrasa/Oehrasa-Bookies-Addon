@@ -125,7 +125,7 @@ public class ShelfCommand extends Command {
             .then(argument("number", IntegerArgumentType.integer(1, 100))
                 .executes(ctx -> {
                     if (currentBook == null) {
-                        error("No book loaded. Use .shelf first to extract a book from a bookshelf.");
+                        error("No book loaded. Use .shelf first to extract a book from a bookshelf");
                         return SINGLE_SUCCESS;
                     }
                     int pageNum = IntegerArgumentType.getInteger(ctx, "number");
@@ -138,7 +138,7 @@ public class ShelfCommand extends Command {
         builder.then(literal("stats")
             .executes(ctx -> {
                 if (currentBook == null) {
-                    error("No book loaded. Use .shelf first to extract a book from a bookshelf.");
+                    error("No book loaded. Use .shelf first to extract a book from a bookshelf");
                     return SINGLE_SUCCESS;
                 }
                 showBookStats(currentBook);

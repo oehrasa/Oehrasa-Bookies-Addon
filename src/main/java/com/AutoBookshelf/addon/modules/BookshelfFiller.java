@@ -491,8 +491,6 @@ public class BookshelfFiller extends Module {
         displayTimer = 0;
     }
 
-    // ==================== BOOK COUNTER METHODS ====================
-
     private String getWorldName() {
         if (mc.world == null) return "unknown";
         return mc.world.getRegistryKey().getValue().toString();
@@ -683,7 +681,6 @@ public class BookshelfFiller extends Module {
         countPos2 = null;
     }
 
-    // ==================== END BOOK COUNTER METHODS ====================
 
     @EventHandler
     private void onInteract(InteractBlockEvent event) {

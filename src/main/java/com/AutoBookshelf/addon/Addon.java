@@ -56,6 +56,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new BookImporter());
         Modules.get().add(new AutoTakeOff());
         Modules.get().add(new ThrowEmptyShulkers());
+        Modules.get().add(new AutoBeacon());
 
         // HUD
         Hud.get().register(MayaChan.INFO);

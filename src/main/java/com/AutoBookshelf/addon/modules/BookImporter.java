@@ -85,7 +85,7 @@ public class BookImporter extends Module {
         .build()
     );
 
-    // Manual override (start from specific file/part)
+    // Manual override
     private final Setting<Integer> startFromFileIndex = sgResume.add(new IntSetting.Builder()
         .name("start-from-file-index")
         .description("Start from file at this position (1 = first file in sorted order)")
@@ -155,9 +155,9 @@ public class BookImporter extends Module {
     private ImportTask pendingNextTask = null;
     private int pendingFileIndex = -1;
 
-    // Progress persistence
+    // Progress persistence – store completed file+part keys
     private static final String PROGRESS_FILE = "AutoBookshelf/import_progress.json";
-    private ProgressData savedProgress = null;
+    private final Set<String> completedParts = new HashSet<>();  // keys = "fileName|partNumber"
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
 
     private static class ImportTask {
@@ -174,20 +174,6 @@ public class BookImporter extends Module {
         }
     }
 
-    private static class ProgressData {
-        String fileName;
-        int partNumber;
-        int fileIndex;
-        long lastUpdated;
-
-        ProgressData(String fileName, int partNumber, int fileIndex) {
-            this.fileName = fileName;
-            this.partNumber = partNumber;
-            this.fileIndex = fileIndex;
-            this.lastUpdated = System.currentTimeMillis();
-        }
-    }
-
     public BookImporter() {
         super(Addon.CATEGORY, "book-importer", "Automatically imports text files into signed books");
     }
@@ -200,7 +186,7 @@ public class BookImporter extends Module {
             return;
         }
 
-        loadProgress();
+        loadProgress();      // loads completedParts set from file
         scanAndQueueFiles();
 
         if (tasks.isEmpty()) {
@@ -221,32 +207,28 @@ public class BookImporter extends Module {
         boolean userOverride = (startFromFileIndex.get() != 1) || (startFromPart.get() != 1);
         sendMessage("§7Manual override: " + (userOverride ? "YES" : "NO"));
 
-        // Resume logic: use saved progress only if no override and persistent enabled
-        if (!userOverride && persistentProgress.get() && savedProgress != null) {
-            // Try to find file by name first (most reliable)
-            int foundIndex = -1;
+        // Find first incomplete task (skipping already completed parts)
+        boolean foundIncomplete = false;
+        if (!userOverride && persistentProgress.get()) {
             for (int i = 0; i < tasks.size(); i++) {
-                if (tasks.get(i).file.getName().equals(savedProgress.fileName)) {
-                    foundIndex = i;
-                    break;
+                ImportTask task = tasks.get(i);
+                for (int part = 1; part <= task.totalParts; part++) {
+                    String key = task.file.getName() + "|" + part;
+                    if (!completedParts.contains(key)) {
+                        startIndex = i;
+                        startPart = part;
+                        foundIncomplete = true;
+                        sendMessage("§aResuming from incomplete: " + task.file.getName() + " part " + part + "/" + task.totalParts);
+                        break;
+                    }
                 }
+                if (foundIncomplete) break;
             }
-            if (foundIndex >= 0) {
-                startIndex = foundIndex;
-                startPart = savedProgress.partNumber;
-                sendMessage("§aResuming from saved progress (by name): " + tasks.get(startIndex).file.getName() + " part " + startPart);
-            } else if (savedProgress.fileIndex < tasks.size()) {
-                // Fallback to index (if file was renamed, but unlikely)
-                startIndex = savedProgress.fileIndex;
-                startPart = savedProgress.partNumber;
-                sendMessage("§aResuming from saved progress (by index): " + tasks.get(startIndex).file.getName() + " part " + startPart);
-            } else {
-                sendMessage("§eSaved file not found, starting from beginning.");
+            if (!foundIncomplete) {
+                sendMessage("§eAll files appear to be fully imported. To re‑import, delete progress or files.");
+                toggle();
+                return;
             }
-        }
-
-        if (userOverride) {
-            sendMessage("§eManual override: ignoring saved progress");
         }
 
         isImporting = true;
@@ -278,7 +260,6 @@ public class BookImporter extends Module {
         sendMessage("Found " + tasks.size() + " file(s) to import");
         sendMessage("Starting with: " + currentTask.file.getName() + " part " + currentPart + "/" + totalParts);
 
-        // If we used a manual override, reset the override settings so they don't persist
         if (userOverride) {
             mc.execute(() -> {
                 startFromFileIndex.set(1);
@@ -295,49 +276,52 @@ public class BookImporter extends Module {
         tasks.clear();
         currentTask = null;
         tickDelay = 0;
-        saveProgress(); // Save on deactivation
+        saveProgress(); // Save completed parts set
     }
 
     private void saveProgress() {
         if (!persistentProgress.get()) return;
-        if (currentTask != null && isImporting) {
-            try {
-                Path progressPath = Paths.get(mc.runDirectory.getPath(), PROGRESS_FILE);
-                Files.createDirectories(progressPath.getParent());
-                ProgressData data = new ProgressData(currentTask.file.getName(), currentPart, currentFileIndex);
-                String json = gson.toJson(data);
-                Files.writeString(progressPath, json);
-            } catch (IOException e) {
-                error("Failed to save progress: " + e.getMessage());
-            }
+        try {
+            Path progressPath = Paths.get(mc.runDirectory.getPath(), PROGRESS_FILE);
+            Files.createDirectories(progressPath.getParent());
+            Map<String, Object> data = new HashMap<>();
+            data.put("completedParts", new ArrayList<>(completedParts));
+            data.put("lastUpdated", System.currentTimeMillis());
+            String json = gson.toJson(data);
+            Files.writeString(progressPath, json);
+        } catch (IOException e) {
+            error("Failed to save progress: " + e.getMessage());
         }
     }
 
+    @SuppressWarnings("unchecked")
     private void loadProgress() {
-        if (!persistentProgress.get()) {
-            savedProgress = null;
-            return;
-        }
+        completedParts.clear();
+        if (!persistentProgress.get()) return;
         try {
             Path progressPath = Paths.get(mc.runDirectory.getPath(), PROGRESS_FILE);
             if (Files.exists(progressPath)) {
                 String json = Files.readString(progressPath);
-                savedProgress = gson.fromJson(json, ProgressData.class);
+                Map<String, Object> data = gson.fromJson(json, Map.class);
+                if (data.containsKey("completedParts")) {
+                    List<String> parts = (List<String>) data.get("completedParts");
+                    completedParts.addAll(parts);
+                }
             }
-        } catch (IOException e) {
-            savedProgress = null;
+        } catch (Exception e) {
+            error("Failed to load progress: " + e.getMessage());
         }
     }
 
     private void resetProgressData() {
+        completedParts.clear();
         try {
             Path progressPath = Paths.get(mc.runDirectory.getPath(), PROGRESS_FILE);
             Files.deleteIfExists(progressPath);
-            savedProgress = null;
-            sendMessage("§aProgress has been reset!");
         } catch (IOException e) {
             error("Failed to reset progress: " + e.getMessage());
         }
+        sendMessage("§aProgress has been reset!");
     }
 
     private void scanAndQueueFiles() {
@@ -360,30 +344,22 @@ public class BookImporter extends Module {
         File[] files = folder.toFile().listFiles((dir, name) -> name.endsWith(".txt"));
         if (files == null) return;
 
-        // Custom natural sorting: by base name, then first number, then second number
+        // Custom natural sorting
         Arrays.sort(files, (a, b) -> {
             String nameA = a.getName();
             String nameB = b.getName();
-
-            // Base name = everything before the first digit
             String baseA = nameA.replaceFirst("\\d.*$", "");
             String baseB = nameB.replaceFirst("\\d.*$", "");
             int baseCompare = baseA.compareToIgnoreCase(baseB);
             if (baseCompare != 0) return baseCompare;
-
-            // Extract numbers
             Pattern pattern = Pattern.compile("\\d+");
             Matcher matcherA = pattern.matcher(nameA);
             Matcher matcherB = pattern.matcher(nameB);
-
-            int numA1 = 0, numA2 = 0;
-            int numB1 = 0, numB2 = 0;
-
+            int numA1 = 0, numA2 = 0, numB1 = 0, numB2 = 0;
             if (matcherA.find()) numA1 = Integer.parseInt(matcherA.group());
             if (matcherA.find()) numA2 = Integer.parseInt(matcherA.group());
             if (matcherB.find()) numB1 = Integer.parseInt(matcherB.group());
             if (matcherB.find()) numB2 = Integer.parseInt(matcherB.group());
-
             if (numA1 != numB1) return Integer.compare(numA1, numB1);
             return Integer.compare(numA2, numB2);
         });
@@ -393,22 +369,15 @@ public class BookImporter extends Module {
             try {
                 List<String> lines = Files.readAllLines(file.toPath());
                 List<String> pages = convertLinesToPages(lines);
-
                 if (pages.isEmpty()) {
                     error("File is empty: " + file.getName());
                     continue;
                 }
-
                 String baseTitle = file.getName().replace(".txt", "");
-                if (baseTitle.length() > 32) {
-                    baseTitle = baseTitle.substring(0, 32);
-                }
-
+                if (baseTitle.length() > 32) baseTitle = baseTitle.substring(0, 32);
                 int totalParts = (int) Math.ceil((double) pages.size() / pagesPerBook.get());
-
                 tasks.add(new ImportTask(file, baseTitle, pages, totalParts));
                 sendMessage("Queued: " + file.getName() + " (" + pages.size() + " pages, " + totalParts + " part(s))");
-
             } catch (IOException e) {
                 error("Failed to read file: " + file.getName());
             }
@@ -423,7 +392,6 @@ public class BookImporter extends Module {
             return;
         }
 
-        // Handle waiting for confirmation before next file
         if (waitingForConfirm) {
             if (requireConfirmNextFile.get() && confirmKey.get().isPressed()) {
                 waitingForConfirm = false;
@@ -439,7 +407,10 @@ public class BookImporter extends Module {
         }
 
         if (currentPart > totalParts) {
-            // Current file finished
+            // Current file finished – mark all its parts as completed
+            for (int i = 1; i <= totalParts; i++) {
+                completedParts.add(currentTask.file.getName() + "|" + i);
+            }
             saveProgress();
 
             if (deleteAfterImport.get() && currentTask != null && currentTask.file != null) {
@@ -461,7 +432,7 @@ public class BookImporter extends Module {
             if (requireConfirmNextFile.get()) {
                 sendMessage("§6=== File completed: " + currentTask.file.getName() + " ===");
                 sendMessage("§eNext file: " + nextTask.file.getName() + " (" + nextTask.totalParts + " parts)");
-                sendMessage("§aPress the confirm key (" + confirmKey.get().toString() + ") to continue, or disable/re-enable module to skip.");
+                sendMessage("§aPress the confirm key (" + confirmKey.get().toString() + ") to continue.");
                 waitingForConfirm = true;
                 pendingNextTask = nextTask;
                 pendingFileIndex = nextIndex;
@@ -492,11 +463,13 @@ public class BookImporter extends Module {
         signCurrentBook();
         totalBooksCreated++;
 
+        // Mark this part as completed
+        completedParts.add(currentTask.file.getName() + "|" + currentPart);
+        saveProgress();
+
         currentPart++;
         currentPageIndex += pagesPerBook.get();
         tickDelay = delayBetweenBooks.get();
-
-        saveProgress();
 
         if (currentPart <= totalParts) {
             sendMessage("Part " + currentPart + "/" + totalParts + " ready for " + currentTask.baseTitle);
@@ -505,20 +478,6 @@ public class BookImporter extends Module {
 
     private void applyNextFile() {
         if (pendingNextTask != null) {
-            // Verify the pending file still exists in the tasks list (in case list changed)
-            boolean stillExists = false;
-            for (int i = 0; i < tasks.size(); i++) {
-                if (tasks.get(i).file.getName().equals(pendingNextTask.file.getName())) {
-                    stillExists = true;
-                    pendingFileIndex = i;
-                    break;
-                }
-            }
-            if (!stillExists) {
-                sendMessage("§cThe next file no longer exists in the queue. Stopping import.");
-                finishImport();
-                return;
-            }
             currentFileIndex = pendingFileIndex;
             currentTask = pendingNextTask;
             currentPart = 1;
@@ -591,8 +550,8 @@ public class BookImporter extends Module {
     private void finishImport() {
         isImporting = false;
         waitingForConfirm = false;
-        // Do NOT reset progress – keep it for future runs
-        sendMessage("§aImport complete! Created " + totalBooksCreated + " book(s)");
+        // Do NOT reset progress – it stays as a record of what's done
+        sendMessage("§aImport complete! Created " + totalBooksCreated + " books");
         toggle();
     }
 
@@ -603,7 +562,7 @@ public class BookImporter extends Module {
         }
     }
 
-    // ========== Page conversion (Textbook logic) ==========
+    // Page conversion
     private List<String> convertLinesToPages(List<String> lines) {
         List<String> pages = new ArrayList<>();
         StringBuilder currentPage = new StringBuilder();

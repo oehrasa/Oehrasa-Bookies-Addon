@@ -17,11 +17,16 @@ import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityType;
+import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.passive.TameableEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_MIDDLE;
 
@@ -53,20 +58,20 @@ public class AutoSex extends Module {
     }
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgMobs = settings.createGroup("Mob Targeting");
     private final SettingGroup sgSex = settings.createGroup("Auto Sex");
     private final SettingGroup sgMovement = settings.createGroup("Movement");
 
-    // Target selection
     private final Setting<Mode> targetMode = sgGeneral.add(new EnumSetting.Builder<Mode>()
         .name("target-mode")
-        .description("The mode at which to follow the player.")
+        .description("The mode at which to follow the target")
         .defaultValue(Mode.BindClick)
         .build()
     );
 
     private final Setting<Keybind> keybind = sgGeneral.add(new KeybindSetting.Builder()
         .name("keybind")
-        .description("What key to press to start following someone.")
+        .description("What key to press to start following someone")
         .defaultValue(Keybind.fromKey(-1))
         .visible(() -> targetMode.get() == Mode.BindClick)
         .build()
@@ -74,7 +79,7 @@ public class AutoSex extends Module {
 
     private final Setting<SortPriority> priority = sgGeneral.add(new EnumSetting.Builder<SortPriority>()
         .name("target-priority")
-        .description("How to select the player to target.")
+        .description("How to select the target")
         .defaultValue(SortPriority.LowestDistance)
         .visible(() -> targetMode.get() == Mode.Automatic)
         .build()
@@ -82,7 +87,7 @@ public class AutoSex extends Module {
 
     private final Setting<Boolean> ignoreRange = sgGeneral.add(new BoolSetting.Builder()
         .name("ignore-range")
-        .description("Follow the player even if they are out of range.")
+        .description("Follow the target even if they are out of range")
         .defaultValue(false)
         .visible(() -> targetMode.get() == Mode.Automatic)
         .build()
@@ -90,7 +95,7 @@ public class AutoSex extends Module {
 
     private final Setting<Double> targetRange = sgGeneral.add(new DoubleSetting.Builder()
         .name("target-range")
-        .description("The range in which it follows a random player.")
+        .description("The range in which it follows a target")
         .defaultValue(50)
         .min(1)
         .max(200)
@@ -113,7 +118,34 @@ public class AutoSex extends Module {
         .build()
     );
 
-    // Movement settings
+    private final Setting<Set<EntityType<?>>> mobTypes = sgMobs.add(new EntityTypeListSetting.Builder()
+        .name("mob-types")
+        .description("Which mob types to target (only when automatic mode or manual targeting)")
+        .defaultValue()
+        .build()
+    );
+
+    private final Setting<Boolean> onlyHostileMobs = sgMobs.add(new BoolSetting.Builder()
+        .name("only-hostile")
+        .description("Only follow mobs that are currently hostile (angry/attacking)")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> ignoreNamedMobs = sgMobs.add(new BoolSetting.Builder()
+        .name("ignore-named")
+        .description("Ignore mobs that have a custom name")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> ignoreTamed = sgMobs.add(new BoolSetting.Builder()
+        .name("ignore-tamed")
+        .description("Ignore tamed mobs")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<ApproachMode> approachMode = sgMovement.add(new EnumSetting.Builder<ApproachMode>()
         .name("approach-mode")
         .description("How to approach the target")
@@ -160,7 +192,33 @@ public class AutoSex extends Module {
         .build()
     );
 
-    // Sex settings
+    private final Setting<Double> pathUpdateThreshold = sgMovement.add(new DoubleSetting.Builder()
+        .name("path-update-threshold")
+        .description("How far the target must move horizontally (blocks) before Baritone recalculates the path")
+        .defaultValue(0.5)
+        .min(0.1)
+        .max(2.0)
+        .sliderRange(0.1, 2.0)
+        .build()
+    );
+
+    private final Setting<Integer> pathUpdateCooldown = sgMovement.add(new IntSetting.Builder()
+        .name("path-update-cooldown")
+        .description("Minimum ticks between path recalculations")
+        .defaultValue(10)
+        .min(0)
+        .max(60)
+        .sliderRange(0, 60)
+        .build()
+    );
+
+    private final Setting<Boolean> debugMode = sgMovement.add(new BoolSetting.Builder()
+        .name("debug-mode")
+        .description("Show debug information")
+        .defaultValue(false)
+        .build()
+    );
+
     private final Setting<Boolean> twerkWhenClose = sgSex.add(new BoolSetting.Builder()
         .name("auto-hump")
         .description("Crouch against the target to give the appearance of sex OwO")
@@ -170,7 +228,7 @@ public class AutoSex extends Module {
 
     private final Setting<Integer> twerkSpeed = sgSex.add(new IntSetting.Builder()
         .name("twerk-speed")
-        .description("How many times per second to spam crouch (1-20)")
+        .description("How many times per second to spam crouch")
         .defaultValue(8)
         .min(1)
         .max(20)
@@ -248,17 +306,10 @@ public class AutoSex extends Module {
         .build()
     );
 
-    private final Setting<Boolean> debugMode = sgMovement.add(new BoolSetting.Builder()
-        .name("debug-mode")
-        .description("Show debug information.")
-        .defaultValue(false)
-        .build()
-    );
-
     private int messageI, timer;
     private boolean isFollowing = false;
-    private String playerName;
-    private PlayerEntity playerEntity;
+    private LivingEntity targetEntity;   // can be PlayerEntity or Mob
+    private String targetName;           // for display
     private int iPublic;
     private boolean pressed = false;
     private boolean alternate = true;
@@ -269,9 +320,11 @@ public class AutoSex extends Module {
     private BlockPos lastTargetPos = null;
     private boolean isInPosition = false;
     private int positionStableTimer = 0;
+    private Vec3d lastTargetPosVec = null;
+    private int pathCooldown = 0;
 
     public AutoSex() {
-        super(Addon.CATEGORY, "auto-Sex", "Tries to have sex with the player in different ways.");
+        super(Addon.CATEGORY, "auto-Sex", "Tries to have sex with the player or mob in freaky ways");
     }
 
     @Override
@@ -283,11 +336,13 @@ public class AutoSex extends Module {
         crouchState = false;
         isInPosition = false;
         positionStableTimer = 0;
-        
+        lastTargetPosVec = null;
+        pathCooldown = 0;
+
         try {
             baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
         } catch (Exception e) {
-            error("Baritone not found! Please install Baritone mod.");
+            error("Baritone not found! Please install Baritone mod");
             toggle();
         }
     }
@@ -295,67 +350,83 @@ public class AutoSex extends Module {
     @Override
     public void onDeactivate() {
         stopFollowing();
-        playerEntity = null;
-        playerName = null;
+        targetEntity = null;
+        targetName = null;
         isFollowing = false;
-        
-        // Reset crouch state
+
         if (wasCrouching) {
             mc.options.sneakKey.setPressed(false);
             wasCrouching = false;
             crouchState = false;
         }
-        
+
         if (baritone != null) {
             baritone.getPathingBehavior().cancelEverything();
         }
     }
 
-    private boolean isPlayerAllowed(PlayerEntity player) {
-        if (player == null) return false;
-        if (player == mc.player) return false;
-        
-        boolean isFriend = Friends.get().isFriend(player);
-        
-        return switch (friendFilter.get()) {
-            case ALL -> true;
-            case ONLY_FRIENDS -> isFriend;
-            case ONLY_NON_FRIENDS -> !isFriend;
-        };
+    // Check if an entity is allowed as target (respects friend filter only for players)
+    private boolean isEntityAllowed(LivingEntity entity) {
+        if (entity == null) return false;
+        if (entity == mc.player) return false;
+
+        // Player specific filtering
+        if (entity instanceof PlayerEntity player) {
+            boolean isFriend = Friends.get().isFriend(player);
+            return switch (friendFilter.get()) {
+                case ALL -> true;
+                case ONLY_FRIENDS -> isFriend;
+                case ONLY_NON_FRIENDS -> !isFriend;
+            };
+        }
+
+        // Mob filtering
+        if (!mobTypes.get().contains(entity.getType())) return false;
+        if (ignoreNamedMobs.get() && entity.hasCustomName()) return false;
+        if (ignoreTamed.get() && entity instanceof TameableEntity tameable && tameable.isTamed()) return false;
+        if (onlyHostileMobs.get()) {
+            // Simple hostile check: if the mob is currently attacking or angry
+            if (entity instanceof net.minecraft.entity.mob.Angerable angerable && angerable.getAngryAt() != null) return true;
+            if (entity instanceof net.minecraft.entity.mob.HostileEntity) return true;
+            // If not obviously hostile, treat as not allowed
+            return false;
+        }
+        return true;
     }
 
     @EventHandler
     private void onMouseButton(MouseButtonEvent event) {
         if (targetMode.get() == Mode.MiddleClick) {
-            if (event.action == KeyAction.Press && event.button == GLFW_MOUSE_BUTTON_MIDDLE && mc.currentScreen == null && mc.targetedEntity != null && mc.targetedEntity instanceof PlayerEntity) {
-                PlayerEntity target = (PlayerEntity) mc.targetedEntity;
-                
-                if (!isPlayerAllowed(target)) {
-                    if (friendFilter.get() == FriendFilter.ONLY_FRIENDS) {
-                        error("§cThat player is not your friend!");
-                    } else if (friendFilter.get() == FriendFilter.ONLY_NON_FRIENDS) {
-                        error("§cThat player is your friend!");
+            if (event.action == KeyAction.Press && event.button == GLFW_MOUSE_BUTTON_MIDDLE && mc.currentScreen == null && mc.targetedEntity != null && mc.targetedEntity instanceof LivingEntity living) {
+                if (!isEntityAllowed(living)) {
+                    if (living instanceof PlayerEntity) {
+                        if (friendFilter.get() == FriendFilter.ONLY_FRIENDS) error("§cThat player is not your friend!");
+                        else if (friendFilter.get() == FriendFilter.ONLY_NON_FRIENDS) error("§cThat player is your friend!");
+                        else error("§cThat entity is not allowed for targeting");
+                    } else {
+                        error("§cThat mob is not allowed (check mob types / filters)");
                     }
                     return;
                 }
-                
-                if (!isFollowing) {
-                    playerName = target.getName().getString();
-                    playerEntity = target;
 
-                    if (message.get()) {
+                if (!isFollowing) {
+                    targetEntity = living;
+                    targetName = living.getName().getString();
+
+                    if (message.get() && living instanceof PlayerEntity) {
                         startMsg();
                     }
 
                     startFollowing();
                     isFollowing = true;
                 } else {
-                    if (message.get()) {
+                    if (message.get() && targetEntity instanceof PlayerEntity) {
                         endMsg();
                     }
 
                     stopFollowing();
-                    playerName = null;
+                    targetEntity = null;
+                    targetName = null;
                     isFollowing = false;
                 }
             }
@@ -370,12 +441,13 @@ public class AutoSex extends Module {
         if (targetMode.get() == Mode.BindClick && keybind != null) {
             if (keybind.get().isPressed() && !pressed && !alternate) {
                 if (isFollowing) {
-                    if (message.get()) {
+                    if (message.get() && targetEntity instanceof PlayerEntity) {
                         endMsg();
                     }
                     pressed = true;
                     alternate = true;
-                    playerName = null;
+                    targetEntity = null;
+                    targetName = null;
                     stopFollowing();
                     isFollowing = false;
                 }
@@ -385,23 +457,23 @@ public class AutoSex extends Module {
                 pressed = false;
             }
 
-            if (keybind.get().isPressed() && !pressed && alternate && mc.currentScreen == null && mc.targetedEntity != null && mc.targetedEntity instanceof PlayerEntity) {
-                PlayerEntity target = (PlayerEntity) mc.targetedEntity;
-                
-                if (!isPlayerAllowed(target)) {
-                    if (friendFilter.get() == FriendFilter.ONLY_FRIENDS) {
-                        error("§cThat player is not your friend!");
-                    } else if (friendFilter.get() == FriendFilter.ONLY_NON_FRIENDS) {
-                        error("§cThat player is your friend!");
+            if (keybind.get().isPressed() && !pressed && alternate && mc.currentScreen == null && mc.targetedEntity != null && mc.targetedEntity instanceof LivingEntity living) {
+                if (!isEntityAllowed(living)) {
+                    if (living instanceof PlayerEntity) {
+                        if (friendFilter.get() == FriendFilter.ONLY_FRIENDS) error("§cThat player is not your friend!");
+                        else if (friendFilter.get() == FriendFilter.ONLY_NON_FRIENDS) error("§cThat player is your friend!");
+                        else error("§cThat entity is not allowed.");
+                    } else {
+                        error("§cThat mob is not allowed (check mob types / filters)");
                     }
                     return;
                 }
-                
-                if (!isFollowing) {
-                    playerName = target.getName().getString();
-                    playerEntity = target;
 
-                    if (message.get()) {
+                if (!isFollowing) {
+                    targetEntity = living;
+                    targetName = living.getName().getString();
+
+                    if (message.get() && living instanceof PlayerEntity) {
                         startMsg();
                     }
 
@@ -416,30 +488,28 @@ public class AutoSex extends Module {
         // Handle automatic mode
         if (targetMode.get() == Mode.Automatic) {
             if (!isFollowing) {
-                PlayerEntity potentialTarget = null;
+                LivingEntity potentialTarget = null;
                 double closestDistance = targetRange.get();
-                
-                for (PlayerEntity player : mc.world.getPlayers()) {
-                    if (isPlayerAllowed(player)) {
-                        double dist = mc.player.distanceTo(player);
+
+                for (Entity entity : mc.world.getEntities()) {
+                    if (entity instanceof LivingEntity living && isEntityAllowed(living)) {
+                        double dist = mc.player.distanceTo(entity);
                         if (dist <= closestDistance) {
                             closestDistance = dist;
-                            potentialTarget = player;
+                            potentialTarget = living;
                         }
                     }
                 }
-                
+
                 if (potentialTarget == null) {
-                    if (friendFilter.get() == FriendFilter.ONLY_FRIENDS && debugMode.get()) {
-                        error("§cNo friends found in range!");
-                    }
+                    if (debugMode.get() && friendFilter.get() == FriendFilter.ONLY_FRIENDS) error("§cNo valid targets in range!");
                     return;
                 }
-                
-                playerEntity = potentialTarget;
-                playerName = playerEntity.getName().getString();
 
-                if (message.get()) {
+                targetEntity = potentialTarget;
+                targetName = targetEntity.getName().getString();
+
+                if (message.get() && targetEntity instanceof PlayerEntity) {
                     startMsg();
                 }
 
@@ -447,25 +517,23 @@ public class AutoSex extends Module {
                 isFollowing = true;
             }
 
-            if (!playerEntity.isAlive() || (playerEntity.distanceTo(mc.player) > maxFollowRange.get() && !ignoreRange.get())) {
-                if (message.get()) {
+            if (!targetEntity.isAlive() || (targetEntity.distanceTo(mc.player) > maxFollowRange.get() && !ignoreRange.get())) {
+                if (message.get() && targetEntity instanceof PlayerEntity) {
                     endMsg();
                 }
-                playerEntity = null;
-                playerName = null;
+                targetEntity = null;
+                targetName = null;
                 stopFollowing();
                 isFollowing = false;
             }
         }
 
         // Handle following
-        if (isFollowing && playerEntity != null && baritone != null) {
+        if (isFollowing && targetEntity != null && baritone != null) {
             BlockPos targetPos = getApproachPosition();
-            
-            // Check if we've reached the goal block
+
             boolean reachedGoal = mc.player.getBlockPos().equals(targetPos);
-            
-            // Handle position state changes
+
             if (reachedGoal && !isInPosition) {
                 isInPosition = true;
                 positionStableTimer = 0;
@@ -475,7 +543,6 @@ public class AutoSex extends Module {
             } else if (!reachedGoal && isInPosition) {
                 isInPosition = false;
                 positionStableTimer = 0;
-                // Stop twerking when leaving position
                 if (wasCrouching) {
                     mc.options.sneakKey.setPressed(false);
                     wasCrouching = false;
@@ -483,18 +550,15 @@ public class AutoSex extends Module {
                     twerkTimer = 0;
                 }
             }
-            
-            // Continuous auto-look when in position
+
             if (isInPosition && autoLook.get()) {
                 updateLookAtBackOfHead();
             }
-            
-            // Handle twerking with delay
+
             if (isInPosition && twerkWhenClose.get()) {
                 if (positionStableTimer < twerkDelay.get()) {
                     positionStableTimer++;
                 } else {
-                    // Twerking logic
                     if (twerkTimer <= 0) {
                         int ticksBetween = Math.max(1, 20 / twerkSpeed.get());
                         twerkTimer = ticksBetween;
@@ -506,29 +570,47 @@ public class AutoSex extends Module {
                     }
                 }
             } else if (!isInPosition && wasCrouching) {
-                // Ensure crouch is off if not in position
                 mc.options.sneakKey.setPressed(false);
                 wasCrouching = false;
                 crouchState = false;
                 twerkTimer = 0;
             }
-            
-            // Pathfinding - only when not at goal
+
             if (!reachedGoal) {
-                if (lastTargetPos == null || !lastTargetPos.equals(targetPos)) {
+                if (pathCooldown > 0) pathCooldown--;
+
+                Vec3d targetPosVec = targetEntity.getPos();
+                boolean shouldUpdate = false;
+
+                if (lastTargetPosVec == null) {
+                    shouldUpdate = true;
+                } else {
+                    // Horizontal distance only (ignore jumping)
+                    double dx = targetPosVec.x - lastTargetPosVec.x;
+                    double dz = targetPosVec.z - lastTargetPosVec.z;
+                    double horizontalDist = Math.sqrt(dx * dx + dz * dz);
+                    if (horizontalDist >= pathUpdateThreshold.get()) {
+                        shouldUpdate = true;
+                    }
+                }
+
+                boolean goalChanged = (lastTargetPos == null || !lastTargetPos.equals(targetPos));
+
+                if ((shouldUpdate || goalChanged) && (pathCooldown == 0 || goalChanged)) {
+                    lastTargetPosVec = targetPosVec;
                     lastTargetPos = targetPos;
                     baritone.getCustomGoalProcess().setGoalAndPath(new GoalBlock(targetPos));
                     if (debugMode.get()) {
                         info("§7Pathfinding to: §f" + targetPos.getX() + ", " + targetPos.getY() + ", " + targetPos.getZ());
                     }
+                    pathCooldown = pathUpdateCooldown.get();
                 }
             } else if (baritone.getPathingBehavior().isPathing()) {
-                // Cancel pathfinding if we've reached the goal
                 baritone.getPathingBehavior().cancelEverything();
             }
 
-            // Dirty talk messages (only when in position)
-            if (isInPosition && dirtyTalk.get() && message.get() && !messages.get().isEmpty()) {
+            // Dirty talk only for players
+            if (isInPosition && dirtyTalk.get() && message.get() && targetEntity instanceof PlayerEntity && !messages.get().isEmpty()) {
                 if (timer <= 0) {
                     int i;
                     if (random.get()) {
@@ -549,88 +631,59 @@ public class AutoSex extends Module {
     }
 
     private BlockPos getApproachPosition() {
-        if (playerEntity == null) return mc.player.getBlockPos();
-        
-        Vec3d playerPos = playerEntity.getPos();
-        
+        if (targetEntity == null) return mc.player.getBlockPos();
+
+        Vec3d targetPos = targetEntity.getPos();
+
         return switch (approachMode.get()) {
-            case Direct -> {
-                yield new BlockPos(
-                    (int) Math.floor(playerPos.x),
-                    (int) Math.floor(playerPos.y),
-                    (int) Math.floor(playerPos.z)
-                );
-            }
+            case Direct -> new BlockPos((int) Math.floor(targetPos.x), (int) Math.floor(targetPos.y), (int) Math.floor(targetPos.z));
             case Behind -> {
-                // Get the direction the player is FACING
-                float yaw = playerEntity.getBodyYaw();
+                float yaw = targetEntity.getBodyYaw();
                 double rad = Math.toRadians(yaw);
-                
-                // Calculate facing direction (0° = South, 90° = West, etc.)
                 double facingX = -Math.sin(rad);
                 double facingZ = Math.cos(rad);
-                
-                // Behind is OPPOSITE direction
-                double behindX = playerPos.x - (facingX * behindOffset.get());
-                double behindZ = playerPos.z - (facingZ * behindOffset.get());
-                
-                yield new BlockPos(
-                    (int) Math.floor(behindX),
-                    (int) Math.floor(playerPos.y),
-                    (int) Math.floor(behindZ)
-                );
+                double behindX = targetPos.x - (facingX * behindOffset.get());
+                double behindZ = targetPos.z - (facingZ * behindOffset.get());
+                yield new BlockPos((int) Math.floor(behindX), (int) Math.floor(targetPos.y), (int) Math.floor(behindZ));
             }
             case Side -> {
-                // Side = perpendicular to facing direction (+90° for right side)
-                float yaw = playerEntity.getBodyYaw();
+                float yaw = targetEntity.getBodyYaw();
                 double rad = Math.toRadians(yaw + 90);
-                
                 double offsetX = -Math.sin(rad) * sideOffset.get();
                 double offsetZ = Math.cos(rad) * sideOffset.get();
-                
-                yield new BlockPos(
-                    (int) Math.floor(playerPos.x + offsetX),
-                    (int) Math.floor(playerPos.y),
-                    (int) Math.floor(playerPos.z + offsetZ)
-                );
+                yield new BlockPos((int) Math.floor(targetPos.x + offsetX), (int) Math.floor(targetPos.y), (int) Math.floor(targetPos.z + offsetZ));
             }
         };
     }
 
     private void updateLookAtBackOfHead() {
-        if (playerEntity == null) return;
-        
-        // Get the direction the player is facing
-        float yaw = playerEntity.getBodyYaw();
+        if (targetEntity == null) return;
+
+        float yaw = targetEntity.getBodyYaw();
         double rad = Math.toRadians(yaw);
-        
-        // Calculate facing direction
         double facingX = -Math.sin(rad);
         double facingZ = Math.cos(rad);
-        
-        // Position behind the head (0.5 blocks back, at eye height)
-        Vec3d headPos = playerEntity.getPos().add(
+
+        Vec3d headPos = targetEntity.getPos().add(
             facingX * 0.5,
-            playerEntity.getEyeHeight(playerEntity.getPose()),
+            targetEntity.getEyeHeight(targetEntity.getPose()),
             facingZ * 0.5
         );
-        
-        // Calculate rotation to look at that position
+
         double dx = headPos.x - mc.player.getX();
         double dy = headPos.y - (mc.player.getY() + mc.player.getEyeHeight(mc.player.getPose()));
         double dz = headPos.z - mc.player.getZ();
-        
+
         double dh = Math.sqrt(dx * dx + dz * dz);
         double targetYaw = Math.toDegrees(Math.atan2(dz, dx)) - 90;
         double targetPitch = -Math.toDegrees(Math.atan2(dy, dh));
-        
-        // Apply rotation
+
         Rotations.rotate(targetYaw, targetPitch, 50);
     }
 
     private void startFollowing() {
-        if (baritone != null && playerEntity != null) {
-            info("§aNow following §f" + playerName);
+        if (baritone != null && targetEntity != null) {
+            info("§aNow following §f" + targetName);
             info("§7Friend filter: §f" + friendFilter.get());
             info("§7Mode: §f" + approachMode.get());
             if (autoLook.get()) {
@@ -640,6 +693,8 @@ public class AutoSex extends Module {
                 info("§7Twerk delay: §f" + twerkDelay.get() / 20.0 + " §7seconds");
             }
             lastTargetPos = null;
+            lastTargetPosVec = null;
+            pathCooldown = 0;
             isInPosition = false;
             positionStableTimer = 0;
         } else {
@@ -658,6 +713,8 @@ public class AutoSex extends Module {
             twerkTimer = 0;
         }
         lastTargetPos = null;
+        lastTargetPosVec = null;
+        pathCooldown = 0;
         isInPosition = false;
         positionStableTimer = 0;
         info("§aStopped following");
@@ -665,46 +722,26 @@ public class AutoSex extends Module {
 
     public void startMsg() {
         if (dirtyTalk.get()) {
-            if (dm.get()) {
-                ChatUtils.sendPlayerMsg("/msg " + playerName + " Come here bby lets have sex uwu");
-            }
-            if (pm.get()) {
-                ChatUtils.sendPlayerMsg("Come here " + playerName + " lets have sex uwu");
-            }
+            if (dm.get()) ChatUtils.sendPlayerMsg("/msg " + targetName + " Come here bby lets have sex uwu");
+            if (pm.get()) ChatUtils.sendPlayerMsg("Heya, Come here " + targetName + " lets have sex uwu");
         } else {
-            if (dm.get()) {
-                ChatUtils.sendPlayerMsg("/msg " + playerName + " I am now following you");
-            }
-            if (pm.get()) {
-                ChatUtils.sendPlayerMsg("I am now following " + playerName);
-            }
+            if (dm.get()) ChatUtils.sendPlayerMsg("/msg " + targetName + " I am now following you");
+            if (pm.get()) ChatUtils.sendPlayerMsg("I am now following " + targetName);
         }
     }
 
     public void followMsg() {
-        if (dm.get()) {
-            ChatUtils.sendPlayerMsg("/msg " + playerName + " " + messages.get().get(iPublic).replace("(enemy)", playerName));
-        }
-        if (pm.get()) {
-            ChatUtils.sendPlayerMsg(messages.get().get(iPublic).replace("(enemy)", playerName));
-        }
+        if (dm.get()) ChatUtils.sendPlayerMsg("/msg " + targetName + " " + messages.get().get(iPublic).replace("(enemy)", targetName));
+        if (pm.get()) ChatUtils.sendPlayerMsg(messages.get().get(iPublic).replace("(enemy)", targetName));
     }
 
     public void endMsg() {
         if (dirtyTalk.get()) {
-            if (dm.get()) {
-                ChatUtils.sendPlayerMsg("/msg " + playerName + " See u later bby girl ;*");
-            }
-            if (pm.get()) {
-                ChatUtils.sendPlayerMsg("See u later " + playerName + " xxx ;*");
-            }
+            if (dm.get()) ChatUtils.sendPlayerMsg("/msg " + targetName + " See u later bby girl ;*");
+            if (pm.get()) ChatUtils.sendPlayerMsg("See u later " + targetName + " xxx ;*");
         } else {
-            if (dm.get()) {
-                ChatUtils.sendPlayerMsg("/msg " + playerName + " I am no longer following you");
-            }
-            if (pm.get()) {
-                ChatUtils.sendPlayerMsg("I am no longer following " + playerName);
-            }
+            if (dm.get()) ChatUtils.sendPlayerMsg("/msg " + targetName + " I am no longer following you");
+            if (pm.get()) ChatUtils.sendPlayerMsg("I am no longer following " + targetName);
         }
     }
 }

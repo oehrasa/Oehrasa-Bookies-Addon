@@ -220,7 +220,7 @@ public class BookCommand extends Command {
 
         List<Text> pages = content.getPages(true);
         if (pageNum < 1 || pageNum > pages.size()) {
-            error("Page " + pageNum + " does not exist. Book has " + pages.size() + " pages.");
+            error("Page " + pageNum + " does not exist. Book has " + pages.size() + " pages");
             return;
         }
 

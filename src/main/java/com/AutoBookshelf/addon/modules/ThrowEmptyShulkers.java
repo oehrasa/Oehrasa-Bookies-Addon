@@ -4,6 +4,7 @@ import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.ShulkerBoxBlock;
 import net.minecraft.component.DataComponentTypes;
@@ -53,26 +54,23 @@ public class ThrowEmptyShulkers extends Module {
         .build()
     );
 
-    // --- Filter ---
-
-    private enum FilterMode { WHITELIST, BLACKLIST }
-
-    private final Setting<FilterMode> filterMode = sgFilter.add(new EnumSetting.Builder<FilterMode>()
-        .name("filter-mode")
-        .description("Whitelist: skip shulkers containing listed items. Blacklist: throw shulkers containing listed items.")
-        .defaultValue(FilterMode.BLACKLIST)
+    // Rotation mode (silent = client‑side only, normal = sends packets)
+    private final Setting<RotationMode> rotationMode = sgThrow.add(new EnumSetting.Builder<RotationMode>()
+        .name("rotation-mode")
+        .description("Normal: sends rotation packets (server sees you turn). Silent: client‑side only (no packets).")
+        .defaultValue(RotationMode.Silent)
         .build()
     );
 
-    private final Setting<List<Item>> filterItems = sgFilter.add(new ItemListSetting.Builder()
-        .name("filter-items")
-        .description("Items to check inside shulkers. Behaviour depends on filter-mode.")
-        .defaultValue()
+    // Disable rotation entirely
+    private final Setting<Boolean> enableRotation = sgThrow.add(new BoolSetting.Builder()
+        .name("enable-rotation")
+        .description("Completely disable any rotation (yaw/pitch changes) – throws without moving your camera.")
+        .defaultValue(true)
         .build()
     );
 
-    // --- Throw Direction ---
-
+    // Throw direction offsets
     private final Setting<Double> yaw = sgThrow.add(new DoubleSetting.Builder()
         .name("yaw-offset")
         .description("Rotates your yaw by this amount before throwing. 180 = behind you, 0 = forward.")
@@ -95,11 +93,26 @@ public class ThrowEmptyShulkers extends Module {
         .build()
     );
 
-    // --- Single state machine ---
-    private enum ThrowState { IDLE, ROTATING, THROWING, RESTORING }
+    // Filter settings (unchanged)
+    private enum FilterMode { WHITELIST, BLACKLIST }
+    private final Setting<FilterMode> filterMode = sgFilter.add(new EnumSetting.Builder<FilterMode>()
+        .name("filter-mode")
+        .description("Whitelist: skip shulkers containing listed items. Blacklist: throw shulkers containing listed items.")
+        .defaultValue(FilterMode.BLACKLIST)
+        .build()
+    );
 
-    // --- Batch state machine ---
+    private final Setting<List<Item>> filterItems = sgFilter.add(new ItemListSetting.Builder()
+        .name("filter-items")
+        .description("Items to check inside shulkers. Behaviour depends on filter-mode.")
+        .defaultValue()
+        .build()
+    );
+
+    // State machines
+    private enum ThrowState { IDLE, ROTATING, THROWING, RESTORING }
     private enum BatchState { IDLE, ROTATING, THROWING_BATCH, RESTORING }
+    private enum RotationMode { Normal, Silent }
 
     private ThrowState throwState = ThrowState.IDLE;
     private BatchState batchState = BatchState.IDLE;
@@ -107,20 +120,12 @@ public class ThrowEmptyShulkers extends Module {
     private int tickTimer = 0;
     private float savedYaw = 0;
     private float savedPitch = 0;
-
-    // Single mode
     private int pendingSlot = -1;
-
-    // Batch mode
     private final List<Integer> pendingSlots = new ArrayList<>();
     private int batchIndex = 0;
 
     public ThrowEmptyShulkers() {
-        super(
-            Addon.CATEGORY,
-            "throw-shulkers",
-            "Automatically throws shulker boxes based on their contents."
-        );
+        super(Addon.CATEGORY, "throw-shulkers", "Automatically throws shulker boxes based on their contents.");
     }
 
     @Override
@@ -144,36 +149,38 @@ public class ThrowEmptyShulkers extends Module {
         }
     }
 
+    // Rotation helper using Rotations.rotate (like EndermanLook)
+    private void applyRotation(float yaw, float pitch) {
+        if (!enableRotation.get()) return; // no rotation at all
+        boolean silent = (rotationMode.get() == RotationMode.Silent);
+        Rotations.rotate(yaw, pitch, 50, silent, null);
+    }
+
+    // --- Single mode ---
     private void tickSingleMode() {
         switch (throwState) {
             case ROTATING -> {
-                savedYaw   = mc.player.getYaw();
+                savedYaw = mc.player.getYaw();
                 savedPitch = mc.player.getPitch();
-                mc.player.setYaw(savedYaw + yaw.get().floatValue());
-                mc.player.setPitch(savedPitch + pitch.get().floatValue());
+                applyRotation(savedYaw + yaw.get().floatValue(), savedPitch + pitch.get().floatValue());
                 throwState = ThrowState.THROWING;
             }
-
             case THROWING -> {
                 executeDrop(pendingSlot);
-                throwState = ThrowState.RESTORING;
+                throwState = enableRotation.get() ? ThrowState.RESTORING : ThrowState.IDLE;
+                if (!enableRotation.get()) tickTimer = delay.get();
             }
-
             case RESTORING -> {
-                mc.player.setYaw(savedYaw);
-                mc.player.setPitch(savedPitch);
+                applyRotation(savedYaw, savedPitch);
                 throwState = ThrowState.IDLE;
                 tickTimer = delay.get();
             }
-
             case IDLE -> {
                 if (tickTimer > 0) { tickTimer--; return; }
-
                 int endSlot = hotbarOnly.get() ? 9 : mc.player.getInventory().size();
                 for (int i = 0; i < endSlot; i++) {
-                    ItemStack stack = mc.player.getInventory().getStack(i);
-                    if (shouldThrow(stack)) {
-                        boolean needsRotation = yaw.get() != 0 || pitch.get() != 0;
+                    if (shouldThrow(mc.player.getInventory().getStack(i))) {
+                        boolean needsRotation = enableRotation.get() && (yaw.get() != 0 || pitch.get() != 0);
                         if (needsRotation) {
                             pendingSlot = i;
                             throwState = ThrowState.ROTATING;
@@ -188,20 +195,18 @@ public class ThrowEmptyShulkers extends Module {
         }
     }
 
+    // --- Batch mode ---
     private void tickBatchMode() {
         switch (batchState) {
             case ROTATING -> {
-                savedYaw   = mc.player.getYaw();
+                savedYaw = mc.player.getYaw();
                 savedPitch = mc.player.getPitch();
-                mc.player.setYaw(savedYaw + yaw.get().floatValue());
-                mc.player.setPitch(savedPitch + pitch.get().floatValue());
+                applyRotation(savedYaw + yaw.get().floatValue(), savedPitch + pitch.get().floatValue());
                 batchIndex = 0;
                 batchState = BatchState.THROWING_BATCH;
             }
-
             case THROWING_BATCH -> {
                 if (tickTimer > 0) { tickTimer--; return; }
-
                 if (batchIndex < pendingSlots.size()) {
                     int slot = pendingSlots.get(batchIndex);
                     if (shouldThrow(mc.player.getInventory().getStack(slot))) {
@@ -210,22 +215,23 @@ public class ThrowEmptyShulkers extends Module {
                     batchIndex++;
                     tickTimer = delay.get();
                 } else {
-                    batchState = BatchState.RESTORING;
+                    batchState = enableRotation.get() ? BatchState.RESTORING : BatchState.IDLE;
+                    if (!enableRotation.get()) {
+                        pendingSlots.clear();
+                        batchIndex = 0;
+                        tickTimer = delay.get();
+                    }
                 }
             }
-
             case RESTORING -> {
-                mc.player.setYaw(savedYaw);
-                mc.player.setPitch(savedPitch);
+                applyRotation(savedYaw, savedPitch);
                 pendingSlots.clear();
                 batchIndex = 0;
                 batchState = BatchState.IDLE;
                 tickTimer = delay.get();
             }
-
             case IDLE -> {
                 if (tickTimer > 0) { tickTimer--; return; }
-
                 pendingSlots.clear();
                 int endSlot = hotbarOnly.get() ? 9 : mc.player.getInventory().size();
                 for (int i = 0; i < endSlot; i++) {
@@ -233,10 +239,8 @@ public class ThrowEmptyShulkers extends Module {
                         pendingSlots.add(i);
                     }
                 }
-
                 if (pendingSlots.isEmpty()) return;
-
-                boolean needsRotation = yaw.get() != 0 || pitch.get() != 0;
+                boolean needsRotation = enableRotation.get() && (yaw.get() != 0 || pitch.get() != 0);
                 if (needsRotation) {
                     batchState = BatchState.ROTATING;
                 } else {
@@ -247,6 +251,7 @@ public class ThrowEmptyShulkers extends Module {
         }
     }
 
+    // Filter logic (unchanged)
     private boolean shouldThrow(ItemStack stack) {
         if (stack.isEmpty()) return false;
         if (!(stack.getItem() instanceof BlockItem blockItem)) return false;
@@ -258,7 +263,6 @@ public class ThrowEmptyShulkers extends Module {
         if (items.isEmpty()) return true;
 
         boolean containsFilteredItem = shulkerContainsAny(stack, items);
-
         return switch (filterMode.get()) {
             case WHITELIST -> !containsFilteredItem;
             case BLACKLIST -> containsFilteredItem;

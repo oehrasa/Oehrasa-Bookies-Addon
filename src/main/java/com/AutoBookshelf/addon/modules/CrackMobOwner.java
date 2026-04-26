@@ -15,6 +15,7 @@ import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.passive.TameableEntity;
 import net.minecraft.entity.projectile.thrown.EnderPearlEntity;
+import net.minecraft.entity.projectile.thrown.ThrownItemEntity;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.text.Text;
 import org.joml.Vector3d;
@@ -166,76 +167,34 @@ public class CrackMobOwner extends Module {
     }
 
     private UUID getOwnerUuidFromEntity(Entity entity) {
-        try {
-            // Method 1: Try to get from EnderPearlEntity's internal field
-            if (entity instanceof EnderPearlEntity pearl) {
-                // Use reflection to get the owner UUID
-                try {
-                    java.lang.reflect.Field ownerField = EnderPearlEntity.class.getDeclaredField("field_7749"); // owner field
-                    ownerField.setAccessible(true);
-                    Object owner = ownerField.get(pearl);
-                    if (owner instanceof UUID uuid) return uuid;
-                    if (owner instanceof Entity ownerEntity) return ownerEntity.getUuid();
-                } catch (Exception e) {
-                    if (debugMode.get()) info("§cReflection failed for pearl: " + e.getMessage());
-                }
-            }
+        // 1. Tamed animals – getOwnerUuid() returns a UUID (null if not tamed)
+        if (entity instanceof TameableEntity tame) {
+            return tame.getOwnerUuid();
+        }
 
-            // Method 2: Read from NBT (works for both pearls and tamed mobs)
+        // 2. End pearls – owner UUID is in NBT, works offline
+        if (entity instanceof EnderPearlEntity) {
             NbtCompound nbt = new NbtCompound();
             entity.writeNbt(nbt);
-
-            if (debugMode.get()) {
-                info("§7[Debug] NBT keys for §f" + entity.getType().getName().getString() + "§7: §f" + String.join(", ", nbt.getKeys()));
-            }
-
-            // Try all possible owner UUID formats
             if (nbt.containsUuid("Owner")) {
-                UUID uuid = nbt.getUuid("Owner");
-                if (debugMode.get()) info("§a[Debug] Found Owner UUID: §f" + uuid);
-                return uuid;
+                return nbt.getUuid("Owner");
             }
+            if (nbt.contains("Owner", 8)) {
+                try { return UUID.fromString(nbt.getString("Owner")); } catch (IllegalArgumentException ignored) {}
+            }
+        }
 
-            if (nbt.contains("Owner", 8)) { // 8 = String type
-                try {
-                    UUID uuid = UUID.fromString(nbt.getString("Owner"));
-                    if (debugMode.get()) info("§a[Debug] Found Owner string: §f" + uuid);
-                    return uuid;
-                } catch (IllegalArgumentException ignored) {}
-            }
+        // 3. Fallback for any other entity type
+        NbtCompound nbt = new NbtCompound();
+        entity.writeNbt(nbt);
+        if (nbt.containsUuid("Owner")) return nbt.getUuid("Owner");
+        if (nbt.containsUuid("owner")) return nbt.getUuid("owner");
+        if (nbt.contains("Owner", 8)) {
+            try { return UUID.fromString(nbt.getString("Owner")); } catch (IllegalArgumentException ignored) {}
+        }
 
-            if (nbt.containsUuid("owner")) {
-                UUID uuid = nbt.getUuid("owner");
-                if (debugMode.get()) info("§a[Debug] Found owner UUID: §f" + uuid);
-                return uuid;
-            }
-
-            // Method 3: Try to get from TameableEntity's owner reference
-            if (entity instanceof TameableEntity tameable) {
-                // Try to get owner UUID via reflection from the tameable's owner field
-                try {
-                    java.lang.reflect.Field ownerField = TameableEntity.class.getDeclaredField("field_7505"); // owner field
-                    ownerField.setAccessible(true);
-                    Object owner = ownerField.get(tameable);
-                    if (owner instanceof UUID uuid) return uuid;
-                    if (owner instanceof Entity ownerEntity && ownerEntity != null) return ownerEntity.getUuid();
-                } catch (Exception e) {
-                    if (debugMode.get()) info("§cReflection failed for tameable: " + e.getMessage());
-                }
-            }
-
-            if (debugMode.get()) {
-                info("§c[Debug] NO OWNER FOUND in NBT for §f" + entity.getType().getName().getString());
-                // Print all NBT contents for debugging
-                for (String key : nbt.getKeys()) {
-                    info("§7[Debug]   §f" + key + "§7: §f" + nbt.get(key).toString());
-                }
-            }
-
-        } catch (Exception e) {
-            if (debugMode.get()) {
-                error("§c[Debug] Failed to read owner: " + e.getMessage());
-            }
+        if (debugMode.get()) {
+            info("§cNo owner UUID for §f" + entity.getType().getName().getString());
         }
         return null;
     }
@@ -251,7 +210,6 @@ public class CrackMobOwner extends Module {
         int newMobs = 0;
 
         for (Entity entity : mc.world.getEntities()) {
-            // Process tamed animals and ender pearls
             boolean isTameable = entity instanceof TameableEntity;
             boolean isPearl = entity instanceof EnderPearlEntity;
 
@@ -269,15 +227,17 @@ public class CrackMobOwner extends Module {
                 mobToOwner.put(mobUuid, ownerUuid);
                 newMobs++;
 
-                String entityName = entity.getType().getName().getString();
-                info("§a✓ Cached: §f" + entityName +
-                     " §7→ §f" + ownerUuid.toString().substring(0, 8) + "...");
+                if (debugMode.get()) {
+                    String entityName = entity.getType().getName().getString();
+                    info("§a✓ Cached: §f" + entityName +
+                        " §7→ §f" + ownerUuid.toString().substring(0, 8) + "...");
 
-                // Try to get name from tab list
-                String name = findNameInTabList(ownerUuid);
-                if (name != null) {
-                    ownerNameCache.put(ownerUuid, name);
-                    info("§a  └─ Name: §f" + name);
+                    // Try to get name from tab list
+                    String name = findNameInTabList(ownerUuid);
+                    if (name != null) {
+                        ownerNameCache.put(ownerUuid, name);
+                        info("§a  └─ Name: §f" + name);
+                    }
                 }
 
                 if (persistentCache.get()) {
@@ -331,7 +291,7 @@ public class CrackMobOwner extends Module {
                             }
                         }
                         displayText = (name != null) ? name :
-                                     (showUnknown.get() ? ownerUuid.toString().substring(0, 8) + "..." : null);
+                            (showUnknown.get() ? ownerUuid.toString().substring(0, 8) + "..." : null);
                     }
 
                     if (displayText != null) {
