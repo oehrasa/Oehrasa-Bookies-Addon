@@ -34,14 +34,14 @@ public class BookImporter extends Module {
 
     private final Setting<String> importFolder = sgGeneral.add(new StringSetting.Builder()
         .name("import-folder")
-        .description("Folder path containing .txt files to import")
+        .description("Folder path containing .txt files to import.")
         .defaultValue("AutoBookshelf/books")
         .build()
     );
 
     private final Setting<Integer> pagesPerBook = sgGeneral.add(new IntSetting.Builder()
         .name("pages-per-book")
-        .description("Maximum pages per book (100 is Minecraft limit)")
+        .description("Maximum pages per book.")
         .defaultValue(100)
         .min(1)
         .max(100)
@@ -50,31 +50,30 @@ public class BookImporter extends Module {
 
     private final Setting<Boolean> deleteAfterImport = sgGeneral.add(new BoolSetting.Builder()
         .name("delete-after-import")
-        .description("Delete .txt files after importing")
+        .description("Delete .txt files after importing.")
         .defaultValue(false)
         .build()
     );
 
     private final Setting<Integer> delayBetweenBooks = sgGeneral.add(new IntSetting.Builder()
         .name("delay-between-books")
-        .description("Ticks to wait between creating each book")
+        .description("Ticks to wait between creating each book.")
         .defaultValue(60)
         .min(0)
         .max(100)
         .build()
     );
 
-    // Persistent progress
     private final Setting<Boolean> persistentProgress = sgResume.add(new BoolSetting.Builder()
         .name("persistent-progress")
-        .description("Save progress to file and resume after restart/crash")
+        .description("Save progress to file and resume after restart/crash.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> saveNow = sgResume.add(new BoolSetting.Builder()
         .name("save-now")
-        .description("Manually save current progress (toggle ON, then OFF manually)")
+        .description("Manually save current progress.")
         .defaultValue(false)
         .onChanged(value -> {
             if (value) {
@@ -88,7 +87,7 @@ public class BookImporter extends Module {
     // Manual override
     private final Setting<Integer> startFromFileIndex = sgResume.add(new IntSetting.Builder()
         .name("start-from-file-index")
-        .description("Start from file at this position (1 = first file in sorted order)")
+        .description("Start from file at this position (1 = first file in sorted order).")
         .defaultValue(1)
         .min(1)
         .max(100)
@@ -97,14 +96,13 @@ public class BookImporter extends Module {
 
     private final Setting<Integer> startFromPart = sgResume.add(new IntSetting.Builder()
         .name("start-from-part")
-        .description("Start from this part number within the file")
+        .description("Start from this part number within the file.")
         .defaultValue(1)
         .min(1)
         .max(100)
         .build()
     );
 
-    // Confirmation before next file
     private final Setting<Boolean> requireConfirmNextFile = sgResume.add(new BoolSetting.Builder()
         .name("confirm-next-file")
         .description("Wait for key press before moving to next file")
@@ -115,7 +113,7 @@ public class BookImporter extends Module {
     private final Setting<Keybind> confirmKey = sgResume.add(new KeybindSetting.Builder()
         .name("confirm-key")
         .description("Key to press to confirm moving to next file")
-        .defaultValue(Keybind.fromKey(84)) // Y key
+        .defaultValue(Keybind.fromKey(84))
         .visible(requireConfirmNextFile::get)
         .build()
     );
@@ -155,10 +153,14 @@ public class BookImporter extends Module {
     private ImportTask pendingNextTask = null;
     private int pendingFileIndex = -1;
 
-    // Progress persistence – store completed file+part keys
+    // Progress persistence (store completed file and part keys)
     private static final String PROGRESS_FILE = "AutoBookshelf/import_progress.json";
     private final Set<String> completedParts = new HashSet<>();  // keys = "fileName|partNumber"
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
+
+    public Setting<Boolean> getSaveNow() {
+        return saveNow;
+    }
 
     private static class ImportTask {
         File file;
@@ -175,7 +177,7 @@ public class BookImporter extends Module {
     }
 
     public BookImporter() {
-        super(Addon.CATEGORY, "book-importer", "Automatically imports text files into signed books");
+        super(Addon.CATEGORY, "book-importer", "Automatically imports text files into signed books.");
     }
 
     @Override
@@ -186,7 +188,7 @@ public class BookImporter extends Module {
             return;
         }
 
-        loadProgress();      // loads completedParts set from file
+        loadProgress();      // loads completed parts set from file
         scanAndQueueFiles();
 
         if (tasks.isEmpty()) {
@@ -276,7 +278,7 @@ public class BookImporter extends Module {
         tasks.clear();
         currentTask = null;
         tickDelay = 0;
-        saveProgress(); // Save completed parts set
+        saveProgress();
     }
 
     private void saveProgress() {
@@ -407,7 +409,7 @@ public class BookImporter extends Module {
         }
 
         if (currentPart > totalParts) {
-            // Current file finished – mark all its parts as completed
+            // Current file finished then mark all its parts as completed
             for (int i = 1; i <= totalParts; i++) {
                 completedParts.add(currentTask.file.getName() + "|" + i);
             }
@@ -436,7 +438,6 @@ public class BookImporter extends Module {
                 waitingForConfirm = true;
                 pendingNextTask = nextTask;
                 pendingFileIndex = nextIndex;
-                return;
             } else {
                 currentFileIndex = nextIndex;
                 currentTask = nextTask;
@@ -448,8 +449,8 @@ public class BookImporter extends Module {
                 sendMessage("Moving to next file: " + currentTask.file.getName());
                 sendMessage("Part 1/" + totalParts + " ready for " + currentTask.baseTitle);
                 saveProgress();
-                return;
             }
+            return;
         }
 
         // Normal book signing loop
@@ -550,7 +551,7 @@ public class BookImporter extends Module {
     private void finishImport() {
         isImporting = false;
         waitingForConfirm = false;
-        // Do NOT reset progress – it stays as a record of what's done
+        // Do NOT reset progress, it stays as a record of what's done
         sendMessage("§aImport complete! Created " + totalBooksCreated + " books");
         toggle();
     }

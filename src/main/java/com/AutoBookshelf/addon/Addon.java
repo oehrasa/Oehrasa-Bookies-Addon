@@ -9,14 +9,11 @@ import com.AutoBookshelf.addon.commands.BookCommand;
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
-import meteordevelopment.meteorclient.pathing.BaritoneUtils;
 import meteordevelopment.meteorclient.commands.Commands;
-import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.systems.hud.Hud;
 import meteordevelopment.meteorclient.systems.hud.HudGroup;
 import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.systems.modules.Modules;
-import meteordevelopment.orbit.EventHandler;
 
 import com.AutoBookshelf.addon.modules.*;
 import net.minecraft.item.Items;
@@ -40,7 +37,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new CalibratedRange());
         Modules.get().add(new CrackMobOwner());
         Modules.get().add(new AutoChestAura());
-        Modules.get().add(new ProjectilePredict());
+        Modules.get().add(new TrajectoryPlus());
         Modules.get().add(new BetterBoatFly());
         Modules.get().add(new BoatPhase());
         Modules.get().add(new BoatGlitch());
@@ -51,12 +48,13 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new AudiobookReader());
         Modules.get().add(new PlatformBuilder());
         Modules.get().add(new UnwaxAura());
-        Modules.get().add(new ClearDespawn());
+        Modules.get().add(new ItemDespawn());
         Modules.get().add(new TntFuseEsp());
         Modules.get().add(new BookImporter());
         Modules.get().add(new AutoTakeOff());
         Modules.get().add(new ThrowEmptyShulkers());
         Modules.get().add(new AutoBeacon());
+        Modules.get().add(new InvisFrameCommand());
 
         // HUD
         Hud.get().register(MayaChan.INFO);

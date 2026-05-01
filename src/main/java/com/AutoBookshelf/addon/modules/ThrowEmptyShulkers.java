@@ -28,8 +28,8 @@ public class ThrowEmptyShulkers extends Module {
         .description("Delay in ticks between each shulker throw.")
         .defaultValue(5)
         .min(1)
-        .max(40)
-        .sliderMax(20)
+        .max(100)
+        .sliderRange(1, 100)
         .build()
     );
 
@@ -125,7 +125,7 @@ public class ThrowEmptyShulkers extends Module {
     private int batchIndex = 0;
 
     public ThrowEmptyShulkers() {
-        super(Addon.CATEGORY, "throw-shulkers", "Automatically throws shulker boxes based on their contents.");
+        super(Addon.CATEGORY, "Throw-Shulkers", "Automatically throws shulker boxes based on their contents.");
     }
 
     @Override
@@ -149,7 +149,7 @@ public class ThrowEmptyShulkers extends Module {
         }
     }
 
-    // Rotation helper using Rotations.rotate (like EndermanLook)
+    // Rotation helper using Rotations.rotate
     private void applyRotation(float yaw, float pitch) {
         if (!enableRotation.get()) return; // no rotation at all
         boolean silent = (rotationMode.get() == RotationMode.Silent);

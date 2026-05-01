@@ -43,7 +43,7 @@ public class AutoLogin extends Module {
 
     private final Setting<String> file_name = sgGeneral.add(new StringSetting.Builder()
         .name("file-name")
-        .description("name for a file that would contain the passwords (stores in .minecraft folder)")
+        .description("name for a file that would contain the passwords (stores in .minecraft folder).")
         .visible(() -> fromFile.get())
         .defaultValue("passwords.txt")
         .build()
@@ -51,7 +51,7 @@ public class AutoLogin extends Module {
 
     private final Setting<String> loginCommand = sgGeneral.add(new StringSetting.Builder()
         .name("login-command")
-        .description("Command to login")
+        .description("Command to login.")
         .visible(() -> !fromFile.get())
         .defaultValue("login 1234")
         .build()
@@ -59,14 +59,14 @@ public class AutoLogin extends Module {
 
     private final Setting<Boolean> serverOnly = sgGeneral.add(new BoolSetting.Builder()
         .name("server-only")
-        .description("Use Auto Login only on server")
+        .description("Use Auto Login only on server.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
         .name("delay")
-        .description("Delay before send command in ticks (20 ticks = 1 sec)")
+        .description("Delay before send command in ticks.")
         .defaultValue(20)
         .range(1, 120)
         .sliderRange(1, 40)
@@ -75,14 +75,14 @@ public class AutoLogin extends Module {
 
     private final Setting<Boolean> debugPrint = sgGeneral.add(new BoolSetting.Builder()
         .name("debug-print")
-        .description("prints messages for debugging")
+        .description("prints messages for debugging.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> debugServer = sgGeneral.add(new BoolSetting.Builder()
         .name("debug-print-server-ip")
-        .description("prints message of current server ip")
+        .description("prints message of current server ip.")
         .visible(() -> debugPrint.get())
         .defaultValue(true)
         .build()
@@ -110,7 +110,7 @@ public class AutoLogin extends Module {
     private int timeout = 0;                    // timeout counter to prevent getting stuck
 
     public AutoLogin(Category cat) {
-        super(cat, "Auto-Login", "Automatically logs in your account via file Data");
+        super(cat, "Auto-Login", "Automatically logs in your account via file Data.");
     }
 
     @Override
@@ -149,7 +149,7 @@ public class AutoLogin extends Module {
             return;
         }
 
-        // Check for at least one empty inventory slot (to avoid dropping on ground)
+        // Check for at least one empty inventory slot
         if (isInventoryFull()) {
             sendMessage("§cInventory is full! Cannot extract book (would drop on ground).");
             return;

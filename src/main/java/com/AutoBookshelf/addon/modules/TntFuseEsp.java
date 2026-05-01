@@ -1,20 +1,18 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
-import meteordevelopment.meteorclient.events.render.Render2DEvent;
+import com.mojang.blaze3d.systems.RenderSystem;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.TntEntity;
-import net.minecraft.util.math.Vec3d;
 import org.joml.Vector3d;
 
 public class TntFuseEsp extends Module {
@@ -132,93 +130,58 @@ public class TntFuseEsp extends Module {
 
     @EventHandler
     private void onRender3D(Render3DEvent event) {
-        if (mc.world == null || mc.player == null || !showTntFuse.get()) {
-            return;
-        }
+        if (mc.world == null || mc.player == null) return;
+
+        // Set up NametagUtils with the current 3D matrices (critical for text projection)
+        NametagUtils.onRender(RenderSystem.getModelViewMatrix());
 
         for (Entity entity : mc.world.getEntities()) {
-            if (!(entity instanceof TntEntity tntEntity)) {
-                continue;
+            if (!(entity instanceof TntEntity tntEntity)) continue;
+
+            int fuse = tntEntity.getFuse();
+            boolean isLit = fuse < 80;
+            double distance = mc.player.getPos().distanceTo(entity.getPos());
+
+            // ---- Render 3D box (if enabled) ----
+            if (showTntFuse.get() && isLit) {
+                Color color = fuseColor(fuse);
+                Color sideColor = new Color(color.r, color.g, color.b, sideOpacity.get());
+                Color lineColor = new Color(color.r, color.g, color.b, lineOpacity.get());
+                event.renderer.box(entity.getX() - 0.5, entity.getY(), entity.getZ() - 0.5,
+                    entity.getX() + 0.5, entity.getY() + 1, entity.getZ() + 0.5,
+                    sideColor, lineColor, shapeMode.get(), 0);
             }
 
-            Color color = fuseColor(tntEntity.getFuse());
+            // ---- Render text (if enabled) ----
+            if (showTntFuseText.get() && isLit) {
+                if (hideWhenNear.get() && distance <= nearDistance.get()) continue;
+                if (hideWhenFar.get() && distance >= farDistance.get()) continue;
 
-            Color sideColor = new Color(color.r, color.g, color.b, sideOpacity.get());
-            Color lineColor = new Color(color.r, color.g, color.b, lineOpacity.get());
+                // Position above the TNT
+                Vector3d pos = new Vector3d(entity.getX(), entity.getY() + 1.2, entity.getZ());
 
-            event.renderer.box(entity.getX() - 0.5, entity.getY(), entity.getZ() - 0.5,
-                entity.getX() + 0.5, entity.getY() + 1, entity.getZ() + 0.5,
-                sideColor, lineColor, shapeMode.get(), 0);
-        }
-    }
+                // Project to screen and render
+                if (NametagUtils.to2D(pos, textScale.get())) {
+                    String text = String.format("%.2fs", fuse / 20.0);
+                    Color color = computeColorFromFuse.get() ? fuseColor(fuse) : textColor.get();
 
-    @EventHandler
-    private void onRender2D(Render2DEvent event) {
-        if (mc.world == null || mc.player == null || !showTntFuseText.get()) {
-            return;
-        }
-
-        for (Entity entity : mc.world.getEntities()) {
-            if (!(entity instanceof TntEntity tntEntity)) {
-                continue;
-            }
-
-            Vec3d pos = entity.getPos();
-
-            // Distance check
-            double distance = mc.player.getPos().distanceTo(pos);
-
-            if (hideWhenNear.get() && distance <= nearDistance.get()) {
-                continue;
-            }
-
-            if (hideWhenFar.get() && distance >= farDistance.get()) {
-                continue;
-            }
-
-            // Create Vector3d for NametagUtils
-            Vector3d vec3 = new Vector3d(pos.x, pos.y + 1.0, pos.z);
-
-            if (NametagUtils.to2D(vec3, textScale.get())) {
-                NametagUtils.begin(vec3);
-
-                String text = String.format("%.2f", (double) tntEntity.getFuse() / 20);
-
-                Color color;
-                if (computeColorFromFuse.get()) {
-                    color = fuseColor(tntEntity.getFuse());
-                } else {
-                    color = textColor.get();
+                    NametagUtils.begin(pos);
+                    TextRenderer.get().begin(1.0, false, true);
+                    double textWidth = TextRenderer.get().getWidth(text);
+                    TextRenderer.get().render(text, -textWidth / 2, -10, color, true);
+                    TextRenderer.get().end();
+                    NametagUtils.end();
                 }
-
-                // Render the text
-                TextRenderer.get().begin(1.0, false, true);
-                double textWidth = TextRenderer.get().getWidth(text);
-                double textHeight = TextRenderer.get().getHeight();
-
-                TextRenderer.get().render(
-                    text,
-                    -textWidth / 2,
-                    -textHeight / 2,
-                    color,
-                    true
-                );
-                TextRenderer.get().end();
-
-                NametagUtils.end();
             }
         }
     }
 
     private static Color fuseColor(int currentFuseTicks) {
         final int initialFuse = 80;
-
         double percent = (double) currentFuseTicks / initialFuse;
         percent = Math.max(0.0, Math.min(1.0, percent));
-
         int r = (int) (255 * (1.0 - percent));
         int g = (int) (255 * percent);
-
         return new Color(r, g, 0);
     }
 }

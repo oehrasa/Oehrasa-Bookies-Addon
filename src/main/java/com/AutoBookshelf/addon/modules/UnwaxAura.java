@@ -27,11 +27,11 @@ import java.util.Set;
 
 public class UnwaxAura extends Module {
     public enum CopperFilter {
-        ALL("All Waxed Copper"),
-        ONLY_OXIDIZED("Only Oxidized"),
-        ONLY_WEATHERED("Only Weathered"),
-        ONLY_EXPOSED("Only Exposed"),
-        ONLY_UNAFFECTED("Only Normal Copper");
+        ALL("All Waxed Copper."),
+        ONLY_OXIDIZED("Only Oxidized."),
+        ONLY_WEATHERED("Only Weathered."),
+        ONLY_EXPOSED("Only Exposed."),
+        ONLY_UNAFFECTED("Only Normal Copper.");
 
         private final String title;
         CopperFilter(String title) { this.title = title; }
@@ -39,9 +39,9 @@ public class UnwaxAura extends Module {
     }
 
     public enum BreakMode {
-        NONE("None - Just remove wax"),
-        BREAK("Break - Break the block after unwaxing"),
-        BREAK_ALL("Break All - Break all unwaxed copper blocks");
+        NONE("None - Just remove wax."),
+        BREAK("Break - Break the block after unwaxing."),
+        BREAK_ALL("Break All - Break all unwaxed copper blocks.");
 
         private final String title;
         BreakMode(String title) { this.title = title; }
@@ -144,7 +144,7 @@ public class UnwaxAura extends Module {
     // General settings
     private final Setting<Integer> unwaxDelay = sgGeneral.add(new IntSetting.Builder()
         .name("unwax-delay")
-        .description("Delay between removing wax from blocks in ticks")
+        .description("Delay between removing wax from blocks in ticks.")
         .defaultValue(10)
         .min(1)
         .max(40)
@@ -154,7 +154,7 @@ public class UnwaxAura extends Module {
 
     private final Setting<Integer> range = sgGeneral.add(new IntSetting.Builder()
         .name("range")
-        .description("How far to reach for blocks")
+        .description("How far to reach for blocks.")
         .defaultValue(4)
         .min(1)
         .max(6)
@@ -164,14 +164,14 @@ public class UnwaxAura extends Module {
 
     private final Setting<Boolean> rotate = sgGeneral.add(new BoolSetting.Builder()
         .name("rotate")
-        .description("Rotate to face the block before removing wax")
+        .description("Rotate to face the block before removing wax.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> autoTool = sgGeneral.add(new BoolSetting.Builder()
         .name("auto-tool")
-        .description("Automatically switch to an axe for unwaxing")
+        .description("Automatically switch to an axe for unwaxing.")
         .defaultValue(true)
         .build()
     );
@@ -183,17 +183,16 @@ public class UnwaxAura extends Module {
         .build()
     );
 
-    // Break mode settings (breakMode must be defined first)
     private final Setting<BreakMode> breakMode = sgBreak.add(new EnumSetting.Builder<BreakMode>()
         .name("break-mode")
-        .description("What to do with the block after removing wax")
+        .description("What to do with the block after removing wax.")
         .defaultValue(BreakMode.NONE)
         .build()
     );
 
     private final Setting<Integer> breakDelay = sgBreak.add(new IntSetting.Builder()
         .name("break-delay")
-        .description("Delay between breaking blocks in ticks (after unwaxing)")
+        .description("Delay between breaking blocks in ticks after unwaxing.")
         .defaultValue(10)
         .min(1)
         .max(40)
@@ -204,7 +203,7 @@ public class UnwaxAura extends Module {
 
     private final Setting<Boolean> autoPick = sgBreak.add(new BoolSetting.Builder()
         .name("auto-pick")
-        .description("Automatically switch to a pickaxe for breaking")
+        .description("Automatically switch to a pickaxe for breaking.")
         .defaultValue(true)
         .visible(() -> breakMode.get() != BreakMode.NONE)
         .build()
@@ -213,7 +212,7 @@ public class UnwaxAura extends Module {
     // Filter settings
     private final Setting<CopperFilter> copperFilter = sgFilter.add(new EnumSetting.Builder<CopperFilter>()
         .name("copper-filter")
-        .description("Which type of waxed copper to target")
+        .description("Which type of waxed copper to target.")
         .defaultValue(CopperFilter.ALL)
         .build()
     );
@@ -221,7 +220,7 @@ public class UnwaxAura extends Module {
     // ESP settings
     private final Setting<Boolean> espEnabled = sgESP.add(new BoolSetting.Builder()
         .name("ESP-enabled")
-        .description("Render waxed copper blocks through walls")
+        .description("Render waxed copper blocks through walls.")
         .defaultValue(true)
         .build()
     );
@@ -239,7 +238,7 @@ public class UnwaxAura extends Module {
 
     private final Setting<ShapeMode> shapeMode = sgESP.add(new EnumSetting.Builder<ShapeMode>()
         .name("shape-mode")
-        .description("How the ESP is rendered")
+        .description("How the ESP is rendered.")
         .defaultValue(ShapeMode.Lines)
         .visible(espEnabled::get)
         .build()
@@ -247,7 +246,7 @@ public class UnwaxAura extends Module {
 
     private final Setting<SettingColor> sideColor = sgESP.add(new ColorSetting.Builder()
         .name("side-color")
-        .description("The side color of the ESP box")
+        .description("The side color of the ESP box.")
         .defaultValue(new SettingColor(255, 200, 0, 40))
         .visible(espEnabled::get)
         .build()
@@ -255,7 +254,7 @@ public class UnwaxAura extends Module {
 
     private final Setting<SettingColor> lineColor = sgESP.add(new ColorSetting.Builder()
         .name("line-color")
-        .description("The line color of the ESP box")
+        .description("The line color of the ESP box.")
         .defaultValue(new SettingColor(255, 200, 0, 200))
         .visible(espEnabled::get)
         .build()
@@ -263,7 +262,7 @@ public class UnwaxAura extends Module {
 
     private final Setting<Boolean> tracer = sgESP.add(new BoolSetting.Builder()
         .name("tracer")
-        .description("Draw a line to the block")
+        .description("Draw a line to the block.")
         .defaultValue(true)
         .visible(espEnabled::get)
         .build()
@@ -271,7 +270,7 @@ public class UnwaxAura extends Module {
 
     private final Setting<SettingColor> tracerColor = sgESP.add(new ColorSetting.Builder()
         .name("tracer-color")
-        .description("The color of the tracer line")
+        .description("The color of the tracer line.")
         .defaultValue(new SettingColor(255, 200, 0, 200))
         .visible(() -> espEnabled.get() && tracer.get())
         .build()
@@ -285,7 +284,7 @@ public class UnwaxAura extends Module {
     private int currentStage = 0; // 0 = unwax, 1 = break
 
     public UnwaxAura() {
-        super(Addon.CATEGORY, "Unwax Aura", "Automatically removes wax from waxed copper blocks and optionally breaks them");
+        super(Addon.CATEGORY, "Unwax-Aura", "Automatically removes wax from waxed copper blocks and breaks them.");
     }
 
     @Override

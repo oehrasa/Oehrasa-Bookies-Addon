@@ -30,7 +30,7 @@ import java.util.UUID;
 
 import com.AutoBookshelf.addon.Addon;
 
-public class ProjectilePredict extends Module {
+public class TrajectoryPlus extends Module {
     public enum Mode {
         Tick,
         Frame
@@ -43,7 +43,7 @@ public class ProjectilePredict extends Module {
 
     private final Setting<Mode> updateMode = sgGeneral.add(new EnumSetting.Builder<Mode>()
         .name("mode")
-        .description("Frame mode is smoother; Tick mode is more 'classic'")
+        .description("Frame mode is smoother; Tick mode is more 'classic'.")
         .defaultValue(Mode.Frame)
         .build()
     );
@@ -72,7 +72,6 @@ public class ProjectilePredict extends Module {
         .build()
     );
 
-    // Box settings (for block hit predictions)
     private final Setting<SettingColor> boxColor = sgBox.add(new ColorSetting.Builder()
         .name("box-color")
         .description("Color of the prediction box when hitting blocks.")
@@ -94,7 +93,6 @@ public class ProjectilePredict extends Module {
         .build()
     );
 
-    // Entity highlight settings
     private final Setting<SettingColor> entityHighlightColor = sgEntity.add(new ColorSetting.Builder()
         .name("entity-highlight-color")
         .description("Color when the path hits an entity.")
@@ -116,7 +114,6 @@ public class ProjectilePredict extends Module {
         .build()
     );
 
-    // Existing projectile settings
     private final Setting<SettingColor> existingProjectileColor = sgGeneral.add(new ColorSetting.Builder()
         .name("existing-projectile-color")
         .description("Color for existing projectile trails and boxes.")
@@ -134,8 +131,8 @@ public class ProjectilePredict extends Module {
     // Store projectile trails
     private final ConcurrentHashMap<UUID, List<Vec3d>> projectileTrails = new ConcurrentHashMap<>();
 
-    public ProjectilePredict() {
-        super(Addon.CATEGORY, "Projectile-Predict", "Smooth projectile prediction and tracking");
+    public TrajectoryPlus() {
+        super(Addon.CATEGORY, "Trajectory-Plus", "Smooth projectile prediction and tracking.");
     }
 
     @Override
@@ -164,7 +161,7 @@ public class ProjectilePredict extends Module {
         }
 
         float delta = (updateMode.get() == Mode.Frame) ? event.tickDelta : 1.0f;
-        
+
         Vec3d pos = getInterpolatedPos(mc.player, delta);
         Vec3d vel = getInitialVelocity(stack.getItem(), delta);
 
@@ -210,8 +207,8 @@ public class ProjectilePredict extends Module {
         if (renderTrail.get()) {
             SettingColor finalColor = hitEntity ? entityHighlightColor.get() : trailColor.get();
             for (int i = 0; i < path.size() - 1; i++) {
-                event.renderer.line(path.get(i).x, path.get(i).y, path.get(i).z, 
-                                   path.get(i+1).x, path.get(i+1).y, path.get(i+1).z, 
+                event.renderer.line(path.get(i).x, path.get(i).y, path.get(i).z,
+                                   path.get(i+1).x, path.get(i+1).y, path.get(i+1).z,
                                    finalColor);
             }
         }
@@ -227,59 +224,59 @@ public class ProjectilePredict extends Module {
             if (isProjectile(entity)) {
                 UUID id = entity.getUuid();
                 Vec3d currentPos = entity.getPos();
-                
+
                 List<Vec3d> trail = projectileTrails.computeIfAbsent(id, k -> new ArrayList<>());
                 trail.add(currentPos);
-                
+
                 while (trail.size() > trailLength.get()) {
                     trail.remove(0);
                 }
-                
+
                 predictProjectilePath(event, entity);
-                
+
                 // Render trail for existing projectiles
                 if (renderTrail.get()) {
                     for (int i = 0; i < trail.size() - 1; i++) {
-                        event.renderer.line(trail.get(i).x, trail.get(i).y, trail.get(i).z, 
-                                           trail.get(i+1).x, trail.get(i+1).y, trail.get(i+1).z, 
+                        event.renderer.line(trail.get(i).x, trail.get(i).y, trail.get(i).z,
+                                           trail.get(i+1).x, trail.get(i+1).y, trail.get(i+1).z,
                                            existingProjectileColor.get());
                     }
                 }
-                
+
                 // Render box for existing projectiles
                 if (renderBox.get()) {
                     event.renderer.box(entity.getBoundingBox(), existingProjectileColor.get(), existingProjectileColor.get(), boxShapeMode.get(), 0);
                 }
             }
         }
-        
+
         projectileTrails.keySet().removeIf(id -> {
             Entity e = mc.world.getEntityById(id.hashCode());
             return e == null;
         });
     }
-    
+
     private void predictProjectilePath(Render3DEvent event, Entity projectile) {
         Vec3d pos = projectile.getPos();
         Vec3d vel = projectile.getVelocity();
-        
+
         List<Vec3d> path = new ArrayList<>();
         path.add(pos);
-        
+
         boolean hitEntity = false;
         Entity hitEntityObj = null;
         Vec3d currentPos = pos;
         Vec3d currentVel = vel;
-        
+
         for (int i = 0; i < 60; i++) {
             Vec3d nextPos = currentPos.add(currentVel);
-            
+
             BlockHitResult blockHit = mc.world.raycast(new RaycastContext(
                 currentPos, nextPos, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, mc.player
             ));
-            
+
             EntityHitResult entityHit = findEntityHit(currentPos, nextPos, projectile);
-            
+
             if (entityHit != null) {
                 path.add(entityHit.getPos());
                 hitEntityObj = entityHit.getEntity();
@@ -292,31 +289,31 @@ public class ProjectilePredict extends Module {
                 }
                 break;
             }
-            
+
             currentPos = nextPos;
             path.add(currentPos);
-            
+
             double drag = 0.99;
             double gravity = getProjectileGravity(projectile);
             currentVel = currentVel.multiply(drag).subtract(0, gravity, 0);
         }
-        
+
         // Render prediction trail for existing projectile
         if (renderTrail.get()) {
             SettingColor finalColor = hitEntity ? entityHighlightColor.get() : existingProjectileColor.get();
             for (int i = 0; i < path.size() - 1; i++) {
-                event.renderer.line(path.get(i).x, path.get(i).y, path.get(i).z, 
-                                   path.get(i+1).x, path.get(i+1).y, path.get(i+1).z, 
+                event.renderer.line(path.get(i).x, path.get(i).y, path.get(i).z,
+                                   path.get(i+1).x, path.get(i+1).y, path.get(i+1).z,
                                    finalColor);
             }
         }
-        
+
         // Render entity highlight for existing projectile prediction
         if (hitEntity && renderEntityHighlight.get() && hitEntityObj != null) {
             event.renderer.box(hitEntityObj.getBoundingBox(), entityHighlightColor.get(), entityHighlightColor.get(), entityShapeMode.get(), 0);
         }
     }
-    
+
     private boolean isProjectile(Entity entity) {
         return entity instanceof ArrowEntity ||
                entity instanceof SpectralArrowEntity ||
@@ -333,7 +330,7 @@ public class ProjectilePredict extends Module {
                entity instanceof PotionEntity ||
                entity instanceof WindChargeEntity;
     }
-    
+
     private double getProjectileGravity(Entity projectile) {
         if (projectile instanceof ArrowEntity) return 0.05;
         if (projectile instanceof SpectralArrowEntity) return 0.05;
@@ -355,12 +352,12 @@ public class ProjectilePredict extends Module {
     private EntityHitResult findEntityHit(Vec3d start, Vec3d end) {
         return findEntityHit(start, end, null);
     }
-    
+
     private EntityHitResult findEntityHit(Vec3d start, Vec3d end, Entity ignoreEntity) {
         for (Entity entity : mc.world.getEntities()) {
             if (entity == mc.player || entity == ignoreEntity) continue;
             if (!(entity instanceof LivingEntity)) continue;
-            
+
             Box box = entity.getBoundingBox().expand(0.3);
             if (box.raycast(start, end).isPresent()) {
                 return new EntityHitResult(entity, box.raycast(start, end).get());
@@ -370,13 +367,13 @@ public class ProjectilePredict extends Module {
     }
 
     private boolean isValidItem(Item item) {
-        return item instanceof BowItem || 
+        return item instanceof BowItem ||
                item instanceof CrossbowItem ||
                item instanceof TridentItem ||
-               item instanceof EnderPearlItem || 
-               item instanceof EggItem || 
+               item instanceof EnderPearlItem ||
+               item instanceof EggItem ||
                item instanceof SnowballItem ||
-               item instanceof ExperienceBottleItem || 
+               item instanceof ExperienceBottleItem ||
                item instanceof WindChargeItem ||
                item instanceof PotionItem;
     }

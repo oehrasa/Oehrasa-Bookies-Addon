@@ -324,7 +324,7 @@ public class AutoSex extends Module {
     private int pathCooldown = 0;
 
     public AutoSex() {
-        super(Addon.CATEGORY, "auto-Sex", "Tries to have sex with the player or mob in freaky ways");
+        super(Addon.CATEGORY, "auto-Sex", "Tries to have sex with the player or mob in freaky ways.");
     }
 
     @Override
@@ -342,7 +342,7 @@ public class AutoSex extends Module {
         try {
             baritone = BaritoneAPI.getProvider().getPrimaryBaritone();
         } catch (Exception e) {
-            error("Baritone not found! Please install Baritone mod");
+            error("Baritone not found! Please install Baritone mod.");
             toggle();
         }
     }

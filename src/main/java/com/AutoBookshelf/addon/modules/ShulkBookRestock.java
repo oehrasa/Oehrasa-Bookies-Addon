@@ -87,7 +87,7 @@ public class ShulkBookRestock extends Module {
     private int lastUsedSlot = -1;
 
     public ShulkBookRestock() {
-        super(Addon.CATEGORY, "SBB-restock", "Automatically restocks shulkers and books in your hotbar when used");
+        super(Addon.CATEGORY, "SBB-Restock", "Automatically restocks shulkers and books in your hotbar when used");
     }
 
     @Override
@@ -97,14 +97,14 @@ public class ShulkBookRestock extends Module {
             error("Player not loaded, module may not work correctly");
             return;
         }
-        
+
         timer = 0;
         pendingRestock = false;
         slotToRestock = -1;
         autoSwitchInProgress = false;
         switchCooldown = 0;
         lastUsedSlot = -1;
-        
+
         // Store initial counts
         for (int i = 0; i < 9; i++) {
             try {
@@ -141,12 +141,12 @@ public class ShulkBookRestock extends Module {
 
         // Check for item usage - this will detect when a shulker/book was used
         checkForItemUsage();
-        
+
         // Auto switch logic - if an item was used and its slot is now empty, switch
         if (autoSwitch.get() && !autoSwitchInProgress && switchCooldown == 0 && lastUsedSlot != -1) {
             handleAutoSwitch();
         }
-        
+
         // Check if hotbar is completely empty of valid items - then restock
         if (!pendingRestock && isHotbarEmpty()) {
             slotToRestock = findBestSlotToRestock();
@@ -159,15 +159,15 @@ public class ShulkBookRestock extends Module {
 
     private void checkForItemUsage() {
         if (mc.player == null || mc.player.getInventory() == null) return;
-        
+
         // Reset lastUsedSlot at the start of check
         lastUsedSlot = -1;
-        
+
         for (int i = 0; i < 9; i++) {
             try {
                 ItemStack stack = mc.player.getInventory().getStack(i);
                 int currentCount = (stack == null || stack.isEmpty()) ? 0 : stack.getCount();
-                
+
                 if (isValidItem(stack)) {
                     // Check if this slot's count decreased (item was used)
                     if (currentCount < previousCounts[i]) {
@@ -190,19 +190,19 @@ public class ShulkBookRestock extends Module {
 
     private void handleAutoSwitch() {
         if (mc.player == null || mc.player.getInventory() == null) return;
-        
+
         // Check if the slot that was just used is now empty
         if (lastUsedSlot != -1) {
             ItemStack usedStack = mc.player.getInventory().getStack(lastUsedSlot);
             boolean isSlotEmpty = usedStack == null || usedStack.isEmpty() || !isValidItem(usedStack);
-            
+
             if (isSlotEmpty) {
                 // Find other valid slots in hotbar
                 List<Integer> validSlots = getValidHotbarSlots();
-                
+
                 // Remove the used slot from valid slots
                 validSlots.remove(Integer.valueOf(lastUsedSlot));
-                
+
                 if (!validSlots.isEmpty()) {
                     // Switch to the next valid slot
                     int nextSlot = validSlots.get(0);
@@ -212,7 +212,7 @@ public class ShulkBookRestock extends Module {
                 }
             }
         }
-        
+
         // Reset after processing
         autoSwitchInProgress = false;
     }
@@ -220,7 +220,7 @@ public class ShulkBookRestock extends Module {
     private List<Integer> getValidHotbarSlots() {
         List<Integer> validSlots = new ArrayList<>();
         if (mc.player == null || mc.player.getInventory() == null) return validSlots;
-        
+
         for (int i = 0; i < 9; i++) {
             ItemStack stack = mc.player.getInventory().getStack(i);
             if (stack != null && isValidItem(stack) && !stack.isEmpty()) {
@@ -232,7 +232,7 @@ public class ShulkBookRestock extends Module {
 
     private boolean isHotbarEmpty() {
         if (mc.player == null || mc.player.getInventory() == null) return true;
-        
+
         for (int i = 0; i < 9; i++) {
             ItemStack stack = mc.player.getInventory().getStack(i);
             if (stack != null && isValidItem(stack) && !stack.isEmpty()) {
@@ -244,7 +244,7 @@ public class ShulkBookRestock extends Module {
 
     private int findBestSlotToRestock() {
         if (mc.player == null || mc.player.getInventory() == null) return -1;
-        
+
         int targetSlot = restockSlot.get();
         if (targetSlot == 0) {
             // Auto-detect: FIRST try the last used slot
@@ -254,7 +254,7 @@ public class ShulkBookRestock extends Module {
                     return lastUsedSlot; // Restock the slot that was just used
                 }
             }
-            
+
             // If last used slot is taken, find first empty slot
             for (int i = 0; i < 9; i++) {
                 ItemStack stack = mc.player.getInventory().getStack(i);
@@ -271,30 +271,30 @@ public class ShulkBookRestock extends Module {
 
     private void performRestock() {
         if (mc.player == null || mc.player.getInventory() == null || mc.interactionManager == null) return;
-        
+
         int targetSlot = slotToRestock;
         if (targetSlot < 0 || targetSlot > 8) return;
-        
+
         // Check if the slot is already occupied with a valid item
         ItemStack currentStack = mc.player.getInventory().getStack(targetSlot);
         if (currentStack != null && isValidItem(currentStack) && !currentStack.isEmpty()) {
             return;
         }
-        
+
         // Find a valid item in inventory (excluding hotbar)
         int itemSlot = findValidItemInInventoryExcludingHotbar();
         if (itemSlot == -1) return;
-        
+
         // Move item to the target hotbar slot
         moveToHotbar(itemSlot, targetSlot);
     }
 
     private int findValidItemInInventoryExcludingHotbar() {
         if (mc.player == null || mc.player.getInventory() == null) return -1;
-        
+
         int totalCount = 0;
         List<Integer> candidateSlots = new ArrayList<>();
-        
+
         for (int i = 9; i < 36; i++) {
             try {
                 ItemStack stack = mc.player.getInventory().getStack(i);
@@ -306,7 +306,7 @@ public class ShulkBookRestock extends Module {
                 // Skip this slot on error
             }
         }
-        
+
         // Check if we should keep one in inventory
         if (keepOneInInventory.get()) {
             int hotbarCount = countValidItemsInHotbar();
@@ -314,17 +314,17 @@ public class ShulkBookRestock extends Module {
                 return -1;
             }
         }
-        
+
         if (!candidateSlots.isEmpty()) {
             return candidateSlots.get(0);
         }
-        
+
         return -1;
     }
 
     private int countValidItemsInHotbar() {
         if (mc.player == null || mc.player.getInventory() == null) return 0;
-        
+
         int count = 0;
         for (int i = 0; i < 9; i++) {
             try {
@@ -342,28 +342,28 @@ public class ShulkBookRestock extends Module {
     private boolean isValidItem(ItemStack stack) {
         if (stack == null || stack.isEmpty()) return false;
         Item item = stack.getItem();
-        
+
         // Check for shulkers
         if (restockShulkers.get()) {
             if (item instanceof BlockItem blockItem && blockItem.getBlock() instanceof ShulkerBoxBlock) {
                 return true;
             }
         }
-        
+
         // Check for writable books (book and quill)
         if (restockWritableBooks.get()) {
             if (item == Items.WRITABLE_BOOK) {
                 return true;
             }
         }
-        
+
         return false;
     }
 
     private void moveToHotbar(int fromSlot, int toHotbarSlot) {
         if (fromSlot < 0 || toHotbarSlot < 0) return;
         if (mc.player == null || mc.interactionManager == null) return;
-        
+
         try {
             mc.interactionManager.clickSlot(
                 mc.player.currentScreenHandler.syncId,
@@ -382,10 +382,10 @@ public class ShulkBookRestock extends Module {
         if (mc.player == null || mc.player.getInventory() == null) {
             return null;
         }
-        
+
         int shulkersInInv = 0;
         int booksInInv = 0;
-        
+
         try {
             for (int i = 9; i < 36; i++) {
                 ItemStack stack = mc.player.getInventory().getStack(i);
@@ -401,11 +401,11 @@ public class ShulkBookRestock extends Module {
         } catch (Exception e) {
             return null;
         }
-        
+
         List<String> items = new ArrayList<>();
         if (restockShulkers.get() && shulkersInInv > 0) items.add(shulkersInInv + " shulkers");
         if (restockWritableBooks.get() && booksInInv > 0) items.add(booksInInv + " books");
-        
+
         return items.isEmpty() ? null : String.join(", ", items);
     }
 }

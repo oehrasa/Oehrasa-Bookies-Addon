@@ -166,7 +166,7 @@ public class AutoTakeOff extends Module {
     private static final int BROKEN_MESSAGE_INTERVAL = 100;
 
     public AutoTakeOff() {
-        super(Addon.CATEGORY, "auto-take-off", "Automatically starts elytra flight when on ground, in lava, or falling");
+        super(Addon.CATEGORY, "Auto-Take-Off", "Automatically starts elytra flight when on ground, in lava, or falling.");
     }
 
     @Override

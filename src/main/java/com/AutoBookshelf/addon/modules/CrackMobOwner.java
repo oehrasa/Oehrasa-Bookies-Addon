@@ -82,7 +82,7 @@ public class CrackMobOwner extends Module {
     private int tickCounter = 0;
 
     public CrackMobOwner() {
-        super(Addon.CATEGORY, "CrackMobOwner", "Shows entity owner (works with cracked accounts)");
+        super(Addon.CATEGORY, "CrackMobOwner", "Shows entity owner by saving into cache.");
     }
 
     @Override

@@ -213,7 +213,7 @@ public class CalibratedRange extends Module {
     }
 
     public CalibratedRange() {
-        super(Addon.CATEGORY, "Calib-Range", "Shows the detection range of calibrated sculk sensors");
+        super(Addon.CATEGORY, "Sculk-Range", "Shows the detection range of calibrated sculk sensors.");
     }
 
     private synchronized ExecutorService getWorkerThread() {

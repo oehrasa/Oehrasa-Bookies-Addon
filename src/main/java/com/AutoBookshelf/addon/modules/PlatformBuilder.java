@@ -26,7 +26,6 @@ public class PlatformBuilder extends Module {
     private final SettingGroup sgPlacement = settings.createGroup("Placement");
     private final SettingGroup sgBlocks = settings.createGroup("Blocks");
 
-    // General settings
     private final Setting<Integer> yLevel = sgGeneral.add(new IntSetting.Builder()
         .name("y-level")
         .description("Y-level to build the platform at.")
@@ -54,7 +53,6 @@ public class PlatformBuilder extends Module {
         .build()
     );
 
-    // Placement settings (add these!)
     private final Setting<Boolean> airPlace = sgPlacement.add(new BoolSetting.Builder()
         .name("air-place")
         .description("Allow placing blocks in mid-air.")
@@ -76,7 +74,6 @@ public class PlatformBuilder extends Module {
         .build()
     );
 
-    // Block selection settings
     private final Setting<List<Block>> allowedBlocks = sgBlocks.add(new BlockListSetting.Builder()
         .name("allowed-blocks")
         .description("Which blocks to use for building the platform.")
@@ -166,7 +163,6 @@ public class PlatformBuilder extends Module {
             return new BlockPos[0];
         }
 
-        // Build in a 9x9 area around the player
         for (int x = -maxReach; x <= maxReach; x++) {
             for (int z = -maxReach; z <= maxReach; z++) {
                 var pos = new BlockPos(mc.player.getBlockPos().getX() + x, targetY, mc.player.getBlockPos().getZ() + z);
@@ -190,7 +186,7 @@ public class PlatformBuilder extends Module {
         return positions.toArray(new BlockPos[0]);
     }
 
-    // New method to check if a position is valid for placement
+
     private boolean canPlaceAtPosition(BlockState state) {
         // Air is always allowed
         if (state.isAir()) return true;
@@ -200,18 +196,16 @@ public class PlatformBuilder extends Module {
             return ignoreLiquids.get();
         }
 
-        // Check for replaceable blocks (grass, tall grass, flowers, ferns, etc.)
+        // Check for replaceable blocks (grass, tall grass, flowers, ferns)
         if (state.isReplaceable() || state.getBlock() == Blocks.GRASS_BLOCK) {
             return replaceBlocks.get();
         }
 
-        // For air-place mode, we can place in anything that's not a solid block
         if (airPlace.get()) {
             // Allow placing in non-solid blocks
             return !state.isFullCube(mc.world, BlockPos.ORIGIN);
         }
 
-        // Default: only place in air
         return state.isAir();
     }
 
@@ -278,7 +272,7 @@ public class PlatformBuilder extends Module {
         if (!PlayerUtils.isWithinReach(pos)) return false;
         if (recentPlacements.contains(pos)) return false;
 
-        // Check if we can place here (using the new method)
+        // Check if we can place here
         BlockState state = mc.world.getBlockState(pos);
         if (!canPlaceAtPosition(state)) return false;
 
@@ -293,8 +287,6 @@ public class PlatformBuilder extends Module {
 
         recentPlacements.add(pos);
 
-        // Use Meteor's BlockUtils.place() with proper rotation and packet handling
-        // Note: BlockUtils.place already handles air-place, liquid placement, etc.
         return BlockUtils.place(pos, item, true, 50, true, true);
     }
 }

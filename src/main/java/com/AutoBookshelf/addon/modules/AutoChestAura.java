@@ -49,7 +49,7 @@ public class AutoChestAura extends Module {
 
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
         .name("open-delay")
-        .description("Cooldown before opening the next container (ticks)")
+        .description("Cooldown before opening the next container in ticks.")
         .defaultValue(3)
         .min(1)
         .sliderMax(20)
@@ -58,7 +58,7 @@ public class AutoChestAura extends Module {
 
     private final Setting<Integer> waitTime = sgGeneral.add(new IntSetting.Builder()
         .name("wait-time")
-        .description("How long to wait after receiving packet before closing (ticks)")
+        .description("How long to wait after receiving packet before closing in ticks.")
         .defaultValue(2)
         .min(1)
         .sliderMax(20)
@@ -67,7 +67,7 @@ public class AutoChestAura extends Module {
 
     private final Setting<Integer> timeout = sgGeneral.add(new IntSetting.Builder()
         .name("force-timeout")
-        .description("Force close after this many ticks if container gets stuck")
+        .description("Force close after this many ticks if container gets stuck.")
         .defaultValue(15)
         .min(5)
         .sliderMax(60)
@@ -76,7 +76,7 @@ public class AutoChestAura extends Module {
 
     private final Setting<Boolean> rotate = sgGeneral.add(new BoolSetting.Builder()
         .name("rotate")
-        .description("Rotate towards container when opening")
+        .description("Rotate towards container when opening.")
         .defaultValue(true)
         .build()
     );
@@ -91,7 +91,7 @@ public class AutoChestAura extends Module {
     private boolean isPending = false;
 
     public AutoChestAura() {
-        super(Addon.CATEGORY, "Chest-Aura", "High-speed automatic container opener");
+        super(Addon.CATEGORY, "Chest-Aura", "High-speed automatic container opener.");
     }
 
     @Override

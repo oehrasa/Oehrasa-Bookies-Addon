@@ -98,7 +98,7 @@ public class BookshelfFiller extends Module {
     private BlockPos countPos1 = null;
     private BlockPos countPos2 = null;
 
-    // Cache for book counts (worldName -> position -> bookCount)
+    // Cache for book counts
     private final Map<String, Map<String, Integer>> savedCounts = new HashMap<>();
     private File cacheFile;
 
@@ -162,7 +162,6 @@ public class BookshelfFiller extends Module {
         .build()
     );
 
-    // Counter tool settings
     private final Setting<Item> counterTool = sgCounter.add(new ItemSetting.Builder()
         .name("counter-tool")
         .description("Tool to use for counting books in bookshelves (right-click to select area)")
@@ -211,7 +210,6 @@ public class BookshelfFiller extends Module {
         .build()
     );
 
-    // Extract settings
     private final Setting<Item> extractTool = sgExtract.add(new ItemSetting.Builder()
         .name("extract-tool")
         .description("Tool to use for extracting books (right-click on bookshelf)")
@@ -221,14 +219,14 @@ public class BookshelfFiller extends Module {
 
     private final Setting<Boolean> requireExtractTool = sgExtract.add(new BoolSetting.Builder()
         .name("require-extract-tool")
-        .description("Require the extract tool to be held to extract books")
+        .description("Require the extract tool to be held to extract books.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Integer> extractDelayTicks = sgExtract.add(new IntSetting.Builder()
         .name("extract-delay")
-        .description("Delay between extracting each book in ticks")
+        .description("Delay between extracting each book in ticks.")
         .defaultValue(8)
         .min(2)
         .max(40)
@@ -237,14 +235,14 @@ public class BookshelfFiller extends Module {
 
     private final Setting<ExtractMode> extractMode = sgExtract.add(new EnumSetting.Builder<ExtractMode>()
         .name("extract-mode")
-        .description("Which books to extract from a single bookshelf")
+        .description("Which books to extract from a single bookshelf.")
         .defaultValue(ExtractMode.ALL)
         .build()
     );
 
     private final Setting<Integer> maxExtractBooks = sgExtract.add(new IntSetting.Builder()
         .name("max-extract-books")
-        .description("Maximum number of books to extract from a single bookshelf")
+        .description("Maximum number of books to extract from a single bookshelf.")
         .defaultValue(3)
         .min(1)
         .max(6)
@@ -255,22 +253,21 @@ public class BookshelfFiller extends Module {
 
     private final Setting<Boolean> showExtractMessages = sgExtract.add(new BoolSetting.Builder()
         .name("show-extract-messages")
-        .description("Show messages when extracting books")
+        .description("Show messages when extracting books.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> enableFilter = sgFilter.add(new BoolSetting.Builder()
         .name("enable-filter")
-        .description("Enable book title filtering (extracts numbers from titles)")
+        .description("Enable book title filtering (extracts numbers from titles).")
         .defaultValue(true)
         .build()
     );
 
-    // Protection settings
     private final Setting<List<Item>> protectedItems = sgProtection.add(new ItemListSetting.Builder()
         .name("protected-items")
-        .description("Items that will never be replaced (will use dedicated swap slot instead)")
+        .description("Items that will never be replaced (will use dedicated swap slot instead).")
         .defaultValue(new ArrayList<>(Arrays.asList(
             Items.NETHERITE_PICKAXE,
             Items.NETHERITE_AXE,
@@ -301,7 +298,7 @@ public class BookshelfFiller extends Module {
 
     private final Setting<Integer> dedicatedSwapSlotIndex = sgProtection.add(new IntSetting.Builder()
         .name("dedicated-swap-slot")
-        .description("Hotbar slot (0-8) to use for swapping books (will be overwritten)")
+        .description("Hotbar slot (0-8) to use for swapping books.")
         .defaultValue(8)
         .min(0)
         .max(8)
@@ -311,7 +308,7 @@ public class BookshelfFiller extends Module {
 
     private final Setting<Boolean> useDedicatedSlot = sgProtection.add(new BoolSetting.Builder()
         .name("use-dedicated-slot")
-        .description("Use a dedicated hotbar slot for book swapping (recommended)")
+        .description("Use a dedicated hotbar slot for book swapping (recommended).")
         .defaultValue(true)
         .build()
     );
@@ -319,21 +316,21 @@ public class BookshelfFiller extends Module {
     // Display settings
     private final Setting<Boolean> showBookInChat = sgDisplay.add(new BoolSetting.Builder()
         .name("show-book-in-chat")
-        .description("Show the book title and author in chat when placing")
+        .description("Show the book title and author in chat when placing.")
         .defaultValue(false)
         .build()
     );
 
     private final Setting<Boolean> showBookCooldown = sgDisplay.add(new BoolSetting.Builder()
         .name("show-book-cooldown")
-        .description("Show book info chat with a cooldown to prevent spam")
+        .description("Show book info chat with a cooldown to prevent spam.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Integer> chatCooldownTicks = sgDisplay.add(new IntSetting.Builder()
         .name("chat-cooldown-ticks")
-        .description("Minimum ticks between showing book info in chat")
+        .description("Minimum ticks between showing book info in chat.")
         .defaultValue(20)
         .min(0)
         .sliderMax(100)
@@ -343,14 +340,14 @@ public class BookshelfFiller extends Module {
 
     private final Setting<Boolean> showOnScreen = sgDisplay.add(new BoolSetting.Builder()
         .name("show-on-screen")
-        .description("Show current book status on screen")
+        .description("Show current book status on screen.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Integer> onScreenDuration = sgDisplay.add(new IntSetting.Builder()
         .name("on-screen-duration")
-        .description("How many ticks to show messages on screen (20 ticks = 1 second)")
+        .description("How many ticks to show messages on screen.")
         .defaultValue(40)
         .min(10)
         .sliderMax(100)
@@ -360,7 +357,7 @@ public class BookshelfFiller extends Module {
 
     private final Setting<Integer> retryCheckInterval = sgDisplay.add(new IntSetting.Builder()
         .name("retry-check-interval")
-        .description("How many ticks to wait between checking for books when none are found (20 ticks = 1 second)")
+        .description("How many ticks to wait between checking for books when none are found.")
         .defaultValue(20)
         .min(5)
         .sliderMax(100)
@@ -370,7 +367,7 @@ public class BookshelfFiller extends Module {
 
     private final Setting<Boolean> verboseChecking = sgDisplay.add(new BoolSetting.Builder()
         .name("verbose-checking")
-        .description("Show messages when waiting for and finding new books")
+        .description("Show messages when waiting for and finding new books.")
         .defaultValue(true)
         .visible(() -> continuousChecking.get())
         .build()
@@ -378,14 +375,14 @@ public class BookshelfFiller extends Module {
 
     private final Setting<Boolean> render = sgRender.add(new BoolSetting.Builder()
         .name("render")
-        .description("Renders the selection area")
+        .description("Renders the selection area.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<SettingColor> sideColor = sgRender.add(new ColorSetting.Builder()
         .name("side-color")
-        .description("The side color of the selection box")
+        .description("The side color of the selection box.")
         .defaultValue(new SettingColor(0, 255, 255, 30))
         .build()
     );
@@ -399,21 +396,21 @@ public class BookshelfFiller extends Module {
 
     private final Setting<SettingColor> pos1Color = sgRender.add(new ColorSetting.Builder()
         .name("pos1-color")
-        .description("The color of the first position marker")
+        .description("The color of the first position marker.")
         .defaultValue(new SettingColor(0, 255, 0, 255))
         .build()
     );
 
     private final Setting<SettingColor> pos2Color = sgRender.add(new ColorSetting.Builder()
         .name("pos2-color")
-        .description("The color of the second position marker")
+        .description("The color of the second position marker.")
         .defaultValue(new SettingColor(255, 0, 0, 255))
         .build()
     );
 
     private enum ExtractMode {
         ALL("All Books"),
-        LIMITED("Limited Amount");
+        LIMITED("Limited Amount.");
 
         private final String title;
         ExtractMode(String title) { this.title = title; }
@@ -421,7 +418,7 @@ public class BookshelfFiller extends Module {
     }
 
     public BookshelfFiller() {
-        super(Addon.CATEGORY, "Bookshelf-Filler", "oeh Yuri romcom bookshelves restocker");
+        super(Addon.CATEGORY, "Bookshelf-Filler", "oeh Yuri romcom bookshelves restocker.");
     }
 
     private void setDisplayText(String text) {
@@ -603,7 +600,7 @@ public class BookshelfFiller extends Module {
             }
         }
 
-        // Process current bookshelves - ALWAYS update (hardcoded true)
+        // Process current bookshelves
         for (Map.Entry<String, Integer> entry : currentAreaCounts.entrySet()) {
             String key = entry.getKey();
             int currentCount = entry.getValue();
@@ -629,7 +626,7 @@ public class BookshelfFiller extends Module {
             }
         }
 
-        // Check for missing bookshelves - ALWAYS remove (hardcoded true)
+        // Check for missing bookshelves
         Set<String> toRemove = new HashSet<>();
         for (String key : worldCounts.keySet()) {
             if (!currentAreaCounts.containsKey(key)) {
@@ -695,7 +692,7 @@ public class BookshelfFiller extends Module {
         BlockState state = mc.world.getBlockState(pos);
         if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) return;
 
-        // Counter tool (highest priority for counting)
+        // Counter tool
         if (counterTool.get() != null && !hand.isEmpty() && hand.getItem() == counterTool.get()) {
             if (requireCounterTool.get() && hand.getItem() != counterTool.get()) {
                 return;
@@ -716,7 +713,6 @@ public class BookshelfFiller extends Module {
             }
         }
 
-        // Extract tool
         if (extractTool.get() != null && !hand.isEmpty() && hand.getItem() == extractTool.get()) {
             fullReset();
             startSingleBlockExtract(pos);
@@ -724,7 +720,6 @@ public class BookshelfFiller extends Module {
             return;
         }
 
-        // Selection tool for area selection
         if (selectionToolSetting.get() != null && !hand.isEmpty() && hand.getItem() == selectionToolSetting.get()) {
             if (selecting) {
                 if (pos1 == null) {
@@ -1055,7 +1050,6 @@ public class BookshelfFiller extends Module {
                 }
             }
         } catch (Exception e) {
-            // Silent fail
         }
         return null;
     }
@@ -1069,7 +1063,6 @@ public class BookshelfFiller extends Module {
                 }
             }
         } catch (Exception e) {
-            // Silent fail
         }
         return null;
     }

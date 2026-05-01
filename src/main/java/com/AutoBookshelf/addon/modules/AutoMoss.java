@@ -34,7 +34,7 @@ public class AutoMoss extends Module {
 
     private final Setting<Double> range = sgGeneral.add(new DoubleSetting.Builder()
         .name("range")
-        .description("The range to search for blocks to bonemeal")
+        .description("The range to search for blocks to bonemeal.")
         .defaultValue(4.5)
         .min(1)
         .sliderMax(6)
@@ -43,7 +43,7 @@ public class AutoMoss extends Module {
 
     private final Setting<Integer> mossSpreadCooldown = sgMoss.add(new IntSetting.Builder()
         .name("moss-cooldown")
-        .description("Cooldown in ticks before bone mealing the same moss block again")
+        .description("Cooldown in ticks before bone mealing the same moss block again.")
         .defaultValue(100)
         .min(20)
         .sliderMax(200)
@@ -52,21 +52,21 @@ public class AutoMoss extends Module {
 
     private final Setting<Boolean> makeTrees = sgTrees.add(new BoolSetting.Builder()
         .name("make-trees")
-        .description("Use bone meal on azalea bushes and saplings to grow them into trees")
+        .description("Use bone meal on azalea bushes and saplings to grow them into trees.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> inventoryAllow = sgGeneral.add(new BoolSetting.Builder()
         .name("inventory-allow")
-        .description("Take bone meal from inventory when hotbar is empty")
+        .description("Take bone meal from inventory when hotbar is empty.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
         .name("delay")
-        .description("Delay between bone meal uses in ticks")
+        .description("Delay between bone meal uses in ticks.")
         .defaultValue(2)
         .min(0)
         .sliderMax(20)
@@ -75,7 +75,7 @@ public class AutoMoss extends Module {
 
     private final Setting<Integer> maxUsesPerTick = sgGeneral.add(new IntSetting.Builder()
         .name("max-uses-per-tick")
-        .description("Maximum number of bone meal uses per tick")
+        .description("Maximum number of bone meal uses per tick.")
         .defaultValue(1)
         .min(1)
         .sliderMax(5)
@@ -88,7 +88,7 @@ public class AutoMoss extends Module {
     private final Map<BlockPos, Integer> recentlyUsedMoss = new HashMap<>();
 
     public AutoMoss() {
-        super(Addon.CATEGORY, "Auto-Moss", "Automatically uses bone meal on specific blocks");
+        super(Addon.CATEGORY, "Auto-Moss", "Automatically uses bone meal on specific blocks.");
     }
 
     @EventHandler

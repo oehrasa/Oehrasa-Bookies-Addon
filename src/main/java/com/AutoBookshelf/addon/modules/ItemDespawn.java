@@ -13,13 +13,14 @@ import net.minecraft.entity.Entity;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.util.math.Box;
 
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class ClearDespawn extends Module {
+public class ItemDespawn extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRender = settings.createGroup("Render");
 
-    // General settings
     private final Setting<Integer> despawnTime = sgGeneral.add(new IntSetting.Builder()
         .name("despawn-time")
         .description("Total despawn time in ticks (6000 ticks = 5 minutes)")
@@ -38,7 +39,7 @@ public class ClearDespawn extends Module {
 
     private final Setting<Integer> renderRange = sgGeneral.add(new IntSetting.Builder()
         .name("render-range")
-        .description("How far away to render despawn indicators (blocks)")
+        .description("How far away to render despawn indicators.")
         .defaultValue(32)
         .min(8)
         .max(128)
@@ -48,7 +49,7 @@ public class ClearDespawn extends Module {
 
     private final Setting<Integer> maxRender = sgGeneral.add(new IntSetting.Builder()
         .name("max-render")
-        .description("Maximum number of items to render (0 = unlimited)")
+        .description("Maximum number of items to render (0 = unlimited).")
         .defaultValue(50)
         .min(0)
         .max(200)
@@ -59,14 +60,14 @@ public class ClearDespawn extends Module {
     // Render settings
     private final Setting<ShapeMode> shapeMode = sgRender.add(new EnumSetting.Builder<ShapeMode>()
         .name("shape-mode")
-        .description("How the items are rendered")
+        .description("How the items are rendered.")
         .defaultValue(ShapeMode.Both)
         .build()
     );
 
     private final Setting<SettingColor> customColor = sgRender.add(new ColorSetting.Builder()
         .name("custom-color")
-        .description("Color when compute-color-from-time is disabled")
+        .description("Color when compute-color-from-time is disabled.")
         .defaultValue(new SettingColor(255, 0, 0, 150))
         .visible(() -> !computeColorFromTime.get())
         .build()
@@ -83,7 +84,7 @@ public class ClearDespawn extends Module {
     );
 
     private final Setting<Integer> sideOpacity = sgRender.add(new IntSetting.Builder()
-        .name("side-opacity")
+        .name("side-opacity.")
         .description("Opacity of the box sides (0-255)")
         .defaultValue(75)
         .min(0)
@@ -92,20 +93,30 @@ public class ClearDespawn extends Module {
         .build()
     );
 
-    private final ConcurrentHashMap<Integer, Integer> itemAges = new ConcurrentHashMap<>();
+    private final Setting<Boolean> trackItems = sgGeneral.add(new BoolSetting.Builder()
+        .name("track-items")
+        .description("Store entity IDs of all item entities while the module is active (cleared on disable).")
+        .defaultValue(false)
+        .build()
+    );
 
-    public ClearDespawn() {
-        super(Addon.CATEGORY, "Clear-Despawn", "Highlights items that are about to despawn");
+    private final ConcurrentHashMap<Integer, Integer> itemAges = new ConcurrentHashMap<>();
+    private final Set<Integer> trackedIds = new HashSet<>();   // stored entity IDs
+
+    public ItemDespawn() {
+        super(Addon.CATEGORY, "Item-Despawn", "Highlights items that are about to despawn.");
     }
 
     @Override
     public void onActivate() {
         itemAges.clear();
+        trackedIds.clear();
     }
 
     @Override
     public void onDeactivate() {
         itemAges.clear();
+        trackedIds.clear();
     }
 
     @EventHandler
@@ -114,7 +125,13 @@ public class ClearDespawn extends Module {
 
         for (Entity entity : mc.world.getEntities()) {
             if (entity instanceof ItemEntity item) {
-                itemAges.put(entity.getId(), item.age);
+                int id = entity.getId();
+                itemAges.put(id, item.age);
+
+                // Track all item IDs when enabled
+                if (trackItems.get()) {
+                    trackedIds.add(id);
+                }
             }
         }
         itemAges.keySet().removeIf(id -> mc.world.getEntityById(id) == null);
@@ -140,15 +157,12 @@ public class ClearDespawn extends Module {
             if (timeLeft <= 0) continue;
 
             Color color;
-
             if (computeColorFromTime.get()) {
-                // Smooth color transition like TntFuseEsp
                 color = despawnColor(timeLeft, despawnTime.get());
             } else {
                 color = customColor.get();
             }
 
-            // Apply opacity settings
             Color sideColor = new Color(color.r, color.g, color.b, sideOpacity.get());
             Color lineColor = new Color(color.r, color.g, color.b, lineOpacity.get());
 
@@ -161,14 +175,15 @@ public class ClearDespawn extends Module {
     }
 
     private Color despawnColor(int timeLeft, int totalTime) {
-        // Calculate percentage of time remaining (0 = about to despawn, 1 = just dropped)
         double percent = (double) timeLeft / totalTime;
-        percent = Math.max(0.0, Math.min(1.0, percent));
+        percent = Math.clamp(percent, 0.0, 1.0);
 
-        // Green (0,255,0) at 100% → Yellow (255,255,0) at 50% → Red (255,0,0) at 0%
         int r = (int) (255 * (1.0 - percent));
         int g = (int) (255 * percent);
-
         return new Color(r, g, 0);
+    }
+
+    public Set<Integer> getTrackedIds() {
+        return trackedIds;
     }
 }

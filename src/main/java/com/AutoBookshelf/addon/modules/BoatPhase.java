@@ -76,7 +76,7 @@ public class BoatPhase extends Module {
     private BoatEntity boat = null;
 
     public BoatPhase() {
-        super(Addon.CATEGORY, "BoatPhase6b6t", "For 6b6t BoatPhase");
+        super(Addon.CATEGORY, "BoatPhase6b6t", "For 6b6t BoatPhase.");
     }
 
     @Override

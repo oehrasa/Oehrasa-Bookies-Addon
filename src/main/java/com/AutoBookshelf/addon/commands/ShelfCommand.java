@@ -38,7 +38,7 @@ public class ShelfCommand extends Command {
     private boolean isExtracting = false;
 
     public ShelfCommand() {
-        super("shelf", "Extracts a book from a chiseled bookshelf slot, reads it, and puts it back");
+        super("shelf", "Extracts a book from a chiseled bookshelf slot, reads it, and puts it back.");
     }
 
     @Override

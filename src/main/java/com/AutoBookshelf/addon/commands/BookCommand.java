@@ -20,7 +20,7 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 public class BookCommand extends Command {
 
     public BookCommand() {
-        super("book", "Shows book information from your held item");
+        super("book", "Shows book information from your held item.");
     }
 
     @Override
