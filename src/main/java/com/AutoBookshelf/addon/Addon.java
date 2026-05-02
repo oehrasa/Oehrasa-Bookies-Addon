@@ -1,5 +1,6 @@
 package com.AutoBookshelf.addon;
 
+import com.AutoBookshelf.addon.commands.BookTranslateCommand;
 import com.AutoBookshelf.addon.hud.MayaChan;
 import com.AutoBookshelf.addon.hud.ElytraTime;
 import com.AutoBookshelf.addon.hud.OnlineFriendsHUD;
@@ -27,7 +28,7 @@ public class Addon extends MeteorAddon {
 
     @Override
     public void onInitialize() {
-        LOG.info("Honey, dinner's ready, Identified AutoBookshelf Addon");
+        LOG.info("Honey, dinner's ready, Identified AutoBookshelf Addon.");
 
         // Modules
         Modules.get().add(new AutoLogin(CATEGORY));
@@ -65,6 +66,7 @@ public class Addon extends MeteorAddon {
         Commands.add(new IfpeekCommand());
         Commands.add(new ShelfCommand());
         Commands.add(new BookCommand());
+        Commands.add(new BookTranslateCommand());
 
     }
 

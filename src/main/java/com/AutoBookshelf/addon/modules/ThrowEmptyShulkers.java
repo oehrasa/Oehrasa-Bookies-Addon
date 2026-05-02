@@ -93,7 +93,7 @@ public class ThrowEmptyShulkers extends Module {
         .build()
     );
 
-    // Filter settings (unchanged)
+    // Filter settings
     private enum FilterMode { WHITELIST, BLACKLIST }
     private final Setting<FilterMode> filterMode = sgFilter.add(new EnumSetting.Builder<FilterMode>()
         .name("filter-mode")
@@ -156,7 +156,6 @@ public class ThrowEmptyShulkers extends Module {
         Rotations.rotate(yaw, pitch, 50, silent, null);
     }
 
-    // --- Single mode ---
     private void tickSingleMode() {
         switch (throwState) {
             case ROTATING -> {
@@ -195,7 +194,6 @@ public class ThrowEmptyShulkers extends Module {
         }
     }
 
-    // --- Batch mode ---
     private void tickBatchMode() {
         switch (batchState) {
             case ROTATING -> {
@@ -251,7 +249,7 @@ public class ThrowEmptyShulkers extends Module {
         }
     }
 
-    // Filter logic (unchanged)
+    // Filter
     private boolean shouldThrow(ItemStack stack) {
         if (stack.isEmpty()) return false;
         if (!(stack.getItem() instanceof BlockItem blockItem)) return false;

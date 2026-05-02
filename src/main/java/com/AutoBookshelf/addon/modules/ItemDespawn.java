@@ -23,7 +23,7 @@ public class ItemDespawn extends Module {
 
     private final Setting<Integer> despawnTime = sgGeneral.add(new IntSetting.Builder()
         .name("despawn-time")
-        .description("Total despawn time in ticks (6000 ticks = 5 minutes)")
+        .description("Total despawn time in ticks (6000 ticks = 5 minutes).")
         .defaultValue(6000)
         .min(100)
         .max(36000)
@@ -32,7 +32,7 @@ public class ItemDespawn extends Module {
 
     private final Setting<Boolean> computeColorFromTime = sgGeneral.add(new BoolSetting.Builder()
         .name("compute-color-from-time")
-        .description("Smoothly transition color based on remaining time (green → yellow → red)")
+        .description("Smoothly transition color based on remaining time.")
         .defaultValue(true)
         .build()
     );
@@ -75,7 +75,7 @@ public class ItemDespawn extends Module {
 
     private final Setting<Integer> lineOpacity = sgRender.add(new IntSetting.Builder()
         .name("line-opacity")
-        .description("Opacity of the box lines (0-255)")
+        .description("Opacity of the box lines (0-255).")
         .defaultValue(255)
         .min(0)
         .max(255)
@@ -85,7 +85,7 @@ public class ItemDespawn extends Module {
 
     private final Setting<Integer> sideOpacity = sgRender.add(new IntSetting.Builder()
         .name("side-opacity.")
-        .description("Opacity of the box sides (0-255)")
+        .description("Opacity of the box sides (0-255).")
         .defaultValue(75)
         .min(0)
         .max(255)

@@ -44,28 +44,28 @@ public class CrackMobOwner extends Module {
 
     private final Setting<Boolean> showUnknown = sgGeneral.add(new BoolSetting.Builder()
         .name("show-unknown")
-        .description("Show 'Unknown Owner' when owner cannot be identified")
+        .description("Show 'Unknown Owner' when owner cannot be identified.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> showUUID = sgGeneral.add(new BoolSetting.Builder()
         .name("show-uuid")
-        .description("Show the owner's UUID instead of name")
+        .description("Show the owner's UUID instead of name.")
         .defaultValue(false)
         .build()
     );
 
     private final Setting<Boolean> persistentCache = sgCache.add(new BoolSetting.Builder()
         .name("persistent-cache")
-        .description("Save cache to disk and load on startup")
+        .description("Save cache to disk and load on startup.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> debugMode = sgDebug.add(new BoolSetting.Builder()
         .name("debug-mode")
-        .description("Show detailed debug information")
+        .description("Show detailed debug information.")
         .defaultValue(true)
         .build()
     );

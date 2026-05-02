@@ -64,14 +64,14 @@ public class AutoSex extends Module {
 
     private final Setting<Mode> targetMode = sgGeneral.add(new EnumSetting.Builder<Mode>()
         .name("target-mode")
-        .description("The mode at which to follow the target")
+        .description("The mode at which to follow the target.")
         .defaultValue(Mode.BindClick)
         .build()
     );
 
     private final Setting<Keybind> keybind = sgGeneral.add(new KeybindSetting.Builder()
         .name("keybind")
-        .description("What key to press to start following someone")
+        .description("What key to press to start following someone.")
         .defaultValue(Keybind.fromKey(-1))
         .visible(() -> targetMode.get() == Mode.BindClick)
         .build()
@@ -79,7 +79,7 @@ public class AutoSex extends Module {
 
     private final Setting<SortPriority> priority = sgGeneral.add(new EnumSetting.Builder<SortPriority>()
         .name("target-priority")
-        .description("How to select the target")
+        .description("How to select the target.")
         .defaultValue(SortPriority.LowestDistance)
         .visible(() -> targetMode.get() == Mode.Automatic)
         .build()
@@ -87,7 +87,7 @@ public class AutoSex extends Module {
 
     private final Setting<Boolean> ignoreRange = sgGeneral.add(new BoolSetting.Builder()
         .name("ignore-range")
-        .description("Follow the target even if they are out of range")
+        .description("Follow the target even if they are out of range.")
         .defaultValue(false)
         .visible(() -> targetMode.get() == Mode.Automatic)
         .build()
@@ -95,7 +95,7 @@ public class AutoSex extends Module {
 
     private final Setting<Double> targetRange = sgGeneral.add(new DoubleSetting.Builder()
         .name("target-range")
-        .description("The range in which it follows a target")
+        .description("The range in which it follows a target.")
         .defaultValue(50)
         .min(1)
         .max(200)
@@ -113,49 +113,49 @@ public class AutoSex extends Module {
 
     private final Setting<Boolean> message = sgGeneral.add(new BoolSetting.Builder()
         .name("message")
-        .description("Sends a message to the player when you start/stop following them")
+        .description("Sends a message to the player when you start/stop following them.")
         .defaultValue(false)
         .build()
     );
 
     private final Setting<Set<EntityType<?>>> mobTypes = sgMobs.add(new EntityTypeListSetting.Builder()
         .name("mob-types")
-        .description("Which mob types to target (only when automatic mode or manual targeting)")
+        .description("Which mob types to target.")
         .defaultValue()
         .build()
     );
 
     private final Setting<Boolean> onlyHostileMobs = sgMobs.add(new BoolSetting.Builder()
         .name("only-hostile")
-        .description("Only follow mobs that are currently hostile (angry/attacking)")
+        .description("Only follow mobs that are currently hostile (angry/attacking).")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> ignoreNamedMobs = sgMobs.add(new BoolSetting.Builder()
         .name("ignore-named")
-        .description("Ignore mobs that have a custom name")
+        .description("Ignore mobs that have a custom name.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> ignoreTamed = sgMobs.add(new BoolSetting.Builder()
         .name("ignore-tamed")
-        .description("Ignore tamed mobs")
+        .description("Ignore tamed mobs.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<ApproachMode> approachMode = sgMovement.add(new EnumSetting.Builder<ApproachMode>()
         .name("approach-mode")
-        .description("How to approach the target")
+        .description("How to approach the target.")
         .defaultValue(ApproachMode.Behind)
         .build()
     );
 
     private final Setting<Double> behindOffset = sgMovement.add(new DoubleSetting.Builder()
         .name("behind-offset")
-        .description("How many blocks behind the target to stand")
+        .description("How many blocks behind the target to stand.")
         .defaultValue(1.5)
         .min(1.0)
         .max(3.0)
@@ -166,7 +166,7 @@ public class AutoSex extends Module {
 
     private final Setting<Double> sideOffset = sgMovement.add(new DoubleSetting.Builder()
         .name("side-offset")
-        .description("How many blocks to the side of the target to stand")
+        .description("How many blocks to the side of the target to stand.")
         .defaultValue(2.0)
         .min(1.0)
         .max(4.0)
@@ -177,7 +177,7 @@ public class AutoSex extends Module {
 
     private final Setting<Integer> maxFollowRange = sgMovement.add(new IntSetting.Builder()
         .name("max-follow-range")
-        .description("Maximum range to follow the target (blocks)")
+        .description("Maximum range to follow the target.")
         .defaultValue(100)
         .min(10)
         .max(500)
@@ -187,14 +187,14 @@ public class AutoSex extends Module {
 
     private final Setting<Boolean> autoLook = sgMovement.add(new BoolSetting.Builder()
         .name("auto-look")
-        .description("Continuously look at the back of the target's head when in position")
+        .description("Continuously look at the back of the target's head when in position.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Double> pathUpdateThreshold = sgMovement.add(new DoubleSetting.Builder()
         .name("path-update-threshold")
-        .description("How far the target must move horizontally (blocks) before Baritone recalculates the path")
+        .description("How far the target must move horizontally (blocks) before Baritone recalculates the path.")
         .defaultValue(0.5)
         .min(0.1)
         .max(2.0)
@@ -204,7 +204,7 @@ public class AutoSex extends Module {
 
     private final Setting<Integer> pathUpdateCooldown = sgMovement.add(new IntSetting.Builder()
         .name("path-update-cooldown")
-        .description("Minimum ticks between path recalculations")
+        .description("Minimum ticks between path recalculations.")
         .defaultValue(10)
         .min(0)
         .max(60)
@@ -214,7 +214,7 @@ public class AutoSex extends Module {
 
     private final Setting<Boolean> debugMode = sgMovement.add(new BoolSetting.Builder()
         .name("debug-mode")
-        .description("Show debug information")
+        .description("Show debug information.")
         .defaultValue(false)
         .build()
     );
@@ -228,7 +228,7 @@ public class AutoSex extends Module {
 
     private final Setting<Integer> twerkSpeed = sgSex.add(new IntSetting.Builder()
         .name("twerk-speed")
-        .description("How many times per second to spam crouch")
+        .description("How many times per second to spam crouch.")
         .defaultValue(8)
         .min(1)
         .max(20)
@@ -238,7 +238,7 @@ public class AutoSex extends Module {
 
     private final Setting<Integer> twerkDelay = sgSex.add(new IntSetting.Builder()
         .name("twerk-delay")
-        .description("Delay in ticks before starting to twerk after reaching position")
+        .description("Delay in ticks before starting to twerk after reaching position.")
         .defaultValue(10)
         .min(0)
         .max(40)
@@ -248,7 +248,7 @@ public class AutoSex extends Module {
 
     private final Setting<Boolean> dirtyTalk = sgSex.add(new BoolSetting.Builder()
         .name("dirty-talk")
-        .description("Whisper naughty things in your enemy's ear")
+        .description("Whisper naughty things in your enemy's ear.")
         .defaultValue(true)
         .visible(message::get)
         .build()
@@ -256,7 +256,7 @@ public class AutoSex extends Module {
 
     private final Setting<Boolean> dm = sgSex.add(new BoolSetting.Builder()
         .name("private-msg")
-        .description("Sends a private chat msg to the person")
+        .description("Sends a private chat msg to the person.")
         .defaultValue(false)
         .visible(message::get)
         .build()
@@ -264,7 +264,7 @@ public class AutoSex extends Module {
 
     private final Setting<Boolean> pm = sgSex.add(new BoolSetting.Builder()
         .name("public-msg")
-        .description("Sends a public chat msg")
+        .description("Sends a public chat msg.")
         .defaultValue(false)
         .visible(message::get)
         .build()
@@ -272,7 +272,7 @@ public class AutoSex extends Module {
 
     private final Setting<Integer> delay = sgSex.add(new IntSetting.Builder()
         .name("delay")
-        .description("The delay between specified messages in ticks")
+        .description("The delay between specified messages in ticks.")
         .defaultValue(100)
         .min(0)
         .sliderMax(200)

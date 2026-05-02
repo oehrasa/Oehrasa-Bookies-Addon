@@ -39,7 +39,7 @@ public class CalibratedRange extends Module {
     // General settings
     private final Setting<Integer> renderDistance = sgGeneral.add(new IntSetting.Builder()
         .name("render-distance")
-        .description("How far away to render spheres (blocks)")
+        .description("How far away to render spheres.")
         .defaultValue(64)
         .min(16)
         .max(128)
@@ -49,14 +49,14 @@ public class CalibratedRange extends Module {
 
     private final Setting<Boolean> smartRendering = sgGeneral.add(new BoolSetting.Builder()
         .name("smart-rendering")
-        .description("Render as circle when far, sphere when close")
+        .description("Render as circle when far, sphere when close.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Integer> smartRenderDistance = sgGeneral.add(new IntSetting.Builder()
         .name("smart-render-distance")
-        .description("Distance to switch from circle to sphere")
+        .description("Distance to switch from circle to sphere.")
         .defaultValue(20)
         .min(5)
         .max(50)
@@ -66,14 +66,14 @@ public class CalibratedRange extends Module {
 
     private final Setting<Boolean> advancedView = sgGeneral.add(new BoolSetting.Builder()
         .name("advanced-view")
-        .description("Detect redstone connections and shriekers in range")
+        .description("Detect redstone connections and shriekers in range.")
         .defaultValue(false)
         .build()
     );
 
     private final Setting<Boolean> onlyRenderImpactful = sgGeneral.add(new BoolSetting.Builder()
         .name("only-render-impactful")
-        .description("Only render sensors that have redstone output or shriekers in range")
+        .description("Only render sensors that have redstone output or shriekers in range.")
         .defaultValue(false)
         .visible(advancedView::get)
         .build()
@@ -82,7 +82,7 @@ public class CalibratedRange extends Module {
     // Render settings
     private final Setting<OcclusionMode> occlusionMode = sgRender.add(new EnumSetting.Builder<OcclusionMode>()
         .name("occlusion-mode")
-        .description("How to handle occlusion (hiding blocks behind other blocks)")
+        .description("How to handle occlusion (hiding blocks behind other blocks).")
         .defaultValue(OcclusionMode.None)
         .build()
     );
@@ -90,14 +90,14 @@ public class CalibratedRange extends Module {
     // FIXED: shapeType now works even when smartRendering is ON
     private final Setting<ShapeType> shapeType = sgRender.add(new EnumSetting.Builder<ShapeType>()
         .name("shape-type")
-        .description("What shape to render (overridden by smart-rendering if enabled)")
+        .description("What shape to render (overridden by smart-rendering if enabled).")
         .defaultValue(ShapeType.Sphere)
         .build()
     );
 
     private final Setting<Double> circleThickness = sgRender.add(new DoubleSetting.Builder()
         .name("circle-thickness")
-        .description("Thickness of circle outline")
+        .description("Thickness of circle outline.")
         .defaultValue(0.08)
         .min(0.02)
         .max(0.5)
@@ -105,11 +105,9 @@ public class CalibratedRange extends Module {
         .build()
     );
 
-    // FIXED: gradation now affects sphere rendering by controlling which blocks are rendered
-    // Higher gradation = more blocks rendered (thicker shell)
     private final Setting<Integer> gradation = sgRender.add(new IntSetting.Builder()
         .name("gradation")
-        .description("Sphere thickness (1-5). Higher = thicker sphere shell")
+        .description("Sphere thickness (1-5). Higher = thicker sphere shell.")
         .defaultValue(1)
         .min(1)
         .max(5)
@@ -120,7 +118,7 @@ public class CalibratedRange extends Module {
 
     private final Setting<Boolean> renderAtPlayerHeight = sgRender.add(new BoolSetting.Builder()
         .name("render-circle-at-player-height")
-        .description("Render circular range indicator at player height instead of sensor height")
+        .description("Render circular range indicator at player height instead of sensor height.")
         .defaultValue(false)
         .visible(() -> shapeType.get() == ShapeType.Circle || shapeType.get() == ShapeType.Both)
         .build()
@@ -128,21 +126,21 @@ public class CalibratedRange extends Module {
 
     private final Setting<SettingColor> sphereColor = sgRender.add(new ColorSetting.Builder()
         .name("sphere-color")
-        .description("Color of the sphere outline")
+        .description("Color of the sphere outline.")
         .defaultValue(new SettingColor(0, 255, 255, 200))
         .build()
     );
 
     private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
         .name("line-color")
-        .description("Color of the sphere lines")
+        .description("Color of the sphere lines.")
         .defaultValue(new SettingColor(0, 255, 255, 255))
         .build()
     );
 
     private final Setting<SettingColor> redstoneColor = sgRender.add(new ColorSetting.Builder()
         .name("redstone-color")
-        .description("Color for sensors with redstone output")
+        .description("Color for sensors with redstone output.")
         .defaultValue(new SettingColor(255, 0, 0, 200))
         .visible(advancedView::get)
         .build()
@@ -150,7 +148,7 @@ public class CalibratedRange extends Module {
 
     private final Setting<SettingColor> shriekerColor = sgRender.add(new ColorSetting.Builder()
         .name("shrieker-color")
-        .description("Color for sensors with shriekers in range")
+        .description("Color for sensors with shriekers in range.")
         .defaultValue(new SettingColor(255, 165, 0, 200))
         .visible(advancedView::get)
         .build()
@@ -158,21 +156,21 @@ public class CalibratedRange extends Module {
 
     private final Setting<ShapeMode> shapeMode = sgRender.add(new EnumSetting.Builder<ShapeMode>()
         .name("shape-mode")
-        .description("How the sphere is rendered")
+        .description("How the sphere is rendered.")
         .defaultValue(ShapeMode.Lines)
         .build()
     );
 
     private final Setting<Boolean> showCenterBox = sgRender.add(new BoolSetting.Builder()
         .name("show-center-box")
-        .description("Show a box at the sensor location")
+        .description("Show a box at the sensor location.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<SettingColor> centerColor = sgRender.add(new ColorSetting.Builder()
         .name("center-color")
-        .description("Color of the center box")
+        .description("Color of the center box.")
         .defaultValue(new SettingColor(255, 255, 255, 150))
         .build()
     );
@@ -431,13 +429,12 @@ public class CalibratedRange extends Module {
         return false;
     }
 
-    // FIXED: gradation now controls sphere thickness
     private Set<BlockPos> generateHollowEuclideanSphere(BlockPos center, double radius, int thickness) {
         Set<BlockPos> positions = new HashSet<>();
         int radiusCeil = (int) Math.ceil(radius);
         double radiusSq = radius * radius;
 
-        // Gradation controls how thick the shell is (1 = thin shell, 5 = thick shell)
+        // Gradation controls how thick the shell is
         double innerRadiusSq = Math.max(0, (radius - thickness) * (radius - thickness));
 
         double centerX = center.getX() + 0.5;
@@ -538,7 +535,6 @@ public class CalibratedRange extends Module {
             }
 
             if (useCircle) {
-                // FIXED: renderAtPlayerHeight now properly affects circle rendering
                 double renderY;
                 if (renderAtPlayerHeight.get()) {
                     renderY = mc.player.getY();
@@ -592,9 +588,9 @@ public class CalibratedRange extends Module {
     private enum ShapeType { Circle, Sphere, Both }
 
     private enum OcclusionMode {
-        None("None - Render all blocks"),
-        Simple("Simple - Hide blocks behind solid faces"),
-        Accurate("Accurate - Hide faces not facing the player");
+        None("None - Render all blocks."),
+        Simple("Simple - Hide blocks behind solid faces."),
+        Accurate("Accurate - Hide faces not facing the player.");
 
         private final String title;
         OcclusionMode(String title) { this.title = title; }

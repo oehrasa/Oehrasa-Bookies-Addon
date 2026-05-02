@@ -134,7 +134,7 @@ public class BookshelfFiller extends Module {
 
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
         .name("delay")
-        .description("Delay between actions in ticks")
+        .description("Delay between actions in ticks.")
         .defaultValue(10)
         .min(0)
         .sliderMax(30)
@@ -143,68 +143,68 @@ public class BookshelfFiller extends Module {
 
     private final Setting<Boolean> continuousChecking = sgGeneral.add(new BoolSetting.Builder()
         .name("continuous-checking")
-        .description("Never stop checking for books - continuously monitor inventory for new books")
+        .description("Never stop checking for books, continuously monitor inventory for new books.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Item> selectionToolSetting = sgSelection.add(new ItemSetting.Builder()
         .name("selection-tool")
-        .description("Which item to use for making selections")
+        .description("Which item to use for making selections.")
         .defaultValue(Items.NETHERITE_AXE)
         .build()
     );
 
     private final Setting<Boolean> requireToolInHand = sgSelection.add(new BoolSetting.Builder()
         .name("require-tool-in-hand")
-        .description("Require the selection tool to be held in hand to make selections")
+        .description("Require the selection tool to be held in hand to make selections.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Item> counterTool = sgCounter.add(new ItemSetting.Builder()
         .name("counter-tool")
-        .description("Tool to use for counting books in bookshelves (right-click to select area)")
+        .description("Tool to use for counting books in bookshelves (right-click to select area).")
         .defaultValue(Items.NETHERITE_PICKAXE)
         .build()
     );
 
     private final Setting<Boolean> requireCounterTool = sgCounter.add(new BoolSetting.Builder()
         .name("require-counter-tool")
-        .description("Require the counter tool to be held to count books")
+        .description("Require the counter tool to be held to count books.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> persistentCache = sgCounter.add(new BoolSetting.Builder()
         .name("persistent-cache")
-        .description("Save book counts to disk and load on startup")
+        .description("Save book counts to disk and load on startup.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> showCountMessages = sgCounter.add(new BoolSetting.Builder()
         .name("show-count-messages")
-        .description("Show messages when counting books")
+        .description("Show messages when counting books.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> showChanges = sgCounter.add(new BoolSetting.Builder()
         .name("show-changes")
-        .description("Show detailed changes when updating counts (new/updated/removed bookshelves)")
+        .description("Show detailed changes when updating counts (new/updated/removed bookshelves).")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> resetAllCounts = sgCounter.add(new BoolSetting.Builder()
         .name("reset-all-counts")
-        .description("RESET ALL SAVED BOOK COUNTS (this cannot be undone)")
+        .description("RESET ALL SAVED BOOK COUNTS.")
         .defaultValue(false)
         .onChanged(value -> {
             if (value) {
                 resetAllCounts();
-                info("§aCounts reset! You can now turn this setting off");
+                info("§aCounts reset! You can now turn this setting off.");
             }
         })
         .build()
@@ -212,7 +212,7 @@ public class BookshelfFiller extends Module {
 
     private final Setting<Item> extractTool = sgExtract.add(new ItemSetting.Builder()
         .name("extract-tool")
-        .description("Tool to use for extracting books (right-click on bookshelf)")
+        .description("Tool to use for extracting books (right-click on bookshelf).")
         .defaultValue(Items.ENCHANTED_GOLDEN_APPLE)
         .build()
     );
@@ -389,7 +389,7 @@ public class BookshelfFiller extends Module {
 
     private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
         .name("line-color")
-        .description("The line color of the selection box")
+        .description("The line color of the selection box.")
         .defaultValue(new SettingColor(0, 255, 255, 255))
         .build()
     );

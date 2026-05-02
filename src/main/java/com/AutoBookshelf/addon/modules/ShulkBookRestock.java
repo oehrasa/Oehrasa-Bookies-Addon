@@ -22,7 +22,7 @@ public class ShulkBookRestock extends Module {
     // General settings
     private final Setting<Integer> restockSlot = sgGeneral.add(new IntSetting.Builder()
         .name("restock-slot")
-        .description("The hotbar slot to restock when all are empty (1-9, 0 = auto-detect)")
+        .description("The hotbar slot to restock when all are empty (1-9, 0 = auto-detect).")
         .defaultValue(0)
         .min(0)
         .max(9)
@@ -32,14 +32,14 @@ public class ShulkBookRestock extends Module {
 
     private final Setting<Boolean> keepOneInInventory = sgGeneral.add(new BoolSetting.Builder()
         .name("keep-one")
-        .description("Keep at least one item in inventory (don't restock the last one)")
+        .description("Keep at least one item in inventory (don't restock the last one).")
         .defaultValue(false)
         .build()
     );
 
     private final Setting<Integer> restockDelay = sgGeneral.add(new IntSetting.Builder()
         .name("restock-delay")
-        .description("Delay in ticks before restocking after hotbar is empty")
+        .description("Delay in ticks before restocking after hotbar is empty.")
         .defaultValue(2)
         .min(0)
         .max(20)
@@ -48,14 +48,14 @@ public class ShulkBookRestock extends Module {
 
     private final Setting<Boolean> autoSwitch = sgGeneral.add(new BoolSetting.Builder()
         .name("auto-switch")
-        .description("Automatically switch to another hotbar slot when current runs out")
+        .description("Automatically switch to another hotbar slot when current runs out.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Integer> switchDelay = sgGeneral.add(new IntSetting.Builder()
         .name("switch-delay")
-        .description("Delay in ticks before auto-switching")
+        .description("Delay in ticks before auto-switching.")
         .defaultValue(1)
         .min(0)
         .max(10)
@@ -66,14 +66,14 @@ public class ShulkBookRestock extends Module {
     // Item type settings
     private final Setting<Boolean> restockShulkers = sgItems.add(new BoolSetting.Builder()
         .name("restock-shulkers")
-        .description("Restock shulker boxes")
+        .description("Restock shulker boxes.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> restockWritableBooks = sgItems.add(new BoolSetting.Builder()
         .name("restock-writable-books")
-        .description("Restock writable books (book and quill)")
+        .description("Restock writable books (book and quill).")
         .defaultValue(false)
         .build()
     );
