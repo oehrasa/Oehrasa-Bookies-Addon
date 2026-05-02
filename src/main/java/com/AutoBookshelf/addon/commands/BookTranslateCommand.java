@@ -30,11 +30,11 @@ public class BookTranslateCommand extends Command {
 
     public BookTranslateCommand() {
         super("booktranslate", "Translates the held written book into another language.");
-    }
+    } // Credits to Akgezen for the modules idea
 
     @Override
     public void build(LiteralArgumentBuilder<CommandSource> builder) {
-        // 1. Display in chat (default)
+        // 1. Display in chat as the default
         builder.executes(ctx -> {
             displayTranslation("en", 1, -1);
             return SINGLE_SUCCESS;
@@ -121,7 +121,7 @@ public class BookTranslateCommand extends Command {
                 JsonArray root = JsonParser.parseString(raw).getAsJsonArray();
                 StringBuilder result = new StringBuilder();
 
-                if (root.size() > 0 && root.get(0).isJsonArray()) {
+                if (!root.isEmpty() && root.get(0).isJsonArray()) {
                     JsonArray segments = root.get(0).getAsJsonArray();
                     for (JsonElement el : segments) {
                         if (el.isJsonArray()) {
@@ -207,7 +207,7 @@ public class BookTranslateCommand extends Command {
                     }
                 }
             }
-            info("§6===========================");
+            info("§6========================");
         }));
     }
 
@@ -276,7 +276,7 @@ public class BookTranslateCommand extends Command {
             }
 
             // 3. Build output filename with timestamp
-            String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy/MM/dd_HH-mm-ss"));
+            String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
             String fileName = finalSafeTitle + "_" + timestamp + ".txt";
 
             // 4. Create output directory and write file
