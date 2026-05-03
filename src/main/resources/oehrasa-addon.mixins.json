@@ -1,5 +1,5 @@
 {
-  "required": false,
+  "required": true,
   "package": "com.AutoBookshelf.addon.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [

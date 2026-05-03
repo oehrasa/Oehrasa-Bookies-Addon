@@ -56,6 +56,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new ThrowEmptyShulkers());
         Modules.get().add(new AutoBeacon());
         Modules.get().add(new InvisFrameCommand());
+        Modules.get().add(new TsundereFurry());
 
         // HUD
         Hud.get().register(MayaChan.INFO);
