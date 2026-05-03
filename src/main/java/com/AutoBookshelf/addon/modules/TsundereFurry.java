@@ -2,9 +2,12 @@ package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.game.SendMessageEvent;
+import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.network.packet.c2s.play.ChatCommandSignedC2SPacket;
+import net.minecraft.network.packet.c2s.play.CommandExecutionC2SPacket;
 import net.minecraft.util.math.random.Random;
 
 import java.util.*;
@@ -117,15 +120,13 @@ public class TsundereFurry extends Module {
     private final Setting<Integer> prefixChance = sgTsundere.add(new IntSetting.Builder()
         .name("prefix-chance")
         .description("Chance (0-100) to add a prefix.")
-        .defaultValue(50)
+        .defaultValue(35)
         .range(0, 100)
         .sliderRange(0, 100)
         .visible(() -> addPrefix.get() && mode.get() != TransformationMode.Animal)
-        .build());
+        .build()); // The odds are pretty good eh
 
-    // Animal sound maps
     private final Map<Animal, List<String>> animalSounds = new HashMap<>();
-    // Tsundere internal
     private static final Pattern TOKEN_RE = Pattern.compile("[A-Za-z0-9]+(?:'[A-Za-z0-9]+)?|_|[^\\w\\s]|\\s+", Pattern.UNICODE_CHARACTER_CLASS);
     private static final Set<String> ALWAYS_STICKY = new HashSet<>(Arrays.asList(
         "whore", "whores", "cunt", "cunts", "bitch", "bitches", "asses", "asshole", "assholes", "asshat", "asshats",
@@ -138,7 +139,6 @@ public class TsundereFurry extends Module {
     ));
     private static final Set<String> PLURAL_HINT = new HashSet<>(Arrays.asList("these", "those", "all"));
 
-    // Expanded tsundere phrase map
     private static final Map<String, List<String>> PHRASE_REPLACEMENTS = new HashMap<>();
     static {
         PHRASE_REPLACEMENTS.put(cleanKey("this tps sucks"), List.of("I'm a stupid baka"));
@@ -152,10 +152,10 @@ public class TsundereFurry extends Module {
             "be safe, you silly baka! It'd be hard to replace you...",
             "don't think I care or anything!"
         ));
-        PHRASE_REPLACEMENTS.put(cleanKey("i hate you"), List.of("it's not like I like you or anything!"));
+        PHRASE_REPLACEMENTS.put(cleanKey("youre dumb"), List.of("it's not like I like you or anything!"));
         PHRASE_REPLACEMENTS.put(cleanKey("i know"), List.of("don't think I didn't know!", "I know, b- baka!"));
         PHRASE_REPLACEMENTS.put(cleanKey("ik"), List.of("don't think I didn't know!", "I know, b- baka!"));
-        PHRASE_REPLACEMENTS.put(cleanKey("im not cute"), List.of("I'm not c- cute!"));
+        PHRASE_REPLACEMENTS.put(cleanKey("im cool"), List.of("I'm not c- cute!"));
         PHRASE_REPLACEMENTS.put(cleanKey("wtf"), List.of("what the, baka!", "what the, b- baka!"));
         PHRASE_REPLACEMENTS.put(cleanKey("thank you"), List.of(
             "I didn't do it for your thanks, baka! But... you're welcome.",
@@ -170,7 +170,7 @@ public class TsundereFurry extends Module {
         PHRASE_REPLACEMENTS.put(cleanKey("im sorry"), List.of(
             "I- I'm not the one who should apologise! But... fine, I forgive you, baka."
         ));
-        PHRASE_REPLACEMENTS.put(cleanKey("are you okay"), List.of(
+        PHRASE_REPLACEMENTS.put(cleanKey("i almost died"), List.of(
             "I- I'm perfectly fine! Don't worry about me, idiot.",
             "Why would I need you to worry? But... thanks, I guess."
         ));
@@ -178,23 +178,81 @@ public class TsundereFurry extends Module {
             "Don't be late or I'll be mad! Yeah, whatever... bye.",
             "See you, I guess? Don't get into trouble or I'll never forgive you!"
         ));
+        PHRASE_REPLACEMENTS.put(cleanKey("cya"), List.of(
+            "What are you going to do if I get lost? At least hold my hand later!",
+            "I only saved you so we can finish our battle later!"
+        ));
     }
 
     public TsundereFurry() {
-        super(Addon.CATEGORY, "Tsundere-Furry", "Transforms outgoing chat messages into animal sounds, tsundere, or both :>.");
-        animalSounds.put(Animal.Rabbit, List.of("chirrup", "purr", "purrrrr", "prrr", "grunt", "thump", "buni", "nurf", "pyon"));
-        animalSounds.put(Animal.Cat, List.of("meow", "mreow", "mrew", "purr", "purrrrr", "prrr", "mew", "rawr", "nya", "buhhh", "nyaa~"));
+        super(Addon.CATEGORY, "Tsundere-Furry", "Transforms outgoing chat messages into animal sounds, tsundere, or both :>");
+        animalSounds.put(Animal.Rabbit, List.of("chirrup", "purr", "purrrrr", "prrr", "grunt", "peko", "thump", "buni", "nurf", "pyon"));
+        animalSounds.put(Animal.Cat, List.of("meow", "mreow", "mrew", "purr", "purrrrr", "prrr", "mew", "rawr", "nya", "buhhh", "nyaa~", "miaw <3"));
     }
 
     @EventHandler
     public void onSendMessage(SendMessageEvent event) {
         if (event.isCancelled()) return;
         String message = event.message;
-
-        // Skip commands
-        if (message.startsWith("/")) return;
-
+        if (message.startsWith("/")) return;   // i spent way too long on reinventing the wheel
         event.message = applyTransformation(message);
+    }
+
+    private boolean redirecting = false;
+
+    @EventHandler
+    private void onPacketSend(PacketEvent.Send event) {
+        if (redirecting) return;
+
+        if (!(event.packet instanceof CommandExecutionC2SPacket) &&
+            !(event.packet instanceof ChatCommandSignedC2SPacket)) {
+            return;
+        }
+
+        String command;
+        if (event.packet instanceof CommandExecutionC2SPacket cmdPacket) {
+            command = "/" + cmdPacket.command();
+        } else {
+            command = "/" + ((ChatCommandSignedC2SPacket) event.packet).command();
+        }
+
+        if (!isWhisperCommand(command)) return;
+
+        String transformed = transformWhisperCommand(command);   // "/msg Steve hello, baka!"
+
+        event.cancel();                     // Stop the original packet
+        redirecting = true;                // Prevent rehandling the new packet
+        try {
+            if (transformed.startsWith("/")) {
+                mc.player.networkHandler.sendChatCommand(transformed.substring(1));
+            } else {
+                mc.player.networkHandler.sendChatMessage(transformed);
+            }
+        } finally {
+            redirecting = false;
+        }
+    }
+
+    private boolean isWhisperCommand(String cmd) {
+        String lower = cmd.toLowerCase();
+        return lower.startsWith("/msg ") || lower.startsWith("/whisper ")
+            || lower.startsWith("/l ") || lower.startsWith("/r ") || lower.startsWith("/w ");
+    }
+
+    private String transformWhisperCommand(String input) {
+        String lower = input.toLowerCase();
+        boolean hasTarget = lower.startsWith("/msg ") || lower.startsWith("/whisper ") || lower.startsWith("/w ");
+
+        if (hasTarget) {
+            String[] parts = input.split(" ", 3);
+            if (parts.length < 3) return input;   // incomplete, leave as it is
+            return parts[0] + " " + parts[1] + " " + applyTransformation(parts[2]);
+        } else {
+            // /r or /l without name
+            String[] parts = input.split(" ", 2);
+            if (parts.length < 2) return input;
+            return parts[0] + " " + applyTransformation(parts[1]);
+        }
     }
 
     private String applyTransformation(String raw) {
@@ -230,28 +288,27 @@ public class TsundereFurry extends Module {
     private String tsundereTransform(String text) {
         if (text == null || text.isEmpty()) return text;
 
-        // Apply whole phrase replace
         text = applyWholePhrases(text);
-        // Swear replace
         text = applyTsundereTokens(text);
-        // Prefix
+
         if (addPrefix.get() && Random.create().nextInt(100) < prefixChance.get()) {
             List<String> prefixList = prefixes.get();
             if (!prefixList.isEmpty()) {
                 text = prefixList.get(Random.create().nextInt(prefixList.size())) + text;
             }
         }
-        // Suffix
+
         if (addSuffix.get() && Random.create().nextInt(100) < suffixChance.get()) {
             List<String> suffixList = suffixes.get();
             if (!suffixList.isEmpty()) {
                 text += suffixList.get(Random.create().nextInt(suffixList.size()));
             }
         }
-        // Stutter
+
         if (stutter.get() && Random.create().nextInt(100) < stutterChance.get()) {
             text = stutterText(text);
         }
+
         return text;
     }
 
@@ -268,7 +325,7 @@ public class TsundereFurry extends Module {
         if (s == null) return "";
         return s.toLowerCase().replaceAll("[^a-z\\s]", "").trim();
     }
-
+    // How much of a Tsundere do YOU think oehrasa is? xD
     private String applyTsundereTokens(String text) {
         if (!swearReplacement.get()) return text;
         List<String> words = swearWords.get();

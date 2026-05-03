@@ -106,10 +106,10 @@ public class MinecartPlacer extends Module {
     private final Setting<Integer> radius = sgGeneral.add(new IntSetting.Builder()
         .name("radius")
         .description("Radius to search for rails around the player.")
-        .defaultValue(10)
+        .defaultValue(5)
         .min(1)
-        .max(50)
-        .sliderMax(50)
+        .max(5)
+        .sliderMax(5)
         .build()
     );
 
@@ -119,7 +119,7 @@ public class MinecartPlacer extends Module {
         .defaultValue(0)
         .min(0)
         .max(100)
-        .sliderMax(100)
+        .sliderMax(200)
         .build()
     );
 
