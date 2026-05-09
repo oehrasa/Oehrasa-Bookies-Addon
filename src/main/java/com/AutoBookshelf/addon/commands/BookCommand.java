@@ -151,7 +151,7 @@ public class BookCommand extends Command {
 
         int pagesToShow = Math.min(3, pages.size());
         if (pagesToShow > 0) {
-            info("§7First " + pagesToShow + " page(s):");
+            info("§7First " + pagesToShow + " pages:");
             for (int i = 0; i < pagesToShow; i++) {
                 String pageContent = pages.get(i).getString();
                 if (pageContent.length() > 150) {
@@ -164,7 +164,7 @@ public class BookCommand extends Command {
         }
 
         if (pages.size() > pagesToShow) {
-            info("§7... and §f" + (pages.size() - pagesToShow) + " §7more page(s)");
+            info("§7... and §f" + (pages.size() - pagesToShow) + " §7more pages");
         }
     }
 

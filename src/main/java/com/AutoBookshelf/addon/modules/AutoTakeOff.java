@@ -249,6 +249,8 @@ public class AutoTakeOff extends Module {
         }
 
         ItemStack chest = mc.player.getEquippedStack(EquipmentSlot.CHEST);
+        if (chest.getItem() != Items.ELYTRA) return;
+
         if (!isElytraUsable(chest)) {
             if (brokenMessageCooldown <= 0) {
                 error("Elytra is broken! Cannot take off.");

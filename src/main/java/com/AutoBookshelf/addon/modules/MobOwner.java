@@ -10,23 +10,26 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
+import meteordevelopment.meteorclient.utils.network.Http;
+import meteordevelopment.meteorclient.utils.network.MeteorExecutor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.passive.TameableEntity;
 import net.minecraft.entity.projectile.thrown.EnderPearlEntity;
-import net.minecraft.entity.projectile.thrown.ThrownItemEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.text.Text;
 import org.joml.Vector3d;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-public class CrackMobOwner extends Module {
+public class MobOwner extends Module {
     private static final Color BACKGROUND = new Color(0, 0, 0, 75);
     private static final Color TEXT = new Color(255, 255, 255);
 
@@ -81,8 +84,8 @@ public class CrackMobOwner extends Module {
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private int tickCounter = 0;
 
-    public CrackMobOwner() {
-        super(Addon.CATEGORY, "CrackMobOwner", "Shows entity owner by saving into cache.");
+    public MobOwner() {
+        super(Addon.CATEGORY, "Mob-Owner", "Shows entity owner by saving into cache.");
     }
 
     @Override
@@ -167,12 +170,12 @@ public class CrackMobOwner extends Module {
     }
 
     private UUID getOwnerUuidFromEntity(Entity entity) {
-        // 1. Tamed animals – getOwnerUuid() returns a UUID (null if not tamed)
+        // 1. Tamed animals – always a valid UUID
         if (entity instanceof TameableEntity tame) {
             return tame.getOwnerUuid();
         }
 
-        // 2. End pearls – owner UUID is in NBT, works offline
+        // 2. Ender pearls / projectiles – owner may be UUID or player name
         if (entity instanceof EnderPearlEntity) {
             NbtCompound nbt = new NbtCompound();
             entity.writeNbt(nbt);
@@ -180,23 +183,32 @@ public class CrackMobOwner extends Module {
                 return nbt.getUuid("Owner");
             }
             if (nbt.contains("Owner", 8)) {
-                try { return UUID.fromString(nbt.getString("Owner")); } catch (IllegalArgumentException ignored) {}
+                return parseOwnerTag(nbt.getString("Owner"));
             }
         }
 
-        // 3. Fallback for any other entity type
+        // 3. General fallback for any entity
         NbtCompound nbt = new NbtCompound();
         entity.writeNbt(nbt);
         if (nbt.containsUuid("Owner")) return nbt.getUuid("Owner");
         if (nbt.containsUuid("owner")) return nbt.getUuid("owner");
-        if (nbt.contains("Owner", 8)) {
-            try { return UUID.fromString(nbt.getString("Owner")); } catch (IllegalArgumentException ignored) {}
-        }
+        if (nbt.contains("Owner", 8)) return parseOwnerTag(nbt.getString("Owner"));
+        if (nbt.contains("owner", 8)) return parseOwnerTag(nbt.getString("owner"));
 
         if (debugMode.get()) {
             info("§cNo owner UUID for §f" + entity.getType().getName().getString());
         }
         return null;
+    }
+
+    private UUID parseOwnerTag(String tag) {
+        if (tag.isEmpty()) return null;
+        try {
+            return UUID.fromString(tag);
+        } catch (IllegalArgumentException e) {
+            // The tag contains a player name generate an offline UUID
+            return UUID.nameUUIDFromBytes(("OfflinePlayer:" + tag).getBytes(StandardCharsets.UTF_8));
+        }
     }
 
     @EventHandler
@@ -229,14 +241,14 @@ public class CrackMobOwner extends Module {
 
                 if (debugMode.get()) {
                     String entityName = entity.getType().getName().getString();
-                    info("§a✓ Cached: §f" + entityName +
-                        " §7→ §f" + ownerUuid.toString().substring(0, 8) + "...");
+                    info("§aCached: §f" + entityName +
+                        " §f" + ownerUuid.toString().substring(0, 8) + "...");
 
                     // Try to get name from tab list
                     String name = findNameInTabList(ownerUuid);
                     if (name != null) {
                         ownerNameCache.put(ownerUuid, name);
-                        info("§a  └─ Name: §f" + name);
+                        info("§aName: §f" + name);
                     }
                 }
 
@@ -282,14 +294,7 @@ public class CrackMobOwner extends Module {
                     if (showUUID.get()) {
                         displayText = ownerUuid.toString();
                     } else {
-                        String name = ownerNameCache.get(ownerUuid);
-                        if (name == null) {
-                            name = findNameInTabList(ownerUuid);
-                            if (name != null) {
-                                ownerNameCache.put(ownerUuid, name);
-                                if (persistentCache.get()) saveCache();
-                            }
-                        }
+                        String name = getOwnerName(ownerUuid);
                         displayText = (name != null) ? name :
                             (showUnknown.get() ? ownerUuid.toString().substring(0, 8) + "..." : null);
                     }
@@ -325,6 +330,50 @@ public class CrackMobOwner extends Module {
 
         text.end();
         NametagUtils.end();
+    }
+
+    private String getOwnerName(UUID uuid) {
+        // 1. Player is currently online
+        PlayerEntity player = mc.world.getPlayerByUuid(uuid);
+        if (player != null) {
+            String name = player.getName().getString();
+            ownerNameCache.put(uuid, name);   // cache for later
+            return name;
+        }
+
+        // 2. Check local cache
+        String name = ownerNameCache.get(uuid);
+        if (name != null) return name;
+
+        // 3. Try to resolve via tab list
+        name = findNameInTabList(uuid);
+        if (name != null) {
+            ownerNameCache.put(uuid, name);
+            if (persistentCache.get()) saveCache();
+            return name;
+        }
+
+        // 4. If still unknown, start a Mojang API request
+        MeteorExecutor.execute(() -> {
+            if (!isActive()) return;
+            ProfileResponse res = Http.get("https://sessionserver.mojang.com/session/minecraft/profile/" + uuid.toString().replace("-", ""))
+                .sendJson(ProfileResponse.class);
+            if (isActive()) {
+                String result;
+                if (res == null) result = "Failed to get name";
+                else result = res.name;
+                ownerNameCache.put(uuid, result);
+                if (persistentCache.get()) saveCache();
+            }
+        });
+
+        // Store temporary placeholder while the HTTP request is in flight
+        ownerNameCache.put(uuid, "Retrieving");
+        return "Retrieving";
+    }
+
+    private static class ProfileResponse {
+        public String name;
     }
 
     private String findNameInTabList(UUID uuid) {

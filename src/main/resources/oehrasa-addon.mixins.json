@@ -3,7 +3,7 @@
   "package": "com.AutoBookshelf.addon.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "tntEntityRendererMixin"
+    "ClientPlayerInteractionManagerMixin"
   ],
   "injectors": {
     "defaultRequire": 1

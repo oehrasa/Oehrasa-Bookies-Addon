@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
+import meteordevelopment.meteorclient.events.entity.EntityRemovedEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
@@ -13,8 +14,8 @@ import net.minecraft.entity.Entity;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.util.math.Box;
 
-import java.util.HashSet;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class ItemDespawn extends Module {
@@ -57,7 +58,6 @@ public class ItemDespawn extends Module {
         .build()
     );
 
-    // Render settings
     private final Setting<ShapeMode> shapeMode = sgRender.add(new EnumSetting.Builder<ShapeMode>()
         .name("shape-mode")
         .description("How the items are rendered.")
@@ -95,13 +95,18 @@ public class ItemDespawn extends Module {
 
     private final Setting<Boolean> trackItems = sgGeneral.add(new BoolSetting.Builder()
         .name("track-items")
-        .description("Store entity IDs of all item entities while the module is active (cleared on disable).")
+        .description("Store UUIDs of all item entities while the module is active (cleared on disable).")
         .defaultValue(false)
         .build()
     );
 
-    private final ConcurrentHashMap<Integer, Integer> itemAges = new ConcurrentHashMap<>();
-    private final Set<Integer> trackedIds = new HashSet<>();   // stored entity IDs
+    private static class TrackedItem {
+        int totalAge;   // estimated total age in ticks
+        long lastTickSeen;  // world time when last present
+    }
+
+    private final ConcurrentHashMap<UUID, TrackedItem> trackedItems = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, Integer> renderAges = new ConcurrentHashMap<>();
 
     public ItemDespawn() {
         super(Addon.CATEGORY, "Item-Despawn", "Highlights items that are about to despawn.");
@@ -109,32 +114,42 @@ public class ItemDespawn extends Module {
 
     @Override
     public void onActivate() {
-        itemAges.clear();
-        trackedIds.clear();
+        trackedItems.clear();
+        renderAges.clear();
     }
 
     @Override
     public void onDeactivate() {
-        itemAges.clear();
-        trackedIds.clear();
+        trackedItems.clear();
+        renderAges.clear();
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.world == null) return;
 
-        for (Entity entity : mc.world.getEntities()) {
-            if (entity instanceof ItemEntity item) {
-                int id = entity.getId();
-                itemAges.put(id, item.age);
+        long currentTick = mc.world.getTime();
 
-                // Track all item IDs when enabled
-                if (trackItems.get()) {
-                    trackedIds.add(id);
-                }
-            }
+        // Update ages for all visible items
+        for (Entity entity : mc.world.getEntities()) {
+            if (!(entity instanceof ItemEntity item)) continue;
+
+            UUID uuid = item.getUuid();
+            TrackedItem tracked = trackedItems.computeIfAbsent(uuid, k -> {
+                TrackedItem t = new TrackedItem();
+                t.totalAge = 0;
+                t.lastTickSeen = currentTick;
+                return t;
+            });
+
+            tracked.lastTickSeen = currentTick;
+
+            // Store the age for rendering
+            renderAges.put(uuid, tracked.totalAge);
+
+            // Increase for the next tick
+            tracked.totalAge++;
         }
-        itemAges.keySet().removeIf(id -> mc.world.getEntityById(id) == null);
     }
 
     @EventHandler
@@ -147,21 +162,17 @@ public class ItemDespawn extends Module {
 
         for (Entity entity : mc.world.getEntities()) {
             if (!(entity instanceof ItemEntity)) continue;
-
             if (mc.player.squaredDistanceTo(entity) > rangeSq) continue;
 
-            Integer age = itemAges.get(entity.getId());
+            Integer age = renderAges.get(entity.getUuid());
             if (age == null) continue;
 
             int timeLeft = despawnTime.get() - age;
             if (timeLeft <= 0) continue;
 
-            Color color;
-            if (computeColorFromTime.get()) {
-                color = despawnColor(timeLeft, despawnTime.get());
-            } else {
-                color = customColor.get();
-            }
+            Color color = computeColorFromTime.get()
+                ? despawnColor(timeLeft, despawnTime.get())
+                : customColor.get();
 
             Color sideColor = new Color(color.r, color.g, color.b, sideOpacity.get());
             Color lineColor = new Color(color.r, color.g, color.b, lineOpacity.get());
@@ -174,6 +185,19 @@ public class ItemDespawn extends Module {
         }
     }
 
+    @EventHandler
+    private void onEntityRemoved(EntityRemovedEvent event) {
+        if (!(event.entity instanceof ItemEntity item)) return;
+
+        UUID uuid = item.getUuid();
+        // Only remove tracking when the item is truly destroyed
+        if (item.getRemovalReason() != Entity.RemovalReason.UNLOADED_TO_CHUNK) {
+            trackedItems.remove(uuid);
+            renderAges.remove(uuid);
+        }
+        // If unloaded, leave the tracked item in the map so age persists
+    }
+
     private Color despawnColor(int timeLeft, int totalTime) {
         double percent = (double) timeLeft / totalTime;
         percent = Math.clamp(percent, 0.0, 1.0);
@@ -183,7 +207,8 @@ public class ItemDespawn extends Module {
         return new Color(r, g, 0);
     }
 
-    public Set<Integer> getTrackedIds() {
-        return trackedIds;
+    // Tracked UUIDs for external use
+    public Set<UUID> getTrackedIds() {
+        return trackedItems.keySet();
     }
 }

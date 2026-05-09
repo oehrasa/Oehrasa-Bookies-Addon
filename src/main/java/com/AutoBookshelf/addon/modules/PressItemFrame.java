@@ -12,15 +12,17 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.entity.decoration.ItemFrameEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
+import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.RaycastContext;
 
 import java.io.File;
 import java.nio.file.Files;
 import java.util.*;
 
-public class InvisFrameCommand extends Module {
+public class PressItemFrame extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgCache = settings.createGroup("Cache");
 
@@ -104,7 +106,7 @@ public class InvisFrameCommand extends Module {
     private File cacheFile;
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
 
-    public InvisFrameCommand() {
+    public PressItemFrame() {
         super(Addon.CATEGORY, "Press-Frame", "Flatten any nearby item frame because You're an Elite Rank.");
     }
 
@@ -170,6 +172,23 @@ public class InvisFrameCommand extends Module {
         }
     }
 
+    private boolean canSee(ItemFrameEntity frame) {
+        Vec3d eyes = mc.player.getEyePos();
+        Vec3d center = frame.getPos().add(0, frame.getHeight() / 2.0, 0);
+
+        RaycastContext context = new RaycastContext(
+            eyes, center,
+            RaycastContext.ShapeType.COLLIDER,
+            RaycastContext.FluidHandling.NONE,
+            mc.player
+        );
+
+        BlockHitResult hit = mc.world.raycast(context);
+        // Visible if the raycast misses all blocks, or hits the block the frame is attached to
+        return hit.getType() == HitResult.Type.MISS
+            || hit.getBlockPos().equals(frame.getBlockPos());
+    }
+
     @EventHandler
     public void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.world == null) return;
@@ -186,7 +205,7 @@ public class InvisFrameCommand extends Module {
                 saveCache();
             }
             if (showInfo.get()) info("Undone " + removed + " frame(s).");
-            undo.set(false);   // auto disable
+            undo.set(false);
 
             return;
         }
@@ -213,10 +232,10 @@ public class InvisFrameCommand extends Module {
             e -> true
         )) {
             if (processedFrames.contains(frame.getUuid())) continue;
-            // Skip frames that are already invisible
             if (frame.isInvisible()) continue;
             if (!PlayerUtils.isWithinReach(frame)) continue;
             if (onlyWithItem.get() && frame.getHeldItemStack().isEmpty()) continue;
+            if (!canSee(frame)) continue; // LOSAT
 
             target = frame;
             break;
@@ -275,7 +294,6 @@ public class InvisFrameCommand extends Module {
         String message = event.getMessage().getString();
 
         if (message.contains("Successfully made the item frame invisible.")) {
-            // If success then mark and save
             processedFrames.add(pendingCommandUUID);
             recentFrames.addLast(pendingCommandUUID);
             while (recentFrames.size() > 50) recentFrames.removeFirst();

@@ -91,8 +91,7 @@ public class AutoLogin extends Module {
     boolean work;
     private int timer;
 
-    // Book extraction fields
-    private boolean isProcessingBook = false;
+    public boolean isProcessingBook = false;
     private BlockPos targetBookPos = null;
     private Direction targetFacing = null;
     private Vec3d targetHitVec = null;
@@ -103,11 +102,10 @@ public class AutoLogin extends Module {
     private Runnable onBookInHand = null;
     private Runnable onBookReturned = null;
 
-    // Simplified inventory tracking
-    private int originalSelectedSlot = -1;      // slot that was selected before extraction
-    private int bookSlot = -1;                  // where the book was found (after extraction)
-    private boolean didSwap = false;            // whether we swapped the book into the main hand
-    private int timeout = 0;                    // timeout counter to prevent getting stuck
+    private int originalSelectedSlot = -1;
+    private int bookSlot = -1;
+    private boolean didSwap = false;
+    private int timeout = 0;
 
     public AutoLogin(Category cat) {
         super(cat, "Auto-Login", "Automatically logs in your account via file Data.");
@@ -131,6 +129,11 @@ public class AutoLogin extends Module {
         work = true;
     }
 
+    @Override
+    public void onDeactivate() {
+        cleanupBook();
+    }
+
     public void extractAndReturn(BlockPos pos, int slot, Runnable onBookInHandCallback, Runnable onBookReturnedCallback) {
         if (isProcessingBook) {
             sendMessage("§cAlready processing a book!");
@@ -149,7 +152,6 @@ public class AutoLogin extends Module {
             return;
         }
 
-        // Check for at least one empty inventory slot
         if (isInventoryFull()) {
             sendMessage("§cInventory is full! Cannot extract book (would drop on ground).");
             return;
@@ -185,8 +187,7 @@ public class AutoLogin extends Module {
     private void updateBookProcessing() {
         if (!isProcessingBook) return;
 
-        // Timeout after 100 ticks (~5 seconds) to prevent permanent stuck
-        if (timeout++ > 100) {
+        if (timeout++ > 160) {
             sendMessage("§cBook extraction timed out! Resetting.");
             cleanupBook();
             return;
@@ -199,13 +200,11 @@ public class AutoLogin extends Module {
 
         switch (bookStage) {
             case 0 -> {
-                // First right-click to take the book
                 rightClickBookshelf();
-                bookDelayTicks = 10; // wait for server to update inventory
+                bookDelayTicks = 10;
                 bookStage = 1;
             }
             case 1 -> {
-                // Locate the extracted book anywhere in inventory (0-35)
                 bookSlot = findBookInInventory();
                 if (bookSlot == -1) {
                     sendMessage("§cFailed to locate extracted book in inventory!");
@@ -213,29 +212,24 @@ public class AutoLogin extends Module {
                     return;
                 }
 
-                // If the book is not already in the selected hotbar slot, bring it to hand
                 if (bookSlot != originalSelectedSlot) {
                     if (bookSlot < 9) {
-                        // Book is already in a hotbar slot – simply select it
                         mc.player.getInventory().selectedSlot = bookSlot;
-                        didSwap = false;           // no swap performed
+                        didSwap = false;
                     } else {
-                        // Book is in main inventory – swap with selected slot
                         mc.interactionManager.clickSlot(
-                            mc.player.currentScreenHandler.syncId,
+                            mc.player.playerScreenHandler.syncId,
                             bookSlot,
                             originalSelectedSlot,
                             SlotActionType.SWAP,
                             mc.player
                         );
                         didSwap = true;
-                        // After swap, the book is now in originalSelectedSlot
                     }
                 } else {
                     didSwap = false;
                 }
 
-                // Book is now in hand
                 if (onBookInHand != null) {
                     onBookInHand.run();
                 }
@@ -243,26 +237,20 @@ public class AutoLogin extends Module {
                 bookStage = 2;
             }
             case 2 -> {
-                // Put the book back into the bookshelf (it's still in the selected slot)
                 rightClickBookshelf();
                 bookDelayTicks = 10;
                 bookStage = 3;
             }
             case 3 -> {
-                // Restore original inventory state
                 if (didSwap) {
-                    // After placing the book, the selected slot (originalSelectedSlot) is empty
-                    // The original item that was in that slot is now at bookSlot
-                    // Swap them back.
                     mc.interactionManager.clickSlot(
-                        mc.player.currentScreenHandler.syncId,
+                        mc.player.playerScreenHandler.syncId,
                         bookSlot,
                         originalSelectedSlot,
                         SlotActionType.SWAP,
                         mc.player
                     );
                 }
-                // Ensure the selected slot is restored (in case something changed)
                 if (mc.player.getInventory().selectedSlot != originalSelectedSlot) {
                     mc.player.getInventory().selectedSlot = originalSelectedSlot;
                 }
@@ -306,6 +294,15 @@ public class AutoLogin extends Module {
         timeout = 0;
     }
 
+    public void cancelBookExtraction() {
+        if (isProcessingBook) {
+            cleanupBook();
+            info("Book extraction cancelled.");
+        } else {
+            info("No active book extraction.");
+        }
+    }
+
     private Vec3d getHitVec(BlockPos pos, Direction facing, int slot) {
         double x = 0, y = 0;
 
@@ -338,7 +335,7 @@ public class AutoLogin extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        updateBookProcessing();
+        if (isActive()) updateBookProcessing();
 
         if (serverOnly.get() && mc.getServer() != null && mc.getServer().isSingleplayer()) return;
 
@@ -379,7 +376,7 @@ public class AutoLogin extends Module {
             e.printStackTrace();
         }
 
-        info("Oops, password seems missing");
+        info("Oops, password seems missing.");
     }
 
     @EventHandler

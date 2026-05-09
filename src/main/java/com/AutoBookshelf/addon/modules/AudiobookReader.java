@@ -116,7 +116,7 @@ public class AudiobookReader extends Module {
     private float pageProgress = 0;
 
     public AudiobookReader() {
-        super(Addon.CATEGORY, "Audio-book", "Reads books aloud with synchronized page tracking.");
+        super(Addon.CATEGORY, "Audio-Book", "Reads books aloud with synchronized page tracking.");
     }
 
     @Override

@@ -38,9 +38,9 @@ public class AutoSex extends Module {
     }
 
     public enum ApproachMode {
-        Direct("Direct - Go straight to target"),
-        Behind("Behind - Stand behind target"),
-        Side("Side - Stand to the side of target");
+        Direct("Direct : Go straight to target"),
+        Behind("Behind : Stand behind target"),
+        Side("Side : Stand to the side of target");
 
         private final String title;
         ApproachMode(String title) { this.title = title; }
@@ -324,7 +324,7 @@ public class AutoSex extends Module {
     private int pathCooldown = 0;
 
     public AutoSex() {
-        super(Addon.CATEGORY, "auto-Sex", "Tries to have sex with the player or mob in freaky ways.");
+        super(Addon.CATEGORY, "Auto-Sex", "Tries to have sex with the player or mob in freaky ways.");
     }
 
     @Override
@@ -687,7 +687,7 @@ public class AutoSex extends Module {
             info("§7Friend filter: §f" + friendFilter.get());
             info("§7Mode: §f" + approachMode.get());
             if (autoLook.get()) {
-                info("§7Auto-look: §aON §7- Continuously looking at back of head");
+                info("§7Auto-look: §aON §7- Continuously looking at back of head.");
             }
             if (twerkWhenClose.get()) {
                 info("§7Twerk delay: §f" + twerkDelay.get() / 20.0 + " §7seconds");
@@ -717,7 +717,7 @@ public class AutoSex extends Module {
         pathCooldown = 0;
         isInPosition = false;
         positionStableTimer = 0;
-        info("§aStopped following");
+        info("§aStopped following.");
     }
 
     public void startMsg() {

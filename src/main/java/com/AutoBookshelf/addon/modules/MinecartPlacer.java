@@ -115,7 +115,7 @@ public class MinecartPlacer extends Module {
 
     private final Setting<Integer> maxMinecarts = sgGeneral.add(new IntSetting.Builder()
         .name("max-minecarts")
-        .description("Maximum number of minecarts to place (0 = unlimited).")
+        .description("Maximum number of minecarts to place (0 = Arm the ICBM Silo).")
         .defaultValue(0)
         .min(0)
         .max(100)
@@ -126,7 +126,7 @@ public class MinecartPlacer extends Module {
     private final Setting<Boolean> skipOccupied = sgGeneral.add(new BoolSetting.Builder()
         .name("skip-occupied")
         .description("Skip rails that already have a minecart.")
-        .defaultValue(true)
+        .defaultValue(false)
         .build()
     );
 
@@ -163,7 +163,7 @@ public class MinecartPlacer extends Module {
     );
 
     public MinecartPlacer() {
-        super(Addon.CATEGORY, "Minecart-Placer", "Places any minecarts on any rails in range.");
+        super(Addon.CATEGORY, "Cart-Placer", "Places any minecarts on any rails in range.");
     }
 
     @Override

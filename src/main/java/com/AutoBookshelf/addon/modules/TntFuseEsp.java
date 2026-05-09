@@ -32,12 +32,6 @@ public class TntFuseEsp extends Module {
         .defaultValue(false)
         .build());
 
-    public final Setting<Boolean> hideTntFlashing = sgGeneral.add(new BoolSetting.Builder()
-        .name("hide-tnt-flashing")
-        .description("Hides the flashing of lit tnt")
-        .defaultValue(false)
-        .build());
-
     public final Setting<Boolean> computeColorFromFuse = sgTextRender.add(new BoolSetting.Builder()
         .name("compute-color-from-fuse")
         .description("Determines the color for the fuse indicator based on fuse time")
@@ -124,15 +118,11 @@ public class TntFuseEsp extends Module {
         super(Addon.CATEGORY, "Tnt-Fuse-Esp", "Shows the fuse time of lit tnt");
     }
 
-    public boolean shouldHideFlashing() {
-        return hideTntFlashing.get();
-    }
-
     @EventHandler
     private void onRender3D(Render3DEvent event) {
         if (mc.world == null || mc.player == null) return;
 
-        // Set up NametagUtils with the current 3D matrices (critical for text projection)
+        // Set up NametagUtils with the current 3D matrices
         NametagUtils.onRender(RenderSystem.getModelViewMatrix());
 
         for (Entity entity : mc.world.getEntities()) {
@@ -142,7 +132,6 @@ public class TntFuseEsp extends Module {
             boolean isLit = fuse < 80;
             double distance = mc.player.getPos().distanceTo(entity.getPos());
 
-            // ---- Render 3D box (if enabled) ----
             if (showTntFuse.get() && isLit) {
                 Color color = fuseColor(fuse);
                 Color sideColor = new Color(color.r, color.g, color.b, sideOpacity.get());
@@ -152,7 +141,6 @@ public class TntFuseEsp extends Module {
                     sideColor, lineColor, shapeMode.get(), 0);
             }
 
-            // ---- Render text (if enabled) ----
             if (showTntFuseText.get() && isLit) {
                 if (hideWhenNear.get() && distance <= nearDistance.get()) continue;
                 if (hideWhenFar.get() && distance >= farDistance.get()) continue;

@@ -35,8 +35,8 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new BookshelfFiller());
         Modules.get().add(new B36());
         Modules.get().add(new MinecartPlacer());
-        Modules.get().add(new CalibratedRange());
-        Modules.get().add(new CrackMobOwner());
+        Modules.get().add(new SculkRange());
+        Modules.get().add(new MobOwner());
         Modules.get().add(new AutoChestAura());
         Modules.get().add(new TrajectoryPlus());
         Modules.get().add(new BetterBoatFly());
@@ -55,8 +55,11 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new AutoTakeOff());
         Modules.get().add(new ThrowEmptyShulkers());
         Modules.get().add(new AutoBeacon());
-        Modules.get().add(new InvisFrameCommand());
+        Modules.get().add(new PressItemFrame());
         Modules.get().add(new TsundereFurry());
+        Modules.get().add(new MapartNamer());
+        Modules.get().add(new MapGridZone());
+        Modules.get().add(new BLU27BNapalm());
 
         // HUD
         Hud.get().register(MayaChan.INFO);

@@ -40,55 +40,106 @@ public class AutoBeacon extends Module {
     public enum OriginMode { PlayerPosition, SelectedBlock }
 
     private final Setting<OriginMode> originMode = sgControls.add(new EnumSetting.Builder<OriginMode>()
-        .name("origin-mode").description("How to set the build location.").defaultValue(OriginMode.SelectedBlock).build());
+        .name("origin-mode")
+        .description("How to set the build location.")
+        .defaultValue(OriginMode.SelectedBlock)
+        .build());
 
     private final Setting<Keybind> setOriginKey = sgControls.add(new KeybindSetting.Builder()
-        .name("set-origin-key").description("Key to set the build origin to the block you are looking at.").defaultValue(Keybind.fromKey(-1))
-        .visible(() -> originMode.get() == OriginMode.SelectedBlock).build());
+        .name("set-origin-key")
+        .description("Key to set the build origin to the block you are looking at.")
+        .defaultValue(Keybind.fromKey(-1))
+        .visible(() -> originMode.get() == OriginMode.SelectedBlock)
+        .build());
 
     private final Setting<Keybind> buildKey = sgControls.add(new KeybindSetting.Builder()
-        .name("build-key").description("Key to start building the pyramid after origin is set.").defaultValue(Keybind.fromKey(-1))
-        .visible(() -> originMode.get() == OriginMode.SelectedBlock).build());
+        .name("build-key")
+        .description("Key to start building the pyramid after origin is set.")
+        .defaultValue(Keybind.fromKey(-1))
+        .visible(() -> originMode.get() == OriginMode.SelectedBlock)
+        .build());
 
     private final Setting<Boolean> preview = sgRender.add(new BoolSetting.Builder()
-        .name("preview").description("Preview the planned pyramid before building starts.").defaultValue(true).build());
+        .name("preview")
+        .description("Preview the planned pyramid before building starts.")
+        .defaultValue(true)
+        .build());
 
     private final Setting<Integer> verticalOffset = sgGeneral.add(new IntSetting.Builder()
-        .name("vertical-offset").description("How many blocks above the origin the bottom layer will start.").defaultValue(1).min(0).max(10).build());
+        .name("vertical-offset")
+        .description("How many blocks above the origin the bottom layer will start.")
+        .defaultValue(1)
+        .min(0)
+        .max(10)
+        .build());
 
     private final Setting<Boolean> replaceGrass = sgPlacement.add(new BoolSetting.Builder()
-        .name("replace-grass").description("Replace grass, tall grass, seagrass, ferns, etc.").defaultValue(true).build());
+        .name("replace-grass")
+        .description("Replace grass, tall grass, seagrass, ferns, etc.")
+        .defaultValue(true)
+        .build());
 
     private final Setting<Boolean> useBaritone = sgBaritone.add(new BoolSetting.Builder()
-        .name("use-baritone").description("Use Baritone to move to out‑of‑reach block positions.").defaultValue(false).build());
+        .name("use-baritone")
+        .description("Use Baritone to move to out‑of‑reach block positions.")
+        .defaultValue(false)
+        .build());
 
     private final Setting<Boolean> jumpWhenStuck = sgBaritone.add(new BoolSetting.Builder()
-        .name("jump-when-stuck").description("Jump if no block has been placed for 5 seconds while building.").defaultValue(true).build());
+        .name("jump-when-stuck")
+        .description("Jump if no block has been placed for 5 seconds while building.")
+        .defaultValue(true)
+        .build());// Doesnt work for now
 
     private final Setting<List<Block>> allowedBlocks = sgGeneral.add(new BlockListSetting.Builder()
-        .name("allowed-blocks").description("Which mineral blocks to use (iron, gold, emerald, diamond, netherite).")
-        .defaultValue(Blocks.IRON_BLOCK, Blocks.GOLD_BLOCK, Blocks.EMERALD_BLOCK, Blocks.DIAMOND_BLOCK, Blocks.NETHERITE_BLOCK).build());
+        .name("allowed-blocks")
+        .description("Which mineral blocks to use (iron, gold, emerald, diamond, netherite).")
+        .defaultValue(Blocks.IRON_BLOCK, Blocks.GOLD_BLOCK, Blocks.EMERALD_BLOCK, Blocks.DIAMOND_BLOCK, Blocks.NETHERITE_BLOCK)
+        .build());
 
     private final Setting<Integer> delayTicks = sgGeneral.add(new IntSetting.Builder()
-        .name("place-delay").description("Ticks between each block placement.").defaultValue(2).min(0).max(10).build());
+        .name("place-delay")
+        .description("Ticks between each block placement.")
+        .defaultValue(2).min(0).max(10)
+        .build());
 
     private final Setting<Integer> blocksPerTick = sgGeneral.add(new IntSetting.Builder()
-        .name("blocks-per-tick").description("How many blocks to place per tick.").defaultValue(1).min(1).max(5).build());
+        .name("blocks-per-tick")
+        .description("How many blocks to place per tick.")
+        .defaultValue(1)
+        .min(1)
+        .max(5)
+        .build());
 
     private final Setting<Boolean> placeBeacons = sgGeneral.add(new BoolSetting.Builder()
-        .name("place-beacons").description("Place four beacons on top after building the pyramid.").defaultValue(true).build());
+        .name("place-beacons")
+        .description("Place four beacons on top after building the pyramid.")
+        .defaultValue(true)
+        .build());
 
     private final Setting<Boolean> render = sgRender.add(new BoolSetting.Builder()
-        .name("render").description("Render the remaining blocks.").defaultValue(true).build());
+        .name("render")
+        .description("Render the remaining blocks.")
+        .defaultValue(true)
+        .build());
     private final Setting<ShapeMode> shapeMode = sgRender.add(new EnumSetting.Builder<ShapeMode>()
-        .name("shape-mode").description("How the box is rendered.").defaultValue(ShapeMode.Both).build());
+        .name("shape-mode")
+        .description("How the box is rendered.")
+        .defaultValue(ShapeMode.Both)
+        .build());
     private final Setting<SettingColor> sideColor = sgRender.add(new ColorSetting.Builder()
-        .name("side-color").defaultValue(new SettingColor(255, 255, 255, 20)).build());
+        .name("side-color")
+        .defaultValue(new SettingColor(255, 255, 255, 20))
+        .build());
     private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
-        .name("line-color").defaultValue(new SettingColor(255, 255, 255, 200)).build());
+        .name("line-color")
+        .defaultValue(new SettingColor(255, 255, 255, 200))
+        .build());
     private final Setting<SettingColor> previewColor = sgRender.add(new ColorSetting.Builder()
-        .name("preview-color").description("Color of the preview boxes before building starts.")
-        .defaultValue(new SettingColor(0, 255, 0, 70)).visible(preview::get).build());
+        .name("preview-color")
+        .description("Color of the preview boxes before building starts.")
+        .defaultValue(new SettingColor(0, 255, 0, 70)).visible(preview::get)
+        .build());
 
     private BlockPos origin = null;
     private List<BlockPos> blocksToPlace = new ArrayList<>();

@@ -667,7 +667,7 @@ public class BookshelfFiller extends Module {
                 }
                 sendMessage("§7Total tracked: §f" + worldCounts.size() + " §7bookshelves, §f" + totalBooks + " §7books");
             } else {
-                info("§e[Book Counter] No changes detected in this area");
+                info("§e[Book Counter] No changes detected in this area.");
                 int totalBooks = worldCounts.values().stream().mapToInt(Integer::intValue).sum();
                 sendMessage("§eTotal tracked: §f" + worldCounts.size() + " §ebookshelves, §f" + totalBooks + " §ebooks");
             }
@@ -730,14 +730,14 @@ public class BookshelfFiller extends Module {
                     selecting = false;
                     wandModeActive = false;
                     info("§aPos2 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
-                    info("§aSelection complete! now filling");
+                    info("§aSelection complete! now filling.");
                     initializeGrid();
                 }
                 event.cancel();
                 return;
             } else {
                 fullReset();
-                info("§eSelection reset");
+                info("§eSelection reset.");
                 event.cancel();
                 return;
             }
@@ -945,10 +945,10 @@ public class BookshelfFiller extends Module {
             int totalBookshelves = rows.stream().mapToInt(List::size).sum();
             info("§aFound §f" + rows.size() + " §arows with §f" + totalBookshelves + " §abookshelves total");
             if (enableFilter.get()) {
-                info("§7Filter enabled - sorting by first number first");
+                info("§7Filter enabled - sorting by first number first.");
                 info("§7Books found: §f" + sortedBookSlots.size());
             }
-            info("§7Filling from pos1 to pos2: left to right, top to bottom");
+            info("§7Filling from pos1 to pos2: left to right, top to bottom.");
             if (useDedicatedSlot.get()) {
                 info("§7Using dedicated swap slot: §f" + (dedicatedSwapSlot + 1));
             }
@@ -991,9 +991,9 @@ public class BookshelfFiller extends Module {
         if (slotBookInfoMap.isEmpty()) {
             if (verboseChecking.get() && !hasShownNoBooksMessage && continuousChecking.get()) {
                 if (enableFilter.get()) {
-                    info("§eNo numbers found in books! Waiting");
+                    info("§eNo numbers found in books! Waiting.");
                 } else {
-                    info("§eNo books found in inventory! Waiting");
+                    info("§eNo books found in inventory! Waiting.");
                 }
                 hasShownNoBooksMessage = true;
             }
@@ -1225,9 +1225,9 @@ public class BookshelfFiller extends Module {
                     return;
                 } else {
                     if (enableFilter.get()) {
-                        info("§cNo more numbers found in books, Stopping. Enable 'continuous-checking' to continue");
+                        info("§cNo more numbers found in books, Stopping. Enable 'continuous-checking' to continue.");
                     } else {
-                        info("§cNo written books found! Stopping. Enable 'continuous-checking' to continue");
+                        info("§cNo written books found! Stopping. Enable 'continuous-checking' to continue.");
                     }
                     allFull = true;
                     isFilling = false;
@@ -1601,7 +1601,7 @@ public class BookshelfFiller extends Module {
         String toolName = selectionToolSetting.get().getName().getString();
         String extractToolName = extractTool.get().getName().getString();
         String counterToolName = counterTool.get().getName().getString();
-        info("§aBookshelf Filler activated");
+        info("§aBookshelf Filler is activated.");
         info("§7- §f" + toolName + " §7= select area & fill");
         info("§7- §f" + extractToolName + " §7= extract books from a bookshelf");
         info("§7- §f" + counterToolName + " §7= count books in selected area");

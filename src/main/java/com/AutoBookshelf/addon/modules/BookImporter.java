@@ -177,7 +177,7 @@ public class BookImporter extends Module {
     }
 
     public BookImporter() {
-        super(Addon.CATEGORY, "book-importer", "Automatically imports text files into signed books.");
+        super(Addon.CATEGORY, "Book-Import", "Automatically imports text files into signed books.");
     }
 
     @Override
@@ -577,7 +577,7 @@ public class BookImporter extends Module {
     }
 
     private void processLine(String line, StringBuilder currentPage, List<String> pages) {
-        boolean lineFitsOnCurrentPage = fitsOnPage(currentPage + line);
+        boolean lineFitsOnCurrentPage = fitsOnPage(currentPage + line + LINE_SEPARATOR);
         if (lineFitsOnCurrentPage) {
             addLineToPage(line, currentPage);
             return;
@@ -596,7 +596,9 @@ public class BookImporter extends Module {
     }
 
     private void startNewPage(StringBuilder currentPage, List<String> pages) {
-        pages.add(currentPage.toString());
+        if (currentPage.length() > 0) {     // only add if not empty
+            pages.add(currentPage.toString());
+        }
         currentPage.setLength(0);
     }
 
@@ -622,8 +624,12 @@ public class BookImporter extends Module {
             }
             splitLongWordAcrossPages(word, currentPage, pages);
         }
-        if (!currentPage.isEmpty() || !linePartForCurrentPage.isEmpty()) {
-            addLineToPage(linePartForCurrentPage.toString(), currentPage);
+        String leftover = linePartForCurrentPage.toString();
+        if (!leftover.isEmpty() || !currentPage.isEmpty()) {
+            if (!fitsOnPage(currentPage.toString() + leftover + LINE_SEPARATOR)) {
+                startNewPage(currentPage, pages);
+            }
+            addLineToPage(leftover, currentPage);
         }
     }
 
@@ -643,30 +649,7 @@ public class BookImporter extends Module {
     }
 
     private boolean fitsOnPage(String text) {
-        if (text.length() >= MAX_PAGE_CHARS) return false;
-        TextHandler textHandler = mc.textRenderer.getTextHandler();
-        TextHandler.WidthRetriever widthRetriever = ((TextHandlerAccessor) textHandler).getWidthRetriever();
-        float currentLineWidth = 0;
-        int lines = 1;
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if (c == '\n') {
-                currentLineWidth = 0;
-                lines++;
-                continue;
-            }
-            float charWidth = widthRetriever.getWidth(c, Style.EMPTY);
-            if (currentLineWidth + charWidth > MAX_PAGE_WIDTH && currentLineWidth > 0) {
-                currentLineWidth = charWidth;
-                lines++;
-            } else {
-                currentLineWidth += charWidth;
-            }
-            if (lines > MAX_PAGE_HEIGHT / 9) {
-                return false;
-            }
-        }
-        int totalHeight = lines * 9;
-        return totalHeight <= MAX_PAGE_HEIGHT;
+        return text.length() < MAX_PAGE_CHARS
+            && mc.textRenderer.getWrappedLinesHeight(text, MAX_PAGE_WIDTH) <= MAX_PAGE_HEIGHT;
     }
-}
+    }

@@ -22,7 +22,6 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
 import net.minecraft.world.chunk.Chunk;
-import net.minecraft.world.dimension.DimensionType;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -30,13 +29,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-public class CalibratedRange extends Module {
+public class SculkRange extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRender = settings.createGroup("Render");
 
     private static final double SENSOR_RANGE = 16.0;
 
-    // General settings
     private final Setting<Integer> renderDistance = sgGeneral.add(new IntSetting.Builder()
         .name("render-distance")
         .description("How far away to render spheres.")
@@ -79,7 +77,6 @@ public class CalibratedRange extends Module {
         .build()
     );
 
-    // Render settings
     private final Setting<OcclusionMode> occlusionMode = sgRender.add(new EnumSetting.Builder<OcclusionMode>()
         .name("occlusion-mode")
         .description("How to handle occlusion (hiding blocks behind other blocks).")
@@ -87,7 +84,6 @@ public class CalibratedRange extends Module {
         .build()
     );
 
-    // FIXED: shapeType now works even when smartRendering is ON
     private final Setting<ShapeType> shapeType = sgRender.add(new EnumSetting.Builder<ShapeType>()
         .name("shape-type")
         .description("What shape to render (overridden by smart-rendering if enabled).")
@@ -210,7 +206,7 @@ public class CalibratedRange extends Module {
         }
     }
 
-    public CalibratedRange() {
+    public SculkRange() {
         super(Addon.CATEGORY, "Sculk-Range", "Shows the detection range of calibrated sculk sensors.");
     }
 
@@ -500,7 +496,6 @@ public class CalibratedRange extends Module {
 
             double distanceToSensor = mc.player.getPos().distanceTo(Vec3d.ofCenter(sensor.pos));
 
-            // FIXED: shapeType now properly overrides smartRendering
             ShapeType effectiveShape = shapeType.get();
             if (smartRendering.get()) {
                 effectiveShape = distanceToSensor <= smartRenderDistance.get() ? ShapeType.Sphere : ShapeType.Circle;
@@ -588,9 +583,9 @@ public class CalibratedRange extends Module {
     private enum ShapeType { Circle, Sphere, Both }
 
     private enum OcclusionMode {
-        None("None - Render all blocks."),
-        Simple("Simple - Hide blocks behind solid faces."),
-        Accurate("Accurate - Hide faces not facing the player.");
+        None("None : Render all blocks."),
+        Simple("Simple : Hide blocks behind solid faces."),
+        Accurate("Accurate : Hide faces not facing the player.");
 
         private final String title;
         OcclusionMode(String title) { this.title = title; }

@@ -35,7 +35,6 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 public class ShelfCommand extends Command {
 
     private ItemStack currentBook = null;
-    private boolean isExtracting = false;
 
     public ShelfCommand() {
         super("shelf", "Extracts a book from a chiseled bookshelf slot, reads it, and puts it back.");
@@ -44,7 +43,16 @@ public class ShelfCommand extends Command {
     @Override
     public void build(LiteralArgumentBuilder<CommandSource> builder) {
         builder.executes(ctx -> {
-            if (isExtracting) {
+            AutoLogin autoLogin = Modules.get().get(AutoLogin.class);
+            if (autoLogin == null) {
+                error("AutoLogin module is not loaded!");
+                return SINGLE_SUCCESS;
+            }
+            if (!autoLogin.isActive()) {
+                error("AutoLogin module must be enabled!");
+                return SINGLE_SUCCESS;
+            }
+            if (autoLogin.isProcessingBook) {
                 error("Already processing a book! Please wait...");
                 return SINGLE_SUCCESS;
             }
@@ -75,37 +83,34 @@ public class ShelfCommand extends Command {
                 return SINGLE_SUCCESS;
             }
 
-            AutoLogin autoLogin = Modules.get().get(AutoLogin.class);
-            if (autoLogin == null) {
-                error("AutoLogin module is not loaded!");
-                return SINGLE_SUCCESS;
-            }
-
-            if (!autoLogin.isActive()) {
-                error("AutoLogin module must be enabled!");
-                return SINGLE_SUCCESS;
-            }
-
-            isExtracting = true;
-
             autoLogin.extractAndReturn(pos, slot,
                 () -> {
                     ItemStack book = mc.player.getMainHandStack();
                     if (book.isEmpty() || !book.isOf(Items.WRITTEN_BOOK)) {
                         error("Failed to get book!");
-                        isExtracting = false;
                         return;
                     }
                     currentBook = book.copy();
                     inspectBook(currentBook);
                 },
-                () -> {
-                    isExtracting = false;
-                }
+                () -> {}
             );
 
             return SINGLE_SUCCESS;
         });
+
+        builder.then(literal("cancel")
+            .executes(ctx -> {
+                AutoLogin autoLogin = Modules.get().get(AutoLogin.class);
+                if (autoLogin == null) {
+                    error("AutoLogin module is not loaded!");
+                    return SINGLE_SUCCESS;
+                }
+                autoLogin.cancelBookExtraction();
+                info("Book extraction forcibly cancelled.");
+                return SINGLE_SUCCESS;
+            })
+        );
 
         builder.then(literal("search")
             .then(argument("word", StringArgumentType.word())
@@ -147,13 +152,11 @@ public class ShelfCommand extends Command {
         );
     }
 
-    // Helper to escape % symbols
     private String escapePercent(String input) {
         if (input == null) return "";
         return input.replace("%", "%%");
     }
 
-    // Helper to add commas without String.format
     private String addCommas(int number) {
         if (number < 1000) return String.valueOf(number);
         StringBuilder result = new StringBuilder();
@@ -168,7 +171,6 @@ public class ShelfCommand extends Command {
         return result.toString();
     }
 
-    // Helper to format decimal without String.format
     private String formatDecimal(double value) {
         double rounded = Math.round(value * 10) / 10.0;
         String str = String.valueOf(rounded);
@@ -223,7 +225,7 @@ public class ShelfCommand extends Command {
 
         int pagesToShow = Math.min(3, pages.size());
         if (pagesToShow > 0) {
-            info("§7First " + pagesToShow + " page(s):");
+            info("§7First " + pagesToShow + " page:");
             for (int i = 0; i < pagesToShow; i++) {
                 String pageContent = pages.get(i).getString();
                 if (pageContent.length() > 150) {
@@ -367,12 +369,12 @@ public class ShelfCommand extends Command {
         info("§7Author: §f" + (author != null && !author.isEmpty() ? author : "Unknown"));
         info("§7Generation: §f" + generationText);
         info("§7Pages: §f" + pages.size() + " §7(§f" + emptyPages + " §7empty)");
-        info("§7Characters: §f" + addCommas(totalChars));      // FIXED: No String.format
-        info("§7Words: §f" + addCommas(totalWords));          // FIXED: No String.format
+        info("§7Characters: §f" + addCommas(totalChars));
+        info("§7Words: §f" + addCommas(totalWords));
         info("§7Longest Page: §f" + longestPage + " §7chars");
         info("§7Shortest Page: §f" + shortestPage + " §7chars");
         info("§7Reading Time: §f" + readingTime);
-        info("§7Reading Level: §f" + formatDecimal(readingLevel) + " §7(" + getReadingLevelDescription((int) readingLevel) + ")"); // FIXED: No String.format
+        info("§7Reading Level: §f" + formatDecimal(readingLevel) + " §7(" + getReadingLevelDescription((int) readingLevel) + ")");
         if (!mostCommonWord.isEmpty()) {
             info("§7Most Common Word: §f" + mostCommonWord + " §7(x§f" + mostCommonWordCount + "§7)");
         }

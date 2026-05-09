@@ -3,6 +3,7 @@ package com.AutoBookshelf.addon.modules;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.meteorclient.utils.player.FindItemResult;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
@@ -34,6 +35,12 @@ public class PlatformBuilder extends Module {
         .max(319)
         .build()
     );
+
+    private final Setting<Keybind> setYKey = sgGeneral.add(new KeybindSetting.Builder()
+        .name("set-y-key")
+        .description("Press to set y-level to start the platform to you Y position.")
+        .defaultValue(Keybind.fromKey(-1))
+        .build());
 
     private final Setting<Integer> maxPlacementsPerTick = sgGeneral.add(new IntSetting.Builder()
         .name("max-placements-per-tick")
@@ -68,8 +75,8 @@ public class PlatformBuilder extends Module {
     );
 
     private final Setting<Boolean> replaceBlocks = sgPlacement.add(new BoolSetting.Builder()
-        .name("replace-blocks")
-        .description("Replace grass, tall grass, flowers, etc.")
+        .name("replace-grass")
+        .description("Replace grass")
         .defaultValue(true)
         .build()
     );
@@ -81,13 +88,6 @@ public class PlatformBuilder extends Module {
         .build()
     );
 
-    private final Setting<Boolean> useInventoryOrder = sgBlocks.add(new BoolSetting.Builder()
-        .name("use-inventory-order")
-        .description("Use blocks in the order they appear in your inventory.")
-        .defaultValue(true)
-        .build()
-    );
-
     private final Setting<Boolean> refillFromInventory = sgBlocks.add(new BoolSetting.Builder()
         .name("refill-from-inventory")
         .description("Automatically refill hotbar from inventory when out of blocks.")
@@ -95,10 +95,10 @@ public class PlatformBuilder extends Module {
         .build()
     );
 
-    private HashSet<BlockPos> recentPlacements = new HashSet<>();
+    private final HashSet<BlockPos> recentPlacements = new HashSet<>();
 
     public PlatformBuilder() {
-        super(Addon.CATEGORY, "Platform-Builder", "Build a platform at a given y-level once in range");
+        super(Addon.CATEGORY, "Platform", "Build a platform at a given y-level once in range");
     }
 
     @Override
@@ -120,6 +120,11 @@ public class PlatformBuilder extends Module {
             return;
         }
         if (mc.player == null || mc.world == null) return;
+
+        if (setYKey.get().isPressed()) {
+            yLevel.set(mc.player.getBlockY());
+            info("Platform Y level is set to " + mc.player.getBlockY());
+        }
 
         BlockPos[] blocks = reachablePositions();
         if (blocks.length == 0) {
@@ -191,13 +196,13 @@ public class PlatformBuilder extends Module {
         // Air is always allowed
         if (state.isAir()) return true;
 
-        // Check for liquids (water, lava)
+        // Check for liquids
         if (state.getFluidState().isStill() || state.getBlock() instanceof FluidBlock) {
             return ignoreLiquids.get();
         }
 
-        // Check for replaceable blocks (grass, tall grass, flowers, ferns)
-        if (state.isReplaceable() || state.getBlock() == Blocks.GRASS_BLOCK) {
+        // Check for replaceable blocks
+        if (state.isReplaceable() || state.getBlock() == Blocks.GRASS_BLOCK || state.getBlock() == Blocks.FERN) {
             return replaceBlocks.get();
         }
 

@@ -57,6 +57,15 @@ public class AutoMoss extends Module {
         .build()
     );
 
+    private final Setting<Integer> treeChance = sgTrees.add(new IntSetting.Builder()
+        .name("tree-chance")
+        .description("Probability from 0 to 100% to grow a trees.")
+        .defaultValue(2)
+        .range(0, 100)
+        .sliderRange(0, 100)
+        .build()
+    );
+
     private final Setting<Boolean> inventoryAllow = sgGeneral.add(new BoolSetting.Builder()
         .name("inventory-allow")
         .description("Take bone meal from inventory when hotbar is empty.")
@@ -186,7 +195,9 @@ public class AutoMoss extends Module {
                         boolean isSapling = blockName.contains("sapling");
 
                         if (isAzalea || isSapling) {
-                            targets.add(pos);
+                            if (mc.world.random.nextInt(100) < treeChance.get()) {
+                                targets.add(pos);
+                            }
                             continue;
                         }
                     }

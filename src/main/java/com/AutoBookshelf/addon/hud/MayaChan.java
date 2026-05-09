@@ -15,7 +15,8 @@ public class MayaChan extends HudElement {
     public enum MayaImage {
         DEFAULT("textures/maya-chan.png", 221, 339),
         BLACK ("textures/maya-black.png", 255, 158),
-        WHITE ("textures/maya-white.png", 277, 302);
+        WHITE ("textures/maya-white.png", 277, 302),
+        SULK ("textures/maya-sulk.png", 384, 512);
 
         public final Identifier id;
         public final int defaultWidth;
