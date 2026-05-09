@@ -2,6 +2,7 @@
 > *How tsundere are You?*
 
 Meteor Addon for Timid book keeper and Yuri Enjoyers
+
 XB-70 My beloved <3
 
 ## Installation
@@ -139,7 +140,7 @@ Open an [issue](https://github.com/oehrasa/Oehrasa-Bookies-Addon/issues) or subm
 ## Disclaimer
 
 Designed for anarchy servers like 6b6t.org. Use responsibly.
-Ask a questions or make a discussing with me on discord : oeh4233
+Ask a question or make a discussions with me on discord : oeh4233
 
 <h1 align="center">
   <img src="https://github.com/user-attachments/assets/0e9c7164-663c-411a-a222-e4416a74131e" alt="Header Image" style="width:70%; max-width:600px;"/>
