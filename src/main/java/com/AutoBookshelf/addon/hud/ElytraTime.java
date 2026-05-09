@@ -18,7 +18,7 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
 public class ElytraTime extends HudElement {
     public static final HudElementInfo<ElytraTime> INFO = new HudElementInfo<>(
         Addon.HUD_GROUP,
-        "Elytra Time",
+        "Elytra-Time",
         "Gives you a rough estimate of the elytra flight time you have left.",
         ElytraTime::new
     );
