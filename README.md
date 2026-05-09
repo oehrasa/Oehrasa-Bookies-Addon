@@ -1,8 +1,8 @@
 # AutoBookshelf
+> *How tsundere are You?*
 
-<h2 align="left">Meteor Addon for Timid book keeper and Yuri Enjoyers</h2>
-
----
+Meteor Addon for Timid book keeper and Yuri Enjoyers
+XB-70 My beloved <3
 
 ## Installation
 
