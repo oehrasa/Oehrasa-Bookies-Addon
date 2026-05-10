@@ -124,10 +124,11 @@ List of addons I used as reference(skid? mwhehe), You should check them out it's
 - **[Numby Hack](https://github.com/cqb13/Numby-hack)** - TntFuseEsp module
 - **[InvincibleMachineGun](https://github.com/adaxiaohu/InvincibleMachineGun)** - AutoChestAura module
 - **[meteor community addon](https://github.com/lapoliciarobomiquesofrances/meteor-community-addon)** - AutoSex base
-- **[hybridious mod](https://github.com/Hybridious/hybridious_mod)** - B36, AutoMoss, and Platform Builder modules
-- **[lu public](https://github.com/CunnyCorp/lu-public)** - Auto Animal for Tsundere Furry module message references, Highlighter for Map Grid
+- **[hybridious mod](https://github.com/Hybridious/hybridious_mod)** - B36, AutoMoss
+- **[lu public](https://github.com/CunnyCorp/lu-public)** - Auto Animal for Tsundere Furry module message, Highlighter for Map Grid
 - **[nerv printer addon](https://github.com/Julflips/nerv-printer-addon)** - Map Namer base reference
 - **[JanitorAddon](https://github.com/Sleeepyv/JanitorAddon)** - ThrowEmptyShulker
+- **[delirious](https://github.com/underscore-zi/delirious)** - Platform Builder
 
 ## Contributing
 
