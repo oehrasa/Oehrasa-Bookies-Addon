@@ -194,7 +194,7 @@ public class TsundereFurry extends Module {
     public void onSendMessage(SendMessageEvent event) {
         if (event.isCancelled()) return;
         String message = event.message;
-        if (message.startsWith("/")) return;   // i spent way too long on reinventing the wheel
+        if (message.startsWith("/")) return;   // I spent way too long on reinventing the wheel
         event.message = applyTransformation(message);
     }
 

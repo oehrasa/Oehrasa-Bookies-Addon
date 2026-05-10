@@ -18,7 +18,6 @@ import net.minecraft.util.math.BlockPos;
 import com.AutoBookshelf.addon.Addon;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 
 public class PlatformBuilder extends Module {
@@ -95,21 +94,14 @@ public class PlatformBuilder extends Module {
         .build()
     );
 
-    private final HashSet<BlockPos> recentPlacements = new HashSet<>();
-
     public PlatformBuilder() {
         super(Addon.CATEGORY, "Platform", "Build a platform at a given y-level once in range");
     }
 
     @Override
-    public void onActivate() {
-        recentPlacements.clear();
-    }
-
+    public void onActivate() {}
     @Override
-    public void onDeactivate() {
-        recentPlacements.clear();
-    }
+    public void onDeactivate() {}
 
     int delay = 0;
 
@@ -163,7 +155,6 @@ public class PlatformBuilder extends Module {
         int targetY = yLevel.get();
         int playerY = (int) mc.player.getY();
 
-        // Only build when within 4 blocks of target Y-level
         if (Math.abs(playerY - targetY) > maxReach) {
             return new BlockPos[0];
         }
@@ -177,41 +168,34 @@ public class PlatformBuilder extends Module {
             }
         }
 
-        positions.removeIf(pos -> {
-            BlockState state = mc.world.getBlockState(pos);
-
-            // Check if we can place here based on settings
-            if (!canPlaceAtPosition(state)) {
-                return true;
-            }
-
-            return recentPlacements.contains(pos);
-        });
+        // Filter out non-placeable positions (no recentPlacements, we retry every tick)
+        positions.removeIf(pos -> !canPlaceAtPosition(pos));
 
         return positions.toArray(new BlockPos[0]);
     }
 
+    // Fixed: accepts BlockPos, uses correct position for isFullCube
+    private boolean canPlaceAtPosition(BlockPos pos) {
+        BlockState state = mc.world.getBlockState(pos);
 
-    private boolean canPlaceAtPosition(BlockState state) {
-        // Air is always allowed
         if (state.isAir()) return true;
 
-        // Check for liquids
+        // Liquids
         if (state.getFluidState().isStill() || state.getBlock() instanceof FluidBlock) {
             return ignoreLiquids.get();
         }
 
-        // Check for replaceable blocks
+        // Replaceable blocks
         if (state.isReplaceable() || state.getBlock() == Blocks.GRASS_BLOCK || state.getBlock() == Blocks.FERN) {
             return replaceBlocks.get();
         }
 
+        // Air‑place: allow any non‑solid block (use the real position, not ORIGIN)
         if (airPlace.get()) {
-            // Allow placing in non-solid blocks
-            return !state.isFullCube(mc.world, BlockPos.ORIGIN);
+            return !state.isFullCube(mc.world, pos);
         }
 
-        return state.isAir();
+        return false;
     }
 
     private boolean isAllowedBlock(Block block) {
@@ -227,7 +211,6 @@ public class PlatformBuilder extends Module {
             return true;
         }
 
-        // Find the best block in hotbar
         int bestSlot = -1;
         for (int i = 0; i < 9; i++) {
             ItemStack stack = mc.player.getInventory().getStack(i);
@@ -241,14 +224,12 @@ public class PlatformBuilder extends Module {
         }
 
         if (bestSlot == -1) {
-            // Try to refill from inventory if enabled
             if (refillFromInventory.get()) {
                 for (int i = 9; i < 36; i++) {
                     ItemStack stack = mc.player.getInventory().getStack(i);
                     if (!stack.isEmpty() && stack.getItem() instanceof net.minecraft.item.BlockItem) {
                         Block block = ((net.minecraft.item.BlockItem) stack.getItem()).getBlock();
                         if (isAllowedBlock(block)) {
-                            // Find empty hotbar slot
                             int emptySlot = -1;
                             for (int j = 0; j < 9; j++) {
                                 if (mc.player.getInventory().getStack(j).isEmpty()) {
@@ -275,13 +256,9 @@ public class PlatformBuilder extends Module {
 
     private boolean placeBlock(BlockPos pos) {
         if (!PlayerUtils.isWithinReach(pos)) return false;
-        if (recentPlacements.contains(pos)) return false;
 
-        // Check if we can place here
-        BlockState state = mc.world.getBlockState(pos);
-        if (!canPlaceAtPosition(state)) return false;
+        // Block state already checked in reachablePositions, no need to check again.
 
-        // Find the block in hotbar
         FindItemResult item = InvUtils.findInHotbar(itemStack -> {
             if (!(itemStack.getItem() instanceof net.minecraft.item.BlockItem)) return false;
             Block block = ((net.minecraft.item.BlockItem) itemStack.getItem()).getBlock();
@@ -290,8 +267,7 @@ public class PlatformBuilder extends Module {
 
         if (!item.found()) return false;
 
-        recentPlacements.add(pos);
-
+        // Use the reliable Meteor placement method (handles air‑place, rotation, etc.)
         return BlockUtils.place(pos, item, true, 50, true, true);
     }
 }

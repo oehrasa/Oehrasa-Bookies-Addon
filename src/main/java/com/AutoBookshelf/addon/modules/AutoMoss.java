@@ -135,12 +135,12 @@ public class AutoMoss extends Module {
                 Vec3d hitPos = new Vec3d(blockPos.getX() + 0.5, blockPos.getY() + 0.5, blockPos.getZ() + 0.5);
                 BlockHitResult hit = new BlockHitResult(hitPos, Direction.UP, blockPos, false);
 
-                int prevSelectedSlot = mc.player.getInventory().selectedSlot;
-                mc.player.getInventory().selectedSlot = boneMealSlot;
+                int prevSelectedSlot = mc.player.getInventory().getSelectedSlot();
+                mc.player.getInventory().setSelectedSlot(boneMealSlot);
 
                 mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hit);
 
-                mc.player.getInventory().selectedSlot = prevSelectedSlot;
+                mc.player.getInventory().setSelectedSlot(prevSelectedSlot);
 
                 // Add moss blocks to cooldown map
                 if (isMoss) {

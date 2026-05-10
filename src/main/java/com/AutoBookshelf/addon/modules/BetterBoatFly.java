@@ -1,24 +1,22 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
-import java.util.List;
-import meteordevelopment.meteorclient.events.entity.BoatMoveEvent;
+import meteordevelopment.meteorclient.events.entity.EntityMoveEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.mixininterface.IVec3d;
-import meteordevelopment.meteorclient.settings.BoolSetting;
-import meteordevelopment.meteorclient.settings.DoubleSetting;
-import meteordevelopment.meteorclient.settings.Setting;
-import meteordevelopment.meteorclient.settings.SettingGroup;
+import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.entity.Entity;
 import net.minecraft.entity.vehicle.BoatEntity;
 import net.minecraft.network.packet.s2c.play.VehicleMoveS2CPacket;
 import net.minecraft.util.Hand;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
+
+import java.util.List;
 
 public class BetterBoatFly extends Module {
     private final Setting<Double> speed;
@@ -78,7 +76,7 @@ public class BetterBoatFly extends Module {
     private void onTick(TickEvent.Pre event) {
         if (!autoMount.get()) return;
 
-        ClientPlayerEntity player = mc.player;
+        var player = mc.player;
         if (player == null || player.isRemoved() || player.hasVehicle()) return;
 
         double radius = 5.0;
@@ -88,7 +86,7 @@ public class BetterBoatFly extends Module {
 
         BoatEntity nearest = null;
         double nearestDistSq = Double.MAX_VALUE;
-        Vec3d playerPos = player.getPos();
+        Vec3d playerPos = player.getEntityPos();
 
         for (BoatEntity boat : boats) {
             double distSq = boat.squaredDistanceTo(playerPos);
@@ -103,7 +101,7 @@ public class BetterBoatFly extends Module {
 
     private void interact(BoatEntity boat) {
         if (rotate.get()) {
-            ClientPlayerEntity player = mc.player;
+            var player = mc.player;
             assert player != null;
             double deltaX = boat.getX() - player.getX();
             double deltaZ = boat.getZ() - player.getZ();
@@ -120,22 +118,28 @@ public class BetterBoatFly extends Module {
     }
 
     @EventHandler
-    private void onBoatMove(BoatMoveEvent event) {
-        if (event.boat.getFirstPassenger() != mc.player) return;
+    private void onEntityMove(EntityMoveEvent event) {
+        Entity entity = event.entity;
+        if (!(entity instanceof BoatEntity boat)) return;
+        if (boat.getControllingPassenger() != mc.player) return;
 
-        assert mc.player != null;
-        event.boat.setYaw(mc.player.getYaw());
+        double velX = entity.getVelocity().x;
+        double velY = entity.getVelocity().y;
+        double velZ = entity.getVelocity().z;
 
+        // Horizontal
         Vec3d vel = PlayerUtils.getHorizontalVelocity(speed.get());
-        double velX = vel.x;
-        double velZ = vel.z;
-        double velY = 0.0;
+        velX = vel.x;
+        velZ = vel.z;
 
+        // Vertical
+        velY = 0.0;
         if (mc.options.jumpKey.isPressed()) velY += verticalSpeed.get() / 20.0;
         if (mc.options.sprintKey.isPressed()) velY -= verticalSpeed.get() / 20.0;
         else velY -= fallSpeed.get() / 20.0;
 
-        ((IVec3d) event.boat.getVelocity()).meteor$set(velX, velY, velZ);
+        boat.setYaw(mc.player.getYaw());
+        ((IVec3d) event.movement).meteor$set(velX, velY, velZ);
     }
 
     @EventHandler

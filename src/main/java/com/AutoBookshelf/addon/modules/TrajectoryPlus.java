@@ -223,7 +223,7 @@ public class TrajectoryPlus extends Module {
         for (Entity entity : mc.world.getEntities()) {
             if (isProjectile(entity)) {
                 UUID id = entity.getUuid();
-                Vec3d currentPos = entity.getPos();
+                Vec3d currentPos = entity.getEntityPos();
 
                 List<Vec3d> trail = projectileTrails.computeIfAbsent(id, k -> new ArrayList<>());
                 trail.add(currentPos);
@@ -257,7 +257,7 @@ public class TrajectoryPlus extends Module {
     }
 
     private void predictProjectilePath(Render3DEvent event, Entity projectile) {
-        Vec3d pos = projectile.getPos();
+        Vec3d pos = projectile.getLerpedPos(event.tickDelta);
         Vec3d vel = projectile.getVelocity();
 
         List<Vec3d> path = new ArrayList<>();
@@ -410,9 +410,7 @@ public class TrajectoryPlus extends Module {
     }
 
     private Vec3d getInterpolatedPos(Entity entity, float delta) {
-        double x = entity.prevX + (entity.getX() - entity.prevX) * delta;
-        double y = (entity.prevY + (entity.getY() - entity.prevY) * delta) + entity.getEyeHeight(entity.getPose());
-        double z = entity.prevZ + (entity.getZ() - entity.prevZ) * delta;
-        return new Vec3d(x, y, z);
+        Vec3d pos = entity.getLerpedPos(delta);           // interpolated foot position
+        return new Vec3d(pos.x, pos.y + entity.getEyeHeight(entity.getPose()), pos.z);  // eye position
     }
 }

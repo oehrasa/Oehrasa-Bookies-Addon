@@ -480,7 +480,7 @@ public class AutoBeacon extends Module {
             Direction face = dir.getOpposite();
             BlockHitResult hit = new BlockHitResult(hitPos, face, neighbor, false);
 
-            int prevSlot = mc.player.getInventory().selectedSlot;
+            int prevSlot = mc.player.getInventory().getSelectedSlot();
             Rotations.rotate(Rotations.getYaw(hitPos), Rotations.getPitch(hitPos), () -> {
                 InvUtils.swap(item.slot(), true);
                 mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hit);
@@ -496,12 +496,12 @@ public class AutoBeacon extends Module {
     }
 
     private FindItemResult findBlockInHotbar() {
-        // 1. Main hand already holds an allowed block → keep it, remember as preferred
+        // 1. Main hand already holds an allowed block then keep it, remember as preferred
         ItemStack mainHand = mc.player.getMainHandStack();
         if (!mainHand.isEmpty() && mainHand.getItem() instanceof BlockItem handBlock) {
             if (allowedBlocks.get().contains(handBlock.getBlock())) {
                 preferredBlock = handBlock.getBlock();
-                return new FindItemResult(mc.player.getInventory().selectedSlot, mainHand.getCount());
+                return new FindItemResult(mc.player.getInventory().getSelectedSlot(), mainHand.getCount());
             }
         }
 

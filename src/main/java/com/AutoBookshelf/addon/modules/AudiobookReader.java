@@ -188,9 +188,9 @@ public class AudiobookReader extends Module {
         int x = (int) (screenWidth / 2 - (mc.textRenderer.getWidth(displayText) * scale) / 2);
         int y = screenHeight - 70;
 
-        event.drawContext.getMatrices().push();
-        event.drawContext.getMatrices().translate(x, y, 0);
-        event.drawContext.getMatrices().scale((float) scale, (float) scale, 1);
+        event.drawContext.getMatrices().pushMatrix();
+        event.drawContext.getMatrices().translate(x, y);
+        event.drawContext.getMatrices().scale((float) scale, (float) scale);
 
         // Draw text
         event.drawContext.drawText(mc.textRenderer, displayText, 0, 0, 0xFFFFD700, true);
@@ -208,7 +208,7 @@ public class AudiobookReader extends Module {
             event.drawContext.fill(0, barY, progressWidth, barY + barHeight, 0xFFFFD700);
         }
 
-        event.drawContext.getMatrices().pop();
+        event.drawContext.getMatrices().popMatrix();
     }
 
     private void sendMessage(String msg) {
@@ -269,7 +269,7 @@ public class AudiobookReader extends Module {
 
         // Speak the page
         if (narrator != null && !currentPageText.isEmpty()) {
-            narrator.say(currentPageText, false);
+            narrator.say(currentPageText, false, 1.0f);
         }
 
         currentPage++;

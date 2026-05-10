@@ -332,12 +332,12 @@ public class MinecartPlacer extends Module {
             false
         );
 
-        int previousSlot = mc.player.getInventory().selectedSlot;
+        int previousSlot = mc.player.getInventory().getSelectedSlot();
 
         Rotations.rotate(Rotations.getYaw(targetPos), Rotations.getPitch(targetPos), () -> {
             // Switch to minecart slot
             if (slot < 9) {
-                mc.player.getInventory().selectedSlot = slot;
+                mc.player.getInventory().setSelectedSlot(slot);
             } else {
                 // Swap to hotbar if needed
                 int tempSlot = -1;
@@ -356,7 +356,7 @@ public class MinecartPlacer extends Module {
                     SlotActionType.SWAP,
                     mc.player
                 );
-                mc.player.getInventory().selectedSlot = tempSlot;
+                mc.player.getInventory().setSelectedSlot(tempSlot);
             }
 
             // Place the minecart
@@ -369,8 +369,8 @@ public class MinecartPlacer extends Module {
             mc.player.swingHand(Hand.MAIN_HAND);
 
             // Restore previous slot
-            if (previousSlot != mc.player.getInventory().selectedSlot) {
-                mc.player.getInventory().selectedSlot = previousSlot;
+            if (previousSlot != mc.player.getInventory().getSelectedSlot()) {
+                mc.player.getInventory().setSelectedSlot(previousSlot);
             }
         });
 

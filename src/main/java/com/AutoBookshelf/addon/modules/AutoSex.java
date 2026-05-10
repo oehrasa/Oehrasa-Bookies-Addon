@@ -4,7 +4,7 @@ import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
 import baritone.api.pathing.goals.GoalBlock;
 import com.AutoBookshelf.addon.Addon;
-import meteordevelopment.meteorclient.events.meteor.MouseButtonEvent;
+import meteordevelopment.meteorclient.events.meteor.MouseClickEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.friends.Friends;
@@ -395,9 +395,9 @@ public class AutoSex extends Module {
     }
 
     @EventHandler
-    private void onMouseButton(MouseButtonEvent event) {
+    private void onMouseButton(MouseClickEvent event) {
         if (targetMode.get() == Mode.MiddleClick) {
-            if (event.action == KeyAction.Press && event.button == GLFW_MOUSE_BUTTON_MIDDLE && mc.currentScreen == null && mc.targetedEntity != null && mc.targetedEntity instanceof LivingEntity living) {
+            if (event.action == KeyAction.Press && event.button() == GLFW_MOUSE_BUTTON_MIDDLE && mc.currentScreen == null && mc.targetedEntity != null && mc.targetedEntity instanceof LivingEntity living) {
                 if (!isEntityAllowed(living)) {
                     if (living instanceof PlayerEntity) {
                         if (friendFilter.get() == FriendFilter.ONLY_FRIENDS) error("§cThat player is not your friend!");
@@ -579,7 +579,7 @@ public class AutoSex extends Module {
             if (!reachedGoal) {
                 if (pathCooldown > 0) pathCooldown--;
 
-                Vec3d targetPosVec = targetEntity.getPos();
+                Vec3d targetPosVec = targetEntity.getLerpedPos(1F);
                 boolean shouldUpdate = false;
 
                 if (lastTargetPosVec == null) {
@@ -633,7 +633,7 @@ public class AutoSex extends Module {
     private BlockPos getApproachPosition() {
         if (targetEntity == null) return mc.player.getBlockPos();
 
-        Vec3d targetPos = targetEntity.getPos();
+        Vec3d targetPos = targetEntity.getLerpedPos(1F);
 
         return switch (approachMode.get()) {
             case Direct -> new BlockPos((int) Math.floor(targetPos.x), (int) Math.floor(targetPos.y), (int) Math.floor(targetPos.z));
@@ -664,7 +664,7 @@ public class AutoSex extends Module {
         double facingX = -Math.sin(rad);
         double facingZ = Math.cos(rad);
 
-        Vec3d headPos = targetEntity.getPos().add(
+        Vec3d headPos = targetEntity.getLerpedPos(1F).add(
             facingX * 0.5,
             targetEntity.getEyeHeight(targetEntity.getPose()),
             facingZ * 0.5

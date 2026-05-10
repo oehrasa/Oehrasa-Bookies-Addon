@@ -17,7 +17,8 @@ import net.minecraft.screen.slot.SlotActionType;
 import java.util.ArrayList;
 import java.util.List;
 
-public class ThrowEmptyShulkers extends Module {
+public class
+ThrowEmptyShulkers extends Module {
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgFilter  = settings.createGroup("Filter");

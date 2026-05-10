@@ -305,7 +305,7 @@ public class UnwaxAura extends Module {
         breakTimer = 0;
         currentStage = 0;
 
-        if (returnSlot.get() && originalSlot != -1 && originalSlot != mc.player.getInventory().selectedSlot) {
+        if (returnSlot.get() && originalSlot != -1 && originalSlot != mc.player.getInventory().getSelectedSlot()) {
             InvUtils.swap(originalSlot, false);
             originalSlot = -1;
         }
@@ -408,7 +408,7 @@ public class UnwaxAura extends Module {
                 );
 
                 if (axe.found()) {
-                    if (originalSlot == -1) originalSlot = mc.player.getInventory().selectedSlot;
+                    if (originalSlot == -1) originalSlot = mc.player.getInventory().getSelectedSlot();
                     InvUtils.swap(axe.slot(), true);
                 } else {
                     mc.options.sneakKey.setPressed(false);
@@ -440,7 +440,7 @@ public class UnwaxAura extends Module {
                 );
 
                 if (pick.found()) {
-                    if (originalSlot == -1) originalSlot = mc.player.getInventory().selectedSlot;
+                    if (originalSlot == -1) originalSlot = mc.player.getInventory().getSelectedSlot();
                     InvUtils.swap(pick.slot(), true);
                 }
             }

@@ -221,7 +221,7 @@ public class AutoChestAura extends Module {
             // Listen for InventoryS2CPacket (container contents)
             if (event.packet instanceof InventoryS2CPacket packet) {
                 ScreenHandler handler = mc.player.currentScreenHandler;
-                if (handler != null && packet.getSyncId() == handler.syncId) {
+                if (handler != null && packet.syncId() == handler.syncId) {
                     packetTimer = waitTime.get();
                 }
             }

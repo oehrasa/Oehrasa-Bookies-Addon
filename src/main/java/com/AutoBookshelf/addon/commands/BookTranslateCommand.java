@@ -30,7 +30,7 @@ public class BookTranslateCommand extends Command {
 
     public BookTranslateCommand() {
         super("booktranslate", "Translates the held written book into another language.");
-    } // Credits to Akgezen for the modules idea
+    } // Credits to Akgezen for the command idea
 
     @Override
     public void build(LiteralArgumentBuilder<CommandSource> builder) {
@@ -179,36 +179,47 @@ public class BookTranslateCommand extends Command {
             : "pages " + startPage + "-" + endPage;
         info("§6Translating " + rangeInfo + " of " + totalPages + " to " + targetLang + "...");
 
-        StringBuilder fullText = new StringBuilder();
-        for (int i = 0; i < pagesToTranslate.size(); i++) {
-            if (i > 0) fullText.append("\n§§§PAGEBREAK§§§\n");
-            fullText.append(pagesToTranslate.get(i).getString());
+        // Translate each page individually – avoids HTTP 400 from oversized requests
+        List<CompletableFuture<String>> futures = new ArrayList<>();
+        for (Text page : pagesToTranslate) {
+            futures.add(translateTextAsync(targetLang, page.getString()));
         }
 
         int finalStartPage = startPage;
-        translateTextAsync(targetLang, fullText.toString()).thenAccept(translated -> mc.executeSync(() -> {
-            if (translated == null) {
-                error("Translation failed (API may be overloaded).");
-                return;
-            }
-
-            String[] pageArray = translated.split("\\n?§§§PAGEBREAK§§§\\n?");
-            info("§6<Translated Book (" + rangeInfo + ")>");
-            for (int i = 0; i < pageArray.length; i++) {
-                int actualPage = finalStartPage + i;
-                info("§7--- Page " + actualPage + " ---");
-                for (String line : pageArray[i].split("\n")) {
-                    if (line.length() > 120) {
-                        for (int j = 0; j < line.length(); j += 120) {
-                            info("§f" + line.substring(j, Math.min(j + 120, line.length())));
-                        }
-                    } else {
-                        info("§f" + line);
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+            .thenAccept(v -> {
+                List<String> translatedPages = new ArrayList<>();
+                for (CompletableFuture<String> future : futures) {
+                    String translated = future.join(); // safe because all futures are done
+                    if (translated == null) {
+                        mc.executeSync(() -> error("Translation failed for one or more pages."));
+                        return;
                     }
+                    translatedPages.add(translated);
                 }
-            }
-            info("§6========================");
-        }));
+
+                mc.executeSync(() -> {
+                    info("§6<Translated Book (" + rangeInfo + ")>");
+                    for (int i = 0; i < translatedPages.size(); i++) {
+                        int actualPage = finalStartPage + i;
+                        info("§7--- Page " + actualPage + " ---");
+                        for (String line : translatedPages.get(i).split("\n")) {
+                            if (line.length() > 120) {
+                                for (int j = 0; j < line.length(); j += 120) {
+                                    info("§f" + line.substring(j, Math.min(j + 120, line.length())));
+                                }
+                            } else {
+                                info("§f" + line);
+                            }
+                        }
+                    }
+                    info("§6========================");
+                });
+            })
+            .exceptionally(e -> {
+                mc.executeSync(() -> error("Translation error: " + e.getMessage()));
+                return null;
+            });
     }
 
     private void exportTranslation(String targetLang, int startPage, int endPage, String customFilename) {
@@ -251,44 +262,51 @@ public class BookTranslateCommand extends Command {
             : "pages " + startPage + "-" + endPage;
         info("§6Translating and exporting " + rangeInfo + " of " + totalPages + " to " + targetLang + "...");
 
-        StringBuilder fullText = new StringBuilder();
-        for (int i = 0; i < pagesToTranslate.size(); i++) {
-            if (i > 0) fullText.append("\n§§§PAGEBREAK§§§\n");
-            fullText.append(pagesToTranslate.get(i).getString());
+        // Translate each page individually, avoids HTTP 400 from oversized requests.
+        List<CompletableFuture<String>> futures = new ArrayList<>();
+        for (Text page : pagesToTranslate) {
+            futures.add(translateTextAsync(targetLang, page.getString()));
         }
 
         int finalStartPage = startPage;
         String finalSafeTitle = safeTitle;
 
-        translateTextAsync(targetLang, fullText.toString()).thenAccept(translated -> mc.executeSync(() -> {
-            if (translated == null) {
-                error("Translation failed. (API may be overloaded)");
-                return;
-            }
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+            .thenAccept(v -> {
+                List<String> translatedPages = new ArrayList<>();
+                for (CompletableFuture<String> future : futures) {
+                    String translated = future.join();
+                    if (translated == null) {
+                        mc.executeSync(() -> error("Translation failed for one or more pages."));
+                        return;
+                    }
+                    translatedPages.add(translated);
+                }
 
-            // 2. Replace PAGEBREAK markers with page numbers
-            String[] pageArray = translated.split("\\n?§§§PAGEBREAK§§§\\n?");
-            StringBuilder fileContent = new StringBuilder();
-            for (int i = 0; i < pageArray.length; i++) {
-                int pageNum = finalStartPage + i;
-                fileContent.append("===== Page ").append(pageNum).append(" =====\n\n");
-                fileContent.append(pageArray[i].trim()).append("\n\n");
-            }
+                // Build file content with page numbers
+                StringBuilder fileContent = new StringBuilder();
+                for (int i = 0; i < translatedPages.size(); i++) {
+                    int pageNum = finalStartPage + i;
+                    fileContent.append("===== Page ").append(pageNum).append(" =====\n\n");
+                    fileContent.append(translatedPages.get(i).trim()).append("\n\n");
+                }
 
-            // 3. Build output filename with timestamp
-            String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
-            String fileName = finalSafeTitle + "_" + timestamp + ".txt";
+                String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
+                String fileName = finalSafeTitle + "_" + timestamp + ".txt";
+                Path outDir = mc.runDirectory.toPath().resolve("AutoBookshelf");
 
-            // 4. Create output directory and write file
-            Path outDir = mc.runDirectory.toPath().resolve("AutoBookshelf");
-            try {
-                Files.createDirectories(outDir);
-                Path outFile = outDir.resolve(fileName);
-                Files.writeString(outFile, fileContent.toString(), StandardCharsets.UTF_8);
-                info("§aExported translation to §f" + outFile.toAbsolutePath());
-            } catch (Exception e) {
-                error("Failed to write file: " + e.getMessage());
-            }
-        }));
+                try {
+                    Files.createDirectories(outDir);
+                    Path outFile = outDir.resolve(fileName);
+                    Files.writeString(outFile, fileContent.toString(), StandardCharsets.UTF_8);
+                    mc.executeSync(() -> info("§aExported translation to §f" + outFile.toAbsolutePath()));
+                } catch (Exception e) {
+                    mc.executeSync(() -> error("Failed to write file: " + e.getMessage()));
+                }
+            })
+            .exceptionally(e -> {
+                mc.executeSync(() -> error("Export error: " + e.getMessage()));
+                return null;
+            });
     }
 }

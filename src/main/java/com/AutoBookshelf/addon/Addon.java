@@ -35,13 +35,10 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new BookshelfFiller());
         Modules.get().add(new B36());
         Modules.get().add(new MinecartPlacer());
-        Modules.get().add(new SculkRange());
         Modules.get().add(new MobOwner());
         Modules.get().add(new AutoChestAura());
         Modules.get().add(new TrajectoryPlus());
         Modules.get().add(new BetterBoatFly());
-        Modules.get().add(new BoatPhase());
-        Modules.get().add(new BoatGlitch());
         Modules.get().add(new BeaconRange());
         Modules.get().add(new ShulkBookRestock());
         Modules.get().add(new AutoMoss());

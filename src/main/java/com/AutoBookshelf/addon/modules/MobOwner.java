@@ -13,17 +13,13 @@ import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.network.Http;
 import meteordevelopment.meteorclient.utils.network.MeteorExecutor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.passive.TameableEntity;
-import net.minecraft.entity.projectile.thrown.EnderPearlEntity;
 import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.text.Text;
+import net.minecraft.entity.projectile.thrown.EnderPearlEntity;
 import org.joml.Vector3d;
 
 import java.io.File;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.Map;
@@ -75,9 +71,7 @@ public class MobOwner extends Module {
 
     private final Vector3d pos = new Vector3d();
 
-    // Store mob UUID -> Owner UUID mapping
-    private final Map<UUID, UUID> mobToOwner = new HashMap<>();
-    // Store Owner UUID -> Name mapping
+    // Caches Owner UUID to Owner Name
     private final Map<UUID, String> ownerNameCache = new HashMap<>();
 
     private File cacheFile;
@@ -103,7 +97,6 @@ public class MobOwner extends Module {
         if (persistentCache.get()) {
             saveCache();
         }
-        mobToOwner.clear();
         ownerNameCache.clear();
     }
 
@@ -113,17 +106,6 @@ public class MobOwner extends Module {
             if (cacheFile.exists()) {
                 String json = new String(Files.readAllBytes(cacheFile.toPath()));
                 JsonObject root = JsonParser.parseString(json).getAsJsonObject();
-
-                if (root.has("mobToOwner")) {
-                    JsonObject mobMap = root.getAsJsonObject("mobToOwner");
-                    for (Map.Entry<String, JsonElement> entry : mobMap.entrySet()) {
-                        try {
-                            UUID mobUuid = UUID.fromString(entry.getKey());
-                            UUID ownerUuid = UUID.fromString(entry.getValue().getAsString());
-                            mobToOwner.put(mobUuid, ownerUuid);
-                        } catch (Exception ignored) {}
-                    }
-                }
 
                 if (root.has("ownerNames")) {
                     JsonObject nameMap = root.getAsJsonObject("ownerNames");
@@ -135,8 +117,7 @@ public class MobOwner extends Module {
                         } catch (Exception ignored) {}
                     }
                 }
-
-                info("§aLoaded cache: §f" + mobToOwner.size() + " §amobs, §f" + ownerNameCache.size() + " §anames");
+                info("§aLoaded cache: §f" + ownerNameCache.size() + " §anames");
             }
         } catch (Exception e) {
             error("Failed to load cache: " + e.getMessage());
@@ -147,67 +128,16 @@ public class MobOwner extends Module {
         if (cacheFile == null) {
             cacheFile = new File(mc.runDirectory, "cracked_mob_owner_cache.json");
         }
-
         try {
             JsonObject root = new JsonObject();
-
-            JsonObject mobMap = new JsonObject();
-            for (Map.Entry<UUID, UUID> entry : mobToOwner.entrySet()) {
-                mobMap.addProperty(entry.getKey().toString(), entry.getValue().toString());
-            }
-            root.add("mobToOwner", mobMap);
-
             JsonObject nameMap = new JsonObject();
             for (Map.Entry<UUID, String> entry : ownerNameCache.entrySet()) {
                 nameMap.addProperty(entry.getKey().toString(), entry.getValue());
             }
             root.add("ownerNames", nameMap);
-
             Files.write(cacheFile.toPath(), gson.toJson(root).getBytes());
         } catch (Exception e) {
             error("Failed to save cache: " + e.getMessage());
-        }
-    }
-
-    private UUID getOwnerUuidFromEntity(Entity entity) {
-        // 1. Tamed animals – always a valid UUID
-        if (entity instanceof TameableEntity tame) {
-            return tame.getOwnerUuid();
-        }
-
-        // 2. Ender pearls / projectiles – owner may be UUID or player name
-        if (entity instanceof EnderPearlEntity) {
-            NbtCompound nbt = new NbtCompound();
-            entity.writeNbt(nbt);
-            if (nbt.containsUuid("Owner")) {
-                return nbt.getUuid("Owner");
-            }
-            if (nbt.contains("Owner", 8)) {
-                return parseOwnerTag(nbt.getString("Owner"));
-            }
-        }
-
-        // 3. General fallback for any entity
-        NbtCompound nbt = new NbtCompound();
-        entity.writeNbt(nbt);
-        if (nbt.containsUuid("Owner")) return nbt.getUuid("Owner");
-        if (nbt.containsUuid("owner")) return nbt.getUuid("owner");
-        if (nbt.contains("Owner", 8)) return parseOwnerTag(nbt.getString("Owner"));
-        if (nbt.contains("owner", 8)) return parseOwnerTag(nbt.getString("owner"));
-
-        if (debugMode.get()) {
-            info("§cNo owner UUID for §f" + entity.getType().getName().getString());
-        }
-        return null;
-    }
-
-    private UUID parseOwnerTag(String tag) {
-        if (tag.isEmpty()) return null;
-        try {
-            return UUID.fromString(tag);
-        } catch (IllegalArgumentException e) {
-            // The tag contains a player name generate an offline UUID
-            return UUID.nameUUIDFromBytes(("OfflinePlayer:" + tag).getBytes(StandardCharsets.UTF_8));
         }
     }
 
@@ -216,50 +146,40 @@ public class MobOwner extends Module {
         if (mc.world == null) return;
 
         tickCounter++;
-        if (tickCounter < 20) return; // Scan every second
+        if (tickCounter < 20) return;   // scan every second
         tickCounter = 0;
 
-        int newMobs = 0;
+        int newNames = 0;
 
         for (Entity entity : mc.world.getEntities()) {
-            boolean isTameable = entity instanceof TameableEntity;
-            boolean isPearl = entity instanceof EnderPearlEntity;
+            UUID ownerUuid = getOwnerUuid(entity);
+            if (ownerUuid == null) continue;
 
-            if (!isTameable && !isPearl) continue;
-
-            UUID mobUuid = entity.getUuid();
-
-            // Skip if already cached
-            if (mobToOwner.containsKey(mobUuid)) continue;
-
-            // Get owner UUID
-            UUID ownerUuid = getOwnerUuidFromEntity(entity);
-
-            if (ownerUuid != null) {
-                mobToOwner.put(mobUuid, ownerUuid);
-                newMobs++;
-
-                if (debugMode.get()) {
-                    String entityName = entity.getType().getName().getString();
-                    info("§aCached: §f" + entityName +
-                        " §f" + ownerUuid.toString().substring(0, 8) + "...");
-
-                    // Try to get name from tab list
-                    String name = findNameInTabList(ownerUuid);
-                    if (name != null) {
-                        ownerNameCache.put(ownerUuid, name);
-                        info("§aName: §f" + name);
-                    }
-                }
-
-                if (persistentCache.get()) {
-                    saveCache();
+            if (!ownerNameCache.containsKey(ownerUuid)) {
+                // Try to resolve name from tab list immediately
+                String name = findNameInTabList(ownerUuid);
+                if (name != null) {
+                    ownerNameCache.put(ownerUuid, name);
+                    newNames++;
+                } else {
+                    // Start async Mojang API request
+                    MeteorExecutor.execute(() -> {
+                        if (!isActive()) return;
+                        ProfileResponse res = Http.get("https://sessionserver.mojang.com/session/minecraft/profile/" + ownerUuid.toString().replace("-", ""))
+                            .sendJson(ProfileResponse.class);
+                        if (isActive()) {
+                            if (res == null) ownerNameCache.put(ownerUuid, "Failed to get name");
+                            else ownerNameCache.put(ownerUuid, res.name);
+                            if (persistentCache.get()) saveCache();
+                        }
+                    });
+                    ownerNameCache.put(ownerUuid, "Retrieving");
                 }
             }
         }
 
-        if (newMobs > 0 && debugMode.get()) {
-            info("§aFound §f" + newMobs + " §anew mob(s) this scan");
+        if (newNames > 0 && debugMode.get()) {
+            info("§aCached §f" + newNames + " §anew name(s) this scan");
         }
     }
 
@@ -268,61 +188,76 @@ public class MobOwner extends Module {
         if (mc.world == null) return;
 
         for (Entity entity : mc.world.getEntities()) {
-            boolean isTameable = entity instanceof TameableEntity;
-            boolean isPearl = entity instanceof EnderPearlEntity;
+            UUID ownerUuid = getOwnerUuid(entity);
+            if (ownerUuid == null) continue;
 
-            if (!isTameable && !isPearl) continue;
+            Utils.set(pos, entity, event.tickDelta);
+            pos.add(0, entity.getEyeHeight(entity.getPose()) + 0.75, 0);
 
-            UUID mobUuid = entity.getUuid();
-            UUID ownerUuid = mobToOwner.get(mobUuid);
-
-            // Try to get on the fly if not cached
-            if (ownerUuid == null) {
-                ownerUuid = getOwnerUuidFromEntity(entity);
-                if (ownerUuid != null) {
-                    mobToOwner.put(mobUuid, ownerUuid);
-                }
-            }
-
-            if (ownerUuid != null) {
-                Utils.set(pos, entity, event.tickDelta);
-                pos.add(0, entity.getEyeHeight(entity.getPose()) + 0.75, 0);
-
-                if (NametagUtils.to2D(pos, scale.get())) {
-                    String displayText;
-
-                    if (showUUID.get()) {
-                        displayText = ownerUuid.toString();
-                    } else {
-                        String name = getOwnerName(ownerUuid);
-                        displayText = (name != null) ? name :
-                            (showUnknown.get() ? ownerUuid.toString().substring(0, 8) + "..." : null);
-                    }
-
-                    if (displayText != null) {
-                        renderNametag(displayText);
-                    }
-                }
-            } else if (showUnknown.get() && debugMode.get()) {
-                // Debug: show that entity has no owner
-                Utils.set(pos, entity, event.tickDelta);
-                pos.add(0, entity.getEyeHeight(entity.getPose()) + 0.75, 0);
-                if (NametagUtils.to2D(pos, scale.get())) {
-                    renderNametag("§cNo Owner Data");
+            if (NametagUtils.to2D(pos, scale.get())) {
+                String name = getOwnerName(ownerUuid);
+                if (name != null) {
+                    renderNametag(name);
                 }
             }
         }
     }
 
+    /**
+     * Extracts the owner's UUID from an entity using the modern API.
+     * Uses LazyEntityReference for TameableEntity, direct getOwner() for EnderPearlEntity.
+     */
+    private UUID getOwnerUuid(Entity entity) {
+        if (entity instanceof TameableEntity tame) {
+            var ref = tame.getOwnerReference();
+            return ref != null ? ref.getUuid() : null;
+        }
+        if (entity instanceof EnderPearlEntity pearl) {
+            Entity owner = pearl.getOwner();
+            return owner != null ? owner.getUuid() : null;
+        }
+        // Fallback for other entities that might expose an owner
+        return null;
+    }
+
+    private String getOwnerName(UUID ownerUuid) {
+        // Check in cache
+        String cached = ownerNameCache.get(ownerUuid);
+        if (cached != null) return cached;
+
+        // Try from online player
+        if (mc.world != null) {
+            PlayerEntity player = mc.world.getPlayerByUuid(ownerUuid);
+            if (player != null) {
+                String name = player.getName().getString();
+                ownerNameCache.put(ownerUuid, name);
+                return name;
+            }
+        }
+
+        // Start an async request
+        MeteorExecutor.execute(() -> {
+            if (!isActive()) return;
+            ProfileResponse res = Http.get("https://sessionserver.mojang.com/session/minecraft/profile/" + ownerUuid.toString().replace("-", ""))
+                .sendJson(ProfileResponse.class);
+            if (isActive()) {
+                if (res == null) ownerNameCache.put(ownerUuid, "Failed to get name");
+                else ownerNameCache.put(ownerUuid, res.name);
+                if (persistentCache.get()) saveCache();
+            }
+        });
+
+        ownerNameCache.put(ownerUuid, "Retrieving");
+        return "Retrieving";
+    }
+
     private void renderNametag(String name) {
         TextRenderer text = TextRenderer.get();
-
         NametagUtils.begin(pos);
         text.beginBig();
 
         double w = text.getWidth(name);
         double h = text.getHeight();
-
         double x = -w / 2;
         double y = -h;
 
@@ -332,78 +267,31 @@ public class MobOwner extends Module {
         NametagUtils.end();
     }
 
-    private String getOwnerName(UUID uuid) {
-        // 1. Player is currently online
-        PlayerEntity player = mc.world.getPlayerByUuid(uuid);
-        if (player != null) {
-            String name = player.getName().getString();
-            ownerNameCache.put(uuid, name);   // cache for later
-            return name;
-        }
-
-        // 2. Check local cache
-        String name = ownerNameCache.get(uuid);
-        if (name != null) return name;
-
-        // 3. Try to resolve via tab list
-        name = findNameInTabList(uuid);
-        if (name != null) {
-            ownerNameCache.put(uuid, name);
-            if (persistentCache.get()) saveCache();
-            return name;
-        }
-
-        // 4. If still unknown, start a Mojang API request
-        MeteorExecutor.execute(() -> {
-            if (!isActive()) return;
-            ProfileResponse res = Http.get("https://sessionserver.mojang.com/session/minecraft/profile/" + uuid.toString().replace("-", ""))
-                .sendJson(ProfileResponse.class);
-            if (isActive()) {
-                String result;
-                if (res == null) result = "Failed to get name";
-                else result = res.name;
-                ownerNameCache.put(uuid, result);
-                if (persistentCache.get()) saveCache();
+    private String findNameInTabList(UUID uuid) {
+        if (mc.getNetworkHandler() == null) return null;
+        for (var entry : mc.getNetworkHandler().getPlayerList()) {
+            if (entry.getProfile().id().equals(uuid)) {
+                var displayName = entry.getDisplayName();
+                if (displayName != null) return displayName.getString();
+                return entry.getProfile().name();
             }
-        });
-
-        // Store temporary placeholder while the HTTP request is in flight
-        ownerNameCache.put(uuid, "Retrieving");
-        return "Retrieving";
+        }
+        return null;
     }
 
     private static class ProfileResponse {
         public String name;
     }
 
-    private String findNameInTabList(UUID uuid) {
-        if (mc.getNetworkHandler() == null) return null;
-
-        for (PlayerListEntry entry : mc.getNetworkHandler().getPlayerList()) {
-            if (entry.getProfile().getId().equals(uuid)) {
-                Text displayName = entry.getDisplayName();
-                if (displayName != null) {
-                    return displayName.getString();
-                }
-                return entry.getProfile().getName();
-            }
-        }
-        return null;
-    }
-
     public void showStatus() {
         info("§7=== CrackMobOwner Status ===");
-        info("§aMobs mapped: §f" + mobToOwner.size());
         info("§aNames cached: §f" + ownerNameCache.size());
         info("§7Cache file: §f" + (cacheFile != null ? cacheFile.getPath() : "Not initialized"));
     }
 
     public void clearCache() {
-        mobToOwner.clear();
         ownerNameCache.clear();
-        info("§aAll caches cleared");
-        if (persistentCache.get()) {
-            saveCache();
-        }
+        info("§aName cache cleared");
+        if (persistentCache.get()) saveCache();
     }
 }

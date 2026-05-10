@@ -165,7 +165,7 @@ public class AutoLogin extends Module {
         targetYaw = Rotations.getYaw(targetHitVec);
         targetPitch = Rotations.getPitch(targetHitVec);
 
-        originalSelectedSlot = mc.player.getInventory().selectedSlot;
+        originalSelectedSlot = mc.player.getInventory().getSelectedSlot();
         bookSlot = -1;
         didSwap = false;
         bookStage = 0;
@@ -214,7 +214,7 @@ public class AutoLogin extends Module {
 
                 if (bookSlot != originalSelectedSlot) {
                     if (bookSlot < 9) {
-                        mc.player.getInventory().selectedSlot = bookSlot;
+                        mc.player.getInventory().setSelectedSlot(bookSlot);
                         didSwap = false;
                     } else {
                         mc.interactionManager.clickSlot(
@@ -251,8 +251,8 @@ public class AutoLogin extends Module {
                         mc.player
                     );
                 }
-                if (mc.player.getInventory().selectedSlot != originalSelectedSlot) {
-                    mc.player.getInventory().selectedSlot = originalSelectedSlot;
+                if (mc.player.getInventory().getSelectedSlot() != originalSelectedSlot) {
+                    mc.player.getInventory().setSelectedSlot(originalSelectedSlot);
                 }
                 if (onBookReturned != null) {
                     onBookReturned.run();

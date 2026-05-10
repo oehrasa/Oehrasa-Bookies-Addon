@@ -1,5 +1,5 @@
 plugins {
-    id("fabric-loom") version "1.9-SNAPSHOT"
+    id("fabric-loom") version "1.14-SNAPSHOT"
 }
 
 base {
@@ -32,7 +32,7 @@ dependencies {
 
     // Meteor
     modImplementation("meteordevelopment:meteor-client:${properties["minecraft_version"] as String}-SNAPSHOT")
-    
+
     // Baritone - use the same version as meteor-client
     modImplementation("meteordevelopment:baritone:${properties["minecraft_version"] as String}-SNAPSHOT")
 

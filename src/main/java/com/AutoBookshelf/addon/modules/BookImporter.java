@@ -540,7 +540,7 @@ public class BookImporter extends Module {
 
         mc.player.getMainHandStack().set(DataComponentTypes.WRITTEN_BOOK_CONTENT, content);
         mc.player.networkHandler.sendPacket(new BookUpdateC2SPacket(
-            mc.player.getInventory().selectedSlot,
+            mc.player.getInventory().getSelectedSlot(),
             partPages,
             Optional.of(titleStr)
         ));
@@ -650,6 +650,6 @@ public class BookImporter extends Module {
 
     private boolean fitsOnPage(String text) {
         return text.length() < MAX_PAGE_CHARS
-            && mc.textRenderer.getWrappedLinesHeight(text, MAX_PAGE_WIDTH) <= MAX_PAGE_HEIGHT;
+            && mc.textRenderer.getWrappedLinesHeight(Text.literal(text), MAX_PAGE_WIDTH) <= MAX_PAGE_HEIGHT;
     }
     }

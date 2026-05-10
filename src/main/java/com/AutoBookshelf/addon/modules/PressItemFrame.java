@@ -174,7 +174,7 @@ public class PressItemFrame extends Module {
 
     private boolean canSee(ItemFrameEntity frame) {
         Vec3d eyes = mc.player.getEyePos();
-        Vec3d center = frame.getPos().add(0, frame.getHeight() / 2.0, 0);
+        Vec3d center = frame.getEntityPos().add(0, frame.getHeight() / 2.0, 0);
 
         RaycastContext context = new RaycastContext(
             eyes, center,
@@ -276,7 +276,7 @@ public class PressItemFrame extends Module {
         pendingTicks = 40;  // 2 seconds timeout
 
         if (rotate.get()) {
-            Vec3d center = target.getPos().add(0, target.getHeight() / 2.0, 0);
+            Vec3d center = target.getEntityPos().add(0, target.getHeight() / 2.0, 0);
             Rotations.rotate(Rotations.getYaw(center), Rotations.getPitch(center), () -> {
                 mc.player.networkHandler.sendChatCommand(finalCmd);
             });
