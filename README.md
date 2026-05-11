@@ -1,7 +1,7 @@
 # AutoBookshelf
 > *How tsundere are You?*
 
-Meteor Addon for Timid book keeper and Yuri Enjoyers
+Meteor Addon for Timid bookkeeper and Yuri Enjoyers
 
 XB-70 My beloved <3
 
@@ -23,7 +23,7 @@ Tested successfully with these mods, but other might work as well
 
 ## Features
 
-**29 modules**, **4 commands**, **3 HUD elements**, and **1 mixin**
+**29 modules**, **4 commands**, **4 HUD elements**, and **1 mixin**
 
 ## Modules (29 total)
 <details>
@@ -66,6 +66,7 @@ Tested successfully with these mods, but other might work as well
 - **Elytra-Time** - Gives you a rough estimate of the elytra flight time you have left
 - **MayaChan** - Render oehrasa beloved OC's : Nishizumi Maya
 - **Online-Friends** - Displays online friends from your friend list
+- **Map-Viewer** - Displays the contents of held maps on your HUD
 
 ## Commands (4)
 | Command          | Description                                                                |
@@ -103,7 +104,7 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 1. Position mapart in inventory grid
 2. Enable the module
 3. Open up anvil
-4. Note : If the mapart has a longer column (Y) then take out the current map (had been named) and position the new map and redo
+4. Note : If the mapart has a longer column (Y) take out the current map (that had been named) and position (stitch) new map to same grid then redo
 </details>
 
 <details>
@@ -124,10 +125,11 @@ List of addons I used as reference(skid? mwhehe), You should check them out it's
 - **[Numby Hack](https://github.com/cqb13/Numby-hack)** - TntFuseEsp module
 - **[InvincibleMachineGun](https://github.com/adaxiaohu/InvincibleMachineGun)** - AutoChestAura module
 - **[meteor community addon](https://github.com/lapoliciarobomiquesofrances/meteor-community-addon)** - AutoSex base
-- **[hybridious mod](https://github.com/Hybridious/hybridious_mod)** - B36, AutoMoss, and Platform Builder modules
-- **[lu public](https://github.com/CunnyCorp/lu-public)** - Auto Animal for Tsundere Furry module message references, Highlighter for Map Grid
+- **[hybridious mod](https://github.com/Hybridious/hybridious_mod)** - B36, AutoMoss
+- **[lu public](https://github.com/CunnyCorp/lu-public)** - Auto Animal for Tsundere Furry module message, Highlighter for Map Grid
 - **[nerv printer addon](https://github.com/Julflips/nerv-printer-addon)** - Map Namer base reference
 - **[JanitorAddon](https://github.com/Sleeepyv/JanitorAddon)** - ThrowEmptyShulker
+- **[delirious](https://github.com/underscore-zi/delirious)** - Platform Builder
 
 ## Contributing
 

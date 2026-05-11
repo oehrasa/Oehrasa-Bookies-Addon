@@ -4,6 +4,7 @@ import com.AutoBookshelf.addon.commands.BookTranslateCommand;
 import com.AutoBookshelf.addon.hud.MayaChan;
 import com.AutoBookshelf.addon.hud.ElytraTime;
 import com.AutoBookshelf.addon.hud.OnlineFriendsHUD;
+import com.AutoBookshelf.addon.hud.MapViewer;
 import com.AutoBookshelf.addon.commands.IfpeekCommand;
 import com.AutoBookshelf.addon.commands.ShelfCommand;
 import com.AutoBookshelf.addon.commands.BookCommand;
@@ -65,6 +66,7 @@ public class Addon extends MeteorAddon {
         Hud.get().register(MayaChan.INFO);
         Hud.get().register(ElytraTime.INFO);
         Hud.get().register(OnlineFriendsHUD.INFO);
+        Hud.get().register(MapViewer.INFO);
 
         // COMMANDS
         Commands.add(new IfpeekCommand());

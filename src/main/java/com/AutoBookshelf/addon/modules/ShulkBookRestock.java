@@ -21,7 +21,7 @@ public class ShulkBookRestock extends Module {
 
     private final Setting<Integer> restockSlot = sgGeneral.add(new IntSetting.Builder()
         .name("restock-slot")
-        .description("The hotbar slot to restock when all are empty (1-9, 0 = auto-detect).")
+        .description("The hotbar slot to restock when all are empty (0 = auto-detect).")
         .defaultValue(0)
         .min(0)
         .max(9)
@@ -39,9 +39,10 @@ public class ShulkBookRestock extends Module {
     private final Setting<Integer> restockDelay = sgGeneral.add(new IntSetting.Builder()
         .name("restock-delay")
         .description("Delay in ticks before restocking after hotbar is empty.")
-        .defaultValue(2)
+        .defaultValue(50)
         .min(0)
-        .max(20)
+        .max(100)
+        .sliderRange(1, 100)
         .build()
     );
 
@@ -55,9 +56,10 @@ public class ShulkBookRestock extends Module {
     private final Setting<Integer> switchDelay = sgGeneral.add(new IntSetting.Builder()
         .name("switch-delay")
         .description("Delay in ticks before auto-switching.")
-        .defaultValue(1)
+        .defaultValue(50)
         .min(0)
-        .max(10)
+        .max(100)
+        .sliderRange(1, 100)
         .visible(autoSwitch::get)
         .build()
     );
