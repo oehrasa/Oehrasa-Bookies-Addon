@@ -61,7 +61,7 @@ Tested successfully with these mods, but other might work as well
 
 </details>
 
-## HUD Elements (3)
+## HUD Elements (4)
 
 - **Elytra-Time** - Gives you a rough estimate of the elytra flight time you have left
 - **MayaChan** - Render oehrasa beloved OC's : Nishizumi Maya
