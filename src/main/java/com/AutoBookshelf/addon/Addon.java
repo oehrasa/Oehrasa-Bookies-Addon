@@ -5,6 +5,7 @@ import com.AutoBookshelf.addon.hud.MayaChan;
 import com.AutoBookshelf.addon.hud.ElytraTime;
 import com.AutoBookshelf.addon.hud.OnlineFriendsHUD;
 import com.AutoBookshelf.addon.hud.MapViewer;
+import com.AutoBookshelf.addon.hud.AnimePics;
 import com.AutoBookshelf.addon.commands.IfpeekCommand;
 import com.AutoBookshelf.addon.commands.ShelfCommand;
 import com.AutoBookshelf.addon.commands.BookCommand;
@@ -61,12 +62,14 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new MapartNamer());
         Modules.get().add(new MapGridZone());
         Modules.get().add(new BLU27BNapalm());
+        Modules.get().add(new ElytraPath());
 
         // HUD
         Hud.get().register(MayaChan.INFO);
         Hud.get().register(ElytraTime.INFO);
         Hud.get().register(OnlineFriendsHUD.INFO);
         Hud.get().register(MapViewer.INFO);
+        Hud.get().register(AnimePics.INFO);
 
         // COMMANDS
         Commands.add(new IfpeekCommand());

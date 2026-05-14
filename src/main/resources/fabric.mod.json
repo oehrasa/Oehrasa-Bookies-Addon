@@ -3,7 +3,7 @@
   "id": "autobookshelf-addon",
   "version": "${version}",
   "name": "AutoBookshelf-addon",
-  "description": "Meteor Addon for Timid Book Keeper and Yuri Enjoyers",
+  "description": "Meteor Addon for Timid Bookkeeper and Yuri Enjoyers",
   "authors": [
     "oehrasa"
   ],

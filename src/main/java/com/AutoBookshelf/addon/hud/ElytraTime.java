@@ -1,17 +1,18 @@
 package com.AutoBookshelf.addon.hud;
 
-import net.minecraft.enchantment.EnchantmentHelper;
-import net.minecraft.enchantment.Enchantments;
-import net.minecraft.entity.EquipmentSlot;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.registry.RegistryKeys;
-import net.minecraft.registry.entry.RegistryEntry;
 import com.AutoBookshelf.addon.Addon;
+import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import meteordevelopment.meteorclient.systems.hud.HudElement;
 import meteordevelopment.meteorclient.systems.hud.HudElementInfo;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.utils.render.color.Color;
+import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.ItemEnchantmentsComponent;
+import net.minecraft.enchantment.Enchantments;
+import net.minecraft.entity.EquipmentSlot;
+import net.minecraft.item.ItemStack;
+import net.minecraft.item.Items;
+import net.minecraft.util.Identifier;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
@@ -24,44 +25,53 @@ public class ElytraTime extends HudElement {
     );
 
     private String displayText = "Efly: 0h 0m 0s Dura: 0";
-    private RegistryEntry<net.minecraft.enchantment.Enchantment> unbreakingEntry = null;
 
     public ElytraTime() {
         super(INFO);
     }
 
-    private RegistryEntry<net.minecraft.enchantment.Enchantment> getUnbreakingEntry() {
-        if (unbreakingEntry == null && mc.world != null) {
-            var registry = mc.world.getRegistryManager().getOrThrow(RegistryKeys.ENCHANTMENT);
-            unbreakingEntry = registry.getEntry(Enchantments.UNBREAKING.getValue()).orElse(null);
-        }
-        return unbreakingEntry;
+    /**
+     * Reads the Unbreaking level directly from the item's enchantments.
+     * Falls back to 0 if the item has no enchantments or no Unbreaking.
+     */
+    private int getUnbreakingLevel(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return 0;
+        // Get the item's enchantments
+        ItemEnchantmentsComponent ench = stack.getOrDefault(
+            DataComponentTypes.ENCHANTMENTS,
+            ItemEnchantmentsComponent.DEFAULT
+        );
+        // Match by Identifier
+        Identifier unbreakingId = Enchantments.UNBREAKING.getValue();
+        return ench.getEnchantmentEntries().stream()
+            .filter(entry -> entry.getKey().getKey()
+                .map(key -> key.getValue().equals(unbreakingId))
+                .orElse(false))
+            .map(Object2IntMap.Entry::getIntValue)
+            .findFirst()
+            .orElse(0);
     }
 
     private int getUnbreakingMultiplier(ItemStack elytra) {
-        if (elytra == null || elytra.isEmpty()) return 1;
-
-        RegistryEntry<net.minecraft.enchantment.Enchantment> entry = getUnbreakingEntry();
-        if (entry == null) return 1;
-
-        // Unbreaking level + 1 is the multiplier
-        return EnchantmentHelper.getLevel(entry, elytra) + 1;
+        return getUnbreakingLevel(elytra) + 1;
     }
 
     private int getTimeRemaining(ItemStack elytra) {
         if (elytra == null || elytra.isEmpty()) return 0;
-
         int multiplier = getUnbreakingMultiplier(elytra);
-        // (maxDamage - currentDamage) * multiplier - 1
+        // Durability points times Unbreaking multiplier 1 = effective flight seconds
         return (elytra.getMaxDamage() - elytra.getDamage()) * multiplier - 1;
     }
+
+    private int totalRawDurability = 0;
+    private int unbreakingLevel = 0;
 
     private int getTotalElytraTime() {
         if (mc.player == null) return 0;
 
         int totalTime = 0;
-        int totalRawDurability = 0;
-        int unbreakingLevel = 0;
+        totalRawDurability = 0;
+        unbreakingLevel = 0;
 
         // Check main inventory
         for (int n = 0; n < mc.player.getInventory().main.size(); n++) {
@@ -69,7 +79,7 @@ public class ElytraTime extends HudElement {
             if (stack.getItem() == Items.ELYTRA) {
                 totalTime += getTimeRemaining(stack);
                 totalRawDurability += (stack.getMaxDamage() - stack.getDamage() - 1);
-                unbreakingLevel = Math.max(unbreakingLevel, EnchantmentHelper.getLevel(getUnbreakingEntry(), stack));
+                unbreakingLevel = Math.max(unbreakingLevel, getUnbreakingLevel(stack));
             }
         }
 
@@ -78,21 +88,12 @@ public class ElytraTime extends HudElement {
         if (chestStack != null && chestStack.getItem() == Items.ELYTRA) {
             totalTime += getTimeRemaining(chestStack);
             totalRawDurability += (chestStack.getMaxDamage() - chestStack.getDamage() - 1);
-            unbreakingLevel = Math.max(unbreakingLevel, EnchantmentHelper.getLevel(getUnbreakingEntry(), chestStack));
+            unbreakingLevel = Math.max(unbreakingLevel, getUnbreakingLevel(chestStack));
         }
 
-        // Each durability point = 4 seconds of flight
-        int totalSeconds = totalTime * 4;
-
-        // Store raw durability for display
-        this.totalRawDurability = totalRawDurability;
-        this.unbreakingLevel = unbreakingLevel;
-
-        return totalSeconds;
+        // totalTime is already in effective seconds
+        return totalTime;
     }
-
-    private int totalRawDurability = 0;
-    private int unbreakingLevel = 0;
 
     private void calculateElytraTime() {
         if (mc.player == null) {
@@ -101,7 +102,6 @@ public class ElytraTime extends HudElement {
         }
 
         int totalSeconds = getTotalElytraTime();
-
         if (totalSeconds < 0) totalSeconds = 0;
 
         int hours = totalSeconds / 3600;
@@ -113,7 +113,8 @@ public class ElytraTime extends HudElement {
             unbreakingDisplay = String.format(" Unb%d", unbreakingLevel);
         }
 
-        displayText = String.format("Efly: %dh %dm %ds Dura: %d%s", hours, minutes, seconds, totalRawDurability, unbreakingDisplay);
+        displayText = String.format("Efly: %dh %dm %ds Dura: %d%s",
+            hours, minutes, seconds, totalRawDurability, unbreakingDisplay);
     }
 
     @Override

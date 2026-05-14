@@ -99,7 +99,7 @@ public class B36 extends Module {
     private BlockPos lastPos = null;
 
     public B36() {
-        super(Addon.CATEGORY, "B36 Peacemaker", "Automatically places and lights TNT around you, Created this to make peace. Named after Convair B-36 Peacemaker");
+        super(Addon.CATEGORY, "B36-Peacemaker", "Automatically places and lights TNT around you, Created this to make peace. Named after Convair B-36 Peacemaker");
     }
 
     @Override
