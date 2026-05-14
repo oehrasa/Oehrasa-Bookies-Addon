@@ -4,10 +4,15 @@ import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.interfaces.IClientPlayerInteractionManager;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.gui.GuiTheme;
+import meteordevelopment.meteorclient.gui.widgets.WWidget;
+import meteordevelopment.meteorclient.gui.widgets.containers.WVerticalList;
+import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.AnvilBlock;
+import net.minecraft.client.gui.screen.ingame.AnvilScreen;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
@@ -131,9 +136,8 @@ public class MapartNamer extends Module {
     private List<MapSlotInfo> mapSlots;
     private int ticks;
 
-    // Per map step control
     private MapSlotInfo currentMap;
-    private int mapStep;    // 0‑5, -1 = idle
+    private int mapStep;
     private int mapStepTimer;
 
     private int verifyTimeout = 0;
@@ -153,6 +157,30 @@ public class MapartNamer extends Module {
         currentMap = null;
         mapStep = -1;
 
+        // If the anvil screen is already open, skip the "await interact" step
+        if (mc.currentScreen instanceof AnvilScreen) {
+            state = State.AwaitScreen;
+            info("Anvil screen already open – waiting for inventory packet…");
+        } else {
+            info("§aEnabled. Right‑click an anvil with maps in your inventory.");
+        }
+    }
+
+    // Reset button
+    @Override
+    public WWidget getWidget(GuiTheme theme) {
+        WVerticalList list = theme.verticalList();
+        WButton resetBtn = list.add(theme.button("Reset Progress")).widget();
+        resetBtn.action = () -> {
+            baseY.set(0);
+            info("Progress reset (base-Y set to 0).");
+        };
+        return list;
+    }
+
+    // Returns true if the current screen is NOT an anvil
+    private boolean isNotAnvilScreen() {
+        return !(mc.currentScreen instanceof AnvilScreen);
     }
 
     @EventHandler
@@ -175,7 +203,7 @@ public class MapartNamer extends Module {
         if (state != State.AwaitScreen) return;
         if (!(event.packet instanceof InventoryS2CPacket)) return;
 
-        // Collect all filled map
+        // Collect all filled maps
         List<MapSlotInfo> allMaps = new ArrayList<>();
         for (int invSlot = 0; invSlot < 36; invSlot++) {
             ItemStack stack = mc.player.getInventory().getStack(invSlot);
@@ -197,11 +225,10 @@ public class MapartNamer extends Module {
             return;
         }
 
-        // Anchor column, leftmost column with any valid map
+        // Anchor column
         int minCol = allMaps.stream().mapToInt(s -> s.col).min().orElse(0);
         int offset = startIndex.get() == StartIndex.ONE ? 1 : 0;
 
-        // Build filtered mapSlots
         mapSlots.clear();
         for (MapSlotInfo info : allMaps) {
             int rawX = info.col - minCol;
@@ -240,6 +267,14 @@ public class MapartNamer extends Module {
     private void onTick(TickEvent.Pre event) {
         if (state != State.HandleMaps) return;
 
+        // If the anvil screen is gone, abort and wait for next anvil
+        if (isNotAnvilScreen()) {
+            state = State.AwaitInteract;
+            currentMap = null;
+            mapStep = -1;
+            return;
+        }
+
         if (currentMap == null) {
             if (ticks > 0) { ticks--; return; }
             if (mapSlots.isEmpty()) return;
@@ -272,8 +307,8 @@ public class MapartNamer extends Module {
                     return;
                 }
 
-                int offset = startIndex.get() == StartIndex.ONE ? 1 : 0;
-                int currentY = baseY.get() + currentMap.row + offset;
+                int off = startIndex.get() == StartIndex.ONE ? 1 : 0;
+                int currentY = baseY.get() + currentMap.row + off;
                 String coordPart = coordinateFormat.get()
                     .replace("{x}", String.valueOf(currentMap.x))
                     .replace("{y}", String.valueOf(currentY));
@@ -283,9 +318,7 @@ public class MapartNamer extends Module {
                 } else {
                     newName = mapName.get() + coordPart;
                 }
-
                 info("Renaming inv slot " + currentMap.invSlot + " (row " + currentMap.row + ", col " + currentMap.col + ") to " + newName);
-
                 mc.getNetworkHandler().sendPacket(new RenameItemC2SPacket(newName));
                 mapStep = STEP_WAIT_RENAME;
                 mapStepTimer = renamePause.get();
@@ -295,15 +328,14 @@ public class MapartNamer extends Module {
                 mapStepTimer = actionDelay.get();
             }
             case STEP_PICKUP_OUTPUT -> {
-                clickSlot(2, 0, SlotActionType.PICKUP);   // take renamed item from anvil output
+                clickSlot(2, 0, SlotActionType.PICKUP);
                 mapStep = STEP_VERIFY_CURSOR;
-                mapStepTimer = 2;   // small delay before first check
+                mapStepTimer = 2;
                 verifyTimeout = 20;
             }
             case STEP_VERIFY_CURSOR -> {
                 ItemStack cursorStack = mc.player.currentScreenHandler.getCursorStack();
                 if (cursorStack.getItem() == Items.FILLED_MAP) {
-                    // The renamed map is now on the cursor
                     mapStep = STEP_PLACE_SOURCE;
                     mapStepTimer = actionDelay.get();
                 } else {
@@ -314,16 +346,15 @@ public class MapartNamer extends Module {
                         ticks = 0;
                         return;
                     }
-                    mapStepTimer = 1;   // keep checking every tick
+                    mapStepTimer = 1;
                 }
             }
             case STEP_PLACE_SOURCE -> {
-                clickSlot(currentMap.containerSlot, 0, SlotActionType.PICKUP); // return to original spot
+                clickSlot(currentMap.containerSlot, 0, SlotActionType.PICKUP);
                 currentMap = null;
                 mapStep = -1;
 
                 if (mapSlots.isEmpty()) {
-                    // batch complete
                     int nextBaseY = baseY.get() + 4;
                     int off = startIndex.get() == StartIndex.ONE ? 1 : 0;
                     if (nextBaseY + off > mapHeight.get()) {
@@ -354,20 +385,14 @@ public class MapartNamer extends Module {
     }
 
     private static class MapSlotInfo {
-        final int containerSlot;
-        final int row;
-        final int col;
-        final int invSlot;
+        final int containerSlot, row, col, invSlot;
         final String currentName;
         int x;
         boolean skip;
 
         MapSlotInfo(int containerSlot, int row, int col, int invSlot, String currentName) {
-            this.containerSlot = containerSlot;
-            this.row = row;
-            this.col = col;
-            this.invSlot = invSlot;
-            this.currentName = currentName;
+            this.containerSlot = containerSlot; this.row = row; this.col = col;
+            this.invSlot = invSlot; this.currentName = currentName;
         }
     }
 
