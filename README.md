@@ -23,11 +23,11 @@ Tested successfully with these mods, but other might work as well
 
 ## Features
 
-**29 modules**, **4 commands**, **4 HUD elements**, and **1 mixin**
+**30 modules**, **4 commands**, **5 HUD elements**, and **1 mixin**
 
-## Modules (29 total)
+## Modules (30 total)
 <details>
-<summary><b>Modules</b> (29 modules)</summary>
+<summary><b>Modules</b> (30 modules)</summary>
 
 - **AudiobookReader** - Reads books aloud using narrator feature
 - **Auto-Beacon** - Builds a 4‑beacon pyramid at a selected location
@@ -45,6 +45,7 @@ Tested successfully with these mods, but other might work as well
 - **Book-Import** - Automatically imports text files into signed books
 - **Cart-Placer** - Places any minecarts on any rails in range
 - **Chest-Aura** - High-speed automatic container opener
+- **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
 - **Item-Despawn** - Highlights items that are about to despawn.
 - **Map-Grid** - Highlights map grid boundaries around the player
 - **Mapart-Namer** - Auto‑names maps based on inventory slot layout
@@ -61,8 +62,9 @@ Tested successfully with these mods, but other might work as well
 
 </details>
 
-## HUD Elements (4)
+## HUD Elements (5)
 
+- **Anime-Pics** -Displays random Anime pictures ( Cheers >< )
 - **Elytra-Time** - Gives you a rough estimate of the elytra flight time you have left
 - **MayaChan** - Render oehrasa beloved OC's : Nishizumi Maya
 - **Online-Friends** - Displays online friends from your friend list
