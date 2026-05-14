@@ -1,0 +1,15 @@
+{
+  "supported_versions": ["1.21.4", "1.21.11"],
+  "description": "Meteor Addon for Timid bookkeeper and Yuri Enjoyers <3",
+  "tags": [
+    "Utility",
+    "Render",
+    "Movement",
+    "Building",
+    "Exploit",
+    "Misc",
+    "QoL",
+    "Automation"
+  ],
+  "homepage": "https://www.meteoraddons.com"
+}
