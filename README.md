@@ -14,7 +14,7 @@ XB-70 My beloved <3
 
 ## Dependencies
 
-Tested successfully with these mods, but other might work as well
+Tested successfully with these mods, but other might work as well (these are just optinal mod)
 - baritone-api-fabric-1.13.1.jar
 - BepHax-0.4.4.0.jar
 - meteor-client-1.21.4-42.jar
@@ -64,7 +64,7 @@ Tested successfully with these mods, but other might work as well
 
 ## HUD Elements (5)
 
-- **Anime-Pics** -Displays random Anime pictures ( Cheers >< )
+- **Anime-Pics** - Displays random Anime pictures ( Cheers >< )
 - **Elytra-Time** - Gives you a rough estimate of the elytra flight time you have left
 - **MayaChan** - Render oehrasa beloved OC's : Nishizumi Maya
 - **Online-Friends** - Displays online friends from your friend list
@@ -114,7 +114,8 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 
 1. Enable the module
 2. Put the .txt file into folder : \minecraft\AutoBookshelf\books
-3. Press set key in the module settings to continue to next file
+3. _Recommend to use along side Bookshelf-Filler module_
+4. Press set key in the module settings to continue to next file
 </details>
 
 ## Credits
