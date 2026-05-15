@@ -1,9 +1,14 @@
-# AutoBookshelf
-> *How tsundere are You?*
-
-Meteor Addon for Timid bookkeeper and Yuri Enjoyers
-
-XB-70 My beloved <3
+<div align="center">
+  <!-- Logo and Title -->
+  <img src="https://github.com/user-attachments/assets/4171fbfb-461a-4512-a6e5-74458512f429" alt="logo" width="30%"/>
+  <h1>AutoBookshelf</h1>
+  <p>Meteor Addon for Timid bookkeeper and Yuri Enjoyers</p>
+<a href="https://github.com/oehrasa/Oehrasa-Bookies-Addon/commits/main"><img src="https://img.shields.io/github/last-commit/oehrasa/Oehrasa-Bookies-Addon?logo=github&color=light_green" alt="Last commit"></a>
+<img src="https://img.shields.io/github/repo-size/oehrasa/Oehrasa-Bookies-Addon?color=magenta" alt="Repo Size">
+<img src="https://img.shields.io/github/issues/oehrasa/Oehrasa-Bookies-Addon?color=blue" alt="Issues">
+<img src="https://img.shields.io/github/stars/oehrasa/Oehrasa-Bookies-Addon?style=flat&color=yellow" alt="Stars">
+<img src="https://img.shields.io/github/downloads/oehrasa/Oehrasa-Bookies-Addon/total?color=red" alt="Downloads">
+</div>
 
 ## Installation
 
