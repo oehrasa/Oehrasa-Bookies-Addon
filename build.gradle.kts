@@ -24,6 +24,10 @@ repositories {
     maven { url = uri("https://jitpack.io") }
 }
 
+loom {
+    accessWidenerPath = file("src/main/resources/oehrasa.accesswidener")
+}
+
 dependencies {
     // Fabric
     minecraft("com.mojang:minecraft:${properties["minecraft_version"] as String}")
@@ -32,7 +36,7 @@ dependencies {
 
     // Meteor
     modImplementation("meteordevelopment:meteor-client:${properties["minecraft_version"] as String}-SNAPSHOT")
-    
+
     // Baritone - use the same version as meteor-client
     modImplementation("meteordevelopment:baritone:${properties["minecraft_version"] as String}-SNAPSHOT")
 

@@ -5,6 +5,10 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.gui.GuiTheme;
+import meteordevelopment.meteorclient.gui.widgets.WWidget;
+import meteordevelopment.meteorclient.gui.widgets.containers.WVerticalList;
+import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
 import meteordevelopment.meteorclient.renderer.Renderer2D;
 import meteordevelopment.meteorclient.renderer.GL;
 import meteordevelopment.meteorclient.settings.*;
@@ -40,6 +44,7 @@ public class AnimePics extends HudElement {
     private boolean locked = false;
     private boolean empty = true;
     private int ticks = 0;
+    private volatile boolean manualRefresh = false;   // true = next load must use fixed tag
 
     // Settings
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -62,7 +67,6 @@ public class AnimePics extends HudElement {
         "avatar", "feed", "cuddle", "woof", "smug", "tickle", "slap", "pat", "wallpaper"
     );
 
-
     private static final List<String> WAIFU_CYCLE_LIST = List.of(
         "waifu", "ero", "ecchi", "oppai", "hentai", "milf", "uniform", "ass", "maid",
         "selfies", "paizuri", "oral", "genshin impact", "raiden shogun", "marin kitagawa",
@@ -73,7 +77,7 @@ public class AnimePics extends HudElement {
         .name("source")
         .description("Image source to use.")
         .defaultValue(Source.WaifuIM)
-        .onChanged(v -> empty = true)
+        .onChanged(v -> refreshNow())
         .build()
     );
 
@@ -82,7 +86,7 @@ public class AnimePics extends HudElement {
         .description("Category for Nekos.life.")
         .visible(() -> source.get() == Source.NekosLife)
         .defaultValue(NekosTag.neko)
-        .onChanged(v -> empty = true)
+        .onChanged(v -> refreshNow())
         .build()
     );
 
@@ -101,7 +105,7 @@ public class AnimePics extends HudElement {
         .description("Image category for WaifuIM.")
         .visible(() -> source.get() == Source.WaifuIM)
         .defaultValue(WaifimTag.waifu)
-        .onChanged(v -> empty = true)
+        .onChanged(v -> refreshNow())
         .build()
     );
 
@@ -165,6 +169,21 @@ public class AnimePics extends HudElement {
         return new AnimePics();
     }
 
+    // Manual refresh button
+    @Override
+    public WWidget getWidget(GuiTheme theme) {
+        WVerticalList list = theme.verticalList();
+        WButton refreshBtn = list.add(theme.button("Refresh Now")).widget();
+        refreshBtn.action = this::refreshNow;
+        return list;
+    }
+
+    // Forces next load to use the currently selected fixed category
+    public void refreshNow() {
+        manualRefresh = true;
+        empty = true;
+    }
+
     @EventHandler
     public void onTick(TickEvent.Post event) {
         if (pauseRefresh.get()) return;
@@ -190,16 +209,16 @@ public class AnimePics extends HudElement {
     private void updateSize() { setSize(imgWidth.get(), imgHeight.get()); }
 
     // Fetch image URL based on selected source
-    private String fetchImageUrl() {
+    private String fetchImageUrl(boolean forceFixed) {
         return switch (source.get()) {
-            case NekosLife -> fetchNekosLife();
-            case WaifuIM -> fetchWaifuIM();
+            case NekosLife -> fetchNekosLife(forceFixed);
+            case WaifuIM -> fetchWaifuIM(forceFixed);
         };
     }
 
-    private String fetchNekosLife() {
+    private String fetchNekosLife(boolean forceFixed) {
         String category;
-        if (cycleNekos.get()) {
+        if (!forceFixed && cycleNekos.get()) {
             category = NEKOS_CYCLE_LIST.get(nekosCycleIndex);
             nekosCycleIndex = (nekosCycleIndex + 1) % NEKOS_CYCLE_LIST.size();
         } else {
@@ -216,9 +235,9 @@ public class AnimePics extends HudElement {
         }
     }
 
-    private String fetchWaifuIM() {
+    private String fetchWaifuIM(boolean forceFixed) {
         String tag;
-        if (cycleWaifu.get()) {
+        if (!forceFixed && cycleWaifu.get()) {
             tag = WAIFU_CYCLE_LIST.get(waifuCycleIndex);
             waifuCycleIndex = (waifuCycleIndex + 1) % WAIFU_CYCLE_LIST.size();
         } else {
@@ -247,7 +266,10 @@ public class AnimePics extends HudElement {
         new Thread(() -> {
             try {
                 locked = true;
-                String url = fetchImageUrl();
+                boolean useFixed = manualRefresh;
+                manualRefresh = false;
+
+                String url = fetchImageUrl(useFixed);
                 if (url == null) { locked = false; return; }
 
                 MeteorClient.LOG.info("[AnimePics] Image URL: " + url);

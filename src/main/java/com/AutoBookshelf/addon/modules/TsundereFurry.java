@@ -20,30 +20,35 @@ public class TsundereFurry extends Module {
     private final SettingGroup sgTsundere = settings.createGroup("Tsundere");
 
     private final Setting<TransformationMode> mode = sgGeneral.add(new EnumSetting.Builder<TransformationMode>()
-        .name("mode").description("How to transform outgoing messages.")
+        .name("mode")
+        .description("How to transform outgoing messages.")
         .defaultValue(TransformationMode.Tsundere)
         .build());
 
     private final Setting<Animal> animal = sgAnimal.add(new EnumSetting.Builder<Animal>()
-        .name("animal").description("Animal to turn into.")
+        .name("animal")
+        .description("Animal to turn into.")
         .defaultValue(Animal.Cat)
         .visible(() -> mode.get() != TransformationMode.Tsundere)
         .build());
 
     private final Setting<Boolean> swearReplacement = sgTsundere.add(new BoolSetting.Builder()
-        .name("swear-replace").description("Replace swear words with tsundere alternatives.")
+        .name("swear-replace")
+        .description("Replace swear words with tsundere alternatives.")
         .defaultValue(true)
         .visible(() -> mode.get() != TransformationMode.Animal)
         .build());
 
     private final Setting<List<String>> swearWords = sgTsundere.add(new StringListSetting.Builder()
-        .name("swear-words").description("Words to replace.")
+        .name("swear-words")
+        .description("Words to replace.")
         .defaultValue(List.of("fuck", "shit", "bitch", "damn", "ass", "cunt", "whore", "dick", "fucking", "motherfucker", "bastard", "slut", "asshole"))
         .visible(() -> swearReplacement.get() && mode.get() != TransformationMode.Animal)
         .build());
 
     private final Setting<List<String>> swearReplacements = sgTsundere.add(new StringListSetting.Builder()
-        .name("swear-replace").description("Possible replacements.")
+        .name("swear-replace")
+        .description("Possible replacements.")
         .defaultValue(List.of("baka", "b- baka", "dummy", "silly", "idiot", "silly goof", "stupid senpai", "hmph", "tchh"))
         .visible(() -> swearReplacement.get() && mode.get() != TransformationMode.Animal)
         .build());
@@ -73,7 +78,8 @@ public class TsundereFurry extends Module {
         .visible(() -> addSuffix.get() && mode.get() != TransformationMode.Animal).build());
 
     private final Setting<Integer> suffixChance = sgTsundere.add(new IntSetting.Builder()
-        .name("suffix-chance").description("Chance (0-100) to add a suffix.")
+        .name("suffix-chance")
+        .description("Chance (0-100) to add a suffix.")
         .defaultValue(40)
         .range(0, 100)
         .sliderRange(0, 100)
@@ -194,7 +200,7 @@ public class TsundereFurry extends Module {
     public void onSendMessage(SendMessageEvent event) {
         if (event.isCancelled()) return;
         String message = event.message;
-        if (message.startsWith("/")) return;   // i spent way too long on reinventing the wheel
+        if (message.startsWith("/")) return;   // I spent way too long on reinventing the wheel
         event.message = applyTransformation(message);
     }
 

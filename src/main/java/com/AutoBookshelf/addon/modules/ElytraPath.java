@@ -98,6 +98,28 @@ public class ElytraPath extends Module {
         .defaultValue(new SettingColor(0, 255, 255, 200))
         .build()
     );
+    private final Setting<Boolean> showVerticalIndicators = sgGeneral.add(new BoolSetting.Builder()
+        .name("vertical-indicators")
+        .description("Draw a vertical line when ascending or descending.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<SettingColor> ascendColor = sgGeneral.add(new ColorSetting.Builder()
+        .name("ascend-color")
+        .description("Colour of the ascending line.")
+        .visible(showVerticalIndicators::get)
+        .defaultValue(new SettingColor(255, 215, 0, 200))
+        .build()
+    );
+
+    private final Setting<SettingColor> descendColor = sgGeneral.add(new ColorSetting.Builder()
+        .name("descend-color")
+        .description("Colour of the descending line.")
+        .visible(showVerticalIndicators::get)
+        .defaultValue(new SettingColor(0, 87, 183, 200))// hours of joy
+        .build()
+    );
 
     private final Setting<SettingColor> gradientStart = sgGeneral.add(new ColorSetting.Builder()
         .name("gradient-start")
@@ -175,17 +197,16 @@ public class ElytraPath extends Module {
         smoothedVelocity = smoothedVelocity.multiply(1.0 - smoothFactor)
             .add(rawHorizontal.multiply(smoothFactor));
 
-        // Determine the direction to draw
+        // Determine the direction to draw (horizontal only)
         Vec3d direction;
         if (smoothedVelocity.lengthSquared() > speedThreshold.get() * speedThreshold.get()) {
-            // Use smoothed movement (horizontal only)
             direction = smoothedVelocity.normalize().multiply(smoothedVelocity.length());
         } else {
-            // Slow or stationary: use camera forward
             Vec3d forward = mc.player.getRotationVec(1.0F).normalize();
             direction = new Vec3d(forward.x * idleSpeed.get(), 0.0, forward.z * idleSpeed.get());
         }
 
+        // Build the forward path (horizontal)
         List<Vec3d> path = new ArrayList<>();
         path.add(startPos);
 
@@ -209,7 +230,7 @@ public class ElytraPath extends Module {
             currentPos = nextPos;
         }
 
-        // Draw the line segments
+        // Draw the forward path segments
         int segments = path.size() - 1;
         for (int i = 0; i < segments; i++) {
             Vec3d p1 = path.get(i);
@@ -250,10 +271,50 @@ public class ElytraPath extends Module {
             event.renderer.line(p1.x, p1.y, p1.z, p2.x, p2.y, p2.z, color);
         }
 
-        // Impact box
+        // Impact box for the forward path
         if (renderImpactBox.get() && finalHit != null) {
             BlockPos bp = finalHit.getBlockPos();
             event.renderer.box(bp, impactBoxColor.get(), impactBoxColor.get(), impactBoxShape.get(), 0);
+        }
+
+        // Vertical ascent / descent indicator
+        if (showVerticalIndicators.get()) {
+            double vy = rawVel.y;
+            if (Math.abs(vy) > 0.02) {
+                Vec3d verticalDir = new Vec3d(0, vy, 0);
+                Vec3d vertCurrentPos = startPos;
+                BlockHitResult vertFinalHit = null;
+                List<Vec3d> vertPath = new ArrayList<>();
+                vertPath.add(startPos);
+
+                for (int i = 0; i < predictionTicks.get(); i++) {
+                    Vec3d nextPos = vertCurrentPos.add(verticalDir);
+                    if (stopAtBlock.get()) {
+                        BlockHitResult hit = raytraceBlock(vertCurrentPos, nextPos);
+                        if (hit != null) {
+                            vertPath.add(hit.getPos());
+                            vertFinalHit = hit;
+                            break;
+                        }
+                    }
+                    vertPath.add(nextPos);
+                    vertCurrentPos = nextPos;
+                }
+
+                // Draw the vertical line (solid colour, just like before)
+                SettingColor vertColor = vy > 0 ? ascendColor.get() : descendColor.get();
+                for (int i = 0; i < vertPath.size() - 1; i++) {
+                    Vec3d p1 = vertPath.get(i);
+                    Vec3d p2 = vertPath.get(i + 1);
+                    event.renderer.line(p1.x, p1.y, p1.z, p2.x, p2.y, p2.z, vertColor);
+                }
+
+                // Impact box for the vertical line
+                if (renderImpactBox.get() && vertFinalHit != null) {
+                    BlockPos bp = vertFinalHit.getBlockPos();
+                    event.renderer.box(bp, impactBoxColor.get(), impactBoxColor.get(), impactBoxShape.get(), 0);
+                }
+            }
         }
     }
 
