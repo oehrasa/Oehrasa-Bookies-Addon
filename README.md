@@ -19,7 +19,7 @@
 
 ## Dependencies
 
-Tested successfully with these mods, but other might work as well (these are just optinal mod)
+Tested successfully with these mods, but other might work as well
 - baritone-api-fabric-1.13.1.jar
 - BepHax-0.4.4.0.jar
 - meteor-client-1.21.4-42.jar
@@ -28,7 +28,7 @@ Tested successfully with these mods, but other might work as well (these are jus
 
 ## Features
 
-**30 modules**, **4 commands**, **5 HUD elements**, and **1 mixin**
+**30 modules**, **4 commands**, **6 HUD elements**, and **1 mixin**
 
 ## Modules (30 total)
 <details>
@@ -67,13 +67,14 @@ Tested successfully with these mods, but other might work as well (these are jus
 
 </details>
 
-## HUD Elements (5)
+## HUD Elements (6)
 
 - **Anime-Pics** - Displays random Anime pictures ( Cheers >< )
 - **Elytra-Time** - Gives you a rough estimate of the elytra flight time you have left
 - **MayaChan** - Render oehrasa beloved OC's : Nishizumi Maya
-- **Online-Friends** - Displays online friends from your friend list
 - **Map-Viewer** - Displays the contents of held maps on your HUD
+- **NeboM** - The radar system claims to be able to detect 5th generation aircraft (Loud Incorrect Buzzer noise)
+- **Online-Friends** - Displays online friends from your friend list
 
 ## Commands (4)
 | Command          | Description                                                                |
