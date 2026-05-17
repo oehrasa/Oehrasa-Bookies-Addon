@@ -1,9 +1,14 @@
-# AutoBookshelf
-> *How tsundere are You?*
-
-Meteor Addon for Timid bookkeeper and Yuri Enjoyers
-
-XB-70 My beloved <3
+<div align="center">
+  <!-- Logo and Title -->
+  <img src="https://github.com/user-attachments/assets/4171fbfb-461a-4512-a6e5-74458512f429" alt="logo" width="30%"/>
+  <h1>AutoBookshelf</h1>
+  <p>Meteor Addon for Timid bookkeeper and Yuri Enjoyers</p>
+<a href="https://github.com/oehrasa/Oehrasa-Bookies-Addon/commits/main"><img src="https://img.shields.io/github/last-commit/oehrasa/Oehrasa-Bookies-Addon?logo=github&color=light_green" alt="Last commit"></a>
+<img src="https://img.shields.io/github/repo-size/oehrasa/Oehrasa-Bookies-Addon?color=magenta" alt="Repo Size">
+<img src="https://img.shields.io/github/issues/oehrasa/Oehrasa-Bookies-Addon?color=blue" alt="Issues">
+<img src="https://img.shields.io/github/stars/oehrasa/Oehrasa-Bookies-Addon?style=flat&color=yellow" alt="Stars">
+<img src="https://img.shields.io/github/downloads/oehrasa/Oehrasa-Bookies-Addon/total?color=red" alt="Downloads">
+</div>
 
 ## Installation
 
@@ -14,7 +19,7 @@ XB-70 My beloved <3
 
 ## Dependencies
 
-Tested successfully with these mods, but other might work as well
+Tested successfully with these mods, but other might work as well (these are just optinal mod)
 - baritone-api-fabric-1.13.1.jar
 - BepHax-0.4.4.0.jar
 - meteor-client-1.21.4-42.jar
@@ -64,7 +69,7 @@ Tested successfully with these mods, but other might work as well
 
 ## HUD Elements (5)
 
-- **Anime-Pics** -Displays random Anime pictures ( Cheers >< )
+- **Anime-Pics** - Displays random Anime pictures ( Cheers >< )
 - **Elytra-Time** - Gives you a rough estimate of the elytra flight time you have left
 - **MayaChan** - Render oehrasa beloved OC's : Nishizumi Maya
 - **Online-Friends** - Displays online friends from your friend list
@@ -114,7 +119,8 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 
 1. Enable the module
 2. Put the .txt file into folder : \minecraft\AutoBookshelf\books
-3. Press set key in the module settings to continue to next file
+3. _Recommend to use along side Bookshelf-Filler module_
+4. Press set key in the module settings to continue to next file
 </details>
 
 ## Credits
