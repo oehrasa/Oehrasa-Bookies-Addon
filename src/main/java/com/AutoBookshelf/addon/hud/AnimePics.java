@@ -7,6 +7,7 @@ import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.widgets.WWidget;
+import meteordevelopment.meteorclient.gui.widgets.containers.WHorizontalList;
 import meteordevelopment.meteorclient.gui.widgets.containers.WVerticalList;
 import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
 import meteordevelopment.meteorclient.renderer.Renderer2D;
@@ -20,6 +21,16 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.texture.NativeImageBackedTexture;
 import net.minecraft.util.Identifier;
+import org.lwjgl.BufferUtils;
+import org.lwjgl.PointerBuffer;
+import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.util.tinyfd.TinyFileDialogs;
+import java.io.File;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.UUID;
 
 import javax.imageio.ImageIO;
 import java.io.ByteArrayInputStream;
@@ -39,12 +50,14 @@ public class AnimePics extends HudElement {
         "Displays random Anime pictures from Nekos.life or WaifuIM.",
         AnimePics::create
     );
-    // Lowercase for identifier is not allowed btw
-    private static final Identifier TEXID = Identifier.of("autobookshelf", "animepics");
+
     private boolean locked = false;
     private boolean empty = true;
     private int ticks = 0;
-    private volatile boolean manualRefresh = false;   // true = next load must use fixed tag
+    private byte[] currentImageBytes = null;   // cached PNG bytes of the displayed image
+    private final PointerBuffer saveFilters;         // file filter for save dialog
+    private volatile boolean manualRefresh = false; // true = next load must use fixed tag
+    private final Identifier textureId;   // unique per element
 
     // Settings
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -52,7 +65,7 @@ public class AnimePics extends HudElement {
     public enum Source { NekosLife, WaifuIM }
 
     public enum NekosTag {
-        neko, waifu, fox_girl, hug, kiss, meow, lizard, goose, gecg,
+        neko, waifu, fox_girl, hug, kiss, meow, gecg,
         avatar, feed, cuddle, woof, smug, tickle, slap, pat, wallpaper
     }
 
@@ -156,6 +169,14 @@ public class AnimePics extends HudElement {
     // Event bus subscription for tick updates
     public AnimePics() {
         super(INFO);
+        this.textureId = Identifier.of("autobookshelf", "animepics_" + UUID.randomUUID());
+
+        // PNG filter for the save dialog
+        ByteBuffer pngFilter = MemoryUtil.memASCII("*.png");
+        saveFilters = BufferUtils.createPointerBuffer(1);
+        saveFilters.put(pngFilter);
+        saveFilters.rewind();
+
         MeteorClient.EVENT_BUS.subscribe(this);
     }
 
@@ -163,18 +184,27 @@ public class AnimePics extends HudElement {
     public void remove() {
         super.remove();
         MeteorClient.EVENT_BUS.unsubscribe(this);
+        if (mc.getTextureManager() != null) {
+            mc.getTextureManager().destroyTexture(textureId);
+        }
     }
 
     private static AnimePics create() {
         return new AnimePics();
     }
 
-    // Manual refresh button
     @Override
     public WWidget getWidget(GuiTheme theme) {
         WVerticalList list = theme.verticalList();
-        WButton refreshBtn = list.add(theme.button("Refresh Now")).widget();
+        WHorizontalList buttonRow = theme.horizontalList();
+        list.add(buttonRow).expandX();
+
+        WButton refreshBtn = buttonRow.add(theme.button("Refresh Now")).widget();
         refreshBtn.action = this::refreshNow;
+
+        WButton saveBtn = buttonRow.add(theme.button("Save Image")).widget();
+        saveBtn.action = this::saveImage;
+
         return list;
     }
 
@@ -182,6 +212,30 @@ public class AnimePics extends HudElement {
     public void refreshNow() {
         manualRefresh = true;
         empty = true;
+    }
+
+    private void saveImage() {
+        if (currentImageBytes == null || currentImageBytes.length == 0) {
+            MeteorClient.LOG.info("[AnimePics] No image to save.");
+            return;
+        }
+
+        String suggestedName = "animepic.png";
+        String path = TinyFileDialogs.tinyfd_saveFileDialog(
+            "Save Image",
+            new File(MeteorClient.FOLDER, suggestedName).getAbsolutePath(),
+            saveFilters,
+            null
+        );
+
+        if (path == null) return;   // user canceled
+
+        try {
+            Files.write(Path.of(path), currentImageBytes);
+            MeteorClient.LOG.info("[AnimePics] Image saved to " + path);
+        } catch (IOException e) {
+            MeteorClient.LOG.error("[AnimePics] Save error: " + e.getMessage());
+        }
     }
 
     @EventHandler
@@ -200,7 +254,7 @@ public class AnimePics extends HudElement {
             loadImage();
             return;
         }
-        GL.bindTexture(TEXID);
+        GL.bindTexture(textureId);
         Renderer2D.TEXTURE.begin();
         Renderer2D.TEXTURE.texQuad(x, y, imgWidth.get(), imgHeight.get(), WHITE);
         Renderer2D.TEXTURE.render(null);
@@ -278,10 +332,11 @@ public class AnimePics extends HudElement {
                 ImageIO.write(img, "png", baos);
 
                 byte[] imageBytes = baos.toByteArray();
+                this.currentImageBytes = imageBytes;    // cache for saving
                 mc.execute(() -> {
                     try {
                         if (mc.getTextureManager() == null) return;
-                        mc.getTextureManager().registerTexture(TEXID,
+                        mc.getTextureManager().registerTexture(textureId,
                             new NativeImageBackedTexture(NativeImage.read(new ByteArrayInputStream(imageBytes))));
                         empty = false;
                         MeteorClient.LOG.info("[AnimePics] Image loaded!");

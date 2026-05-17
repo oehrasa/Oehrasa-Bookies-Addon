@@ -101,7 +101,7 @@ public class ElytraPath extends Module {
     private final Setting<Boolean> showVerticalIndicators = sgGeneral.add(new BoolSetting.Builder()
         .name("vertical-indicators")
         .description("Draw a vertical line when ascending or descending.")
-        .defaultValue(true)
+        .defaultValue(false)
         .build()
     );
 
