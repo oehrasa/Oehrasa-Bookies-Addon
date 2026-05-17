@@ -3,6 +3,7 @@
   <img src="https://github.com/user-attachments/assets/4171fbfb-461a-4512-a6e5-74458512f429" alt="logo" width="30%"/>
   <h1>AutoBookshelf</h1>
   <p>Meteor Addon for Timid bookkeeper and Yuri Enjoyers</p>
+<img src="https://img.shields.io/badge/Meteor Addon-6f1ab1?logo=meteor&logoColor=white"/> 
 <a href="https://github.com/oehrasa/Oehrasa-Bookies-Addon/commits/main"><img src="https://img.shields.io/github/last-commit/oehrasa/Oehrasa-Bookies-Addon?logo=github&color=light_green" alt="Last commit"></a>
 <img src="https://img.shields.io/github/repo-size/oehrasa/Oehrasa-Bookies-Addon?color=magenta" alt="Repo Size">
 <img src="https://img.shields.io/github/issues/oehrasa/Oehrasa-Bookies-Addon?color=blue" alt="Issues">
@@ -84,6 +85,7 @@ Tested successfully with these mods, but other might work as well
 | `.ifpeek`        | Shows book information from an item frame                                  |
 | `.shelf`         | Extracts a book from a chiseled bookshelf slot, reads it, and puts it back |
 
+## TUTORIALS
 <details>
 <summary>Auto-Login</summary>
 - Turn on, login at any server, file 'passwords.txt' will be created
@@ -119,9 +121,10 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 <summary><b>Book-Import</b> - Automatically imports text files into signed books</summary>
 
 1. Enable the module
-2. Put the .txt file into folder : \minecraft\AutoBookshelf\books
+2. Put the .txt file into folder : `\minecraft\AutoBookshelf\books`
 3. _Recommend to use along side Bookshelf-Filler module_
 4. Press set key in the module settings to continue to next file
+> I will post the python code soon
 </details>
 
 ## Credits
@@ -148,10 +151,11 @@ Open an [issue](https://github.com/oehrasa/Oehrasa-Bookies-Addon/issues) or subm
 
 [GNU GPLv3](LICENSE) - Free to fork and modify.
 
-## Disclaimer
-
-Designed for anarchy servers like 6b6t.org. Use responsibly.
-Ask a question or make a discussions with me on discord : oeh4233
+> [!IMPORTANT]
+>## Disclaimer
+>Designed for anarchy servers like 6b6t.org. Use responsibly.
+> 
+>Ask a question or make a discussions with me on discord : oeh4233
 
 <h1 align="center">
   <img src="https://github.com/user-attachments/assets/0e9c7164-663c-411a-a222-e4416a74131e" alt="Header Image" style="width:70%; max-width:600px;"/>
