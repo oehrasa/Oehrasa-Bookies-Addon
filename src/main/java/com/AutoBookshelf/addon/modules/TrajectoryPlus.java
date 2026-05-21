@@ -132,7 +132,7 @@ public class TrajectoryPlus extends Module {
     private final ConcurrentHashMap<UUID, List<Vec3d>> projectileTrails = new ConcurrentHashMap<>();
 
     public TrajectoryPlus() {
-        super(Addon.CATEGORY, "Trajectory-Plus", "Smooth projectile prediction and tracking.");
+        super(Addon.CATEGORY2, "Trajectory-Plus", "Smooth projectile prediction and tracking.");
     }
 
     @Override

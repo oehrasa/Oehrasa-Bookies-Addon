@@ -146,23 +146,16 @@ public class AudiobookReader extends Module {
     private void onTick(TickEvent.Post event) {
         if (mc.player == null) return;
 
-        // Update progress based on elapsed time
-        if (isReading && pageStartTime > 0 && estimatedPageDuration > 0) {
-            long elapsed = System.currentTimeMillis() - pageStartTime;
-            pageProgress = Math.min(1.0f, (float) elapsed / estimatedPageDuration);
-
-            // Update display timer to refresh progress bar
-            if (displayTimer < 5) {
-                displayTimer = 5; // Keep display active
+        if (isReading && currentPages.size() > 0) {
+            float pageFraction = 0;
+            if (estimatedPageDuration > 0) {
+                long elapsed = System.currentTimeMillis() - pageStartTime;
+                pageFraction = Math.min(1.0f, (float) elapsed / estimatedPageDuration);
             }
-        }
+            // currentPage already points to the next page, so subtract 1
+            pageProgress = (currentPage - 1 + pageFraction) / currentPages.size();
 
-        // Update display timer
-        if (displayTimer > 0) {
-            displayTimer--;
-            if (displayTimer == 0 && !isReading) {
-                displayText = "";
-            }
+            if (displayTimer < 5) displayTimer = 5;
         }
 
         if (playKey.get().isPressed() && !isReading) {
@@ -196,14 +189,14 @@ public class AudiobookReader extends Module {
         event.drawContext.drawText(mc.textRenderer, displayText, 0, 0, 0xFFFFD700, true);
 
         // Draw progress bar if enabled
-        if (showProgressBar.get() && isReading && pageProgress > 0 && pageProgress < 1.0f) {
+        if (showProgressBar.get() && isReading && currentPages.size() > 0) {
             int barWidth = mc.textRenderer.getWidth(displayText);
             int barHeight = 3;
             int barY = mc.textRenderer.fontHeight + 2;
 
             // Background
             event.drawContext.fill(0, barY, barWidth, barY + barHeight, 0x44000000);
-            // Progress
+            // Global progress
             int progressWidth = (int) (barWidth * pageProgress);
             event.drawContext.fill(0, barY, progressWidth, barY + barHeight, 0xFFFFD700);
         }

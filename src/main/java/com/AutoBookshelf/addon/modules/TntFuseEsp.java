@@ -115,7 +115,7 @@ public class TntFuseEsp extends Module {
         .build());
 
     public TntFuseEsp() {
-        super(Addon.CATEGORY, "Tnt-Fuse-Esp", "Shows the fuse time of lit tnt");
+        super(Addon.CATEGORY2, "Tnt-Fuse-Esp", "Shows the fuse time of lit tnt");
     }
 
     @EventHandler

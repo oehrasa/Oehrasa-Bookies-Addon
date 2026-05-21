@@ -55,7 +55,7 @@ public class AnimePics extends HudElement {
     private boolean empty = true;
     private int ticks = 0;
     private byte[] currentImageBytes = null;   // cached PNG bytes of the displayed image
-    private final PointerBuffer saveFilters;         // file filter for save dialog
+    private final PointerBuffer saveFilters;         // file filter for save dialogue
     private volatile boolean manualRefresh = false; // true = next load must use fixed tag
     private final Identifier textureId;   // unique per element
 
@@ -78,7 +78,7 @@ public class AnimePics extends HudElement {
     private static final List<String> NEKOS_CYCLE_LIST = List.of(
         "neko", "waifu", "fox_girl", "hug", "kiss", "meow", "lizard", "goose", "gecg",
         "avatar", "feed", "cuddle", "woof", "smug", "tickle", "slap", "pat", "wallpaper"
-    );
+    ); // oomfie rfs
 
     private static final List<String> WAIFU_CYCLE_LIST = List.of(
         "waifu", "ero", "ecchi", "oppai", "hentai", "milf", "uniform", "ass", "maid",
@@ -171,7 +171,7 @@ public class AnimePics extends HudElement {
         super(INFO);
         this.textureId = Identifier.of("autobookshelf", "animepics_" + UUID.randomUUID());
 
-        // PNG filter for the save dialog
+        // PNG filter for the save dialogue
         ByteBuffer pngFilter = MemoryUtil.memASCII("*.png");
         saveFilters = BufferUtils.createPointerBuffer(1);
         saveFilters.put(pngFilter);
@@ -228,7 +228,7 @@ public class AnimePics extends HudElement {
             null
         );
 
-        if (path == null) return;   // user canceled
+        if (path == null) return;   // user cancelled
 
         try {
             Files.write(Path.of(path), currentImageBytes);

@@ -13,10 +13,12 @@ import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.MapIdComponent;
+import net.minecraft.entity.decoration.ItemFrameEntity;
 import net.minecraft.item.FilledMapItem;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.item.map.MapState;
+import net.minecraft.util.hit.EntityHitResult;
 import org.jetbrains.annotations.Nullable;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
@@ -25,13 +27,13 @@ public class MapViewer extends HudElement {
     public static final HudElementInfo<MapViewer> INFO = new HudElementInfo<>(
         Addon.HUD_GROUP,
         "Map-Viewer",
-        "Displays the contents of held maps onto your HUD.",
+        "Displays the contents of held/item maps frame onto your HUD.",
         MapViewer::new
     );
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
-    public enum Mode { Held, Mainhand, Offhand, SlotIndex, MapId }
+    public enum Mode { Held, Mainhand, Offhand, ItemFrame, SlotIndex, MapId }
     public enum DualHandling { ShowBoth, PrioritizeMainhand, PrioritizeOffhand }
     public enum Orientation { Horizontal, Vertical }
 
@@ -45,7 +47,14 @@ public class MapViewer extends HudElement {
         .name("dual-handling")
         .description("What to do when both hands hold different maps.")
         .visible(() -> mode.get() == Mode.Held)
-        .defaultValue(DualHandling.ShowBoth).build()
+        .defaultValue(DualHandling.ShowBoth)
+        .build()
+    );
+    private final Setting<Boolean> showGap = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-gap")
+        .description("Add a gap between two maps when both are shown.")
+        .defaultValue(true)
+        .build()
     );
     private final Setting<Orientation> orientation = sgGeneral.add(new EnumSetting.Builder<Orientation>()
         .name("orientation")
@@ -102,7 +111,7 @@ public class MapViewer extends HudElement {
     public void tick(HudRenderer renderer) {
         double s = scale.get();
         double mapSize = 128 * s;
-        double gap = 4 * s;
+        double gap = showGap.get() ? 4 * s : 0;
 
         // Update size based on orientation and number of maps
         if (showSecondMap) {
@@ -154,6 +163,12 @@ public class MapViewer extends HudElement {
             }
             case Mainhand -> stack1 = mc.player.getMainHandStack();
             case Offhand  -> stack1 = mc.player.getOffHandStack();
+            case ItemFrame -> {
+                if (mc.crosshairTarget instanceof EntityHitResult entityHit
+                    && entityHit.getEntity() instanceof ItemFrameEntity frame) {
+                    stack1 = frame.getHeldItemStack();
+                }
+            }
             case SlotIndex -> stack1 = mc.player.getInventory().getStack(slotIndex.get());
             case MapId -> {
                 for (int i = 0; i < mc.player.getInventory().size(); i++) {
@@ -177,7 +192,7 @@ public class MapViewer extends HudElement {
 
         double s = scale.get();
         double mapSize = 128 * s;
-        double gap = 4 * s;
+        double gap = showGap.get() ? 4 * s : 0;
         double x1 = this.x;
         double y1 = this.y;
 

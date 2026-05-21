@@ -12,10 +12,13 @@ import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.component.DataComponentTypes;
+import net.minecraft.entity.EntityType;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.*;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.network.packet.s2c.play.BlockBreakingProgressS2CPacket;
+import net.minecraft.network.packet.s2c.play.EntitySpawnS2CPacket;
+import net.minecraft.util.math.Vec3d;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
@@ -182,6 +185,7 @@ public class NeboM extends HudElement {
     private static final int ICON_SIZE = 16;  // normal size
     private static final int ICON_TEXT_GAP = 2;
     private final Map<UUID, Integer> crystalPlaceTicks = new HashMap<>(); // player UUID -> ticks left
+    private final Map<Integer, Integer> crystalPlaceTicksByEntity = new HashMap<>();
     private final Map<Integer, Integer> miningTicks = new HashMap<>(); // entity ID -> ticks left
 
     public NeboM() { super(INFO); MeteorClient.EVENT_BUS.subscribe(this); }
@@ -299,7 +303,7 @@ public class NeboM extends HudElement {
                     ItemStack actionItem = getActionItem(player, state);
                     if (actionItem != null && isActionState(state)) {
                         x += ICON_TEXT_GAP;
-                        double iconY = y - 9;   // center 16px icon vertically
+                        double iconY = y - 9;   // centre 16px icon vertically
                         renderer.item(actionItem, (int) x, (int) iconY, 1.0f, false);
                         x += ICON_SIZE;
                     }
@@ -413,9 +417,32 @@ public class NeboM extends HudElement {
     @EventHandler
     private void onPacketReceive(PacketEvent.Receive event) {
         if (mc.player == null || mc.world == null) return;
+
+        // Mining progress for all players
         if (event.packet instanceof BlockBreakingProgressS2CPacket packet) {
             int entityId = packet.getEntityId();
             miningTicks.put(entityId, actionDisplayTicks.get());
+        }
+
+        // Crystal placed by anyone, guess who placed it by distance
+        if (event.packet instanceof EntitySpawnS2CPacket packet
+            && packet.getEntityType() == EntityType.END_CRYSTAL) {
+
+            Vec3d crystalPos = new Vec3d(packet.getX(), packet.getY(), packet.getZ());
+            PlayerEntity nearest = null;
+            double nearestDist = Double.MAX_VALUE;
+
+            for (PlayerEntity p : mc.world.getPlayers()) {
+                double dist = p.getPos().squaredDistanceTo(crystalPos);
+                if (dist < 64.0 && dist < nearestDist) {
+                    nearestDist = dist;
+                    nearest = p;
+                }
+            }
+
+            if (nearest != null) {
+                crystalPlaceTicks.put(nearest.getUuid(), actionDisplayTicks.get());
+            }
         }
     }
 

@@ -28,7 +28,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-public class AutoChestAura extends Module {
+public class ChestAura extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
     private final Setting<Double> range = sgGeneral.add(new DoubleSetting.Builder()
@@ -90,7 +90,7 @@ public class AutoChestAura extends Module {
 
     private boolean isPending = false;
 
-    public AutoChestAura() {
+    public ChestAura() {
         super(Addon.CATEGORY, "Chest-Aura", "High-speed automatic container opener.");
     }
 
@@ -112,9 +112,6 @@ public class AutoChestAura extends Module {
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (mc.world == null || mc.player == null) return;
-
-        // --- 1. Stuck detection and state management ---
-
         if (isPending) {
             stuckTimer++;
 
@@ -142,8 +139,6 @@ public class AutoChestAura extends Module {
             return;
         }
 
-        // --- 2. Find new container ---
-
         if (timer > 0) {
             timer--;
             return;
@@ -154,13 +149,9 @@ public class AutoChestAura extends Module {
 
         for (BlockEntity block : Utils.blockEntities()) {
             if (!blocks.get().contains(block.getType())) continue;
-
             if (mc.player.getEyePos().distanceTo(Vec3d.ofCenter(block.getPos())) >= range.get()) continue;
-
             BlockPos pos = block.getPos();
             if (openedBlocks.containsKey(pos)) continue;
-
-            // --- 3. Execute opening ---
 
             Runnable click = () -> mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND,
                 new BlockHitResult(new Vec3d(pos.getX(), pos.getY(), pos.getZ()), Direction.UP, pos, false));
@@ -218,14 +209,14 @@ public class AutoChestAura extends Module {
         private void onPacket(PacketEvent.Receive event) {
             if (!isPending) return;
 
-            // Listen for InventoryS2CPacket (container contents)
+            // Listen for InventoryS2CPacket
             if (event.packet instanceof InventoryS2CPacket packet) {
                 ScreenHandler handler = mc.player.currentScreenHandler;
                 if (handler != null && packet.getSyncId() == handler.syncId) {
                     packetTimer = waitTime.get();
                 }
             }
-            // Fallback: sometimes container is empty or laggy, only OpenScreen packet is sent
+            // sometimes container is empty or laggy, only OpenScreen packet is sent
             else if (event.packet instanceof OpenScreenS2CPacket packet) {
                 if (packetTimer == 0) {
                     packetTimer = timeout.get() - 5;
