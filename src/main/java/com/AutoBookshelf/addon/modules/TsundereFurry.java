@@ -194,6 +194,7 @@ public class TsundereFurry extends Module {
         super(Addon.CATEGORY2, "Tsundere-Furry", "Transforms outgoing chat messages into animal sounds, tsundere, or both :>");
         animalSounds.put(Animal.Rabbit, List.of("chirrup", "purr", "purrrrr", "prrr", "grunt", "peko", "thump", "buni", "nurf", "pyon"));
         animalSounds.put(Animal.Cat, List.of("meow", "mreow", "mrew", "purr", "purrrrr", "prrr", "mew", "rawr", "nya", "buhhh", "nyaa~", "miaw <3"));
+        animalSounds.put(Animal.Dog, List.of("bark", "woof", "arf arf", "grrrrr", "ruff", "growl", "yap", "bowwow", "yap", "Im a good boy :3"));
     }
 
     @EventHandler
@@ -481,6 +482,7 @@ public class TsundereFurry extends Module {
 
     public enum Animal {
         Rabbit,
-        Cat
+        Cat,
+        Dog
     }
 }

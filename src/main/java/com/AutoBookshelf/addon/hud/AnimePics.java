@@ -2,6 +2,7 @@ package com.AutoBookshelf.addon.hud;
 
 import com.AutoBookshelf.addon.Addon;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -47,7 +48,7 @@ public class AnimePics extends HudElement {
     public static final HudElementInfo<AnimePics> INFO = new HudElementInfo<>(
         Addon.HUD_GROUP,
         "Anime-Pics",
-        "Displays random Anime pictures from Nekos.life or WaifuIM.",
+        "Displays random Anime pictures from Nekos.life or WaifuIM or Safebooru.",
         AnimePics::create
     );
 
@@ -62,7 +63,7 @@ public class AnimePics extends HudElement {
     // Settings
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
-    public enum Source { NekosLife, WaifuIM }
+    public enum Source { NekosLife, WaifuIM, Safebooru }
 
     public enum NekosTag {
         neko, waifu, fox_girl, hug, kiss, meow, gecg,
@@ -78,7 +79,7 @@ public class AnimePics extends HudElement {
     private static final List<String> NEKOS_CYCLE_LIST = List.of(
         "neko", "waifu", "fox_girl", "hug", "kiss", "meow", "lizard", "goose", "gecg",
         "avatar", "feed", "cuddle", "woof", "smug", "tickle", "slap", "pat", "wallpaper"
-    ); // oomfie rfs
+    ); // oomfie rfs <3
 
     private static final List<String> WAIFU_CYCLE_LIST = List.of(
         "waifu", "ero", "ecchi", "oppai", "hentai", "milf", "uniform", "ass", "maid",
@@ -127,6 +128,14 @@ public class AnimePics extends HudElement {
         .description("Cycle through WaifuIM tags on each refresh.")
         .visible(() -> source.get() == Source.WaifuIM)
         .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<String> safebooruTag = sgGeneral.add(new StringSetting.Builder()
+        .name("safebooru-tag")
+        .description("Tag for Safebooru images.")
+        .visible(() -> source.get() == Source.Safebooru)
+        .defaultValue("yuri")
         .build()
     );
 
@@ -212,6 +221,7 @@ public class AnimePics extends HudElement {
     public void refreshNow() {
         manualRefresh = true;
         empty = true;
+        ticks = 0;
     }
 
     private void saveImage() {
@@ -267,6 +277,7 @@ public class AnimePics extends HudElement {
         return switch (source.get()) {
             case NekosLife -> fetchNekosLife(forceFixed);
             case WaifuIM -> fetchWaifuIM(forceFixed);
+            case Safebooru -> fetchSafebooru();
         };
     }
 
@@ -311,6 +322,43 @@ public class AnimePics extends HudElement {
             return image.get("url").getAsString();
         } catch (Exception e) {
             MeteorClient.LOG.error("[AnimePics] WaifuIM Error: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private String fetchSafebooru() {
+        String tag = safebooruTag.get();
+        try {
+            String encoded = URLEncoder.encode(tag, StandardCharsets.UTF_8);
+            int pid = new Random().nextInt(700);
+            String apiUrl = "https://safebooru.org/index.php?page=dapi&s=post&q=index&json=1"
+                + "&tags=" + encoded
+                + "&limit=10" // request 10 posts
+                + "&pid=" + pid;
+
+            JsonElement result = Http.get(apiUrl).sendJson(JsonElement.class);
+            if (!(result instanceof JsonArray array) || array.isEmpty()) {
+                return null;
+            }
+
+            // Pick a random post from the page
+            JsonObject post = array.get(new Random().nextInt(array.size())).getAsJsonObject();
+
+            // Prefer file_url, then preview_url, then construct from directory/image
+            if (post.has("file_url")) {
+                return post.get("file_url").getAsString();
+            }
+            if (post.has("preview_url")) {
+                return post.get("preview_url").getAsString();
+            }
+            if (post.has("directory") && post.has("image")) {
+                return "https://safebooru.org/images/"
+                    + post.get("directory").getAsString() + "/"
+                    + post.get("image").getAsString();
+            }
+            return null;
+        } catch (Exception e) {
+            MeteorClient.LOG.error("[AnimePics] Safebooru Error: " + e.getMessage());
             return null;
         }
     }

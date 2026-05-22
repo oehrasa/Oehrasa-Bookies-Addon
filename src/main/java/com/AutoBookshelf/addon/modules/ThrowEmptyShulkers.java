@@ -3,6 +3,7 @@ package com.AutoBookshelf.addon.modules; // Adjust package to your addon
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
@@ -124,7 +125,7 @@ public class ThrowEmptyShulkers extends Module {
     private final List<Integer> pendingSlots = new ArrayList<>();
     private int batchIndex = 0;
 
-    public ThrowEmptyShulkers() {
+    public ThrowEmptyShulkers(Category category2) {
         super(Addon.CATEGORY2, "Throw-Shulkers", "Automatically throws shulker boxes based on their contents.");
     }
 

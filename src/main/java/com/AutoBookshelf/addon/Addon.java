@@ -73,7 +73,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new TntFuseEsp());
         Modules.get().add(new TsundereFurry());
         Modules.get().add(new TrajectoryPlus());
-        Modules.get().add(new ThrowEmptyShulkers());
+        Modules.get().add(new ThrowEmptyShulkers(CATEGORY2));
         // U
         Modules.get().add(new UnwaxAura());
 
@@ -96,6 +96,7 @@ public class Addon extends MeteorAddon {
     @Override
     public void onRegisterCategories() {
         Modules.registerCategory(CATEGORY);
+        Modules.registerCategory(CATEGORY2);
     }
 
     @Override
