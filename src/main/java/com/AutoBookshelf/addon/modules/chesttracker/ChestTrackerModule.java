@@ -6,7 +6,9 @@ import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.BlockActivateEvent;
 import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
-import meteordevelopment.meteorclient.events.world.ChunkDataEvent;
+import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
+import net.minecraft.client.gui.screen.ingame.HandledScreen;
+import net.minecraft.text.Text;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
@@ -32,7 +34,6 @@ import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import org.joml.Vector3d;
@@ -617,18 +618,24 @@ public class ChestTrackerModule extends Module {
         }
     }
 
-    // Remove all entries in a chunk when it unloads
     @EventHandler
-    private void onChunkUnload(ChunkDataEvent event) {
+    private void onOpenScreen(OpenScreenEvent event) {
         if (!isActive()) return;
-        ChunkPos cp = event.chunk().getPos();
-        String dim = getCurrentDimension();
-        Map<BlockPos, TrackedContainer> dimContainers = data.getContainers().get(dim);
-        if (dimContainers != null) {
-            dimContainers.entrySet().removeIf(entry -> {
-                BlockPos pos = entry.getKey();
-                return (pos.getX() >> 4) == cp.x && (pos.getZ() >> 4) == cp.z;
-            });
+        if (!(event.screen instanceof HandledScreen<?> handledScreen)) return;
+
+        BlockPos trackPos = currentOpenPositions[0];
+        if (trackPos == null) trackPos = lastInteractedBlock;
+        if (trackPos == null) return;
+
+        String currentDim = getCurrentDimension();
+        Block block = mc.world.getBlockState(trackPos).getBlock();
+        String defaultName = Text.translatable(block.getTranslationKey()).getString().trim();
+        String screenTitle = handledScreen.getTitle().getString().trim();
+
+        TrackedContainer tracked = data.getContainer(trackPos, currentDim);
+        if (tracked != null && !screenTitle.equals(defaultName)) {
+            tracked.setCustomName(screenTitle);
+            if (debugMode.get()) info("Captured custom name: " + screenTitle);
         }
     }
 

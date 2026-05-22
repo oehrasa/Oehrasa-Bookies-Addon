@@ -1,6 +1,8 @@
 package com.AutoBookshelf.addon.modules.chesttracker;
 
 import com.google.gson.JsonArray;
+import net.minecraft.registry.Registries;
+import net.minecraft.util.Identifier;
 import com.google.gson.JsonObject;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -49,7 +51,32 @@ public class TrackedContainer {
     }
     public int getItemCount(String itemId) { return items.getOrDefault(itemId, 0); }
     public Map<String, Integer> getItems() { return new HashMap<>(items); }
-    public List<ItemStack> getItemStacks() { return new ArrayList<>(itemStacks); }
+    public List<ItemStack> getItemStacks() {
+        // If we already have stacks (e.g. freshly tracked), return them directly
+        if (!itemStacks.isEmpty()) {
+            return new ArrayList<>(itemStacks);
+        }
+
+        // Reconstruct from items map (after loading from JSON)
+        List<ItemStack> stacks = new ArrayList<>();
+        for (Map.Entry<String, Integer> entry : items.entrySet()) {
+            Identifier id = Identifier.tryParse(entry.getKey());
+            if (id == null) continue;
+            Item item = Registries.ITEM.get(id);
+            if (item == null) continue;               // mod removed?
+            int count = entry.getValue();
+            int maxStack = item.getMaxCount();
+            while (count > 0) {
+                int stackSize = Math.min(count, maxStack);
+                stacks.add(new ItemStack(item, stackSize));
+                count -= stackSize;
+            }
+        }
+        // Cache the result so we don't rebuild every frame
+        itemStacks.clear();
+        itemStacks.addAll(stacks);
+        return stacks;
+    }
     public BlockPos getPosition() { return position; }
     public String getDimension() { return dimension; }
     public String getCustomName() { return customName; }

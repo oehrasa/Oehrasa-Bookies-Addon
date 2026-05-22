@@ -14,6 +14,7 @@ import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.*;
+import net.minecraft.text.Text;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.BundleContentsComponent;
@@ -247,7 +248,10 @@ public class ContainerPeek extends Module {
         } else if (lastContainer != null) {
             stacks = lastContainer.getItemStacks();
             pos = lastContainer.getPosition();
-            typeStr = lastContainer.getContainerType();
+            // Use custom name if set, otherwise fall back to container type
+            typeStr = lastContainer.getCustomName() != null
+                ? lastContainer.getCustomName()
+                : lastContainer.getContainerType();
             posStr = String.format("%d, %d, %d", pos.getX(), pos.getY(), pos.getZ());
         } else {
             return;
@@ -294,7 +298,7 @@ public class ContainerPeek extends Module {
 
         int textY = panelY + padding;
         if (showType.get()) {
-            context.drawTextWithShadow(mc.textRenderer, typeStr, panelX + padding, textY, 0xFFFFFF);
+            context.drawTextWithShadow(mc.textRenderer, Text.literal(typeStr), panelX + padding, textY, 0xFFFFFF);
             textY += 10;
         }
         if (showPosition.get()) {
