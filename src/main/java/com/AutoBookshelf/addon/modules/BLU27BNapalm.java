@@ -59,11 +59,11 @@ public class BLU27BNapalm extends Module {
     private final Setting<Integer> igniteChance = sgGeneral.add(new IntSetting.Builder()
         .name("ignite-chance")
         .description("Probability 0 to 100% that a flammable block will actually be ignited.")
-        .defaultValue(8)
+        .defaultValue(2)
         .range(0, 100)
         .sliderRange(0, 100)
         .build()
-        // Yes I'm listening to mommy ASMR while adding these
+        // Yes I'm listening to Mommy ASMR while adding these
     );
 
     private final Setting<Boolean> extinguishFire = sgGeneral.add(new BoolSetting.Builder()

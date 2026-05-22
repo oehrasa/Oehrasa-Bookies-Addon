@@ -27,6 +27,8 @@ public class Addon extends MeteorAddon {
     public static final HudGroup HUD_GROUP = new HudGroup("MayaChan");
 
     public static final Category CATEGORY = new Category("Bookshelf", Items.WRITTEN_BOOK.getDefaultStack());
+    public static final Category CATEGORY2 = new Category("Aurelius", Items.WRITABLE_BOOK.getDefaultStack());
+    // Cocceius Fulvius Ulpius
 
     @Override
     public void onInitialize() {
@@ -34,51 +36,62 @@ public class Addon extends MeteorAddon {
 
         // Modules
         Modules.get().add(new AutoLogin(CATEGORY));
-        Modules.get().add(new BookshelfFiller());
-        Modules.get().add(new B36());
-        Modules.get().add(new MinecartPlacer());
-        Modules.get().add(new MobOwner());
-        Modules.get().add(new AutoChestAura());
-        Modules.get().add(new TrajectoryPlus());
-        Modules.get().add(new BetterBoatFly());
-        Modules.get().add(new BeaconRange());
-        Modules.get().add(new ShulkBookRestock());
-        Modules.get().add(new AutoMoss());
         Modules.get().add(new AutoSex());
-        Modules.get().add(new AudiobookReader());
-        Modules.get().add(new PlatformBuilder());
-        Modules.get().add(new UnwaxAura());
-        Modules.get().add(new ItemDespawn());
-        Modules.get().add(new TntFuseEsp());
-        Modules.get().add(new BookImporter());
-        Modules.get().add(new AutoTakeOff());
-        Modules.get().add(new ThrowEmptyShulkers());
+        Modules.get().add(new AutoMoss());
         Modules.get().add(new AutoBeacon());
-        Modules.get().add(new PressItemFrame());
-        Modules.get().add(new TsundereFurry());
+        Modules.get().add(new AutoTakeOff());
+        Modules.get().add(new AudiobookReader());
+        // B
+        Modules.get().add(new B36());
+        Modules.get().add(new BeaconRange());
+        Modules.get().add(new BLU27BNapalm());
+        Modules.get().add(new BookImporter());
+        Modules.get().add(new BetterBoatFly());
+        Modules.get().add(new BookshelfFiller());
+        // C
+        Modules.get().add(new ChestAura());
+        Modules.get().add(new ContainerPeek());
+        Modules.get().add(new com.AutoBookshelf.addon.modules.chesttracker.ChestTrackerModule());
+        // E I M
+        Modules.get().add(new ElytraPath());
+        Modules.get().add(new ItemDespawn());
+        Modules.get().add(new MobOwner());
         Modules.get().add(new MapartNamer());
         Modules.get().add(new MapGridZone());
-        Modules.get().add(new BLU27BNapalm());
-        Modules.get().add(new ElytraPath());
+        Modules.get().add(new MinecartPlacer());
+        // P
+        Modules.get().add(new PortalCave());
+        Modules.get().add(new PressItemFrame());
+        Modules.get().add(new PlatformBuilder());
+        // S
+        Modules.get().add(new ShulkBookRestock());
+        // T
+        Modules.get().add(new TntFuseEsp());
+        Modules.get().add(new TsundereFurry());
+        Modules.get().add(new TrajectoryPlus());
+        Modules.get().add(new ThrowEmptyShulkers());
+        // U
+        Modules.get().add(new UnwaxAura());
 
         // HUD
-        Hud.get().register(MayaChan.INFO);
-        Hud.get().register(ElytraTime.INFO);
-        Hud.get().register(OnlineFriendsHUD.INFO);
         Hud.get().register(AnimePics.INFO);
+        Hud.get().register(ElytraTime.INFO);
+        Hud.get().register(MayaChan.INFO);
         Hud.get().register(NeboM.INFO);
+        Hud.get().register(OnlineFriendsHUD.INFO);
 
         // COMMANDS
-        Commands.add(new IfpeekCommand());
-        Commands.add(new ShelfCommand());
         Commands.add(new BookCommand());
         Commands.add(new BookTranslateCommand());
+        Commands.add(new IfpeekCommand());
+        Commands.add(new ShelfCommand());
 
     }
 
     @Override
     public void onRegisterCategories() {
         Modules.registerCategory(CATEGORY);
+        Modules.registerCategory(CATEGORY2);
     }
 
     @Override

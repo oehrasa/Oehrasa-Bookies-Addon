@@ -419,7 +419,7 @@ public class AutoBeacon extends Module {
         if (state.isAir()) return true;
         if (!replaceGrass.get()) return false;
         Block block = state.getBlock();
-        return block == Blocks.GRASS_BLOCK ||
+        return block == Blocks.SHORT_GRASS ||
             block == Blocks.TALL_GRASS || block == Blocks.FERN ||
             block == Blocks.SEAGRASS || block == Blocks.TALL_SEAGRASS;
     }

@@ -28,7 +28,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-public class AutoChestAura extends Module {
+public class ChestAura extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
     private final Setting<Double> range = sgGeneral.add(new DoubleSetting.Builder()
@@ -90,7 +90,7 @@ public class AutoChestAura extends Module {
 
     private boolean isPending = false;
 
-    public AutoChestAura() {
+    public ChestAura() {
         super(Addon.CATEGORY, "Chest-Aura", "High-speed automatic container opener.");
     }
 

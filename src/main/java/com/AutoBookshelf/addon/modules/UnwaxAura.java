@@ -87,45 +87,117 @@ public class UnwaxAura extends Module {
     private final SettingGroup sgESP = settings.createGroup("ESP Settings");
 
     private final Setting<Integer> unwaxDelay = sgGeneral.add(new IntSetting.Builder()
-        .name("unwax-delay").description("Ticks after unwaxing before checking result.").defaultValue(10).min(1).max(40).sliderRange(1, 40).build());
+        .name("unwax-delay")
+        .description("Ticks after unwaxing before checking result.")
+        .defaultValue(10)
+        .min(1)
+        .max(40)
+        .sliderRange(1, 40)
+        .build());
+
     private final Setting<Integer> range = sgGeneral.add(new IntSetting.Builder()
-        .name("range").description("Reach distance in blocks.").defaultValue(4).min(1).max(6).sliderRange(1, 6).build());
+        .name("range")
+        .description("Reach distance in blocks.")
+        .defaultValue(4)
+        .min(1)
+        .max(6)
+        .sliderRange(1, 6)
+        .build());
+
     private final Setting<Boolean> rotate = sgGeneral.add(new BoolSetting.Builder()
-        .name("rotate").description("Rotate towards the block before acting.").defaultValue(true).build());
+        .name("rotate")
+        .description("Rotate towards the block before acting.")
+        .defaultValue(true)
+        .build());
+
     private final Setting<Boolean> autoTool = sgGeneral.add(new BoolSetting.Builder()
-        .name("auto-tool").description("Auto switch to an axe for unwaxing.").defaultValue(true).build());
+        .name("auto-tool")
+        .description("Auto switch to an axe for unwaxing.")
+        .defaultValue(true)
+        .build());
+
     private final Setting<Boolean> returnSlot = sgGeneral.add(new BoolSetting.Builder()
-        .name("return-slot").description("Return to original hotbar slot after tools.").defaultValue(true).build());
+        .name("return-slot")
+        .description("Return to original hotbar slot after tools.")
+        .defaultValue(true)
+        .build());
 
     private final Setting<BreakMode> breakMode = sgBreak.add(new EnumSetting.Builder<BreakMode>()
-        .name("break-mode").description("What to do after unwaxing.").defaultValue(BreakMode.NONE).build());
+        .name("break-mode")
+        .description("What to do after unwaxing.")
+        .defaultValue(BreakMode.NONE)
+        .build());
+
     private final Setting<Integer> breakDelay = sgBreak.add(new IntSetting.Builder()
-        .name("break-delay").description("Ticks after breaking before scanning again.").defaultValue(10).min(1).max(40).sliderRange(1, 40)
-        .visible(() -> breakMode.get() != BreakMode.NONE).build());
+        .name("break-delay")
+        .description("Ticks after breaking before scanning again.")
+        .defaultValue(10)
+        .min(1)
+        .max(40)
+        .sliderRange(1, 40)
+        .visible(() -> breakMode.get() != BreakMode.NONE)
+        .build());
+
     private final Setting<Boolean> autoPick = sgBreak.add(new BoolSetting.Builder()
-        .name("auto-pick").description("Auto switch to a pickaxe for breaking.").defaultValue(true)
-        .visible(() -> breakMode.get() != BreakMode.NONE).build());
+        .name("auto-pick")
+        .description("Auto switch to a pickaxe for breaking.")
+        .defaultValue(true)
+        .visible(() -> breakMode.get() != BreakMode.NONE)
+        .build());
 
     private final Setting<CopperFilter> copperFilter = sgFilter.add(new EnumSetting.Builder<CopperFilter>()
-        .name("copper-filter").description("Which waxed copper to target.").defaultValue(CopperFilter.ALL).build());
+        .name("copper-filter")
+        .description("Which waxed copper to target.")
+        .defaultValue(CopperFilter.ALL)
+        .build());
 
     private final Setting<Boolean> espEnabled = sgESP.add(new BoolSetting.Builder()
-        .name("ESP-enabled").description("Highlight waxed copper blocks.").defaultValue(true).build());
+        .name("ESP-enabled")
+        .description("Highlight waxed copper blocks.")
+        .defaultValue(true)
+        .build());
     private final Setting<Integer> espRange = sgESP.add(new IntSetting.Builder()
-        .name("ESP-range").description("Max render distance for ESP.").defaultValue(64).min(8).max(256).sliderRange(8, 256)
-        .visible(espEnabled::get).build());
-    private final Setting<ShapeMode> shapeMode = sgESP.add(new EnumSetting.Builder<ShapeMode>()
-        .name("shape-mode").description("ESP shape mode.").defaultValue(ShapeMode.Lines).visible(espEnabled::get).build());
-    private final Setting<SettingColor> sideColor = sgESP.add(new ColorSetting.Builder()
-        .name("side-color").description("Side color of ESP box.").defaultValue(new SettingColor(255, 200, 0, 40)).visible(espEnabled::get).build());
-    private final Setting<SettingColor> lineColor = sgESP.add(new ColorSetting.Builder()
-        .name("line-color").description("Line color of ESP box.").defaultValue(new SettingColor(255, 200, 0, 200)).visible(espEnabled::get).build());
-    private final Setting<Boolean> tracer = sgESP.add(new BoolSetting.Builder()
-        .name("tracer").description("Draw line to target.").defaultValue(true).visible(espEnabled::get).build());
-    private final Setting<SettingColor> tracerColor = sgESP.add(new ColorSetting.Builder()
-        .name("tracer-color").description("Tracer line color.").defaultValue(new SettingColor(255, 200, 0, 200))
-        .visible(() -> espEnabled.get() && tracer.get()).build());
+        .name("ESP-range")
+        .description("Max render distance for ESP.")
+        .defaultValue(64)
+        .min(8)
+        .max(256)
+        .sliderRange(8, 256)
+        .visible(espEnabled::get)
+        .build());
 
+    private final Setting<ShapeMode> shapeMode = sgESP.add(new EnumSetting.Builder<ShapeMode>()
+        .name("shape-mode")
+        .description("ESP shape mode.")
+        .defaultValue(ShapeMode.Lines)
+        .visible(espEnabled::get)
+        .build());
+
+    private final Setting<SettingColor> sideColor = sgESP.add(new ColorSetting.Builder()
+        .name("side-color")
+        .description("Side color of ESP box.")
+        .defaultValue(new SettingColor(255, 200, 0, 40)).visible(espEnabled::get)
+        .build());
+
+    private final Setting<SettingColor> lineColor = sgESP.add(new ColorSetting.Builder()
+        .name("line-color")
+        .description("Line color of ESP box.")
+        .defaultValue(new SettingColor(255, 200, 0, 200)).visible(espEnabled::get)
+        .build());
+
+    private final Setting<Boolean> tracer = sgESP.add(new BoolSetting.Builder()
+        .name("tracer")
+        .description("Draw line to target.")
+        .defaultValue(true).visible(espEnabled::get)
+        .build());
+
+    private final Setting<SettingColor> tracerColor = sgESP.add(new ColorSetting.Builder()
+        .name("tracer-color")
+        .description("Tracer line color.")
+        .defaultValue(new SettingColor(255, 200, 0, 200))
+        .visible(() -> espEnabled.get() && tracer.get())
+        .build());
+    // Honestly overlooked this thing
     private enum Stage { SCAN, ROTATE_UNWAX, UNWAX, WAIT_UNWAX, ROTATE_BREAK, START_BREAK, BREAKING, WAIT_BREAK }
     private Stage stage = Stage.SCAN;
     private BlockPos currentTarget = null;
@@ -136,7 +208,7 @@ public class UnwaxAura extends Module {
     private boolean lookingForUnwaxed = false;
 
     public UnwaxAura() {
-        super(Addon.CATEGORY, "Unwax-Aura", "Automatically removes wax from copper blocks and optionally breaks them.");
+        super(Addon.CATEGORY2, "Unwax-Aura", "Automatically removes wax from copper blocks and optionally breaks them.");
     }
 
     @Override

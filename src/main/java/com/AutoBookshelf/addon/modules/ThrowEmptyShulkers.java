@@ -126,7 +126,7 @@ ThrowEmptyShulkers extends Module {
     private int batchIndex = 0;
 
     public ThrowEmptyShulkers() {
-        super(Addon.CATEGORY, "Throw-Shulkers", "Automatically throws shulker boxes based on their contents.");
+        super(Addon.CATEGORY2, "Throw-Shulkers", "Automatically throws shulker boxes based on their contents.");
     }
 
     @Override
