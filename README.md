@@ -141,7 +141,7 @@ List of addons I used as reference(skid? mwhehe), You should check them out it's
 - **[nerv printer addon](https://github.com/Julflips/nerv-printer-addon)** - Map Namer base reference
 - **[JanitorAddon](https://github.com/Sleeepyv/JanitorAddon)** - ThrowEmptyShulker
 - **[delirious](https://github.com/underscore-zi/delirious)** - Platform Builder
-- **[Trouser](https://github.com/etianl/Trouser-Streak) - PortalPatternFinder
+- **[Trouser](https://github.com/etianl/Trouser-Streak)** - PortalPatternFinder
 
 ## Contributing
 
