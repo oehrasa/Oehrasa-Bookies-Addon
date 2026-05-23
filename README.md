@@ -1,9 +1,15 @@
-# AutoBookshelf
-> *How tsundere are You?*
-
-Meteor Addon for Timid book keeper and Yuri Enjoyers
-
-XB-70 My beloved <3
+<div align="center">
+  <!-- Logo and Title -->
+  <img src="https://github.com/user-attachments/assets/4171fbfb-461a-4512-a6e5-74458512f429" alt="logo" width="30%"/>
+  <h1>AutoBookshelf</h1>
+  <p>Meteor Addon for Timid bookkeeper and Yuri Enjoyers</p>
+<img src="https://img.shields.io/badge/Meteor Addon-6f1ab1?logo=meteor&logoColor=white"/> 
+<a href="https://github.com/oehrasa/Oehrasa-Bookies-Addon/commits/main"><img src="https://img.shields.io/github/last-commit/oehrasa/Oehrasa-Bookies-Addon?logo=github&color=light_green" alt="Last commit"></a>
+<img src="https://img.shields.io/github/repo-size/oehrasa/Oehrasa-Bookies-Addon?color=magenta" alt="Repo Size">
+<img src="https://img.shields.io/github/issues/oehrasa/Oehrasa-Bookies-Addon?color=blue" alt="Issues">
+<img src="https://img.shields.io/github/stars/oehrasa/Oehrasa-Bookies-Addon?style=flat&color=yellow" alt="Stars">
+<img src="https://img.shields.io/github/downloads/oehrasa/Oehrasa-Bookies-Addon/total?color=red" alt="Downloads">
+</div>
 
 ## Installation
 
@@ -23,11 +29,11 @@ Tested successfully with these mods, but other might work as well
 
 ## Features
 
-**29 modules**, **4 commands**, **3 HUD elements**, and **1 mixin**
+**32 modules**, **4 commands**, **6 HUD elements**, and **1 mixin**
 
-## Modules (29 total)
+## Modules (32 total)
 <details>
-<summary><b>Modules</b> (29 modules)</summary>
+<summary><b>Modules</b> (32 modules)</summary>
 
 - **AudiobookReader** - Reads books aloud using narrator feature
 - **Auto-Beacon** - Builds a 4‑beacon pyramid at a selected location
@@ -45,12 +51,16 @@ Tested successfully with these mods, but other might work as well
 - **Book-Import** - Automatically imports text files into signed books
 - **Cart-Placer** - Places any minecarts on any rails in range
 - **Chest-Aura** - High-speed automatic container opener
+- **Chest-Tracker** - Track items in containers
+- **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block
+- **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
 - **Item-Despawn** - Highlights items that are about to despawn.
 - **Map-Grid** - Highlights map grid boundaries around the player
 - **Mapart-Namer** - Auto‑names maps based on inventory slot layout
 - **Mob-Owner** - Shows entity owner by saving into cache
 - **Platform** - Build a platform at a given y-level once in range
 - **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
+- **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in 1.13+ chunks
 - **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
 - **Sculk-Range** - Shows the detection range of calibrated sculk sensors.
 - **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
@@ -61,10 +71,13 @@ Tested successfully with these mods, but other might work as well
 
 </details>
 
-## HUD Elements (3)
+## HUD Elements (6)
 
+- **Anime-Pics** - Displays random Anime pictures ( Cheers >< )
 - **Elytra-Time** - Gives you a rough estimate of the elytra flight time you have left
 - **MayaChan** - Render oehrasa beloved OC's : Nishizumi Maya
+- **Map-Viewer** - Displays the contents of held maps on your HUD
+- **NeboM** - The radar system claims to be able to detect 5th generation aircraft (Loud Incorrect Buzzer noise)
 - **Online-Friends** - Displays online friends from your friend list
 
 ## Commands (4)
@@ -75,8 +88,9 @@ Tested successfully with these mods, but other might work as well
 | `.ifpeek`        | Shows book information from an item frame                                  |
 | `.shelf`         | Extracts a book from a chiseled bookshelf slot, reads it, and puts it back |
 
+## TUTORIALS
 <details>
-<summary>Auto-Login</summary>
+<summary><b>Auto-Login</b></summary>
 - Turn on, login at any server, file 'passwords.txt' will be created
 - Add lines in form of 'server_ip nickname password comment_optional'
 - Alternative usage: login by command
@@ -86,15 +100,15 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 </details>
 
 <details>
-<summary><b>Bookshelf-Filler</b> - Fill Chiseled Bookshelf with books</summary>
+<summary><b>Bookshelf-Filler</b> - Fill Chiselled Bookshelf with books</summary>
 
 1. Enable module
 2. Select an area of position using Axe
 3. Set position 1 corner
 4. Set position 2 corner
 5. To reset position just click again with Axe tools
-6. Optionally : Hold and click with Gaples to take out book from chiseled bookshelf
-7. Optionally : Hold and click with Pickaxes tool to count how many book in chiseled bookshelf area
+6. Optionally : Hold and click with Gaples to take out book from chiselled bookshelf
+7. Optionally : Hold and click with Pickaxes tool to count how many book in chiselled bookshelf area
 </details>
 
 <details>
@@ -103,15 +117,17 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 1. Position mapart in inventory grid
 2. Enable the module
 3. Open up anvil
-4. Note : If the mapart has a longer column (Y) then take out the current map (had been named) and position the new map and redo
+4. Note : If the mapart has a longer column (Y) take out the current map (that had been named) and position (stitch) new map to same grid then redo
 </details>
 
 <details>
 <summary><b>Book-Import</b> - Automatically imports text files into signed books</summary>
 
 1. Enable the module
-2. Put the .txt file into folder : \minecraft\AutoBookshelf\books
-3. Press set key in the module settings to continue to next file
+2. Put the .txt file into folder : `\minecraft\AutoBookshelf\books`
+3. _Recommend to use alongside Bookshelf-Filler module_
+4. Press set key in the module settings to continue to next file
+> I will post the Python code soon
 </details>
 
 ## Credits
@@ -129,6 +145,7 @@ List of addons I used as reference(skid? mwhehe), You should check them out it's
 - **[nerv printer addon](https://github.com/Julflips/nerv-printer-addon)** - Map Namer base reference
 - **[JanitorAddon](https://github.com/Sleeepyv/JanitorAddon)** - ThrowEmptyShulker
 - **[delirious](https://github.com/underscore-zi/delirious)** - Platform Builder
+- **[Trouser](https://github.com/etianl/Trouser-Streak) - PortalPatternFinder
 
 ## Contributing
 
@@ -138,10 +155,11 @@ Open an [issue](https://github.com/oehrasa/Oehrasa-Bookies-Addon/issues) or subm
 
 [GNU GPLv3](LICENSE) - Free to fork and modify.
 
-## Disclaimer
-
-Designed for anarchy servers like 6b6t.org. Use responsibly.
-Ask a question or make a discussions with me on discord : oeh4233
+> [!IMPORTANT]
+>## Disclaimer
+>Designed for anarchy servers like 6b6t.org. Use responsibly.
+> 
+>Ask a question or make a discussions with me on discord : oeh4233
 
 <h1 align="center">
   <img src="https://github.com/user-attachments/assets/0e9c7164-663c-411a-a222-e4416a74131e" alt="Header Image" style="width:70%; max-width:600px;"/>
