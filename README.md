@@ -21,19 +21,19 @@
 ## Dependencies
 
 Tested successfully with these mods, but other might work as well
-- baritone-api-fabric-1.13.1.jar
-- BepHax-0.4.4.0.jar
-- meteor-client-1.21.4-42.jar
-- client_maps-1.3.2+1.21.4.jar (Recommended for Mapart-Namer module)
-- map-in-slot-3.3.0.jar (Recommended for Mapart-Namer module)
+- baritone-meteor-1.21.11.jar
+- BepHax-Final.jar
+- meteor-client-1.21.11-65.jar
+- client_maps-1.3.2.jar (Recommended for Mapart-Namer module)
+- map-in-slot-3.4.1.jar (Recommended for Mapart-Namer module)
 
 ## Features
 
-**32 modules**, **4 commands**, **6 HUD elements**, and **1 mixin**
+**29 modules**, **4 commands**, **5 HUD elements**, and **1 mixin**
 
-## Modules (32 total)
+## Modules (29 total)
 <details>
-<summary><b>Modules</b> (32 modules)</summary>
+<summary><b>Modules</b> (29 modules)</summary>
 
 - **AudiobookReader** - Reads books aloud using narrator feature
 - **Auto-Beacon** - Builds a 4‑beacon pyramid at a selected location
@@ -45,8 +45,6 @@ Tested successfully with these mods, but other might work as well
 - **Beacon-Range** - Renders the range of powered beacons
 - **BLU-27/B-Napalm** - I love the smell of Napalm in the morning, Commit some trolling against the Vietnamese
 - **Better-BoatFly** - Transforms your boat into a plane
-- **BoatPhase6b6t** - For 6b6t BoatPhase
-- **BoatGlitch6b6t** - Dependency for BoatPhase
 - **Bookshelf-Filler** - oeh Yuri romcom bookshelves restocker
 - **Book-Import** - Automatically imports text files into signed books
 - **Cart-Placer** - Places any minecarts on any rails in range
@@ -62,7 +60,6 @@ Tested successfully with these mods, but other might work as well
 - **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
 - **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in 1.13+ chunks
 - **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
-- **Sculk-Range** - Shows the detection range of calibrated sculk sensors.
 - **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
 - **Tnt-Fuse-Esp** - Shows the fuse time of lit tnt
 - **Trajectory-Plus** - Smooth projectile prediction and tracking
@@ -71,12 +68,11 @@ Tested successfully with these mods, but other might work as well
 
 </details>
 
-## HUD Elements (6)
+## HUD Elements (5)
 
 - **Anime-Pics** - Displays random Anime pictures ( Cheers >< )
 - **Elytra-Time** - Gives you a rough estimate of the elytra flight time you have left
 - **MayaChan** - Render oehrasa beloved OC's : Nishizumi Maya
-- **Map-Viewer** - Displays the contents of held maps on your HUD
 - **NeboM** - The radar system claims to be able to detect 5th generation aircraft (Loud Incorrect Buzzer noise)
 - **Online-Friends** - Displays online friends from your friend list
 
