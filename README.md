@@ -6,7 +6,7 @@
 <img src="https://img.shields.io/badge/Meteor Addon-6f1ab1?logo=meteor&logoColor=white"/> 
 <a href="https://github.com/oehrasa/Oehrasa-Bookies-Addon/commits/main"><img src="https://img.shields.io/github/last-commit/oehrasa/Oehrasa-Bookies-Addon?logo=github&color=light_green" alt="Last commit"></a>
 <img src="https://img.shields.io/github/repo-size/oehrasa/Oehrasa-Bookies-Addon?color=magenta" alt="Repo Size">
-<img src="https://img.shields.io/github/issues/oehrasa/Oehrasa-Bookies-Addon?color=blue" alt="Issues">
+<img src="https://img.shields.io/github/issues/oehrasa/Oehrasa-Bookies-Addon?style=flat-square&color=blue">
 <img src="https://img.shields.io/github/stars/oehrasa/Oehrasa-Bookies-Addon?style=flat&color=yellow" alt="Stars">
 <img src="https://img.shields.io/github/downloads/oehrasa/Oehrasa-Bookies-Addon/total?color=red" alt="Downloads">
 </div>
