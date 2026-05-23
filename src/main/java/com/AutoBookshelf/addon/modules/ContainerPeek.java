@@ -14,7 +14,6 @@ import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.*;
-import net.minecraft.text.Text;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.BundleContentsComponent;
@@ -22,6 +21,7 @@ import net.minecraft.component.type.ContainerComponent;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.decoration.ItemFrameEntity;
 import net.minecraft.item.ItemStack;
+import net.minecraft.text.Text;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.hit.HitResult;
@@ -248,7 +248,6 @@ public class ContainerPeek extends Module {
         } else if (lastContainer != null) {
             stacks = lastContainer.getItemStacks();
             pos = lastContainer.getPosition();
-            // Use custom name if set, otherwise fall back to container type
             typeStr = lastContainer.getCustomName() != null
                 ? lastContainer.getCustomName()
                 : lastContainer.getContainerType();
@@ -280,12 +279,17 @@ public class ContainerPeek extends Module {
         if (textLines > 0) panelHeight += 10 * textLines + padding;
 
         int panelX = screenX - panelWidth / 2;
-        int panelY = screenY - panelHeight - 20;
+        int panelY = screenY - panelHeight;   // directly above the crosshair
 
+        // clamp to screen
         if (panelX < 0) panelX = 0;
         if (panelY < 0) panelY = 0;
         if (panelX + panelWidth > mc.getWindow().getScaledWidth()) panelX = mc.getWindow().getScaledWidth() - panelWidth;
         if (panelY + panelHeight > mc.getWindow().getScaledHeight()) panelY = mc.getWindow().getScaledHeight() - panelHeight;
+
+        var matrices = context.getMatrices();
+        matrices.pushMatrix();
+        matrices.identity();   // reset inherited translation
 
         // Background
         context.fill(panelX, panelY, panelX + panelWidth, panelY + panelHeight, backgroundColor.get().getPacked());
@@ -296,16 +300,18 @@ public class ContainerPeek extends Module {
         context.fill(panelX, panelY, panelX + 1, panelY + panelHeight, borderColor.get().getPacked());
         context.fill(panelX + panelWidth - 1, panelY, panelX + panelWidth, panelY + panelHeight, borderColor.get().getPacked());
 
+        // Text
         int textY = panelY + padding;
         if (showType.get()) {
             context.drawTextWithShadow(mc.textRenderer, Text.literal(typeStr), panelX + padding, textY, 0xFFFFFF);
             textY += 10;
         }
         if (showPosition.get()) {
-            context.drawTextWithShadow(mc.textRenderer, posStr, panelX + padding, textY, 0xCCCCCC);
+            context.drawTextWithShadow(mc.textRenderer, Text.literal(posStr), panelX + padding, textY, 0xCCCCCC);
             textY += 10;
         }
 
+        // Item grid
         int itemStartX = panelX + padding;
         int itemStartY = textY + padding;
         float itemScale = iconSize / 16.0f;
@@ -314,7 +320,9 @@ public class ContainerPeek extends Module {
             int row = i / itemsPerRow;
             int x = itemStartX + col * (iconSize + padding);
             int y = itemStartY + row * (iconSize + padding);
-            RenderUtils.drawItem(event.drawContext, stacks.get(i), x, y, itemScale, true);
+            RenderUtils.drawItem(event.drawContext, stacks.get(i), x, y, itemScale, true, null, false);
         }
+
+        matrices.popMatrix();
     }
 }
