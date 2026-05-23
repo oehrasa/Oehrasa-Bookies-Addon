@@ -42,7 +42,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new AutoBeacon());
         Modules.get().add(new AutoTakeOff());
         Modules.get().add(new AudiobookReader());
-        // C
+        // B
         Modules.get().add(new B36());
         Modules.get().add(new BoatPhase());
         Modules.get().add(new BoatGlitch());
@@ -51,7 +51,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new BookImporter());
         Modules.get().add(new BetterBoatFly());
         Modules.get().add(new BookshelfFiller());
-        // B
+        // C
         Modules.get().add(new ChestAura());
         Modules.get().add(new ContainerPeek());
         Modules.get().add(new com.AutoBookshelf.addon.modules.chesttracker.ChestTrackerModule());

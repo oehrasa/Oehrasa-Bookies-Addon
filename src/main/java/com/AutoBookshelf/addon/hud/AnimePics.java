@@ -38,6 +38,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
@@ -48,7 +49,7 @@ public class AnimePics extends HudElement {
     public static final HudElementInfo<AnimePics> INFO = new HudElementInfo<>(
         Addon.HUD_GROUP,
         "Anime-Pics",
-        "Displays random Anime pictures from Nekos.life or WaifuIM or Safebooru.",
+        "Displays random Anime pictures from Nekos.life or WaifuIM or Safebooru or even Custom.",
         AnimePics::create
     );
 
@@ -63,7 +64,7 @@ public class AnimePics extends HudElement {
     // Settings
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
-    public enum Source { NekosLife, WaifuIM, Safebooru }
+    public enum Source { NekosLife, WaifuIM, Safebooru, LocalFolder }
 
     public enum NekosTag {
         neko, waifu, fox_girl, hug, kiss, meow, gecg,
@@ -91,7 +92,11 @@ public class AnimePics extends HudElement {
         .name("source")
         .description("Image source to use.")
         .defaultValue(Source.WaifuIM)
-        .onChanged(v -> refreshNow())
+        .onChanged(v -> {
+            if (v == Source.LocalFolder) loadLocalFileList();
+            refreshNow();
+            updateSourceButtonsVisibility();
+        })
         .build()
     );
 
@@ -175,7 +180,18 @@ public class AnimePics extends HudElement {
         .build()
     );
 
-    // Event bus subscription for tick updates
+    private final Setting<String> localFolderPath = sgGeneral.add(new StringSetting.Builder()
+        .name("local-folder-path")
+        .description("Path to the folder containing images for Local Folder.")
+        .visible(() -> source.get() == Source.LocalFolder)
+        .defaultValue("")
+        .build()
+    );
+
+    // Local folder cycle
+    private List<File> localImageFiles = new ArrayList<>();
+    private int localImageIndex = 0;
+
     public AnimePics() {
         super(INFO);
         this.textureId = Identifier.of("autobookshelf", "animepics_" + UUID.randomUUID());
@@ -202,19 +218,42 @@ public class AnimePics extends HudElement {
         return new AnimePics();
     }
 
+    // Widgets
+    private WHorizontalList folderRow;
+    private WHorizontalList onlineRow;
+
     @Override
     public WWidget getWidget(GuiTheme theme) {
-        WVerticalList list = theme.verticalList();
-        WHorizontalList buttonRow = theme.horizontalList();
-        list.add(buttonRow).expandX();
+        WHorizontalList row = theme.horizontalList();
 
-        WButton refreshBtn = buttonRow.add(theme.button("Refresh Now")).widget();
+        WButton refreshBtn = row.add(theme.button("Refresh Now")).widget();
         refreshBtn.action = this::refreshNow;
 
-        WButton saveBtn = buttonRow.add(theme.button("Save Image")).widget();
+        WButton saveBtn = row.add(theme.button("Save Image")).widget();
         saveBtn.action = this::saveImage;
 
-        return list;
+        // Folder selector (visible when is not LocalFolder)
+        folderRow = theme.horizontalList();
+        row.add(folderRow);
+        WButton selectFolderBtn = folderRow.add(theme.button("Select Folder")).widget();
+        selectFolderBtn.action = this::selectLocalFolder;
+
+        // Switch to online (visible only when LocalFolder)
+        onlineRow = theme.horizontalList();
+        row.add(onlineRow);
+        WButton onlineBtn = onlineRow.add(theme.button("Select Online")).widget();
+        onlineBtn.action = () -> {
+            source.set(Source.WaifuIM);
+            refreshNow();
+        };
+
+        updateSourceButtonsVisibility();
+        return row;
+    }
+
+    private void updateSourceButtonsVisibility() {
+        if (folderRow != null) folderRow.visible = source.get() != Source.LocalFolder;
+        if (onlineRow != null) onlineRow.visible = source.get() == Source.LocalFolder;
     }
 
     // Forces next load to use the currently selected fixed category
@@ -248,6 +287,36 @@ public class AnimePics extends HudElement {
         }
     }
 
+    private void selectLocalFolder() {
+        String path = TinyFileDialogs.tinyfd_selectFolderDialog(
+            "Choose image folder",
+            localFolderPath.get().isEmpty()
+                ? new File(MeteorClient.FOLDER, "images").getAbsolutePath()
+                : localFolderPath.get()
+        );
+        if (path != null) {
+            localFolderPath.set(path);
+            source.set(Source.LocalFolder);   // triggers onChanged → load list + refresh
+            MeteorClient.LOG.info("Image folder set to " + path);
+            refreshNow();
+        }
+    }
+
+    /** reloads the list of image files from the current local folder. */
+    private void loadLocalFileList() {
+        localImageFiles.clear();
+        localImageIndex = 0;
+        String folderPath = localFolderPath.get();
+        if (folderPath.isEmpty()) return;
+
+        File dir = new File(folderPath);
+        File[] files = dir.listFiles((d, name) -> {
+            String lower = name.toLowerCase();
+            return lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg");
+        });
+        if (files != null) localImageFiles.addAll(List.of(files));
+    }
+
     @EventHandler
     public void onTick(TickEvent.Post event) {
         if (pauseRefresh.get()) return;
@@ -278,6 +347,7 @@ public class AnimePics extends HudElement {
             case NekosLife -> fetchNekosLife(forceFixed);
             case WaifuIM -> fetchWaifuIM(forceFixed);
             case Safebooru -> fetchSafebooru();
+            case LocalFolder -> "local://" + (localFolderPath.get());
         };
     }
 
@@ -333,24 +403,16 @@ public class AnimePics extends HudElement {
             int pid = new Random().nextInt(700);
             String apiUrl = "https://safebooru.org/index.php?page=dapi&s=post&q=index&json=1"
                 + "&tags=" + encoded
-                + "&limit=10" // request 10 posts
+                + "&limit=10"
                 + "&pid=" + pid;
 
             JsonElement result = Http.get(apiUrl).sendJson(JsonElement.class);
-            if (!(result instanceof JsonArray array) || array.isEmpty()) {
-                return null;
-            }
+            if (!(result instanceof JsonArray array) || array.isEmpty()) return null;
 
-            // Pick a random post from the page
             JsonObject post = array.get(new Random().nextInt(array.size())).getAsJsonObject();
 
-            // Prefer file_url, then preview_url, then construct from directory/image
-            if (post.has("file_url")) {
-                return post.get("file_url").getAsString();
-            }
-            if (post.has("preview_url")) {
-                return post.get("preview_url").getAsString();
-            }
+            if (post.has("file_url")) return post.get("file_url").getAsString();
+            if (post.has("preview_url")) return post.get("preview_url").getAsString();
             if (post.has("directory") && post.has("image")) {
                 return "https://safebooru.org/images/"
                     + post.get("directory").getAsString() + "/"
@@ -361,6 +423,14 @@ public class AnimePics extends HudElement {
             MeteorClient.LOG.error("[AnimePics] Safebooru Error: " + e.getMessage());
             return null;
         }
+    }
+
+    /** Returns the next local image file, cycling through the list. */
+    private File getNextLocalImage() {
+        if (localImageFiles.isEmpty()) return null;
+        File file = localImageFiles.get(localImageIndex);
+        localImageIndex = (localImageIndex + 1) % localImageFiles.size();
+        return file;
     }
 
     private void loadImage() {
@@ -374,18 +444,34 @@ public class AnimePics extends HudElement {
                 String url = fetchImageUrl(useFixed);
                 if (url == null) { locked = false; return; }
 
-                MeteorClient.LOG.info("[AnimePics] Image URL: " + url);
-                var img = ImageIO.read(Http.get(url).sendInputStream());
-                var baos = new ByteArrayOutputStream();
-                ImageIO.write(img, "png", baos);
+                byte[] imageBytes;
 
-                byte[] imageBytes = baos.toByteArray();
-                this.currentImageBytes = imageBytes;    // cache for saving
+                if (url.startsWith("local://")) {
+                    // Use cycling instead of random
+                    File file = getNextLocalImage();
+                    if (file == null) {
+                        MeteorClient.LOG.error("[AnimePics] No images found in folder.");
+                        locked = false;
+                        return;
+                    }
+                    imageBytes = Files.readAllBytes(file.toPath());
+                } else {
+                    // Network source
+                    MeteorClient.LOG.info("[AnimePics] Image URL: " + url);
+                    var img = ImageIO.read(Http.get(url).sendInputStream());
+                    var baos = new ByteArrayOutputStream();
+                    ImageIO.write(img, "png", baos);
+                    imageBytes = baos.toByteArray();
+                }
+
+                this.currentImageBytes = imageBytes;
+                byte[] finalImageBytes = imageBytes;
+
                 mc.execute(() -> {
                     try {
                         if (mc.getTextureManager() == null) return;
                         mc.getTextureManager().registerTexture(textureId,
-                            new NativeImageBackedTexture(NativeImage.read(new ByteArrayInputStream(imageBytes))));
+                            new NativeImageBackedTexture(NativeImage.read(new ByteArrayInputStream(finalImageBytes))));
                         empty = false;
                         MeteorClient.LOG.info("[AnimePics] Image loaded!");
                     } catch (Exception ex) {
