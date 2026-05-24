@@ -496,7 +496,7 @@ public class AutoBeacon extends Module {
     }
 
     private FindItemResult findBlockInHotbar() {
-        // 1. Main hand already holds an allowed block → keep it, remember as preferred
+        // 1. Main hand already holds an allowed block
         ItemStack mainHand = mc.player.getMainHandStack();
         if (!mainHand.isEmpty() && mainHand.getItem() instanceof BlockItem handBlock) {
             if (allowedBlocks.get().contains(handBlock.getBlock())) {

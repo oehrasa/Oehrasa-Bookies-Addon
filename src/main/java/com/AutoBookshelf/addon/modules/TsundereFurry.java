@@ -32,6 +32,27 @@ public class TsundereFurry extends Module {
         .visible(() -> mode.get() != TransformationMode.Tsundere)
         .build());
 
+    private final Setting<List<String>> rabbitSounds = sgAnimal.add(new StringListSetting.Builder()
+        .name("rabbit-sounds")
+        .description("Turn into rabbits.")
+        .defaultValue(List.of("chirrup", "purr", "purrrrr", "prrr", "grunt", "peko", "thump", "buni", "nurf", "pyon"))
+        .visible(() -> mode.get() != TransformationMode.Tsundere)
+        .build());
+
+    private final Setting<List<String>> catSounds = sgAnimal.add(new StringListSetting.Builder()
+        .name("cat-sounds")
+        .description("Turn into cats.")
+        .defaultValue(List.of("meow", "mreow", "mrew", "purr", "hissss", "prrr", "mew", "rawr", "nya", "buhhh", "nyaa~", "miaw <3"))
+        .visible(() -> mode.get() != TransformationMode.Tsundere)
+        .build());
+
+    private final Setting<List<String>> dogSounds = sgAnimal.add(new StringListSetting.Builder()
+        .name("dog-sounds")
+        .description("Turn into dogs.")
+        .defaultValue(List.of("bark", "woof", "arf arf", "grrrrr", "ruff", "growl", "yap", "bowwow", "yap", "Im a good boy :3", "arf", "awoo", "aruff"))
+        .visible(() -> mode.get() != TransformationMode.Tsundere)
+        .build());
+
     private final Setting<Boolean> swearReplacement = sgTsundere.add(new BoolSetting.Builder()
         .name("swear-replace")
         .description("Replace swear words with tsundere alternatives.")
@@ -132,7 +153,6 @@ public class TsundereFurry extends Module {
         .visible(() -> addPrefix.get() && mode.get() != TransformationMode.Animal)
         .build()); // The odds are pretty good eh
 
-    private final Map<Animal, List<String>> animalSounds = new HashMap<>();
     private static final Pattern TOKEN_RE = Pattern.compile("[A-Za-z0-9]+(?:'[A-Za-z0-9]+)?|_|[^\\w\\s]|\\s+", Pattern.UNICODE_CHARACTER_CLASS);
     private static final Set<String> ALWAYS_STICKY = new HashSet<>(Arrays.asList(
         "whore", "whores", "cunt", "cunts", "bitch", "bitches", "asses", "asshole", "assholes", "asshat", "asshats",
@@ -192,9 +212,6 @@ public class TsundereFurry extends Module {
 
     public TsundereFurry() {
         super(Addon.CATEGORY2, "Tsundere-Furry", "Transforms outgoing chat messages into animal sounds, tsundere, or both :>");
-        animalSounds.put(Animal.Rabbit, List.of("chirrup", "purr", "purrrrr", "prrr", "grunt", "peko", "thump", "buni", "nurf", "pyon"));
-        animalSounds.put(Animal.Cat, List.of("meow", "mreow", "mrew", "purr", "purrrrr", "prrr", "mew", "rawr", "nya", "buhhh", "nyaa~", "miaw <3"));
-        animalSounds.put(Animal.Dog, List.of("bark", "woof", "arf arf", "grrrrr", "ruff", "growl", "yap", "bowwow", "yap", "Im a good boy :3"));
     }
 
     @EventHandler
@@ -272,8 +289,12 @@ public class TsundereFurry extends Module {
     }
 
     private String convertToAnimalSounds(String message) {
-        List<String> sounds = animalSounds.get(animal.get());
-        if (sounds == null || sounds.isEmpty()) return message;
+        List<String> sounds = switch (animal.get()) {
+            case Rabbit -> rabbitSounds.get();
+            case Cat    -> catSounds.get();
+            case Dog    -> dogSounds.get();
+        };
+        if (sounds.isEmpty()) return message;
 
         Map<String, String> wordToSound = new HashMap<>();
         StringBuffer out = new StringBuffer();
