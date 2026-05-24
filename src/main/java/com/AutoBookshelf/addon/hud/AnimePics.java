@@ -93,6 +93,7 @@ public class AnimePics extends HudElement {
         .defaultValue(Source.WaifuIM)
         .onChanged(v -> {
             if (v == Source.LocalFolder) loadLocalFileList();   // reload list when switching to local
+            loggedEmptyFolder = false;
             refreshNow();
             if (this.settings != null) this.settings.invalidate();
             updateSourceButtonsVisibility();
@@ -191,6 +192,7 @@ public class AnimePics extends HudElement {
     // Local folder cycle
     private List<File> localImageFiles = new ArrayList<>();
     private int localImageIndex = 0;
+    private boolean loggedEmptyFolder = false;
 
     public AnimePics() {
         super(INFO);
@@ -298,6 +300,7 @@ public class AnimePics extends HudElement {
             localFolderPath.set(path);
             source.set(Source.LocalFolder);
             MeteorClient.LOG.info("Image folder set to " + path);
+            loggedEmptyFolder = false;
             refreshNow();
         }
     }
@@ -320,6 +323,23 @@ public class AnimePics extends HudElement {
     @EventHandler
     public void onTick(TickEvent.Post event) {
         if (pauseRefresh.get()) return;
+
+        // If source is local but the file list was never loaded (after relog), load it now
+        if (source.get() == Source.LocalFolder && localImageFiles.isEmpty()) {
+            loadLocalFileList();
+        }
+
+        // If the folder is still empty, log once and stop refreshing
+        if (source.get() == Source.LocalFolder && localImageFiles.isEmpty()) {
+            if (!loggedEmptyFolder) {
+                MeteorClient.LOG.error("[AnimePics] No images found in folder.");
+                loggedEmptyFolder = true;
+            }
+            return;
+        } else {
+            loggedEmptyFolder = false;
+        }
+
         ticks++;
         if (ticks >= refreshRate.get()) {
             ticks = 0;
@@ -330,6 +350,10 @@ public class AnimePics extends HudElement {
     @Override
     public void render(HudRenderer renderer) {
         if (empty) {
+            // If local folder is empty, don't keep trying
+            if (source.get() == Source.LocalFolder && localImageFiles.isEmpty()) {
+                return;
+            }
             loadImage();
             return;
         }
@@ -455,11 +479,23 @@ public class AnimePics extends HudElement {
                     // Use cycling instead of random
                     File file = getNextLocalImage();
                     if (file == null) {
-                        MeteorClient.LOG.error("[AnimePics] No images found in folder.");
                         locked = false;
                         return;
                     }
-                    imageBytes = Files.readAllBytes(file.toPath());
+                    // If already PNG, read raw bytes, otherwise convert via ImageIO
+                    if (file.getName().toLowerCase().endsWith(".png")) {
+                        imageBytes = Files.readAllBytes(file.toPath());
+                    } else {
+                        java.awt.image.BufferedImage img = ImageIO.read(file);
+                        if (img == null) {
+                            MeteorClient.LOG.error("[AnimePics] Could not read image: " + file.getName());
+                            locked = false;
+                            return;
+                        }
+                        var baos = new ByteArrayOutputStream();
+                        ImageIO.write(img, "png", baos);
+                        imageBytes = baos.toByteArray();
+                    }
                 } else {
                     MeteorClient.LOG.info("[AnimePics] Image URL: " + url);
                     var img = ImageIO.read(Http.get(url).sendInputStream());

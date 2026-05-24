@@ -6,6 +6,7 @@ import com.AutoBookshelf.addon.hud.ElytraTime;
 import com.AutoBookshelf.addon.hud.OnlineFriendsHUD;
 import com.AutoBookshelf.addon.hud.AnimePics;
 import com.AutoBookshelf.addon.hud.NeboM;
+import com.AutoBookshelf.addon.hud.TeleportTimer;
 import com.AutoBookshelf.addon.commands.IfpeekCommand;
 import com.AutoBookshelf.addon.commands.ShelfCommand;
 import com.AutoBookshelf.addon.commands.BookCommand;
@@ -52,6 +53,8 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new ChestAura());
         Modules.get().add(new ContainerPeek());
         Modules.get().add(new com.AutoBookshelf.addon.modules.chesttracker.ChestTrackerModule());
+        // D
+        Modules.get().add(new DriedGhastPlacer());
         // E I M
         Modules.get().add(new ElytraPath());
         Modules.get().add(new ItemDespawn());
@@ -79,6 +82,7 @@ public class Addon extends MeteorAddon {
         Hud.get().register(MayaChan.INFO);
         Hud.get().register(NeboM.INFO);
         Hud.get().register(OnlineFriendsHUD.INFO);
+        Hud.get().register(TeleportTimer.INFO);
 
         // COMMANDS
         Commands.add(new BookCommand());
