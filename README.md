@@ -29,11 +29,11 @@ Tested successfully with these mods, but other might work as well
 
 ## Features
 
-**29 modules**, **4 commands**, **5 HUD elements**, and **1 mixin**
+**30 modules**, **4 commands**, **6 HUD elements**, and **1 mixin**
 
-## Modules (29 total)
+## Modules (30 total)
 <details>
-<summary><b>Modules</b> (29 modules)</summary>
+<summary><b>Modules</b> (30 modules)</summary>
 
 - **AudiobookReader** - Reads books aloud using narrator feature
 - **Auto-Beacon** - Builds a 4‑beacon pyramid at a selected location
@@ -50,6 +50,7 @@ Tested successfully with these mods, but other might work as well
 - **Cart-Placer** - Places any minecarts on any rails in range
 - **Chest-Aura** - High-speed automatic container opener
 - **Chest-Tracker** - Track items in containers
+- **Dried-Ghast** - Give these cute and tiny little creatures a second chances
 - **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block
 - **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
 - **Item-Despawn** - Highlights items that are about to despawn.
@@ -68,13 +69,14 @@ Tested successfully with these mods, but other might work as well
 
 </details>
 
-## HUD Elements (5)
+## HUD Elements (6)
 
 - **Anime-Pics** - Displays random Anime pictures ( Cheers >< )
 - **Elytra-Time** - Gives you a rough estimate of the elytra flight time you have left
 - **MayaChan** - Render oehrasa beloved OC's : Nishizumi Maya
 - **NeboM** - The radar system claims to be able to detect 5th generation aircraft (Loud Incorrect Buzzer noise)
 - **Online-Friends** - Displays online friends from your friend list
+- **Teleport-Timer** - Shows a countdown bar on pending teleportation
 
 ## Commands (4)
 | Command          | Description                                                                |
@@ -124,6 +126,13 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 3. _Recommend to use alongside Bookshelf-Filler module_
 4. Press set key in the module settings to continue to next file
 > I will post the Python code soon
+</details>
+
+<details>
+<summary><b>Cart-Placer</b></summary>
+- Think of your decision before arming the launchers with tomahawk missiles
+    
+https://github.com/user-attachments/assets/023f2df1-003e-4c12-bd4f-9119999ad11e
 </details>
 
 ## Credits
