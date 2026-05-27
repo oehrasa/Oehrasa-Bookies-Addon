@@ -63,7 +63,7 @@ public class MayaChan extends HudElement {
     );
 
     public static final HudElementInfo<MayaChan> INFO = new HudElementInfo<>(
-        Addon.HUD_GROUP, "MayaChan", "Render oehrasa beloved OC's : Nishizumi Maya.", MayaChan::new);
+        Addon.HUD_GROUP, "MayaChan", "Renders oehrasa beloved OC's : Nishizumi Maya.", MayaChan::new); // Drawing by Kodack, me, A-Chan & sis
 
     public MayaChan() {
         super(INFO);

@@ -29,11 +29,11 @@ Tested successfully with these mods, but other might work as well
 
 ## Features
 
-**32 modules**, **4 commands**, **6 HUD elements**, and **1 mixin**
+**33 modules**, **4 commands**, **7 HUD elements**, and **1 mixin**
 
-## Modules (32 total)
+## Modules (33 total)
 <details>
-<summary><b>Modules</b> (32 modules)</summary>
+<summary><b>Modules</b> (Bookies modules)</summary>
 
 - **AudiobookReader** - Reads books aloud using narrator feature
 - **Auto-Beacon** - Builds a 4‑beacon pyramid at a selected location
@@ -57,6 +57,7 @@ Tested successfully with these mods, but other might work as well
 - **Item-Despawn** - Highlights items that are about to despawn.
 - **Map-Grid** - Highlights map grid boundaries around the player
 - **Mapart-Namer** - Auto‑names maps based on inventory slot layout
+- **Mats-Refill** - Automatically restocks materials from shulker boxes
 - **Mob-Owner** - Shows entity owner by saving into cache
 - **Platform** - Build a platform at a given y-level once in range
 - **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
@@ -71,14 +72,15 @@ Tested successfully with these mods, but other might work as well
 
 </details>
 
-## HUD Elements (6)
+## HUD Elements (7)
 
 - **Anime-Pics** - Displays random Anime pictures ( Cheers >< )
 - **Elytra-Time** - Gives you a rough estimate of the elytra flight time you have left
-- **MayaChan** - Render oehrasa beloved OC's : Nishizumi Maya
+- **MayaChan** - Renders oehrasa beloved OC's : Nishizumi Maya
 - **Map-Viewer** - Displays the contents of held maps on your HUD
 - **NeboM** - The radar system claims to be able to detect 5th generation aircraft (Loud Incorrect Buzzer noise)
 - **Online-Friends** - Displays online friends from your friend list
+- **Teleport-Timer** - Shows a countdown bar for teleports and cooldowns
 
 ## Commands (4)
 | Command          | Description                                                                |

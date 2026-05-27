@@ -21,53 +21,79 @@ public class TeleportTimer extends HudElement {
     public static final HudElementInfo<TeleportTimer> INFO = new HudElementInfo<>(
         Addon.HUD_GROUP,
         "Teleport-Timer",
-        "Shows a countdown bar on pending teleportation.",
+        "Shows a countdown bar for teleports and cooldowns.",
         TeleportTimer::new
     );
+
+    public enum Rank {
+        Prime(300, 420),
+        Elite(90, 120),
+        APEX(15, 30);
+
+        public final int homeCooldownSec, tpaCooldownSec;
+        Rank(int home, int tpa) {
+            this.homeCooldownSec = home;
+            this.tpaCooldownSec = tpa;
+        }
+    }
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
     private final Setting<SettingColor> startColor = sgGeneral.add(new ColorSetting.Builder()
         .name("start-color")
-        .description("Colour at the beginning of the countdown.")
         .defaultValue(new SettingColor(0, 255, 0, 200))
         .build()
     );
-
     private final Setting<SettingColor> midColor = sgGeneral.add(new ColorSetting.Builder()
         .name("mid-color")
-        .description("Colour in the middle of the countdown.")
         .defaultValue(new SettingColor(255, 255, 0, 200))
         .build()
     );
-
     private final Setting<SettingColor> endColor = sgGeneral.add(new ColorSetting.Builder()
         .name("end-color")
-        .description("Colour at the end of the countdown.")
         .defaultValue(new SettingColor(255, 0, 0, 200))
         .build()
     );
-
     private final Setting<Double> barHeight = sgGeneral.add(new DoubleSetting.Builder()
         .name("bar-height")
-        .description("Height of the countdown bar.")
         .defaultValue(10)
         .min(4)
         .sliderRange(4, 30)
         .build()
     );
 
+    private final Setting<Boolean> showCooldown = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-cooldown")
+        .description("Display cooldown timer after teleport.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Rank> rank = sgGeneral.add(new EnumSetting.Builder<Rank>()
+        .name("rank")
+        .description("Your rank (used to calculate full cooldown).")
+        .defaultValue(Rank.Elite)
+        .build()
+    );
+
+    // internal state
     private int ticksRemaining = 0;
     private int totalTicks = 0;
-    private static final Pattern SECONDS_PATTERN = Pattern.compile("Teleporting.*?\\b(\\d+)\\s*seconds?");
+    private String label = "";
+    private boolean isCooldown = false;
+
+    // patterns
+    private static final Pattern TELEPORT_WARMUP = Pattern.compile("Teleporting.*?\\bin\\s+(\\d+)\\s*seconds?");
+    private static final Pattern TELEPORT_SUCCESS = Pattern.compile("Teleporting to:");
+    private static final Pattern COOLDOWN_MSG = Pattern.compile("You have to wait (?:(\\d+)m\\s*)?(\\d+)s\\s+to teleport again");
+    private static final Pattern TELEPORT_CANCEL = Pattern.compile("Successfully cancelled your pending teleport request to:\\s*(\\S+)");
 
     public TeleportTimer() {
         super(INFO);
         MeteorClient.EVENT_BUS.subscribe(this);
     }
 
-    @Override
-    public void remove() {
+    @Override public void remove() {
         super.remove();
         MeteorClient.EVENT_BUS.unsubscribe(this);
     }
@@ -77,19 +103,72 @@ public class TeleportTimer extends HudElement {
         if (mc.player == null || mc.world == null) return;
         String message = event.getMessage().getString();
 
-        Matcher matcher = SECONDS_PATTERN.matcher(message);
+        // Cancel
+        Matcher cancelMatcher = TELEPORT_CANCEL.matcher(message);
+        if (cancelMatcher.find()) {
+            ticksRemaining = 0;
+            totalTicks = 0;
+            label = "";
+            return;
+        }
+
+        // 1. Teleport warmup, we capture destination as well
+        Matcher matcher = TELEPORT_WARMUP.matcher(message);
         if (matcher.find()) {
             int seconds = Integer.parseInt(matcher.group(1));
             ticksRemaining = seconds * 20;
             totalTicks = ticksRemaining;
+            // Try to extract the destination name
+            String destination = "";
+            Matcher destMatcher = TELEPORT_WARMUP.matcher(message);
+            if (message.contains(" to ")) {
+                int start = message.indexOf(" to ") + 4;
+                int end = message.length();
+                // Check if there's " in " before the end, and if so stop there
+                int inIdx = message.indexOf(" in ", start);
+                if (inIdx != -1) end = inIdx;
+                // Also cut at period
+                int dotIdx = message.indexOf('.', start);
+                if (dotIdx != -1 && dotIdx < end) end = dotIdx;
+                destination = message.substring(start, end).trim();
+            }
+            label = destination.isEmpty() ? "Teleporting" : "Teleporting to " + destination;
+            isCooldown = false;
+            return;
+        }
+
+        // 2. Teleport success then start a cooldown
+        if (showCooldown.get() && TELEPORT_SUCCESS.matcher(message).find()) {
+            int fullSec = rank.get().homeCooldownSec;
+            ticksRemaining = fullSec * 20;
+            totalTicks = fullSec * 20;
+            label = "Home Cooldown";
+            isCooldown = true;
+            return;
+        }
+
+        // 3. Manual cooldown message
+        if (showCooldown.get()) {
+            matcher = COOLDOWN_MSG.matcher(message);
+            if (matcher.find()) {
+                if (message.contains("Lower your cooldown")) return;
+                String minStr = matcher.group(1);
+                String secStr = matcher.group(2);
+                int minutes = (minStr != null) ? Integer.parseInt(minStr) : 0;
+                int seconds = Integer.parseInt(secStr);
+                int remaining = minutes * 60 + seconds;
+                int fullSec = rank.get().homeCooldownSec;
+                ticksRemaining = remaining * 20;
+                totalTicks = fullSec * 20;
+                label = "Home Cooldown";
+                isCooldown = true;
+            }
         }
     }
 
-    @EventHandler
+        @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (ticksRemaining > 0) {
-            ticksRemaining--;
-        }
+        if (ticksRemaining > 0) ticksRemaining--;
     }
 
     @Override
@@ -98,7 +177,6 @@ public class TeleportTimer extends HudElement {
 
         double fraction = (double) ticksRemaining / totalTicks;
         Color colour;
-
         if (fraction > 0.5) {
             double t = (fraction - 0.5) * 2.0;
             colour = lerpColor(midColor.get(), startColor.get(), t);
@@ -107,15 +185,18 @@ public class TeleportTimer extends HudElement {
             colour = lerpColor(endColor.get(), midColor.get(), t);
         }
 
-        // Background
+        // Label above the bar
+        renderer.text(label, x, y - renderer.textHeight(false, getScale()) - 1, colour, false, getScale());
+
+        // Background bar
         renderer.quad(x, y, getWidth(), barHeight.get(), new SettingColor(0, 0, 0, 100));
 
         // Filled bar
         double filledWidth = getWidth() * fraction;
         renderer.quad(x, y, filledWidth, barHeight.get(), colour);
 
-        // Time text
-        String text = String.format("%.1fs", ticksRemaining / 20.0);
+        // Time text below the bar
+        String text = formatTime(ticksRemaining);
         double textX = x + getWidth() / 2.0 - renderer.textWidth(text, false, getScale()) / 2.0;
         double textY = y + barHeight.get() + 2;
         renderer.text(text, textX, textY, colour, false, getScale());
@@ -123,7 +204,7 @@ public class TeleportTimer extends HudElement {
 
     @Override
     public void tick(HudRenderer renderer) {
-        setSize(200, barHeight.get() + renderer.textHeight(false, getScale()) + 4);
+        setSize(200, barHeight.get() + renderer.textHeight(false, getScale()) * 2 + 6);
     }
 
     private double getScale() { return 1.0; }
@@ -132,7 +213,15 @@ public class TeleportTimer extends HudElement {
         int r = (int) Math.round(a.r + (b.r - a.r) * t);
         int g = (int) Math.round(a.g + (b.g - a.g) * t);
         int bl = (int) Math.round(a.b + (b.b - a.b) * t);
-        int alpha = (int) Math.round(a.a + (b.a - a.a) * t);
-        return new Color(r, g, bl, alpha);
+        int al = (int) Math.round(a.a + (b.a - a.a) * t);
+        return new Color(r, g, bl, al);
+    }
+
+    private String formatTime(int ticks) {
+        int totalSec = ticks / 20;
+        if (totalSec >= 60) {
+            return String.format("%dm %ds", totalSec / 60, totalSec % 60);
+        }
+        return String.format("%ds", totalSec);
     }
 }

@@ -70,10 +70,15 @@ public class PressItemFrame extends Module {
 
     private boolean canSee(ItemFrameEntity frame) {
         Vec3d eyes = mc.player.getEyePos();
-        Vec3d frameCenter = frame.getPos().add(0, frame.getHeight() / 2.0, 0);
+        // Accurate centre of the frame's bounding box
+        Vec3d center = frame.getBoundingBox().getCenter();
+        // Direction the frame's front is facing (opposite of the attached wall/ceiling/floor)
+        Vec3d facing = Vec3d.of(frame.getHorizontalFacing().getVector());
+        // Move the target 0.1 blocks outward so the ray doesn't hit the solid block behind
+        Vec3d target = center.add(facing.multiply(0.1));
 
         RaycastContext context = new RaycastContext(
-            eyes, frameCenter,
+            eyes, target,
             RaycastContext.ShapeType.COLLIDER,
             RaycastContext.FluidHandling.NONE,
             mc.player
@@ -82,10 +87,10 @@ public class PressItemFrame extends Module {
         BlockHitResult hit = mc.world.raycast(context);
         if (hit.getType() == HitResult.Type.MISS) return true;
 
-        // Visible only if the block hit is behind the frame
         double distToHit = eyes.squaredDistanceTo(hit.getPos());
-        double distToFrame = eyes.squaredDistanceTo(frameCenter);
-        return distToHit > distToFrame;
+        double distToTarget = eyes.squaredDistanceTo(target);
+        // Allow a tiny tolerance to handle floating‑point inaccuracies
+        return distToHit >= distToTarget - 0.01;
     }
 
     @EventHandler

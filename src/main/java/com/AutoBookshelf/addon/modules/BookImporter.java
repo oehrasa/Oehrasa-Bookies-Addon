@@ -4,20 +4,22 @@ import com.AutoBookshelf.addon.Addon;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.mixin.TextHandlerAccessor;
+import meteordevelopment.meteorclient.gui.GuiTheme;
+import meteordevelopment.meteorclient.gui.widgets.WWidget;
+import meteordevelopment.meteorclient.gui.widgets.containers.WHorizontalList;
+import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.client.font.TextHandler;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.WrittenBookContentComponent;
 import net.minecraft.network.packet.c2s.play.BookUpdateC2SPacket;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.text.RawFilteredPair;
-import net.minecraft.text.Style;
 import net.minecraft.text.Text;
+import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
 import java.io.File;
 import java.io.IOException;
@@ -71,19 +73,6 @@ public class BookImporter extends Module {
         .build()
     );
 
-    private final Setting<Boolean> saveNow = sgResume.add(new BoolSetting.Builder()
-        .name("save-now")
-        .description("Manually save current progress.")
-        .defaultValue(false)
-        .onChanged(value -> {
-            if (value) {
-                saveProgress();
-                sendMessage("§aProgress saved manually.");
-            }
-        })
-        .build()
-    );
-
     // Manual override
     private final Setting<Integer> startFromFileIndex = sgResume.add(new IntSetting.Builder()
         .name("start-from-file-index")
@@ -118,15 +107,17 @@ public class BookImporter extends Module {
         .build()
     );
 
-    private final Setting<Boolean> resetProgress = sgResume.add(new BoolSetting.Builder()
-        .name("reset-progress")
-        .description("Reset saved progress (toggle ON, then OFF manually)")
+    private final Setting<Boolean> useSelectedFile = sgGeneral.add(new BoolSetting.Builder()
+        .name("use-selected-file")
+        .description("Use a manually selected .txt file instead of the import folder.")
         .defaultValue(false)
-        .onChanged(value -> {
-            if (value) {
-                resetProgressData();
-            }
-        })
+        .build()
+    );
+
+    private final Setting<String> selectedFilePath = sgGeneral.add(new StringSetting.Builder()
+        .name("selected-file-path")
+        .description("Path of the manually selected file (set via the button).")
+        .defaultValue("")
         .build()
     );
 
@@ -157,10 +148,6 @@ public class BookImporter extends Module {
     private static final String PROGRESS_FILE = "AutoBookshelf/import_progress.json";
     private final Set<String> completedParts = new HashSet<>();  // keys = "fileName|partNumber"
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
-
-    public Setting<Boolean> getSaveNow() {
-        return saveNow;
-    }
 
     private static class ImportTask {
         File file;
@@ -324,10 +311,47 @@ public class BookImporter extends Module {
             error("Failed to reset progress: " + e.getMessage());
         }
         sendMessage("§aProgress has been reset!");
+        if (isActive()) {
+            toggle();
+        }
     }
 
     private void scanAndQueueFiles() {
         tasks.clear();
+
+        if (useSelectedFile.get()) {
+            String path = selectedFilePath.get();
+            if (path.isEmpty()) {
+                sendMessage("§cNo file selected. Please use the 'Select File' button.");
+                toggle();
+                return;
+            }
+            File file = new File(path);
+            if (!file.exists() || !file.getName().endsWith(".txt")) {
+                sendMessage("§cSelected file is not a valid .txt file.");
+                toggle();
+                return;
+            }
+            try {
+                List<String> lines = Files.readAllLines(file.toPath());
+                List<String> pages = convertLinesToPages(lines);
+                if (pages.isEmpty()) {
+                    sendMessage("§cFile is empty.");
+                    toggle();
+                    return;
+                }
+                String baseTitle = file.getName().replace(".txt", "");
+                if (baseTitle.length() > 32) baseTitle = baseTitle.substring(0, 32);
+                int totalParts = (int) Math.ceil((double) pages.size() / pagesPerBook.get());
+                tasks.add(new ImportTask(file, baseTitle, pages, totalParts));
+                sendMessage("Queued: " + file.getName() + " (" + pages.size() + " pages, " + totalParts + " part(s))");
+            } catch (IOException e) {
+                sendMessage("§cFailed to read file.");
+                toggle();
+            }
+            return;
+        }
+
         Path folder = Paths.get(mc.runDirectory.getPath(), importFolder.get());
 
         if (!Files.exists(folder)) {
@@ -384,6 +408,42 @@ public class BookImporter extends Module {
                 error("Failed to read file: " + file.getName());
             }
         }
+    }
+
+    @Override
+    public WWidget getWidget(GuiTheme theme) {
+        WHorizontalList row = theme.horizontalList();
+
+        WButton selectBtn = row.add(theme.button("Select File")).widget();
+        selectBtn.action = () -> {
+            String path = TinyFileDialogs.tinyfd_openFileDialog(
+                "Select a .txt file",
+                new File(mc.runDirectory, importFolder.get()).getAbsolutePath(),
+                null,
+                null,
+                false
+            );
+            if (path != null) {
+                selectedFilePath.set(path);
+                useSelectedFile.set(true);
+                info("Selected file: " + path);
+            }
+        };
+
+        WButton clearBtn = row.add(theme.button("Clear Selection")).widget();
+        clearBtn.action = () -> {
+            selectedFilePath.set("");
+            useSelectedFile.set(false);
+            info("Cleared manual file selection.");
+        };
+
+        WButton resetBtn = row.add(theme.button("Reset Progress")).widget();
+        resetBtn.action = this::resetProgressData;
+
+        WButton saveBtn = row.add(theme.button("Save Now")).widget();
+        saveBtn.action = this::saveProgress;
+
+        return row;
     }
 
     @EventHandler
@@ -652,4 +712,4 @@ public class BookImporter extends Module {
         return text.length() < MAX_PAGE_CHARS
             && mc.textRenderer.getWrappedLinesHeight(text, MAX_PAGE_WIDTH) <= MAX_PAGE_HEIGHT;
     }
-    }
+}
