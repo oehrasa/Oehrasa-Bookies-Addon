@@ -70,12 +70,10 @@ public class MaterialsRefill extends Module {
         .build()
     );
 
-    private final Setting<Double> placeRange = sgGeneral.add(new DoubleSetting.Builder()
-        .name("place-range")
-        .description("How far to place the shulker.")
-        .defaultValue(4.0)
-        .min(1)
-        .sliderMax(5)
+    private final Setting<Boolean> autoToggle = sgGeneral.add(new BoolSetting.Builder()
+        .name("auto-toggle")
+        .description("Automatically toggle the module off after breaking the shulker.")
+        .defaultValue(true)
         .build()
     );
 
@@ -304,11 +302,13 @@ public class MaterialsRefill extends Module {
         if (!breakAfterFill.get()) {
             stage = Stage.IDLE;
             resetState();
+            if (autoToggle.get()) toggle();
             return;
         }
         if (mc.world.getBlockState(placedShulkerPos).isAir()) {
             stage = Stage.IDLE;
             resetState();
+            if (autoToggle.get()) toggle();
             return;
         }
         // Continuous mining until broken
