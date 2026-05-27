@@ -86,6 +86,7 @@ public class TeleportTimer extends HudElement {
     private static final Pattern TELEPORT_WARMUP = Pattern.compile("Teleporting.*?\\bin\\s+(\\d+)\\s*seconds?");
     private static final Pattern TELEPORT_SUCCESS = Pattern.compile("Teleporting to:");
     private static final Pattern COOLDOWN_MSG = Pattern.compile("You have to wait (?:(\\d+)m\\s*)?(\\d+)s\\s+to teleport again");
+    private static final Pattern TELEPORT_CANCEL = Pattern.compile("Successfully cancelled your pending teleport request to:\\s*(\\S+)");
 
     public TeleportTimer() {
         super(INFO);
@@ -102,44 +103,64 @@ public class TeleportTimer extends HudElement {
         if (mc.player == null || mc.world == null) return;
         String message = event.getMessage().getString();
 
-        // 1. Teleport warmup (countdown)
+        // Cancel
+        Matcher cancelMatcher = TELEPORT_CANCEL.matcher(message);
+        if (cancelMatcher.find()) {
+            ticksRemaining = 0;
+            totalTicks = 0;
+            label = "";
+            return;
+        }
+
+        // 1. Teleport warmup, we capture destination as well
         Matcher matcher = TELEPORT_WARMUP.matcher(message);
         if (matcher.find()) {
             int seconds = Integer.parseInt(matcher.group(1));
             ticksRemaining = seconds * 20;
             totalTicks = ticksRemaining;
-            label = "Teleport";
+            // Try to extract the destination name
+            String destination = "";
+            Matcher destMatcher = TELEPORT_WARMUP.matcher(message);
+            if (message.contains(" to ")) {
+                int start = message.indexOf(" to ") + 4;
+                int end = message.length();
+                // Check if there's " in " before the end, and if so stop there
+                int inIdx = message.indexOf(" in ", start);
+                if (inIdx != -1) end = inIdx;
+                // Also cut at period
+                int dotIdx = message.indexOf('.', start);
+                if (dotIdx != -1 && dotIdx < end) end = dotIdx;
+                destination = message.substring(start, end).trim();
+            }
+            label = destination.isEmpty() ? "Teleporting" : "Teleporting to " + destination;
             isCooldown = false;
             return;
         }
 
-        // 2. Teleport success → start cooldown automatically
+        // 2. Teleport success then start a cooldown
         if (showCooldown.get() && TELEPORT_SUCCESS.matcher(message).find()) {
             int fullSec = rank.get().homeCooldownSec;
             ticksRemaining = fullSec * 20;
             totalTicks = fullSec * 20;
-            label = "Home CD";
+            label = "Home Cooldown";
             isCooldown = true;
             return;
         }
 
-        // 3. Manual cooldown message (fallback)
+        // 3. Manual cooldown message
         if (showCooldown.get()) {
             matcher = COOLDOWN_MSG.matcher(message);
             if (matcher.find()) {
-                // Only handle /home cooldown (skip /tpa ones that contain shop link)
                 if (message.contains("Lower your cooldown")) return;
-
                 String minStr = matcher.group(1);
                 String secStr = matcher.group(2);
                 int minutes = (minStr != null) ? Integer.parseInt(minStr) : 0;
                 int seconds = Integer.parseInt(secStr);
                 int remaining = minutes * 60 + seconds;
-
                 int fullSec = rank.get().homeCooldownSec;
                 ticksRemaining = remaining * 20;
                 totalTicks = fullSec * 20;
-                label = "Home CD";
+                label = "Home Cooldown";
                 isCooldown = true;
             }
         }

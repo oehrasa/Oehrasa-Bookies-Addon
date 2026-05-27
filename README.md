@@ -56,6 +56,7 @@ Tested successfully with these mods, but other might work as well
 - **Map-Grid** - Highlights map grid boundaries around the player
 - **Mapart-Namer** - Auto‑names maps based on inventory slot layout
 - **Mob-Owner** - Shows entity owner by saving into cache
+- **Mats-Refill** - Automatically restocks materials from shulker boxes
 - **Platform** - Build a platform at a given y-level once in range
 - **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
 - **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in 1.13+ chunks

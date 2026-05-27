@@ -18,6 +18,8 @@ import net.minecraft.item.*;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.network.packet.s2c.play.BlockBreakingProgressS2CPacket;
 import net.minecraft.network.packet.s2c.play.EntitySpawnS2CPacket;
+import net.minecraft.network.packet.s2c.play.WorldEventS2CPacket;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import org.jetbrains.annotations.Nullable;
 
@@ -187,6 +189,7 @@ public class NeboM extends HudElement {
     private final Map<UUID, Integer> crystalPlaceTicks = new HashMap<>(); // player UUID -> ticks left
     private final Map<Integer, Integer> crystalPlaceTicksByEntity = new HashMap<>();
     private final Map<Integer, Integer> miningTicks = new HashMap<>(); // entity ID -> ticks left
+    private final Map<UUID, Integer> containerOpenTicks = new HashMap<>();
 
     public NeboM() { super(INFO); MeteorClient.EVENT_BUS.subscribe(this); }
 
@@ -365,7 +368,8 @@ public class NeboM extends HudElement {
         }
 
         // Container
-        if (player.currentScreenHandler != player.playerScreenHandler) {
+        Integer containerTicks = containerOpenTicks.get(player.getUuid());
+        if (containerTicks != null && containerTicks > 0) {
             states.add("Container");
         }
         return states;
@@ -444,6 +448,28 @@ public class NeboM extends HudElement {
                 crystalPlaceTicks.put(nearest.getUuid(), actionDisplayTicks.get());
             }
         }
+
+        // Container open detection
+        if (event.packet instanceof WorldEventS2CPacket worldEvent) {
+            int eventId = worldEvent.getEventId();
+            if (eventId == 1008 || eventId == 1010 || eventId == 1012 || eventId == 1013) {
+                BlockPos pos = worldEvent.getPos();
+                Vec3d containerPos = pos.toCenterPos();
+
+                PlayerEntity nearest = null;
+                double nearestDist = Double.MAX_VALUE;
+                for (PlayerEntity p : mc.world.getPlayers()) {
+                    double dist = p.getEntityPos().squaredDistanceTo(containerPos);
+                    if (dist < 256.0 && dist < nearestDist) {   // 16 blocks reach
+                        nearestDist = dist;
+                        nearest = p;
+                    }
+                }
+                if (nearest != null) {
+                    containerOpenTicks.put(nearest.getUuid(), actionDisplayTicks.get());
+                }
+            }
+        }
     }
 
     @EventHandler
@@ -455,6 +481,10 @@ public class NeboM extends HudElement {
         });
         // Decrement mining timers
         miningTicks.entrySet().removeIf(entry -> {
+            entry.setValue(entry.getValue() - 1);
+            return entry.getValue() <= 0;
+        });
+        containerOpenTicks.entrySet().removeIf(entry -> {
             entry.setValue(entry.getValue() - 1);
             return entry.getValue() <= 0;
         });

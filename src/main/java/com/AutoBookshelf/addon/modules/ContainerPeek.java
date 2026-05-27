@@ -89,7 +89,7 @@ public class ContainerPeek extends Module {
     private final Setting<SettingColor> borderColor = sgGeneral.add(new ColorSetting.Builder()
         .name("border-color")
         .description("Border color of the preview panel.")
-        .defaultValue(new SettingColor(255, 255, 255, 100))
+        .defaultValue(new SettingColor(255, 255, 255, 0))
         .build()
     );
 
@@ -279,17 +279,12 @@ public class ContainerPeek extends Module {
         if (textLines > 0) panelHeight += 10 * textLines + padding;
 
         int panelX = screenX - panelWidth / 2;
-        int panelY = screenY - panelHeight;   // directly above the crosshair
+        int panelY = screenY - panelHeight - 20;
 
-        // clamp to screen
         if (panelX < 0) panelX = 0;
         if (panelY < 0) panelY = 0;
         if (panelX + panelWidth > mc.getWindow().getScaledWidth()) panelX = mc.getWindow().getScaledWidth() - panelWidth;
         if (panelY + panelHeight > mc.getWindow().getScaledHeight()) panelY = mc.getWindow().getScaledHeight() - panelHeight;
-
-        var matrices = context.getMatrices();
-        matrices.pushMatrix();
-        matrices.identity();   // reset inherited translation
 
         // Background
         context.fill(panelX, panelY, panelX + panelWidth, panelY + panelHeight, backgroundColor.get().getPacked());
@@ -300,7 +295,6 @@ public class ContainerPeek extends Module {
         context.fill(panelX, panelY, panelX + 1, panelY + panelHeight, borderColor.get().getPacked());
         context.fill(panelX + panelWidth - 1, panelY, panelX + panelWidth, panelY + panelHeight, borderColor.get().getPacked());
 
-        // Text
         int textY = panelY + padding;
         if (showType.get()) {
             context.drawTextWithShadow(mc.textRenderer, Text.literal(typeStr), panelX + padding, textY, 0xFFFFFF);
@@ -311,7 +305,6 @@ public class ContainerPeek extends Module {
             textY += 10;
         }
 
-        // Item grid
         int itemStartX = panelX + padding;
         int itemStartY = textY + padding;
         float itemScale = iconSize / 16.0f;
@@ -320,9 +313,7 @@ public class ContainerPeek extends Module {
             int row = i / itemsPerRow;
             int x = itemStartX + col * (iconSize + padding);
             int y = itemStartY + row * (iconSize + padding);
-            RenderUtils.drawItem(event.drawContext, stacks.get(i), x, y, itemScale, true, null, false);
+            RenderUtils.drawItem(event.drawContext, stacks.get(i), x, y, itemScale, true);
         }
-
-        matrices.popMatrix();
     }
 }

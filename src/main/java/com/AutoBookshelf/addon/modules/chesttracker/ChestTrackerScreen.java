@@ -44,6 +44,7 @@ public class ChestTrackerScreen extends Screen {
     private int cachedMaxY;
     private int cachedTotalRows;
     private int cachedVisibleHeight;
+    private Map<Item, Double> distanceCache = new HashMap<>();
 
     public ChestTrackerScreen(ChestTrackerModule module) {
         super(Text.literal("Chest Tracker"));
@@ -122,13 +123,29 @@ public class ChestTrackerScreen extends Screen {
             case NAME_ASC   -> allItems.sort((a, b) -> a.item.getName().getString().compareToIgnoreCase(b.item.getName().getString()));
             case NAME_DESC  -> allItems.sort((a, b) -> b.item.getName().getString().compareToIgnoreCase(a.item.getName().getString()));
             case DISTANCE -> {
+                if (client.player == null) break;
                 Vec3d playerPos = client.player.getEntityPos();
                 List<TrackedContainer> containers = data.getAllContainers(getCurrentDimension());
-                allItems.sort((a, b) -> {
-                    double distA = getClosestContainerDistance(a.item, playerPos, containers);
-                    double distB = getClosestContainerDistance(b.item, playerPos, containers);
-                    return Double.compare(distA, distB);
-                });
+
+                // Precompute closest distance for each item
+                distanceCache.clear();
+                for (ItemEntry entry : allItems) {
+                    double closest = Double.MAX_VALUE;
+                    for (TrackedContainer c : containers) {
+                        if (c.containsItem(entry.item)) {
+                            BlockPos pos = c.getPosition();
+                            double dist = playerPos.squaredDistanceTo(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
+                            if (dist < closest) closest = dist;
+                        }
+                    }
+                    distanceCache.put(entry.item, Math.sqrt(closest));
+                }
+
+                // Sort using the cached values
+                allItems.sort((a, b) -> Double.compare(
+                    distanceCache.getOrDefault(a.item, Double.MAX_VALUE),
+                    distanceCache.getOrDefault(b.item, Double.MAX_VALUE)
+                ));
             }
         }
     }
@@ -331,7 +348,7 @@ public class ChestTrackerScreen extends Screen {
         }
     }
 
-    // ── Mouse events using Click (1.21.11) ────────────────────────
+    // Mouse events using Click
     @Override
     public boolean mouseClicked(Click click, boolean doubled) {
         double mouseX = click.x();

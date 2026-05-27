@@ -61,6 +61,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new MobOwner());
         Modules.get().add(new MapartNamer());
         Modules.get().add(new MapGridZone());
+        Modules.get().add(new MaterialsRefill());
         Modules.get().add(new MinecartPlacer());
         // P
         Modules.get().add(new PortalCave());
