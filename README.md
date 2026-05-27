@@ -29,11 +29,11 @@ Tested successfully with these mods, but other might work as well
 
 ## Features
 
-**32 modules**, **4 commands**, **7 HUD elements**, and **1 mixin**
+**34 modules**, **4 commands**, **7 HUD elements**, and **1 mixin**
 
-## Modules (32 total)
+## Modules (34 total)
 <details>
-<summary><b>Modules</b> (32 modules)</summary>
+<summary><b>Modules</b> (Bookies Modules)</summary>
 
 - **AudiobookReader** - Reads books aloud using narrator feature
 - **Auto-Beacon** - Builds a 4‑beacon pyramid at a selected location
