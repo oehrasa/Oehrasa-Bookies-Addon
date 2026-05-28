@@ -47,12 +47,12 @@ public class MaterialsRefill extends Module {
         .build()
     );
 
-    private final Setting<Integer> moveDelay = sgGeneral.add(new IntSetting.Builder()
-        .name("move-delay")
-        .description("Ticks between each shift‑click.")
-        .defaultValue(15)
-        .min(2)
-        .sliderMax(40)
+    private final Setting<Integer> placeRange = sgGeneral.add(new IntSetting.Builder()
+        .name("place-range")
+        .description("how far is the placement range.")
+        .defaultValue(2)
+        .min(1)
+        .sliderMax(4)
         .build()
     );
 
@@ -65,13 +65,13 @@ public class MaterialsRefill extends Module {
 
     private final Setting<Boolean> autoTake = sgGeneral.add(new BoolSetting.Builder()
         .name("auto-take")
-        .description("Automatically take items from the shulker. If disabled, only open/close without moving items.")
+        .description("Automatically take items from the shulker. If disabled, only open/close.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> autoToggle = sgGeneral.add(new BoolSetting.Builder()
-        .name("auto-toggle")
+        .name("toggle-off")
         .description("Automatically toggle the module off after breaking the shulker.")
         .defaultValue(true)
         .build()
@@ -90,6 +90,8 @@ public class MaterialsRefill extends Module {
     private BlockPos placedShulkerPos;
     private int delayTicks;
     private int keepFree = 0;   // number of empty slots to preserve (0 if not breaking, 1 if breaking)
+    private String lastFailItem = "";
+    private String lastFailReason = "";
 
     public MaterialsRefill() {
         super(Addon.CATEGORY, "Mats-Refill",
@@ -156,9 +158,15 @@ public class MaterialsRefill extends Module {
             if (shulkerSlot != -1) break;
         }
         if (shulkerSlot == -1) {
-            info("No shulker with " + currentTargetItem.getName().getString());
-            stage = Stage.IDLE; resetState(); return;
+            if (PrintInfo(currentTargetItem.getName().getString(), "no shulker")) {
+                info("No shulker with " + currentTargetItem.getName().getString());
+            }
+            stage = Stage.IDLE;
+            resetState();
+            delayTicks = 20;
+            return;
         }
+        resetFail();
         stage = Stage.PLACE_SHULKER;
     }
 
@@ -178,30 +186,89 @@ public class MaterialsRefill extends Module {
 
         mc.player.getInventory().setSelectedSlot(shulkerSlot);
 
-        if (!(mc.crosshairTarget instanceof BlockHitResult blockHit)) {
-            stage = Stage.IDLE;
-            resetState();
-            return;
+        BlockPos placePos = null;
+        Direction placeFace = null;
+        BlockPos supportBlock = null;
+        Vec3d hitVec = null;
+
+        // 1) Main: crosshair target
+        if (mc.crosshairTarget instanceof BlockHitResult blockHit) {
+            BlockPos clickedBlock = blockHit.getBlockPos();
+            Direction clickedFace = blockHit.getSide();
+            BlockPos candidate = clickedBlock.offset(clickedFace);
+
+            double reach = mc.player.getEntityInteractionRange();
+            if ((mc.world.getBlockState(candidate).isAir()
+                || mc.world.getBlockState(candidate).getBlock() == net.minecraft.block.Blocks.WATER)
+                && mc.player.getPos().squaredDistanceTo(candidate.getX() + 0.5, candidate.getY() + 0.5, candidate.getZ() + 0.5) <= reach * reach) {
+                placePos = candidate;
+                placeFace = clickedFace;
+                supportBlock = clickedBlock;
+                hitVec = blockHit.getPos();
+            }
         }
 
-        BlockPos clickedBlock = blockHit.getBlockPos();
-        Direction clickedFace = blockHit.getSide();
-        BlockPos candidate = clickedBlock.offset(clickedFace);
-        double reach = mc.player.getEntityInteractionRange();
+        // 2) Fallback
+        if (placePos == null) {
+            Vec3d lookVec = mc.player.getRotationVec(1.0F).multiply(placeRange.get());
+            BlockPos targetBlock = mc.player.getBlockPos().add((int) lookVec.x, 0, (int) lookVec.z);
 
-        if (!((mc.world.getBlockState(candidate).isAir()
-            || mc.world.getBlockState(candidate).getBlock() == net.minecraft.block.Blocks.WATER)
-            && mc.player.getPos().squaredDistanceTo(candidate.getX() + 0.5, candidate.getY() + 0.5, candidate.getZ() + 0.5) <= reach * reach)) {
-            stage = Stage.IDLE;
-            resetState();
-            return;
+            // Find the nearest solid block within +2 Y of the target position
+            BlockPos solidBlock = null;
+            for (int dy = -2; dy <= 2; dy++) {
+                BlockPos check = targetBlock.add(0, dy, 0);
+                if (mc.world.getBlockState(check).isSolidBlock(mc.world, check)) {
+                    solidBlock = check;
+                    break;
+                }
+            }
+
+            if (solidBlock == null) {
+                stage = Stage.IDLE;
+                resetState();
+                return;
+            }
+
+            // Try to place on top of the solid block
+            BlockPos candidate = solidBlock.up();
+            Direction candidateFace = Direction.UP;
+            boolean found = false;
+
+            if (!mc.world.getBlockState(candidate).isAir()) {
+                // Top blocked? then try sides
+                for (Direction dir : Direction.values()) {
+                    BlockPos neighbor = solidBlock.offset(dir);
+                    if (mc.world.getBlockState(neighbor).isAir()) {
+                        candidate = neighbor;
+                        candidateFace = dir;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    stage = Stage.IDLE;
+                    resetState();
+                    return;
+                }
+            }
+
+            // Ensure the placement is within range
+            double reach = mc.player.getEntityInteractionRange();
+            if (mc.player.getPos().squaredDistanceTo(candidate.getX() + 0.5, candidate.getY() + 0.5, candidate.getZ() + 0.5) > reach * reach) {
+                stage = Stage.IDLE;
+                resetState();
+                return;
+            }
+
+            placePos = candidate;
+            placeFace = candidateFace;
+            supportBlock = placePos.offset(candidateFace.getOpposite());
+            hitVec = Vec3d.ofCenter(supportBlock).add(Vec3d.of(candidateFace.getVector()).multiply(0.5));
         }
 
-        BlockPos supportBlock = clickedBlock;
-        Direction placeFace = clickedFace;
-        Vec3d hitVec = blockHit.getPos();
-        placedShulkerPos = candidate;
+        placedShulkerPos = placePos;
 
+        // Place the shulker
         if (rotate.get()) {
             Vec3d finalHitVec = hitVec;
             Direction finalPlaceFace = placeFace;
@@ -261,11 +328,13 @@ public class MaterialsRefill extends Module {
             return;
         }
 
+        // Count empty slots in main inventory
         int emptySlots = 0;
         for (int i = 0; i < 36; i++) {
             if (mc.player.getInventory().getStack(i).isEmpty()) emptySlots++;
         }
 
+        // If we have only the required number of empty slots, stop
         if (emptySlots <= keepFree) {
             mc.player.closeHandledScreen();
             delayTicks = 2;
@@ -274,23 +343,25 @@ public class MaterialsRefill extends Module {
         }
 
         var handler = screen.getScreenHandler();
-        boolean moved = false;
-        for (int i = 0; i < 27 && !moved; i++) {
+        int moved = 0;
+
+        // Loop over all shulker slots and shiftclick each matching stack instantly
+        for (int i = 0; i < 27; i++) {
             ItemStack stack = handler.getSlot(i).getStack();
             if (stack.getItem() == currentTargetItem) {
                 mc.interactionManager.clickSlot(handler.syncId, i, 0, SlotActionType.QUICK_MOVE, mc.player);
-                moved = true;
-                break;
+                moved++;
+
+                // Stop if we have filled all slots
+                emptySlots--;
+                if (emptySlots <= keepFree) break;
             }
         }
 
-        if (moved) {
-            delayTicks = moveDelay.get();
-        } else {
-            mc.player.closeHandledScreen();
-            delayTicks = 2;
-            stage = Stage.CLOSE_AND_BREAK;
-        }
+        // After moving everything, close and proceed to break
+        mc.player.closeHandledScreen();
+        delayTicks = 2;
+        stage = Stage.CLOSE_AND_BREAK;
     }
 
     private void closeAndBreak() {
@@ -335,5 +406,17 @@ public class MaterialsRefill extends Module {
             stack.getItem() == Items.GREEN_SHULKER_BOX ||
             stack.getItem() == Items.RED_SHULKER_BOX ||
             stack.getItem() == Items.BLACK_SHULKER_BOX;
+    }
+
+    private boolean PrintInfo(String itemName, String reason) {
+        if (itemName.equals(lastFailItem) && reason.equals(lastFailReason)) return false;
+        lastFailItem = itemName;
+        lastFailReason = reason;
+        return true;
+    }
+
+    private void resetFail() {
+        lastFailItem = "";
+        lastFailReason = "";
     }
 }
