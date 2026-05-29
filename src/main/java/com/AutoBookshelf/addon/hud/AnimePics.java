@@ -26,16 +26,14 @@ import org.lwjgl.BufferUtils;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.util.tinyfd.TinyFileDialogs;
-import java.io.File;
-import java.io.IOException;
+
+import java.io.*;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 
 import javax.imageio.ImageIO;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -471,13 +469,9 @@ public class AnimePics extends HudElement {
                 byte[] imageBytes;
 
                 if (url.startsWith("local://")) {
-                    // Use cycling instead of random
+                    // Local file
                     File file = getNextLocalImage();
-                    if (file == null) {
-                        locked = false;
-                        return;
-                    }
-                    // If already PNG, read raw bytes, otherwise convert via ImageIO
+                    if (file == null) { locked = false; return; }
                     if (file.getName().toLowerCase().endsWith(".png")) {
                         imageBytes = Files.readAllBytes(file.toPath());
                     } else {
@@ -494,20 +488,35 @@ public class AnimePics extends HudElement {
                 } else {
                     // Network source
                     MeteorClient.LOG.info("[AnimePics] Image URL: " + url);
-                    var img = ImageIO.read(Http.get(url).sendInputStream());
-                    var baos = new ByteArrayOutputStream();
-                    ImageIO.write(img, "png", baos);
-                    imageBytes = baos.toByteArray();
+                    InputStream stream = Http.get(url).sendInputStream();
+                    imageBytes = stream.readAllBytes();
+                    stream.close();
+
+                    // Check if it's already a PNG
+                    if (!isPNG(imageBytes)) {
+                        // Convert to PNG via ImageIO
+                        var bais = new ByteArrayInputStream(imageBytes);
+                        java.awt.image.BufferedImage img = ImageIO.read(bais);
+                        if (img == null) {
+                            throw new IOException("Unsupported image format for URL: " + url);
+                        }
+                        var baos = new ByteArrayOutputStream();
+                        ImageIO.write(img, "png", baos);
+                        imageBytes = baos.toByteArray();
+                    }
                 }
 
                 this.currentImageBytes = imageBytes;
-                byte[] finalImageBytes = imageBytes;
 
+                byte[] finalBytes = imageBytes;
                 mc.execute(() -> {
                     try {
                         if (mc.getTextureManager() == null) return;
-                        mc.getTextureManager().registerTexture(textureId,
-                            new NativeImageBackedTexture(NativeImage.read(new ByteArrayInputStream(finalImageBytes))));
+                        mc.getTextureManager().destroyTexture(textureId);
+                        NativeImage nativeImage = NativeImage.read(new ByteArrayInputStream(finalBytes));
+                        mc.getTextureManager().registerTexture(
+                            textureId, new NativeImageBackedTexture(nativeImage)
+                        );
                         empty = false;
                         MeteorClient.LOG.info("[AnimePics] Image loaded!");
                     } catch (Exception ex) {
@@ -520,5 +529,19 @@ public class AnimePics extends HudElement {
             locked = false;
         }).start();
         updateSize();
+    }
+
+    /** Checks if the given bytes start with the PNG signature. */
+    private static boolean isPNG(byte[] bytes) {
+        if (bytes.length < 8) return false;
+        // PNG signature: 0x89 P N G \r \n 0x1A \n
+        return bytes[0] == (byte)0x89 &&
+            bytes[1] == 0x50 &&
+            bytes[2] == 0x4E &&
+            bytes[3] == 0x47 &&
+            bytes[4] == 0x0D &&
+            bytes[5] == 0x0A &&
+            bytes[6] == 0x1A &&
+            bytes[7] == 0x0A;
     }
 }

@@ -21,6 +21,8 @@ import net.minecraft.item.map.MapState;
 import net.minecraft.util.hit.EntityHitResult;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Objects;
+
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 public class MapViewer extends HudElement {
@@ -95,8 +97,11 @@ public class MapViewer extends HudElement {
         .defaultValue(new SettingColor(25, 25, 25, 50))
         .build()
     );
+    // Cached state to avoid redundant lookups
+    private ItemStack lastStack1 = null, lastStack2 = null;
+    private MapIdComponent lastMapId1 = null, lastMapId2 = null;
+    private boolean lastShowSecond = false;
 
-    // State
     @Nullable private MapIdComponent mapId1, mapId2;
     @Nullable private MapState mapData1, mapData2;
     private boolean showSecondMap = false;
@@ -113,7 +118,94 @@ public class MapViewer extends HudElement {
         double mapSize = 128 * s;
         double gap = showGap.get() ? 4 * s : 0;
 
-        // Update size based on orientation and number of maps
+        if (!Utils.canUpdate()) {
+            setSize(mapSize, mapSize);
+            return;
+        }
+
+        ItemStack stack1 = ItemStack.EMPTY, stack2 = ItemStack.EMPTY;
+        MapIdComponent newId1 = null, newId2 = null;
+        boolean newShowSecond = false;
+
+        switch (mode.get()) {
+            case Held -> {
+                stack1 = mc.player.getMainHandStack();
+                stack2 = mc.player.getOffHandStack();
+                boolean hasMain = isMap(stack1);
+                boolean hasOff  = isMap(stack2);
+                if (hasMain && hasOff) {
+                    if (areMapsDifferent(stack1, stack2)) {
+                        if (dualHandling.get() == DualHandling.ShowBoth) {
+                            newId1 = getMapId(stack1);
+                            newId2 = getMapId(stack2);
+                            newShowSecond = true;
+                        } else if (dualHandling.get() == DualHandling.PrioritizeMainhand) {
+                            newId1 = getMapId(stack1);
+                        } else {
+                            newId1 = getMapId(stack2);
+                        }
+                    } else {
+                        newId1 = getMapId(stack1);
+                    }
+                } else if (hasMain) {
+                    newId1 = getMapId(stack1);
+                } else if (hasOff) {
+                    newId1 = getMapId(stack2);
+                    stack1 = stack2; // for caching
+                }
+            }
+            case Mainhand -> {
+                stack1 = mc.player.getMainHandStack();
+                newId1 = getMapId(stack1);
+            }
+            case Offhand -> {
+                stack1 = mc.player.getOffHandStack();
+                newId1 = getMapId(stack1);
+            }
+            case ItemFrame -> {
+                if (mc.crosshairTarget instanceof EntityHitResult entityHit
+                    && entityHit.getEntity() instanceof ItemFrameEntity frame) {
+                    stack1 = frame.getHeldItemStack();
+                    newId1 = getMapId(stack1);
+                }
+            }
+            case SlotIndex -> {
+                stack1 = mc.player.getInventory().getStack(slotIndex.get());
+                newId1 = getMapId(stack1);
+            }
+            case MapId -> {
+                // Look for the map in inventory (use a different variable name to avoid shadowing 's')
+                for (int i = 0; i < mc.player.getInventory().size(); i++) {
+                    ItemStack invStack = mc.player.getInventory().getStack(i);
+                    if (isMap(invStack) && getMapId(invStack).id() == mapId.get()) {
+                        stack1 = invStack;
+                        newId1 = getMapId(invStack);
+                        break;
+                    }
+                }
+            }
+        }
+
+        boolean changed = !Objects.equals(newId1, lastMapId1)
+            || !Objects.equals(newId2, lastMapId2)
+            || (newShowSecond != lastShowSecond);
+
+        if (changed) {
+            lastStack1 = stack1;
+            lastStack2 = stack2;
+            lastMapId1 = newId1;
+            lastMapId2 = newId2;
+            lastShowSecond = newShowSecond;
+
+            mapId1 = newId1;
+            mapId2 = newId2;
+            showSecondMap = newShowSecond;
+
+            mapData1 = (mapId1 != null) ? FilledMapItem.getMapState(mapId1, mc.world) : null;
+            mapData2 = (mapId2 != null) ? FilledMapItem.getMapState(mapId2, mc.world) : null;
+        }
+
+        // Update size
         if (showSecondMap) {
             if (orientation.get() == Orientation.Horizontal) {
                 setSize(2 * mapSize + gap, mapSize);
@@ -122,67 +214,6 @@ public class MapViewer extends HudElement {
             }
         } else {
             setSize(mapSize, mapSize);
-        }
-
-        if (!Utils.canUpdate()) return;
-
-        mapId1 = mapId2 = null;
-        mapData1 = mapData2 = null;
-        showSecondMap = false;
-
-        ItemStack stack1 = ItemStack.EMPTY;
-        ItemStack stack2 = ItemStack.EMPTY;
-
-        switch (mode.get()) {
-            case Held -> {
-                stack1 = mc.player.getMainHandStack();
-                stack2 = mc.player.getOffHandStack();
-                boolean hasMain = isMap(stack1);
-                boolean hasOff  = isMap(stack2);
-
-                if (hasMain && hasOff) {
-                    if (areMapsDifferent(stack1, stack2)) {
-                        if (dualHandling.get() == DualHandling.ShowBoth) {
-                            mapId1 = getMapId(stack1); mapData1 = getMapData(mapId1);
-                            mapId2 = getMapId(stack2); mapData2 = getMapData(mapId2);
-                            showSecondMap = true;
-                            return;
-                        } else if (dualHandling.get() == DualHandling.PrioritizeMainhand) {
-                            stack2 = ItemStack.EMPTY;
-                        } else {
-                            stack1 = stack2;
-                        }
-                    } else {
-                        stack2 = ItemStack.EMPTY;
-                    }
-                } else if (hasMain) {
-                    stack2 = ItemStack.EMPTY;
-                } else if (hasOff) {
-                    stack1 = stack2;
-                }
-            }
-            case Mainhand -> stack1 = mc.player.getMainHandStack();
-            case Offhand  -> stack1 = mc.player.getOffHandStack();
-            case ItemFrame -> {
-                if (mc.crosshairTarget instanceof EntityHitResult entityHit
-                    && entityHit.getEntity() instanceof ItemFrameEntity frame) {
-                    stack1 = frame.getHeldItemStack();
-                }
-            }
-            case SlotIndex -> stack1 = mc.player.getInventory().getStack(slotIndex.get());
-            case MapId -> {
-                for (int i = 0; i < mc.player.getInventory().size(); i++) {
-                    ItemStack stack = mc.player.getInventory().getStack(i);
-                    if (isMap(stack) && getMapId(stack).id() == mapId.get()) {
-                        stack1 = stack; break;
-                    }
-                }
-            }
-        }
-
-        if (isMap(stack1)) {
-            mapId1 = getMapId(stack1);
-            mapData1 = getMapData(mapId1);
         }
     }
 
@@ -213,10 +244,6 @@ public class MapViewer extends HudElement {
         }
     }
 
-    /**
-     * Renders a single map using MapRenderState pipeline.
-     * Background is drawn at absolute screen coordinates (unaffected by matrix).
-     */
     private void drawMap(HudRenderer renderer, MapIdComponent id, MapState data,
                          MapRenderState renderState, double x, double y, double scale) {
         MapRenderer mapRenderer = mc.getMapRenderer();
@@ -252,12 +279,6 @@ public class MapViewer extends HudElement {
 
     private MapIdComponent getMapId(ItemStack stack) {
         return stack.get(DataComponentTypes.MAP_ID);
-    }
-
-    @Nullable
-    private MapState getMapData(@Nullable MapIdComponent component) {
-        if (component == null) return null;
-        return FilledMapItem.getMapState(component, mc.world);
     }
 
     private boolean areMapsDifferent(ItemStack a, ItemStack b) {

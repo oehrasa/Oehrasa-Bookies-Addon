@@ -90,6 +90,8 @@ public class MaterialsRefill extends Module {
     private BlockPos placedShulkerPos;
     private int delayTicks;
     private int keepFree = 0;   // number of empty slots to preserve (0 if not breaking, 1 if breaking)
+    private boolean pickaxeEquipped = false;
+    private int preBreakSlot = -1;
     private String lastFailItem = "";
     private String lastFailReason = "";
 
@@ -364,6 +366,14 @@ public class MaterialsRefill extends Module {
         stage = Stage.CLOSE_AND_BREAK;
     }
 
+    private void restorePickaxeSlot() {
+        if (pickaxeEquipped && preBreakSlot >= 0 && preBreakSlot <= 8) {
+            mc.player.getInventory().setSelectedSlot(preBreakSlot);
+            pickaxeEquipped = false;
+            preBreakSlot = -1;
+        }
+    }
+
     private void closeAndBreak() {
         if (mc.currentScreen != null) {
             mc.player.closeHandledScreen();
@@ -371,17 +381,40 @@ public class MaterialsRefill extends Module {
             return;
         }
         if (!breakAfterFill.get()) {
+            // Restore pickaxe if we had swapped
+            restorePickaxeSlot();
             stage = Stage.IDLE;
             resetState();
             if (autoToggle.get()) toggle();
             return;
         }
         if (mc.world.getBlockState(placedShulkerPos).isAir()) {
+            // Block already gone, restore slot and finish
+            restorePickaxeSlot();
             stage = Stage.IDLE;
             resetState();
             if (autoToggle.get()) toggle();
             return;
         }
+
+        // Equip a pickaxe (if there is one)
+        if (!pickaxeEquipped) {
+            int pickSlot = -1;
+            // Search hotbar for any pickaxe item
+            for (int i = 0; i < 9; i++) {
+                if (mc.player.getInventory().getStack(i).getItem() instanceof net.minecraft.item.PickaxeItem) {
+                    pickSlot = i;
+                    break;
+                }
+            }
+            if (pickSlot != -1) {
+                preBreakSlot = mc.player.getInventory().selectedSlot;
+                mc.player.getInventory().setSelectedSlot(pickSlot);
+                pickaxeEquipped = true;
+            }
+            // If no pickaxe found, we just use whatever is in hand
+        }
+
         // Continuous mining until broken
         mc.interactionManager.updateBlockBreakingProgress(placedShulkerPos, Direction.UP);
         mc.player.swingHand(Hand.MAIN_HAND);
