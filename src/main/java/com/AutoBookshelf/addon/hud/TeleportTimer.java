@@ -111,10 +111,14 @@ public class TeleportTimer extends HudElement {
         .defaultValue(TpaCooldown.Zero_Vote).visible(() -> rank.get() == Rank.NoRank)
         .build());
 
-    // Warmup
-    private int warmupTicksRemaining = 0;
-    private int warmupTotalTicks = 0;
-    private String warmupLabel = "";
+    // Warmups
+    private int homeWarmupTicks = 0;
+    private int homeWarmupTotal = 0;
+    private String homeWarmupLabel = "";
+
+    private int tpaWarmupTicks = 0;
+    private int tpaWarmupTotal = 0;
+    private String tpaWarmupLabel = "";
 
     // Home cooldown
     private int homeTicksRemaining = 0;
@@ -155,9 +159,23 @@ public class TeleportTimer extends HudElement {
 
         // Cancel
         if (TELEPORT_CANCEL.matcher(message).find()) {
-            warmupTicksRemaining = 0;
-            warmupTotalTicks = 0;
-            warmupLabel = "";
+            String cancelledDest = "";
+            int colonIdx = message.indexOf(": ");
+            if (colonIdx != -1) {
+                cancelledDest = message.substring(colonIdx + 2).trim().toLowerCase();
+            }
+            // Cancel home warmup if its label contains the cancelled destination
+            if (homeWarmupTicks > 0 && homeWarmupLabel.toLowerCase().contains(cancelledDest)) {
+                homeWarmupTicks = 0;
+                homeWarmupTotal = 0;
+                homeWarmupLabel = "";
+            }
+            // Cancel TPA warmup if the target matches
+            if (tpaWarmupTicks > 0 && tpaTarget.equalsIgnoreCase(cancelledDest)) {
+                tpaWarmupTicks = 0;
+                tpaWarmupTotal = 0;
+                tpaWarmupLabel = "";
+            }
             return;
         }
 
@@ -173,36 +191,43 @@ public class TeleportTimer extends HudElement {
         Matcher matcher = TELEPORT_WARMUP.matcher(message);
         if (matcher.find()) {
             int seconds = Integer.parseInt(matcher.group(1));
-            warmupTicksRemaining = seconds * 20;
-            warmupTotalTicks = seconds * 20;
+            int ticks = seconds * 20;
 
-            String destination = "";
-            if (message.contains(" to ")) {
-                int start = message.indexOf(" to ") + 4;
-                int end = message.length();
-                int inIdx = message.indexOf(" in ", start);
-                if (inIdx != -1) end = inIdx;
-                int dotIdx = message.indexOf('.', start);
-                if (dotIdx != -1 && dotIdx < end) end = dotIdx;
-                destination = message.substring(start, end).trim();
-            }
-            if (pendingTpa && !tpaTarget.isEmpty()) {
-                warmupLabel = "Teleporting to " + tpaTarget;
+            // Determine type using the pendingTpa flag (set when TPA is accepted)
+            boolean isHome = !pendingTpa;
+
+            if (isHome) {
+                homeWarmupTicks = ticks;
+                homeWarmupTotal = ticks;
+                // Extract destination (e.g., "first")
+                String dest = "";
+                if (message.contains(" to ")) {
+                    int start = message.indexOf(" to ") + 4;
+                    int end = message.length();
+                    int inIdx = message.indexOf(" in ", start);
+                    if (inIdx != -1) end = inIdx;
+                    int dotIdx = message.indexOf('.', start);
+                    if (dotIdx != -1 && dotIdx < end) end = dotIdx;
+                    dest = message.substring(start, end).trim();
+                }
+                homeWarmupLabel = dest.isEmpty() ? "Teleporting home" : "Teleporting to " + dest;
             } else {
-                warmupLabel = destination.isEmpty() ? "Teleporting" : "Teleporting to " + destination;
+                tpaWarmupTicks = ticks;
+                tpaWarmupTotal = ticks;
+                tpaWarmupLabel = tpaTarget.isEmpty() ? "Teleporting (TPA)" : "Teleporting to " + tpaTarget;
             }
 
-            lastTeleportWasHome = !pendingTpa;
-            pendingTpa = false;
+            lastTeleportWasHome = isHome;
+            pendingTpa = false;   // reset for next use
             return;
         }
 
         // 2. Arrival
         if (showCooldown.get()) {
             if (HOME_ARRIVAL.matcher(message).find()) {
-                // Home arrival
                 lastTeleportWasHome = true;
-                warmupTicksRemaining = 0;
+                homeWarmupTicks = 0;   // stop home warmup bar
+                tpaWarmupTicks = 0;    // stop tpa warmup bar too
 
                 int fullSec = (rank.get() == Rank.NoRank)
                     ? customHomeCd.get().seconds
@@ -212,9 +237,10 @@ public class TeleportTimer extends HudElement {
                 homeLabel = "Home Cooldown";
                 return;
             } else if (TPA_ARRIVAL.matcher(message).find()) {
-                // TPA arrival, it starts on manual reminder
                 lastTeleportWasHome = false;
-                warmupTicksRemaining = 0;
+                homeWarmupTicks = 0;
+                tpaWarmupTicks = 0;    // stop warmups
+
                 return;
             }
         }
@@ -252,7 +278,8 @@ public class TeleportTimer extends HudElement {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (warmupTicksRemaining > 0) warmupTicksRemaining--;
+        if (homeWarmupTicks > 0) homeWarmupTicks--;
+        if (tpaWarmupTicks > 0) tpaWarmupTicks--;
         if (homeTicksRemaining > 0) homeTicksRemaining--;
         if (tpaTicksRemaining > 0) tpaTicksRemaining--;
     }
@@ -261,13 +288,15 @@ public class TeleportTimer extends HudElement {
     public void render(HudRenderer renderer) {
         double barH = barHeight.get();
         double scale = getScale();
+
+        // Count visible bars
         int visibleBars = 0;
-        if (warmupTicksRemaining > 0) visibleBars++;
-        if (homeTicksRemaining > 0) visibleBars++;
-        if (tpaTicksRemaining > 0) visibleBars++;
+        if (homeWarmupTicks > 0 && homeWarmupTotal > 0) visibleBars++;
+        if (tpaWarmupTicks > 0 && tpaWarmupTotal > 0) visibleBars++;
+        if (homeTicksRemaining > 0 && homeTotalTicks > 0) visibleBars++;
+        if (tpaTicksRemaining > 0 && tpaTotalTicks > 0) visibleBars++;
         if (visibleBars == 0) return;
 
-        // Layout: each bar = barH + 2*textHeight + 6   label above, timer below
         double lineH = renderer.textHeight(false, scale);
         double barGap = 2;
         double rowHeight = lineH + 2 + barH + 2 + lineH + barGap;
@@ -275,17 +304,20 @@ public class TeleportTimer extends HudElement {
         setSize(200, totalHeight);
 
         double y = this.y;
-        // Warmup bar
-        if (warmupTicksRemaining > 0 && warmupTotalTicks > 0) {
-            drawBar(renderer, y, warmupTicksRemaining, warmupTotalTicks, warmupLabel, barH, scale);
+
+        // Draw bars in order
+        if (homeWarmupTicks > 0 && homeWarmupTotal > 0) {
+            drawBar(renderer, y, homeWarmupTicks, homeWarmupTotal, homeWarmupLabel, barH, scale);
             y += rowHeight;
         }
-        // Home cooldown
+        if (tpaWarmupTicks > 0 && tpaWarmupTotal > 0) {
+            drawBar(renderer, y, tpaWarmupTicks, tpaWarmupTotal, tpaWarmupLabel, barH, scale);
+            y += rowHeight;
+        }
         if (homeTicksRemaining > 0 && homeTotalTicks > 0) {
             drawBar(renderer, y, homeTicksRemaining, homeTotalTicks, homeLabel, barH, scale);
             y += rowHeight;
         }
-        // Tpa cooldown
         if (tpaTicksRemaining > 0 && tpaTotalTicks > 0) {
             drawBar(renderer, y, tpaTicksRemaining, tpaTotalTicks, tpaLabel, barH, scale);
         }

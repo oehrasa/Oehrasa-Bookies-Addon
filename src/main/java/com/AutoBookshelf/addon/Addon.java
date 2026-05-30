@@ -11,6 +11,7 @@ import com.AutoBookshelf.addon.hud.TeleportTimer;
 import com.AutoBookshelf.addon.commands.IfpeekCommand;
 import com.AutoBookshelf.addon.commands.ShelfCommand;
 import com.AutoBookshelf.addon.commands.BookCommand;
+import com.AutoBookshelf.addon.commands.AssignOwnerCommand;
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
@@ -93,6 +94,7 @@ public class Addon extends MeteorAddon {
         Commands.add(new BookTranslateCommand());
         Commands.add(new IfpeekCommand());
         Commands.add(new ShelfCommand());
+        Commands.add(new AssignOwnerCommand());
 
     }
 

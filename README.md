@@ -3,10 +3,10 @@
   <img src="https://github.com/user-attachments/assets/4171fbfb-461a-4512-a6e5-74458512f429" alt="logo" width="30%"/>
   <h1>AutoBookshelf</h1>
   <p>Meteor Addon for Timid bookkeeper and Yuri Enjoyers</p>
-<img src="https://img.shields.io/badge/Meteor Addon-6f1ab1?logo=meteor&logoColor=white"/> 
-<a href="https://github.com/oehrasa/Oehrasa-Bookies-Addon/commits/main"><img src="https://img.shields.io/github/last-commit/oehrasa/Oehrasa-Bookies-Addon?logo=github&color=light_green" alt="Last commit"></a>
+<img src="https://img.shields.io/badge/Meteor Addon-6f1ab1?logo=meteor&logoColor=white" alt="Meteor Addon"/>
 <img src="https://img.shields.io/github/repo-size/oehrasa/Oehrasa-Bookies-Addon?color=magenta" alt="Repo Size">
-<img src="https://img.shields.io/github/issues/oehrasa/Oehrasa-Bookies-Addon?color=blue" alt="Issues">
+<img src="https://img.shields.io/github/release/oehrasa/Oehrasa-Bookies-Addon?color=blue" alt="Release">
+<a href="https://github.com/oehrasa/Oehrasa-Bookies-Addon/commits/main"><img src="https://img.shields.io/github/last-commit/oehrasa/Oehrasa-Bookies-Addon?logo=github&color=light_green" alt="Last commit"></a>
 <img src="https://img.shields.io/github/stars/oehrasa/Oehrasa-Bookies-Addon?style=flat&color=yellow" alt="Stars">
 <img src="https://img.shields.io/github/downloads/oehrasa/Oehrasa-Bookies-Addon/total?color=red" alt="Downloads">
 </div>
@@ -85,6 +85,7 @@ Tested successfully with these mods, but other might work as well
 ## Commands (4)
 | Command          | Description                                                                |
 |------------------|----------------------------------------------------------------------------|
+| `.assowner`      | Assign a cracked account name as the owner by looking at it                |
 | `.book`          | Shows book information from your held item                                 |
 | `.booktranslate` | Translates the held written book into another language                     |
 | `.ifpeek`        | Shows book information from an item frame                                  |
@@ -130,6 +131,13 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 3. _Recommend to use alongside Bookshelf-Filler module_
 4. Press set key in the module settings to continue to next file
 > I will post the Python code soon
+</details>
+
+<details>
+<summary><b>Cart-Placer</b> - Do NOT the USS Ohio</summary>
+- Think of your decision before arming the launchers with tomahawk missiles
+
+https://github.com/user-attachments/assets/023f2df1-003e-4c12-bd4f-9119999ad11e
 </details>
 
 ## Credits

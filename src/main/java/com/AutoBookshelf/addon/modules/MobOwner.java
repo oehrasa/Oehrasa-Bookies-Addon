@@ -391,19 +391,19 @@ public class MobOwner extends Module {
         return null;
     }
 
-    public void showStatus() {
-        info("§7=== CrackMobOwner Status ===");
-        info("§aMobs mapped: §f" + mobToOwner.size());
-        info("§aNames cached: §f" + ownerNameCache.size());
-        info("§7Cache file: §f" + (cacheFile != null ? cacheFile.getPath() : "Not initialized"));
+    /** Called by the AssignOwnerCommand to manually set an owner for an entity */
+    public void assignOwner(Entity entity, UUID ownerUuid, String ownerName) {
+        mobToOwner.put(entity.getUuid(), ownerUuid);
+        ownerNameCache.put(ownerUuid, ownerName);
+        if (persistentCache.get()) saveCache();
+        if (debugMode.get()) {
+            info("Manually assigned " + ownerName + " to " + entity.getType().getName().getString());
+        }
     }
 
-    public void clearCache() {
-        mobToOwner.clear();
-        ownerNameCache.clear();
-        info("§aAll caches cleared");
-        if (persistentCache.get()) {
-            saveCache();
-        }
+    /** Expose the cache for the command (optional)*/
+    public void addOwnerName(UUID ownerUuid, String name) {
+        ownerNameCache.put(ownerUuid, name);
+        if (persistentCache.get()) saveCache();
     }
 }
