@@ -73,6 +73,7 @@ public class MobOwner extends Module {
 
     // Caches Owner UUID to Owner Name
     private final Map<UUID, String> ownerNameCache = new HashMap<>();
+    private final Map<UUID, UUID> mobToOwner = new HashMap<>();
 
     private File cacheFile;
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
@@ -208,6 +209,11 @@ public class MobOwner extends Module {
      * Uses LazyEntityReference for TameableEntity, direct getOwner() for EnderPearlEntity.
      */
     private UUID getOwnerUuid(Entity entity) {
+        // 1) If a manual mapping was added by the command, use that
+        UUID manualUuid = mobToOwner.get(entity.getUuid());
+        if (manualUuid != null) return manualUuid;
+
+        // 2) Otherwise, read the real owner from the entity
         if (entity instanceof TameableEntity tame) {
             var ref = tame.getOwnerReference();
             return ref != null ? ref.getUuid() : null;
@@ -216,7 +222,6 @@ public class MobOwner extends Module {
             Entity owner = pearl.getOwner();
             return owner != null ? owner.getUuid() : null;
         }
-        // Fallback for other entities that might expose an owner
         return null;
     }
 
@@ -283,15 +288,19 @@ public class MobOwner extends Module {
         public String name;
     }
 
-    public void showStatus() {
-        info("§7=== CrackMobOwner Status ===");
-        info("§aNames cached: §f" + ownerNameCache.size());
-        info("§7Cache file: §f" + (cacheFile != null ? cacheFile.getPath() : "Not initialized"));
+    /** Called by the AssignOwnerCommand to manually set an owner for an entity */
+    public void assignOwner(Entity entity, UUID ownerUuid, String ownerName) {
+        mobToOwner.put(entity.getUuid(), ownerUuid);
+        ownerNameCache.put(ownerUuid, ownerName);
+        if (persistentCache.get()) saveCache();
+        if (debugMode.get()) {
+            info("Manually assigned " + ownerName + " to " + entity.getType().getName().getString());
+        }
     }
 
-    public void clearCache() {
-        ownerNameCache.clear();
-        info("§aName cache cleared");
+    /** Expose the cache for the command (optional)*/
+    public void addOwnerName(UUID ownerUuid, String name) {
+        ownerNameCache.put(ownerUuid, name);
         if (persistentCache.get()) saveCache();
     }
 }

@@ -5,7 +5,6 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
-import meteordevelopment.meteorclient.utils.player.FindItemResult;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import meteordevelopment.orbit.EventHandler;
@@ -15,6 +14,7 @@ import net.minecraft.component.type.ContainerComponent;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.registry.tag.ItemTags;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
@@ -90,8 +90,13 @@ public class MaterialsRefill extends Module {
     private BlockPos placedShulkerPos;
     private int delayTicks;
     private int keepFree = 0;   // number of empty slots to preserve (0 if not breaking, 1 if breaking)
+    private boolean pickaxeEquipped = false;
+    private int preBreakSlot = -1;
     private String lastFailItem = "";
     private String lastFailReason = "";
+    private Direction placedFace;
+    private Vec3d placedHitVec;
+    private BlockPos placedSupportBlock;
 
     public MaterialsRefill() {
         super(Addon.CATEGORY, "Mats-Refill",
@@ -191,16 +196,22 @@ public class MaterialsRefill extends Module {
         BlockPos supportBlock = null;
         Vec3d hitVec = null;
 
-        // 1) Main: crosshair target
+        // Normal crosshair placement
         if (mc.crosshairTarget instanceof BlockHitResult blockHit) {
             BlockPos clickedBlock = blockHit.getBlockPos();
             Direction clickedFace = blockHit.getSide();
             BlockPos candidate = clickedBlock.offset(clickedFace);
 
             double reach = mc.player.getEntityInteractionRange();
+
             if ((mc.world.getBlockState(candidate).isAir()
-                || mc.world.getBlockState(candidate).getBlock() == net.minecraft.block.Blocks.WATER)
-                && mc.player.getEntityPos().squaredDistanceTo(candidate.getX() + 0.5, candidate.getY() + 0.5, candidate.getZ() + 0.5) <= reach * reach) {
+                || mc.world.getBlockState(candidate).isReplaceable())
+                && mc.player.getEntityPos().squaredDistanceTo(
+                candidate.getX() + 0.5,
+                candidate.getY() + 0.5,
+                candidate.getZ() + 0.5
+            ) <= reach * reach) {
+
                 placePos = candidate;
                 placeFace = clickedFace;
                 supportBlock = clickedBlock;
@@ -208,15 +219,20 @@ public class MaterialsRefill extends Module {
             }
         }
 
-        // 2) Fallback
+        // Fallback placement
         if (placePos == null) {
-            Vec3d lookVec = mc.player.getRotationVec(1.0F).multiply(placeRange.get());
-            BlockPos targetBlock = mc.player.getBlockPos().add((int) lookVec.x, 0, (int) lookVec.z);
+            Vec3d eyePos = mc.player.getEyePos();
+            Vec3d lookVec = mc.player.getRotationVec(1.0F);
 
-            // Find the nearest solid block within +2 Y of the target position
+            BlockPos targetBlock = BlockPos.ofFloored(
+                eyePos.add(lookVec.multiply(placeRange.get()))
+            );
+
             BlockPos solidBlock = null;
+
             for (int dy = -2; dy <= 2; dy++) {
                 BlockPos check = targetBlock.add(0, dy, 0);
+
                 if (mc.world.getBlockState(check).isSolidBlock(mc.world, check)) {
                     solidBlock = check;
                     break;
@@ -224,99 +240,165 @@ public class MaterialsRefill extends Module {
             }
 
             if (solidBlock == null) {
+                if (PrintInfo("fallback", "no solid block")) {
+                    info("No valid fallback placement found.");
+                }
                 stage = Stage.IDLE;
                 resetState();
+                delayTicks = 20;
                 return;
             }
 
-            // Try to place on top of the solid block
             BlockPos candidate = solidBlock.up();
             Direction candidateFace = Direction.UP;
-            boolean found = false;
 
-            if (!mc.world.getBlockState(candidate).isAir()) {
-                // Top blocked? then try sides
-                for (Direction dir : Direction.values()) {
-                    BlockPos neighbor = solidBlock.offset(dir);
-                    if (mc.world.getBlockState(neighbor).isAir()) {
-                        candidate = neighbor;
+            if (!mc.world.getBlockState(candidate).isReplaceable()) {
+                boolean found = false;
+
+                for (Direction dir : Direction.Type.HORIZONTAL) {
+                    BlockPos sidePos = solidBlock.offset(dir);
+
+                    if (mc.world.getBlockState(sidePos).isReplaceable()) {
+                        candidate = sidePos;
                         candidateFace = dir;
                         found = true;
                         break;
                     }
                 }
+
                 if (!found) {
+                    if (PrintInfo("fallback", "no free side")) {
+                        info("No free side around fallback block.");
+                    }
                     stage = Stage.IDLE;
                     resetState();
+                    delayTicks = 20;
                     return;
                 }
             }
 
-            // Ensure the placement is within range
             double reach = mc.player.getEntityInteractionRange();
-            if (mc.player.getEntityPos().squaredDistanceTo(candidate.getX() + 0.5, candidate.getY() + 0.5, candidate.getZ() + 0.5) > reach * reach) {
+
+            if (mc.player.getEntityPos().squaredDistanceTo(
+                candidate.getX() + 0.5,
+                candidate.getY() + 0.5,
+                candidate.getZ() + 0.5
+            ) > reach * reach) {
+                if (PrintInfo("fallback", "out of reach")) {
+                    info("Fallback placement out of reach.");
+                }
                 stage = Stage.IDLE;
                 resetState();
+                delayTicks = 20;
                 return;
             }
 
             placePos = candidate;
             placeFace = candidateFace;
-            supportBlock = placePos.offset(candidateFace.getOpposite());
-            hitVec = Vec3d.ofCenter(supportBlock).add(Vec3d.of(candidateFace.getVector()).multiply(0.5));
+
+            supportBlock = candidate.offset(candidateFace.getOpposite());
+
+            hitVec = Vec3d.ofCenter(supportBlock)
+                .add(Vec3d.of(candidateFace.getVector()).multiply(0.5));
         }
 
+        // Save placement data for later opening
         placedShulkerPos = placePos;
+        placedFace = placeFace;
+        placedHitVec = hitVec;
+        placedSupportBlock = supportBlock;
 
-        // Place the shulker
         if (rotate.get()) {
             Vec3d finalHitVec = hitVec;
             Direction finalPlaceFace = placeFace;
             BlockPos finalSupportBlock = supportBlock;
-            Rotations.rotate(Rotations.getYaw(finalHitVec), Rotations.getPitch(finalHitVec), -100, () -> {
-                sendPlacePacket(finalSupportBlock, finalPlaceFace, finalHitVec);
-            });
+
+            Rotations.rotate(
+                Rotations.getYaw(finalHitVec),
+                Rotations.getPitch(finalHitVec),
+                -100,
+                () -> {
+                    BlockHitResult hit = new BlockHitResult(
+                        finalHitVec,
+                        finalPlaceFace,
+                        finalSupportBlock,
+                        false
+                    );
+
+                    mc.interactionManager.interactBlock(
+                        mc.player,
+                        Hand.MAIN_HAND,
+                        hit
+                    );
+
+                    mc.player.swingHand(Hand.MAIN_HAND);
+                }
+            );
         } else {
-            sendPlacePacket(supportBlock, placeFace, hitVec);
+            BlockHitResult hit = new BlockHitResult(
+                hitVec,
+                Direction.UP,
+                placedShulkerPos,
+                false
+            );
+
+            mc.interactionManager.interactBlock(
+                mc.player,
+                Hand.MAIN_HAND,
+                hit
+            );
+
+            mc.player.swingHand(Hand.MAIN_HAND);
         }
 
         delayTicks = 4;
         stage = Stage.OPEN_SHULKER;
     }
 
-    private void sendPlacePacket(BlockPos support, Direction face, Vec3d hitVec) {
-        BlockHitResult hit = new BlockHitResult(hitVec, face, support, false);
-        mc.player.networkHandler.sendPacket(
-            new PlayerInteractBlockC2SPacket(Hand.MAIN_HAND, hit, 0)
-        );
-        mc.player.swingHand(Hand.MAIN_HAND);
-    }
-
     private void openShulker() {
+        if (placedShulkerPos == null) {
+            stage = Stage.IDLE;
+            resetState();
+            return;
+        }
+
         if (mc.currentScreen instanceof HandledScreen) {
             if (!autoTake.get()) {
-                // Do not close automatically
                 stage = Stage.WAIT_MANUAL_CLOSE;
                 return;
             }
-            // Auto take enabled, we proceed to restock
             stage = Stage.RESTOCK;
             keepFree = breakAfterFill.get() ? 1 : 0;
             delayTicks = 5;
             return;
         }
 
-        // Check if the shulker is within reach
+        // Wait until the shulker block actually exists
+        if (!(mc.world.getBlockState(placedShulkerPos).getBlock() instanceof net.minecraft.block.ShulkerBoxBlock)) {
+            delayTicks = 2;
+            return;
+        }
+
+        // Check reach
         double reach = mc.player.getEntityInteractionRange();
-        if (mc.player.squaredDistanceTo(placedShulkerPos.getX() + 0.5, placedShulkerPos.getY() + 0.5, placedShulkerPos.getZ() + 0.5) > reach * reach) {
+        if (mc.player.squaredDistanceTo(
+            placedShulkerPos.getX() + 0.5,
+            placedShulkerPos.getY() + 0.5,
+            placedShulkerPos.getZ() + 0.5
+        ) > reach * reach) {
             info("Shulker is too far to open. Resetting.");
             stage = Stage.IDLE;
             resetState();
             return;
         }
 
-        // Send open packet
-        BlockHitResult hit = new BlockHitResult(Vec3d.ofCenter(placedShulkerPos), Direction.UP, placedShulkerPos, false);
+        // Always open by clicking the centre of the shulker with UP face
+        BlockHitResult hit = new BlockHitResult(
+            Vec3d.ofCenter(placedShulkerPos),
+            Direction.UP,
+            placedShulkerPos,
+            false
+        );
         mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(Hand.MAIN_HAND, hit, 0));
         mc.player.swingHand(Hand.MAIN_HAND);
         delayTicks = 4;
@@ -364,6 +446,14 @@ public class MaterialsRefill extends Module {
         stage = Stage.CLOSE_AND_BREAK;
     }
 
+    private void restorePickaxeSlot() {
+        if (pickaxeEquipped && preBreakSlot >= 0 && preBreakSlot <= 8) {
+            mc.player.getInventory().setSelectedSlot(preBreakSlot);
+            pickaxeEquipped = false;
+            preBreakSlot = -1;
+        }
+    }
+
     private void closeAndBreak() {
         if (mc.currentScreen != null) {
             mc.player.closeHandledScreen();
@@ -371,17 +461,40 @@ public class MaterialsRefill extends Module {
             return;
         }
         if (!breakAfterFill.get()) {
+            // Restore pickaxe if we had swapped
+            restorePickaxeSlot();
             stage = Stage.IDLE;
             resetState();
             if (autoToggle.get()) toggle();
             return;
         }
         if (mc.world.getBlockState(placedShulkerPos).isAir()) {
+            // Block already gone, restore slot and finish
+            restorePickaxeSlot();
             stage = Stage.IDLE;
             resetState();
             if (autoToggle.get()) toggle();
             return;
         }
+
+        // Equip a pickaxe (if there is one)
+        if (!pickaxeEquipped) {
+            int pickSlot = -1;
+            // Search hotbar for any pickaxe item
+            for (int i = 0; i < 9; i++) {
+                if (mc.player.getInventory().getStack(i).isIn(ItemTags.PICKAXES)) {
+                    pickSlot = i;
+                    break;
+                }
+            }
+            if (pickSlot != -1) {
+                preBreakSlot = mc.player.getInventory().getSelectedSlot();
+                mc.player.getInventory().setSelectedSlot(pickSlot);
+                pickaxeEquipped = true;
+            }
+            // If no pickaxe found, we just use whatever is in hand
+        }
+
         // Continuous mining until broken
         mc.interactionManager.updateBlockBreakingProgress(placedShulkerPos, Direction.UP);
         mc.player.swingHand(Hand.MAIN_HAND);
