@@ -19,17 +19,16 @@ import meteordevelopment.meteorclient.systems.hud.Hud;
 import meteordevelopment.meteorclient.systems.hud.HudGroup;
 import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.systems.modules.Modules;
-
+import net.minecraft.world.item.Items;
 import com.AutoBookshelf.addon.modules.*;
-import net.minecraft.item.Items;
 import org.slf4j.Logger;
 
 public class Addon extends MeteorAddon {
     public static final Logger LOG = LogUtils.getLogger();
     public static final HudGroup HUD_GROUP = new HudGroup("MayaChan");
 
-    public static final Category CATEGORY = new Category("Bookshelf", Items.WRITTEN_BOOK.getDefaultStack());
-    public static final Category CATEGORY2 = new Category("Aurelius", Items.WRITABLE_BOOK.getDefaultStack());
+    public static final Category CATEGORY = new Category("Bookshelf", Items.WRITTEN_BOOK.getDefaultInstance());
+    public static final Category CATEGORY2 = new Category("Aurelius", Items.WRITABLE_BOOK.getDefaultInstance());
     // Cocceius Fulvius Ulpius
 
     @Override

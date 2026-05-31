@@ -13,10 +13,10 @@ import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.network.Http;
 import meteordevelopment.meteorclient.utils.network.MeteorExecutor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.passive.TameableEntity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.entity.projectile.thrown.EnderPearlEntity;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.TamableAnimal;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl;
 import org.joml.Vector3d;
 
 import java.io.File;
@@ -103,7 +103,7 @@ public class MobOwner extends Module {
 
     private void loadCache() {
         try {
-            cacheFile = new File(mc.runDirectory, "cracked_mob_owner_cache.json");
+            cacheFile = new File(mc.gameDirectory, "cracked_mob_owner_cache.json");
             if (cacheFile.exists()) {
                 String json = new String(Files.readAllBytes(cacheFile.toPath()));
                 JsonObject root = JsonParser.parseString(json).getAsJsonObject();
@@ -127,7 +127,7 @@ public class MobOwner extends Module {
 
     private void saveCache() {
         if (cacheFile == null) {
-            cacheFile = new File(mc.runDirectory, "cracked_mob_owner_cache.json");
+            cacheFile = new File(mc.gameDirectory, "cracked_mob_owner_cache.json");
         }
         try {
             JsonObject root = new JsonObject();
@@ -144,7 +144,7 @@ public class MobOwner extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (mc.world == null) return;
+        if (mc.level == null) return;
 
         tickCounter++;
         if (tickCounter < 20) return;   // scan every second
@@ -152,7 +152,7 @@ public class MobOwner extends Module {
 
         int newNames = 0;
 
-        for (Entity entity : mc.world.getEntities()) {
+        for (Entity entity : mc.level.entitiesForRendering()) {
             UUID ownerUuid = getOwnerUuid(entity);
             if (ownerUuid == null) continue;
 
@@ -186,9 +186,9 @@ public class MobOwner extends Module {
 
     @EventHandler
     private void onRender2D(Render2DEvent event) {
-        if (mc.world == null) return;
+        if (mc.level == null) return;
 
-        for (Entity entity : mc.world.getEntities()) {
+        for (Entity entity : mc.level.entitiesForRendering()) {
             UUID ownerUuid = getOwnerUuid(entity);
             if (ownerUuid == null) continue;
 
@@ -210,17 +210,17 @@ public class MobOwner extends Module {
      */
     private UUID getOwnerUuid(Entity entity) {
         // 1) If a manual mapping was added by the command, use that
-        UUID manualUuid = mobToOwner.get(entity.getUuid());
+        UUID manualUuid = mobToOwner.get(entity.getUUID());
         if (manualUuid != null) return manualUuid;
 
         // 2) Otherwise, read the real owner from the entity
-        if (entity instanceof TameableEntity tame) {
+        if (entity instanceof TamableAnimal tame) {
             var ref = tame.getOwnerReference();
-            return ref != null ? ref.getUuid() : null;
+            return ref != null ? ref.getUUID() : null;
         }
-        if (entity instanceof EnderPearlEntity pearl) {
+        if (entity instanceof ThrownEnderpearl pearl) {
             Entity owner = pearl.getOwner();
-            return owner != null ? owner.getUuid() : null;
+            return owner != null ? owner.getUUID() : null;
         }
         return null;
     }
@@ -231,8 +231,8 @@ public class MobOwner extends Module {
         if (cached != null) return cached;
 
         // Try from online player
-        if (mc.world != null) {
-            PlayerEntity player = mc.world.getPlayerByUuid(ownerUuid);
+        if (mc.level != null) {
+            Player player = mc.level.getPlayerByUUID(ownerUuid);
             if (player != null) {
                 String name = player.getName().getString();
                 ownerNameCache.put(ownerUuid, name);
@@ -273,10 +273,10 @@ public class MobOwner extends Module {
     }
 
     private String findNameInTabList(UUID uuid) {
-        if (mc.getNetworkHandler() == null) return null;
-        for (var entry : mc.getNetworkHandler().getPlayerList()) {
+        if (mc.getConnection() == null) return null;
+        for (var entry : mc.getConnection().getOnlinePlayers()) {
             if (entry.getProfile().id().equals(uuid)) {
-                var displayName = entry.getDisplayName();
+                var displayName = entry.getTabListDisplayName();
                 if (displayName != null) return displayName.getString();
                 return entry.getProfile().name();
             }
@@ -290,11 +290,11 @@ public class MobOwner extends Module {
 
     /** Called by the AssignOwnerCommand to manually set an owner for an entity */
     public void assignOwner(Entity entity, UUID ownerUuid, String ownerName) {
-        mobToOwner.put(entity.getUuid(), ownerUuid);
+        mobToOwner.put(entity.getUUID(), ownerUuid);
         ownerNameCache.put(ownerUuid, ownerName);
         if (persistentCache.get()) saveCache();
         if (debugMode.get()) {
-            info("Manually assigned " + ownerName + " to " + entity.getType().getName().getString());
+            info("Manually assigned " + ownerName + " to " + entity.getType().getDescription().getString());
         }
     }
 

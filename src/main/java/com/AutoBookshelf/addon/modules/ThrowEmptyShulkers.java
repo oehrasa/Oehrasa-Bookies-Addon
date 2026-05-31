@@ -6,14 +6,13 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.ShulkerBoxBlock;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.ContainerComponent;
-import net.minecraft.item.BlockItem;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.screen.slot.SlotActionType;
-
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.ItemContainerContents;
+import net.minecraft.world.level.block.ShulkerBoxBlock;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -141,7 +140,7 @@ ThrowEmptyShulkers extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
-        if (mc.player == null || mc.interactionManager == null) return;
+        if (mc.player == null || mc.gameMode == null) return;
 
         if (throwAtOnce.get()) {
             tickBatchMode();
@@ -160,8 +159,8 @@ ThrowEmptyShulkers extends Module {
     private void tickSingleMode() {
         switch (throwState) {
             case ROTATING -> {
-                savedYaw = mc.player.getYaw();
-                savedPitch = mc.player.getPitch();
+                savedYaw = mc.player.getYRot();
+                savedPitch = mc.player.getXRot();
                 applyRotation(savedYaw + yaw.get().floatValue(), savedPitch + pitch.get().floatValue());
                 throwState = ThrowState.THROWING;
             }
@@ -177,9 +176,9 @@ ThrowEmptyShulkers extends Module {
             }
             case IDLE -> {
                 if (tickTimer > 0) { tickTimer--; return; }
-                int endSlot = hotbarOnly.get() ? 9 : mc.player.getInventory().size();
+                int endSlot = hotbarOnly.get() ? 9 : mc.player.getInventory().getContainerSize();
                 for (int i = 0; i < endSlot; i++) {
-                    if (shouldThrow(mc.player.getInventory().getStack(i))) {
+                    if (shouldThrow(mc.player.getInventory().getItem(i))) {
                         boolean needsRotation = enableRotation.get() && (yaw.get() != 0 || pitch.get() != 0);
                         if (needsRotation) {
                             pendingSlot = i;
@@ -198,8 +197,8 @@ ThrowEmptyShulkers extends Module {
     private void tickBatchMode() {
         switch (batchState) {
             case ROTATING -> {
-                savedYaw = mc.player.getYaw();
-                savedPitch = mc.player.getPitch();
+                savedYaw = mc.player.getYRot();
+                savedPitch = mc.player.getXRot();
                 applyRotation(savedYaw + yaw.get().floatValue(), savedPitch + pitch.get().floatValue());
                 batchIndex = 0;
                 batchState = BatchState.THROWING_BATCH;
@@ -208,7 +207,7 @@ ThrowEmptyShulkers extends Module {
                 if (tickTimer > 0) { tickTimer--; return; }
                 if (batchIndex < pendingSlots.size()) {
                     int slot = pendingSlots.get(batchIndex);
-                    if (shouldThrow(mc.player.getInventory().getStack(slot))) {
+                    if (shouldThrow(mc.player.getInventory().getItem(slot))) {
                         executeDrop(slot);
                     }
                     batchIndex++;
@@ -232,9 +231,9 @@ ThrowEmptyShulkers extends Module {
             case IDLE -> {
                 if (tickTimer > 0) { tickTimer--; return; }
                 pendingSlots.clear();
-                int endSlot = hotbarOnly.get() ? 9 : mc.player.getInventory().size();
+                int endSlot = hotbarOnly.get() ? 9 : mc.player.getInventory().getContainerSize();
                 for (int i = 0; i < endSlot; i++) {
-                    if (shouldThrow(mc.player.getInventory().getStack(i))) {
+                    if (shouldThrow(mc.player.getInventory().getItem(i))) {
                         pendingSlots.add(i);
                     }
                 }
@@ -269,31 +268,31 @@ ThrowEmptyShulkers extends Module {
     }
 
     private boolean isShulkerEmpty(ItemStack stack) {
-        ContainerComponent container = stack.get(DataComponentTypes.CONTAINER);
+        ItemContainerContents container = stack.get(DataComponents.CONTAINER);
         if (container == null) return true;
-        for (ItemStack stored : container.iterateNonEmpty()) {
+        for (ItemStack stored : container.nonEmptyItems()) {
             if (!stored.isEmpty()) return false;
         }
         return true;
     }
 
     private boolean shulkerContainsAny(ItemStack shulker, List<Item> items) {
-        ContainerComponent container = shulker.get(DataComponentTypes.CONTAINER);
+        ItemContainerContents container = shulker.get(DataComponents.CONTAINER);
         if (container == null) return false;
-        for (ItemStack stored : container.iterateNonEmpty()) {
+        for (ItemStack stored : container.nonEmptyItems()) {
             if (!stored.isEmpty() && items.contains(stored.getItem())) return true;
         }
         return false;
     }
 
     private void executeDrop(int invSlot) {
-        if (mc.player == null || mc.player.currentScreenHandler == null) return;
+        if (mc.player == null || mc.player.containerMenu == null) return;
         int networkSlot = (invSlot < 9) ? 36 + invSlot : invSlot;
-        mc.interactionManager.clickSlot(
-            mc.player.currentScreenHandler.syncId,
+        mc.gameMode.handleInventoryMouseClick(
+            mc.player.containerMenu.containerId,
             networkSlot,
             1,
-            SlotActionType.THROW,
+            ClickType.THROW,
             mc.player
         );
     }

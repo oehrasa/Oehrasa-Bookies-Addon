@@ -4,6 +4,7 @@ import com.AutoBookshelf.addon.Addon;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.mojang.blaze3d.platform.NativeImage;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
@@ -18,10 +19,9 @@ import meteordevelopment.meteorclient.systems.hud.HudElementInfo;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.utils.network.Http;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.client.texture.AbstractTexture;
-import net.minecraft.client.texture.NativeImage;
-import net.minecraft.client.texture.NativeImageBackedTexture;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.renderer.texture.AbstractTexture;
+import net.minecraft.client.renderer.texture.DynamicTexture;
+import net.minecraft.resources.Identifier;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryUtil;
@@ -194,7 +194,7 @@ public class AnimePics extends HudElement {
 
     public AnimePics() {
         super(INFO);
-        this.textureId = Identifier.of("autobookshelf", "animepics_" + UUID.randomUUID());
+        this.textureId = Identifier.fromNamespaceAndPath("autobookshelf", "animepics_" + UUID.randomUUID());
 
         // PNG filter for the save dialogue
         ByteBuffer pngFilter = MemoryUtil.memASCII("*.png");
@@ -210,7 +210,7 @@ public class AnimePics extends HudElement {
         super.remove();
         MeteorClient.EVENT_BUS.unsubscribe(this);
         if (mc.getTextureManager() != null) {
-            mc.getTextureManager().destroyTexture(textureId);
+            mc.getTextureManager().release(textureId);
         }
     }
 
@@ -355,7 +355,7 @@ public class AnimePics extends HudElement {
         AbstractTexture tex = mc.getTextureManager().getTexture(textureId);
         if (tex == null) return;
 
-        var textureView = tex.getGlTextureView();
+        var textureView = tex.getTextureView();
         var sampler = tex.getSampler();
 
         Renderer2D.TEXTURE.begin();
@@ -514,10 +514,10 @@ public class AnimePics extends HudElement {
                 mc.execute(() -> {
                     try {
                         if (mc.getTextureManager() == null) return;
-                        mc.getTextureManager().destroyTexture(textureId);
+                        mc.getTextureManager().release(textureId);
                         NativeImage nativeImage = NativeImage.read(new ByteArrayInputStream(finalBytes));
-                        mc.getTextureManager().registerTexture(textureId,
-                            new NativeImageBackedTexture(() -> "AnimePics", nativeImage));
+                        mc.getTextureManager().register(textureId,
+                            new DynamicTexture(() -> "AnimePics", nativeImage));
                         empty = false;
                         MeteorClient.LOG.info("[AnimePics] Image loaded!");
                     } catch (Exception ex) {

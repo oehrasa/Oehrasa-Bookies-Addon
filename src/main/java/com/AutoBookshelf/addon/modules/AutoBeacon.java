@@ -14,19 +14,18 @@ import meteordevelopment.meteorclient.utils.player.*;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.item.BlockItem;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.util.Hand;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -176,7 +175,7 @@ public class AutoBeacon extends Module {
             useBaritone.set(false);
         }
         if (originMode.get() == OriginMode.PlayerPosition) {
-            origin = mc.player.getBlockPos();
+            origin = mc.player.blockPosition();
             initBuild();
         }
     }
@@ -233,12 +232,12 @@ public class AutoBeacon extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.level == null) return;
 
         if (originMode.get() == OriginMode.SelectedBlock) {
             if (!originSet && setOriginKey.get().isPressed()) {
-                if (mc.crosshairTarget != null && mc.crosshairTarget.getType() == HitResult.Type.BLOCK) {
-                    BlockHitResult hit = (BlockHitResult) mc.crosshairTarget;
+                if (mc.hitResult != null && mc.hitResult.getType() == HitResult.Type.BLOCK) {
+                    BlockHitResult hit = (BlockHitResult) mc.hitResult;
                     origin = hit.getBlockPos();
                     baseY = origin.getY() + verticalOffset.get();
                     generateBlockList();
@@ -261,13 +260,13 @@ public class AutoBeacon extends Module {
         if (!building) return;
 
         // Periodic cleanup of already placed blocks
-        if (mc.world.getTime() % 100 == 0) {
-            remainingBlocks.removeIf(pos -> isBlockCorrectAtPosition(mc.world.getBlockState(pos)));
+        if (mc.level.getGameTime() % 100 == 0) {
+            remainingBlocks.removeIf(pos -> isBlockCorrectAtPosition(mc.level.getBlockState(pos)));
         }
 
         // Verification of previous placement
         if (pendingVerification != null) {
-            BlockState state = mc.world.getBlockState(pendingVerification);
+            BlockState state = mc.level.getBlockState(pendingVerification);
             if (isBlockCorrectAtPosition(state)) {
                 remainingBlocks.remove(pendingVerification);
             }
@@ -289,7 +288,7 @@ public class AutoBeacon extends Module {
 
         if (jumpWhenStuck.get()) {
             if (stuckTicks >= 100) {          // 5 seconds
-                mc.player.jump();
+                mc.player.jumpFromGround();
                 stuckTicks = 0;
             } else if (placeTimer == 0) {     // only count when not already delaying
                 stuckTicks++;
@@ -336,7 +335,7 @@ public class AutoBeacon extends Module {
                 List<BlockPos> layerBlocks = getBlocksForLayer(currentLayer);
                 List<BlockPos> stillMissing = new ArrayList<>();
                 for (BlockPos pos : layerBlocks) {
-                    if (!isBlockCorrectAtPosition(mc.world.getBlockState(pos))) {
+                    if (!isBlockCorrectAtPosition(mc.level.getBlockState(pos))) {
                         stillMissing.add(pos);
                     }
                 }
@@ -401,11 +400,11 @@ public class AutoBeacon extends Module {
     }
 
     private BlockPos findClosestBlock() {
-        BlockPos playerPos = mc.player.getBlockPos();
+        BlockPos playerPos = mc.player.blockPosition();
         double closestDist = Double.MAX_VALUE;
         BlockPos closest = null;
         for (BlockPos pos : remainingBlocks) {
-            double dist = pos.getSquaredDistance(playerPos);
+            double dist = pos.distSqr(playerPos);
             if (dist < closestDist) {
                 closestDist = dist;
                 closest = pos;
@@ -415,7 +414,7 @@ public class AutoBeacon extends Module {
     }
 
     private boolean canPlaceAtPosition(BlockPos pos) {
-        BlockState state = mc.world.getBlockState(pos);
+        BlockState state = mc.level.getBlockState(pos);
         if (state.isAir()) return true;
         if (!replaceGrass.get()) return false;
         Block block = state.getBlock();
@@ -426,10 +425,10 @@ public class AutoBeacon extends Module {
 
     private boolean isPosPlaceableThroughWall(BlockPos pos) {
         for (Direction dir : Direction.values()) {
-            BlockPos neighbor = pos.offset(dir);
-            if (mc.world == null) continue;
-            BlockState neighborState = mc.world.getBlockState(neighbor);
-            if (!neighborState.isReplaceable() && PlayerUtils.isWithinReach(neighbor)) {
+            BlockPos neighbor = pos.relative(dir);
+            if (mc.level == null) continue;
+            BlockState neighborState = mc.level.getBlockState(neighbor);
+            if (!neighborState.canBeReplaced() && PlayerUtils.isWithinReach(neighbor)) {
                 return true;
             }
         }
@@ -467,15 +466,15 @@ public class AutoBeacon extends Module {
 
     private boolean placeBlockManually(BlockPos pos, FindItemResult item) {
         for (Direction dir : Direction.values()) {
-            BlockPos neighbor = pos.offset(dir);
-            BlockState neighborState = mc.world.getBlockState(neighbor);
-            if (neighborState.isReplaceable()) continue;
+            BlockPos neighbor = pos.relative(dir);
+            BlockState neighborState = mc.level.getBlockState(neighbor);
+            if (neighborState.canBeReplaced()) continue;
             if (!PlayerUtils.isWithinReach(neighbor)) continue;
 
-            Vec3d hitPos = Vec3d.ofCenter(neighbor).add(
-                dir.getOffsetX() * 0.5,
-                dir.getOffsetY() * 0.5,
-                dir.getOffsetZ() * 0.5
+            Vec3 hitPos = Vec3.atCenterOf(neighbor).add(
+                dir.getStepX() * 0.5,
+                dir.getStepY() * 0.5,
+                dir.getStepZ() * 0.5
             );
             Direction face = dir.getOpposite();
             BlockHitResult hit = new BlockHitResult(hitPos, face, neighbor, false);
@@ -483,8 +482,8 @@ public class AutoBeacon extends Module {
             int prevSlot = mc.player.getInventory().getSelectedSlot();
             Rotations.rotate(Rotations.getYaw(hitPos), Rotations.getPitch(hitPos), () -> {
                 InvUtils.swap(item.slot(), true);
-                mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hit);
-                mc.player.swingHand(Hand.MAIN_HAND);
+                mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
+                mc.player.swing(InteractionHand.MAIN_HAND);
             });
             InvUtils.swapBack();
             return true;
@@ -497,7 +496,7 @@ public class AutoBeacon extends Module {
 
     private FindItemResult findBlockInHotbar() {
         // 1. Main hand already holds an allowed block then keep it, remember as preferred
-        ItemStack mainHand = mc.player.getMainHandStack();
+        ItemStack mainHand = mc.player.getMainHandItem();
         if (!mainHand.isEmpty() && mainHand.getItem() instanceof BlockItem handBlock) {
             if (allowedBlocks.get().contains(handBlock.getBlock())) {
                 preferredBlock = handBlock.getBlock();
@@ -508,7 +507,7 @@ public class AutoBeacon extends Module {
         // 2. Prefer the same block type we used last time
         if (preferredBlock != null) {
             for (int i = 0; i < 9; i++) {
-                ItemStack stack = mc.player.getInventory().getStack(i);
+                ItemStack stack = mc.player.getInventory().getItem(i);
                 if (!stack.isEmpty() && stack.getItem() instanceof BlockItem bi && bi.getBlock() == preferredBlock) {
                     return new FindItemResult(i, stack.getCount());
                 }
@@ -530,7 +529,7 @@ public class AutoBeacon extends Module {
 
         // 3. Any allowed block in hotbar
         for (int i = 0; i < 9; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
+            ItemStack stack = mc.player.getInventory().getItem(i);
             if (!stack.isEmpty() && stack.getItem() instanceof BlockItem bi && allowedBlocks.get().contains(bi.getBlock())) {
                 preferredBlock = bi.getBlock(); // start using this type
                 return new FindItemResult(i, stack.getCount());
@@ -557,7 +556,7 @@ public class AutoBeacon extends Module {
 
     private FindItemResult findBeaconInInventory() {
         for (int i = 0; i < 9; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
+            ItemStack stack = mc.player.getInventory().getItem(i);
             if (!stack.isEmpty() && stack.getItem() == Items.BEACON) {
                 return new FindItemResult(i, stack.getCount());
             }
@@ -568,7 +567,7 @@ public class AutoBeacon extends Module {
             if (empty.found()) {
                 InvUtils.move().from(result.slot()).toHotbar(empty.slot());
                 for (int i = 0; i < 9; i++) {
-                    ItemStack stack = mc.player.getInventory().getStack(i);
+                    ItemStack stack = mc.player.getInventory().getItem(i);
                     if (!stack.isEmpty() && stack.getItem() == Items.BEACON) {
                         return new FindItemResult(i, stack.getCount());
                     }

@@ -9,7 +9,7 @@ import meteordevelopment.meteorclient.systems.hud.HudElement;
 import meteordevelopment.meteorclient.systems.hud.HudElementInfo;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.utils.render.color.Color;
-import net.minecraft.util.Identifier;
+import net.minecraft.resources.Identifier;
 
 public class MayaChan extends HudElement {
     public enum MayaImage {
@@ -23,7 +23,7 @@ public class MayaChan extends HudElement {
         public final int defaultHeight;
 
         MayaImage(String path, int defaultWidth, int defaultHeight) {
-            this.id = Identifier.of("oehrasa", path);
+            this.id = Identifier.fromNamespaceAndPath("oehrasa", path);
             this.defaultWidth = defaultWidth;
             this.defaultHeight = defaultHeight;
         }

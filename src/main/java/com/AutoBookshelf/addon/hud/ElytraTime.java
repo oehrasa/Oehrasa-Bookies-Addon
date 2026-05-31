@@ -6,14 +6,13 @@ import meteordevelopment.meteorclient.systems.hud.HudElement;
 import meteordevelopment.meteorclient.systems.hud.HudElementInfo;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.utils.render.color.Color;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.ItemEnchantmentsComponent;
-import net.minecraft.enchantment.Enchantments;
-import net.minecraft.entity.EquipmentSlot;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.registry.entry.RegistryEntry;
-import net.minecraft.util.Identifier;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.enchantment.Enchantments;
+import net.minecraft.world.item.enchantment.ItemEnchantments;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
@@ -37,14 +36,14 @@ public class ElytraTime extends HudElement {
      */
     private int getUnbreakingLevel(ItemStack stack) {
         if (stack == null || stack.isEmpty()) return 0;
-        ItemEnchantmentsComponent ench = stack.getOrDefault(
-            DataComponentTypes.ENCHANTMENTS,
-            ItemEnchantmentsComponent.DEFAULT
+        ItemEnchantments ench = stack.getOrDefault(
+            DataComponents.ENCHANTMENTS,
+            ItemEnchantments.EMPTY
         );
-        Identifier unbreakingId = Enchantments.UNBREAKING.getValue();
-        return ench.getEnchantmentEntries().stream()
-            .filter(entry -> entry.getKey().getKey()
-                .map(key -> key.getValue().equals(unbreakingId))
+        Identifier unbreakingId = Enchantments.UNBREAKING.identifier();
+        return ench.entrySet().stream()
+            .filter(entry -> entry.getKey().unwrapKey()
+                .map(key -> key.identifier().equals(unbreakingId))
                 .orElse(false))
             .map(Object2IntMap.Entry::getIntValue)
             .findFirst()
@@ -58,7 +57,7 @@ public class ElytraTime extends HudElement {
     private int getTimeRemaining(ItemStack elytra) {
         if (elytra == null || elytra.isEmpty()) return 0;
         int multiplier = getUnbreakingMultiplier(elytra);
-        return (elytra.getMaxDamage() - elytra.getDamage()) * multiplier - 1;
+        return (elytra.getMaxDamage() - elytra.getDamageValue()) * multiplier - 1;
     }
 
     private int totalRawDurability = 0;
@@ -71,20 +70,20 @@ public class ElytraTime extends HudElement {
         totalRawDurability = 0;
         unbreakingLevel = 0;
 
-        for (int n = 0; n < mc.player.getInventory().getMainStacks().size(); n++) {
-            ItemStack stack = mc.player.getInventory().getMainStacks().get(n);
+        for (int n = 0; n < mc.player.getInventory().getNonEquipmentItems().size(); n++) {
+            ItemStack stack = mc.player.getInventory().getNonEquipmentItems().get(n);
             if (stack.getItem() == Items.ELYTRA) {
                 totalTime += getTimeRemaining(stack);
-                totalRawDurability += (stack.getMaxDamage() - stack.getDamage() - 1);
+                totalRawDurability += (stack.getMaxDamage() - stack.getDamageValue() - 1);
                 unbreakingLevel = Math.max(unbreakingLevel, getUnbreakingLevel(stack));
             }
         }
 
         // Check equipped chest slot
-        ItemStack chestStack = mc.player.getEquippedStack(EquipmentSlot.CHEST);
+        ItemStack chestStack = mc.player.getItemBySlot(EquipmentSlot.CHEST);
         if (chestStack != null && chestStack.getItem() == Items.ELYTRA) {
             totalTime += getTimeRemaining(chestStack);
-            totalRawDurability += (chestStack.getMaxDamage() - chestStack.getDamage() - 1);
+            totalRawDurability += (chestStack.getMaxDamage() - chestStack.getDamageValue() - 1);
             unbreakingLevel = Math.max(unbreakingLevel, getUnbreakingLevel(chestStack));
         }
 

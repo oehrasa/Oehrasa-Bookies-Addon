@@ -6,10 +6,9 @@ import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.network.packet.c2s.play.ChatCommandSignedC2SPacket;
-import net.minecraft.network.packet.c2s.play.CommandExecutionC2SPacket;
-import net.minecraft.util.math.random.Random;
-
+import net.minecraft.network.protocol.game.ServerboundChatCommandPacket;
+import net.minecraft.network.protocol.game.ServerboundChatCommandSignedPacket;
+import net.minecraft.util.RandomSource;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -228,16 +227,16 @@ public class TsundereFurry extends Module {
     private void onPacketSend(PacketEvent.Send event) {
         if (redirecting) return;
 
-        if (!(event.packet instanceof CommandExecutionC2SPacket) &&
-            !(event.packet instanceof ChatCommandSignedC2SPacket)) {
+        if (!(event.packet instanceof ServerboundChatCommandPacket) &&
+            !(event.packet instanceof ServerboundChatCommandSignedPacket)) {
             return;
         }
 
         String command;
-        if (event.packet instanceof CommandExecutionC2SPacket cmdPacket) {
+        if (event.packet instanceof ServerboundChatCommandPacket cmdPacket) {
             command = "/" + cmdPacket.command();
         } else {
-            command = "/" + ((ChatCommandSignedC2SPacket) event.packet).command();
+            command = "/" + ((ServerboundChatCommandSignedPacket) event.packet).command();
         }
 
         if (!isWhisperCommand(command)) return;
@@ -248,9 +247,9 @@ public class TsundereFurry extends Module {
         redirecting = true;                // Prevent rehandling the new packet
         try {
             if (transformed.startsWith("/")) {
-                mc.player.networkHandler.sendChatCommand(transformed.substring(1));
+                mc.player.connection.sendCommand(transformed.substring(1));
             } else {
-                mc.player.networkHandler.sendChatMessage(transformed);
+                mc.player.connection.sendChat(transformed);
             }
         } finally {
             redirecting = false;
@@ -305,7 +304,7 @@ public class TsundereFurry extends Module {
         while (matcher.find()) {
             String word = matcher.group();
             String lower = word.toLowerCase();
-            wordToSound.putIfAbsent(lower, sounds.get(Random.create().nextInt(sounds.size())));
+            wordToSound.putIfAbsent(lower, sounds.get(RandomSource.create().nextInt(sounds.size())));
             String replacement = wordToSound.get(lower);
             replacement = matchCase(word, replacement);
             matcher.appendReplacement(out, Matcher.quoteReplacement(replacement));
@@ -320,21 +319,21 @@ public class TsundereFurry extends Module {
         text = applyWholePhrases(text);
         text = applyTsundereTokens(text);
 
-        if (addPrefix.get() && Random.create().nextInt(100) < prefixChance.get()) {
+        if (addPrefix.get() && RandomSource.create().nextInt(100) < prefixChance.get()) {
             List<String> prefixList = prefixes.get();
             if (!prefixList.isEmpty()) {
-                text = prefixList.get(Random.create().nextInt(prefixList.size())) + text;
+                text = prefixList.get(RandomSource.create().nextInt(prefixList.size())) + text;
             }
         }
 
-        if (addSuffix.get() && Random.create().nextInt(100) < suffixChance.get()) {
+        if (addSuffix.get() && RandomSource.create().nextInt(100) < suffixChance.get()) {
             List<String> suffixList = suffixes.get();
             if (!suffixList.isEmpty()) {
-                text += suffixList.get(Random.create().nextInt(suffixList.size()));
+                text += suffixList.get(RandomSource.create().nextInt(suffixList.size()));
             }
         }
 
-        if (stutter.get() && Random.create().nextInt(100) < stutterChance.get()) {
+        if (stutter.get() && RandomSource.create().nextInt(100) < stutterChance.get()) {
             text = stutterText(text);
         }
 
@@ -345,7 +344,7 @@ public class TsundereFurry extends Module {
         String cleaned = cleanKey(text);
         if (PHRASE_REPLACEMENTS.containsKey(cleaned)) {
             List<String> options = PHRASE_REPLACEMENTS.get(cleaned);
-            return options.get(Random.create().nextInt(options.size()));
+            return options.get(RandomSource.create().nextInt(options.size()));
         }
         return text;
     }
@@ -414,7 +413,7 @@ public class TsundereFurry extends Module {
                 } else {
                     if (pluralish) pluralFlag = true;
                     profane = true;
-                    String rep = replacements.get(Random.create().nextInt(replacements.size()));
+                    String rep = replacements.get(RandomSource.create().nextInt(replacements.size()));
                     tokens.set(i, matchCase(tok, rep));
                 }
             }
@@ -492,7 +491,7 @@ public class TsundereFurry extends Module {
     }
 
     private String flip(String a, String b) {
-        return Random.create().nextBoolean() ? a : b;
+        return RandomSource.create().nextBoolean() ? a : b;
     }
 
     public enum TransformationMode {

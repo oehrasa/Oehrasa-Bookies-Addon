@@ -154,7 +154,7 @@ public class TeleportTimer extends HudElement {
 
     @EventHandler
     private void onMessageReceive(ReceiveMessageEvent event) {
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.level == null) return;
         String message = event.getMessage().getString();
 
         // Cancel

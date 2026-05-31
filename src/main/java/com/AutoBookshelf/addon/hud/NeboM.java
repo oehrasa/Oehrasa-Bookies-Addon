@@ -11,16 +11,22 @@ import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.*;
-import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
-import net.minecraft.network.packet.s2c.play.BlockBreakingProgressS2CPacket;
-import net.minecraft.network.packet.s2c.play.EntitySpawnS2CPacket;
-import net.minecraft.network.packet.s2c.play.WorldEventS2CPacket;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
+import net.minecraft.network.protocol.game.ClientboundBlockDestructionPacket;
+import net.minecraft.network.protocol.game.ClientboundLevelEventPacket;
+import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.BowItem;
+import net.minecraft.world.item.CrossbowItem;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.PotionItem;
+import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
@@ -183,7 +189,7 @@ public class NeboM extends HudElement {
         .build()
     );
 
-    private final List<PlayerEntity> players = new ArrayList<>();
+    private final List<Player> players = new ArrayList<>();
     private static final int ICON_SIZE = 16;  // normal size
     private static final int ICON_TEXT_GAP = 2;
     private final Map<UUID, Integer> crystalPlaceTicks = new HashMap<>(); // player UUID -> ticks left
@@ -215,9 +221,9 @@ public class NeboM extends HudElement {
         double width = renderer.textWidth("Players:", shadow.get(), scl);
         double height = renderer.textHeight(shadow.get(), scl);
 
-        if (mc.world == null) { setSize(width, height); return; }
+        if (mc.level == null) { setSize(width, height); return; }
 
-        for (PlayerEntity player : getNearbyPlayers()) {
+        for (Player player : getNearbyPlayers()) {
             if (!shouldShow(player)) continue;
 
             double lineWidth = 0;
@@ -255,9 +261,9 @@ public class NeboM extends HudElement {
             x + border.get() + alignX(renderer.textWidth("Players:", shadow.get(), scl), alignment.get()),
             y, Color.GRAY, shadow.get(), scl);
 
-        if (mc.world == null) return;
+        if (mc.level == null) return;
 
-        for (PlayerEntity player : getNearbyPlayers()) {
+        for (Player player : getNearbyPlayers()) {
             if (!shouldShow(player)) continue;
 
             String name = player.getName().getString();
@@ -315,45 +321,45 @@ public class NeboM extends HudElement {
         }
     }
 
-    private boolean shouldShow(PlayerEntity player) {
+    private boolean shouldShow(Player player) {
         if (player == mc.player && !includeSelf.get()) return false;
         if (!displayFriends.get() && Friends.get().isFriend(player)) return false;
         return true;
     }
 
-    private List<PlayerEntity> getNearbyPlayers() {
+    private List<Player> getNearbyPlayers() {
         players.clear();
         double maxDistSq = maxDistance.get() * maxDistance.get();
-        for (PlayerEntity player : mc.world.getPlayers()) {
-            if (player.squaredDistanceTo(mc.player) <= maxDistSq) players.add(player);
+        for (Player player : mc.level.players()) {
+            if (player.distanceToSqr(mc.player) <= maxDistSq) players.add(player);
         }
-        players.sort(Comparator.comparingDouble(p -> p.squaredDistanceTo(mc.player)));
+        players.sort(Comparator.comparingDouble(p -> p.distanceToSqr(mc.player)));
         if (players.size() > limit.get()) players.subList(limit.get(), players.size()).clear();
         return players;
     }
 
-    private List<String> getActiveStates(PlayerEntity player) {
+    private List<String> getActiveStates(Player player) {
         List<String> states = new ArrayList<>();
-        if (player.isGliding()) states.add("Fly");
+        if (player.isFallFlying()) states.add("Fly");
         if (player.isSprinting()) states.add("Sprint");
-        if (player.isSneaking()) states.add("Sneak");
+        if (player.isShiftKeyDown()) states.add("Sneak");
         if (player.isSwimming()) states.add("Swim");
 
         // Crystal placement (recent packet)
-        Integer crystalTicks = crystalPlaceTicks.get(player.getUuid());
+        Integer crystalTicks = crystalPlaceTicks.get(player.getUUID());
         if (crystalTicks != null && crystalTicks > 0) {
             states.add("Crystal");
         }
 
         // Continuous item use
         if (player.isUsingItem()) {
-            ItemStack active = player.getActiveItem();
+            ItemStack active = player.getUseItem();
             if (!active.isEmpty()) {
                 Item item = active.getItem();
                 if (item instanceof BowItem || item instanceof CrossbowItem) states.add("Bow");
                 else if (item == Items.END_CRYSTAL || item == Items.RESPAWN_ANCHOR) states.add("Crystal");
                 else if (item instanceof BlockItem) states.add("Place");
-                else if (active.getComponents().get(DataComponentTypes.FOOD) != null) states.add("Eat");
+                else if (active.getComponents().get(DataComponents.FOOD) != null) states.add("Eat");
                 else if (item instanceof PotionItem || item == Items.POTION) states.add("Drink");
             }
         }
@@ -362,13 +368,13 @@ public class NeboM extends HudElement {
         Integer mineTicks = miningTicks.get(player.getId());
         if (mineTicks != null && mineTicks > 0) {
             states.add("Mining");
-        } else if (player == mc.player && mc.interactionManager != null && mc.interactionManager.isBreakingBlock()) {
+        } else if (player == mc.player && mc.gameMode != null && mc.gameMode.isDestroying()) {
             // fallback for local player without packet
             states.add("Mining");
         }
 
         // Container
-        Integer containerTicks = containerOpenTicks.get(player.getUuid());
+        Integer containerTicks = containerOpenTicks.get(player.getUUID());
         if (containerTicks != null && containerTicks > 0) {
             states.add("Container");
         }
@@ -376,16 +382,16 @@ public class NeboM extends HudElement {
     }
 
     @Nullable
-    private ItemStack getActionItem(PlayerEntity player, String state) {
+    private ItemStack getActionItem(Player player, String state) {
         return switch (state) {
-            case "Bow", "Eat", "Drink" -> player.getActiveItem().copy();
+            case "Bow", "Eat", "Drink" -> player.getUseItem().copy();
             case "Crystal" -> {
                 // If using item, return the active item; else for quick crystal it's already in the state list, show crystal item.
-                if (player.isUsingItem()) yield player.getActiveItem().copy();
+                if (player.isUsingItem()) yield player.getUseItem().copy();
                 else yield new ItemStack(Items.END_CRYSTAL);
             }
-            case "Place" -> player.getActiveItem().copy();
-            case "Mining" -> player.getMainHandStack().copy();
+            case "Place" -> player.getUseItem().copy();
+            case "Mining" -> player.getMainHandItem().copy();
             default -> null;
         };
     }
@@ -409,35 +415,35 @@ public class NeboM extends HudElement {
 
     @EventHandler
     private void onPacketSend(PacketEvent.Send event) {
-        if (mc.player == null || mc.world == null) return;
-        if (event.packet instanceof PlayerInteractBlockC2SPacket) {
-            ItemStack stack = mc.player.getMainHandStack();
+        if (mc.player == null || mc.level == null) return;
+        if (event.packet instanceof ServerboundUseItemOnPacket) {
+            ItemStack stack = mc.player.getMainHandItem();
             if (stack.getItem() == Items.END_CRYSTAL) {
-                crystalPlaceTicks.put(mc.player.getUuid(), actionDisplayTicks.get());
+                crystalPlaceTicks.put(mc.player.getUUID(), actionDisplayTicks.get());
             }
         }
     }
 
     @EventHandler
     private void onPacketReceive(PacketEvent.Receive event) {
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.level == null) return;
 
         // Mining progress for all players
-        if (event.packet instanceof BlockBreakingProgressS2CPacket packet) {
-            int entityId = packet.getEntityId();
+        if (event.packet instanceof ClientboundBlockDestructionPacket packet) {
+            int entityId = packet.getId();
             miningTicks.put(entityId, actionDisplayTicks.get());
         }
 
         // Crystal placed by anyone, guess who placed it by distance
-        if (event.packet instanceof EntitySpawnS2CPacket packet
-            && packet.getEntityType() == EntityType.END_CRYSTAL) {
+        if (event.packet instanceof ClientboundAddEntityPacket packet
+            && packet.getType() == EntityType.END_CRYSTAL) {
 
-            Vec3d crystalPos = new Vec3d(packet.getX(), packet.getY(), packet.getZ());
-            PlayerEntity nearest = null;
+            Vec3 crystalPos = new Vec3(packet.getX(), packet.getY(), packet.getZ());
+            Player nearest = null;
             double nearestDist = Double.MAX_VALUE;
 
-            for (PlayerEntity p : mc.world.getPlayers()) {
-                double dist = p.getEntityPos().squaredDistanceTo(crystalPos);
+            for (Player p : mc.level.players()) {
+                double dist = p.position().distanceToSqr(crystalPos);
                 if (dist < 64.0 && dist < nearestDist) {
                     nearestDist = dist;
                     nearest = p;
@@ -445,28 +451,28 @@ public class NeboM extends HudElement {
             }
 
             if (nearest != null) {
-                crystalPlaceTicks.put(nearest.getUuid(), actionDisplayTicks.get());
+                crystalPlaceTicks.put(nearest.getUUID(), actionDisplayTicks.get());
             }
         }
 
         // Container open detection
-        if (event.packet instanceof WorldEventS2CPacket worldEvent) {
-            int eventId = worldEvent.getEventId();
+        if (event.packet instanceof ClientboundLevelEventPacket worldEvent) {
+            int eventId = worldEvent.getType();
             if (eventId == 1008 || eventId == 1010 || eventId == 1012 || eventId == 1013) {
                 BlockPos pos = worldEvent.getPos();
-                Vec3d containerPos = pos.toCenterPos();
+                Vec3 containerPos = pos.getCenter();
 
-                PlayerEntity nearest = null;
+                Player nearest = null;
                 double nearestDist = Double.MAX_VALUE;
-                for (PlayerEntity p : mc.world.getPlayers()) {
-                    double dist = p.getEntityPos().squaredDistanceTo(containerPos);
+                for (Player p : mc.level.players()) {
+                    double dist = p.position().distanceToSqr(containerPos);
                     if (dist < 256.0 && dist < nearestDist) {   // 16 blocks reach
                         nearestDist = dist;
                         nearest = p;
                     }
                 }
                 if (nearest != null) {
-                    containerOpenTicks.put(nearest.getUuid(), actionDisplayTicks.get());
+                    containerOpenTicks.put(nearest.getUUID(), actionDisplayTicks.get());
                 }
             }
         }

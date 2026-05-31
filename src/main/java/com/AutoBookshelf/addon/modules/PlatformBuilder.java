@@ -9,12 +9,12 @@ import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.FluidBlock;
-import net.minecraft.item.ItemStack;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LiquidBlock;
+import net.minecraft.world.level.block.state.BlockState;
 import com.AutoBookshelf.addon.Addon;
 
 import java.util.ArrayList;
@@ -111,7 +111,7 @@ public class PlatformBuilder extends Module {
             delay--;
             return;
         }
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.level == null) return;
 
         if (setYKey.get().isPressed()) {
             yLevel.set(mc.player.getBlockY());
@@ -127,10 +127,10 @@ public class PlatformBuilder extends Module {
             return;
         }
 
-        BlockPos playerPos = mc.player.getBlockPos();
+        BlockPos playerPos = mc.player.blockPosition();
         java.util.Arrays.sort(blocks, (a, b) -> {
-            double distA = a.getSquaredDistance(playerPos);
-            double distB = b.getSquaredDistance(playerPos);
+            double distA = a.distSqr(playerPos);
+            double distB = b.distSqr(playerPos);
             return Double.compare(distA, distB);
         });
 
@@ -161,7 +161,7 @@ public class PlatformBuilder extends Module {
 
         for (int x = -maxReach; x <= maxReach; x++) {
             for (int z = -maxReach; z <= maxReach; z++) {
-                var pos = new BlockPos(mc.player.getBlockPos().getX() + x, targetY, mc.player.getBlockPos().getZ() + z);
+                var pos = new BlockPos(mc.player.blockPosition().getX() + x, targetY, mc.player.blockPosition().getZ() + z);
                 if (PlayerUtils.isWithinReach(pos)) {
                     positions.add(pos);
                 }
@@ -176,23 +176,23 @@ public class PlatformBuilder extends Module {
 
     // Fixed: accepts BlockPos, uses correct position for isFullCube
     private boolean canPlaceAtPosition(BlockPos pos) {
-        BlockState state = mc.world.getBlockState(pos);
+        BlockState state = mc.level.getBlockState(pos);
 
         if (state.isAir()) return true;
 
         // Liquids
-        if (state.getFluidState().isStill() || state.getBlock() instanceof FluidBlock) {
+        if (state.getFluidState().isSource() || state.getBlock() instanceof LiquidBlock) {
             return ignoreLiquids.get();
         }
 
         // Replaceable blocks
-        if (state.isReplaceable() || state.getBlock() == Blocks.GRASS_BLOCK || state.getBlock() == Blocks.FERN) {
+        if (state.canBeReplaced() || state.getBlock() == Blocks.GRASS_BLOCK || state.getBlock() == Blocks.FERN) {
             return replaceBlocks.get();
         }
 
         // Air‑place: allow any non‑solid block (use the real position, not ORIGIN)
         if (airPlace.get()) {
-            return !state.isFullCube(mc.world, pos);
+            return !state.isCollisionShapeFullBlock(mc.level, pos);
         }
 
         return false;
@@ -206,16 +206,16 @@ public class PlatformBuilder extends Module {
     }
 
     private boolean switchToBuildMat() {
-        var current = mc.player.getMainHandStack().getItem();
-        if (current instanceof net.minecraft.item.BlockItem && isAllowedBlock(((net.minecraft.item.BlockItem) current).getBlock())) {
+        var current = mc.player.getMainHandItem().getItem();
+        if (current instanceof net.minecraft.world.item.BlockItem && isAllowedBlock(((net.minecraft.world.item.BlockItem) current).getBlock())) {
             return true;
         }
 
         int bestSlot = -1;
         for (int i = 0; i < 9; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
-            if (!stack.isEmpty() && stack.getItem() instanceof net.minecraft.item.BlockItem) {
-                Block block = ((net.minecraft.item.BlockItem) stack.getItem()).getBlock();
+            ItemStack stack = mc.player.getInventory().getItem(i);
+            if (!stack.isEmpty() && stack.getItem() instanceof net.minecraft.world.item.BlockItem) {
+                Block block = ((net.minecraft.world.item.BlockItem) stack.getItem()).getBlock();
                 if (isAllowedBlock(block)) {
                     bestSlot = i;
                     break;
@@ -226,13 +226,13 @@ public class PlatformBuilder extends Module {
         if (bestSlot == -1) {
             if (refillFromInventory.get()) {
                 for (int i = 9; i < 36; i++) {
-                    ItemStack stack = mc.player.getInventory().getStack(i);
-                    if (!stack.isEmpty() && stack.getItem() instanceof net.minecraft.item.BlockItem) {
-                        Block block = ((net.minecraft.item.BlockItem) stack.getItem()).getBlock();
+                    ItemStack stack = mc.player.getInventory().getItem(i);
+                    if (!stack.isEmpty() && stack.getItem() instanceof net.minecraft.world.item.BlockItem) {
+                        Block block = ((net.minecraft.world.item.BlockItem) stack.getItem()).getBlock();
                         if (isAllowedBlock(block)) {
                             int emptySlot = -1;
                             for (int j = 0; j < 9; j++) {
-                                if (mc.player.getInventory().getStack(j).isEmpty()) {
+                                if (mc.player.getInventory().getItem(j).isEmpty()) {
                                     emptySlot = j;
                                     break;
                                 }
@@ -260,8 +260,8 @@ public class PlatformBuilder extends Module {
         // Block state already checked in reachablePositions, no need to check again.
 
         FindItemResult item = InvUtils.findInHotbar(itemStack -> {
-            if (!(itemStack.getItem() instanceof net.minecraft.item.BlockItem)) return false;
-            Block block = ((net.minecraft.item.BlockItem) itemStack.getItem()).getBlock();
+            if (!(itemStack.getItem() instanceof net.minecraft.world.item.BlockItem)) return false;
+            Block block = ((net.minecraft.world.item.BlockItem) itemStack.getItem()).getBlock();
             return isAllowedBlock(block);
         });
 

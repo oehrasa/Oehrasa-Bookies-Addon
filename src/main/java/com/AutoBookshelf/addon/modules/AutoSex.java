@@ -17,14 +17,13 @@ import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.passive.TameableEntity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
-
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.TamableAnimal;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.phys.Vec3;
 import java.util.List;
 import java.util.Set;
 
@@ -320,7 +319,7 @@ public class AutoSex extends Module {
     private BlockPos lastTargetPos = null;
     private boolean isInPosition = false;
     private int positionStableTimer = 0;
-    private Vec3d lastTargetPosVec = null;
+    private Vec3 lastTargetPosVec = null;
     private int pathCooldown = 0;
 
     public AutoSex() {
@@ -355,7 +354,7 @@ public class AutoSex extends Module {
         isFollowing = false;
 
         if (wasCrouching) {
-            mc.options.sneakKey.setPressed(false);
+            mc.options.keyShift.setDown(false);
             wasCrouching = false;
             crouchState = false;
         }
@@ -371,7 +370,7 @@ public class AutoSex extends Module {
         if (entity == mc.player) return false;
 
         // Player specific filtering
-        if (entity instanceof PlayerEntity player) {
+        if (entity instanceof Player player) {
             boolean isFriend = Friends.get().isFriend(player);
             return switch (friendFilter.get()) {
                 case ALL -> true;
@@ -383,11 +382,11 @@ public class AutoSex extends Module {
         // Mob filtering
         if (!mobTypes.get().contains(entity.getType())) return false;
         if (ignoreNamedMobs.get() && entity.hasCustomName()) return false;
-        if (ignoreTamed.get() && entity instanceof TameableEntity tameable && tameable.isTamed()) return false;
+        if (ignoreTamed.get() && entity instanceof TamableAnimal tameable && tameable.isTame()) return false;
         if (onlyHostileMobs.get()) {
             // Simple hostile check: if the mob is currently attacking or angry
-            if (entity instanceof net.minecraft.entity.mob.Angerable angerable && angerable.getAngryAt() != null) return true;
-            if (entity instanceof net.minecraft.entity.mob.HostileEntity) return true;
+            if (entity instanceof net.minecraft.world.entity.NeutralMob angerable && angerable.getPersistentAngerTarget() != null) return true;
+            if (entity instanceof net.minecraft.world.entity.monster.Monster) return true;
             // If not obviously hostile, treat as not allowed
             return false;
         }
@@ -397,9 +396,9 @@ public class AutoSex extends Module {
     @EventHandler
     private void onMouseButton(MouseClickEvent event) {
         if (targetMode.get() == Mode.MiddleClick) {
-            if (event.action == KeyAction.Press && event.button() == GLFW_MOUSE_BUTTON_MIDDLE && mc.currentScreen == null && mc.targetedEntity != null && mc.targetedEntity instanceof LivingEntity living) {
+            if (event.action == KeyAction.Press && event.button() == GLFW_MOUSE_BUTTON_MIDDLE && mc.screen == null && mc.crosshairPickEntity != null && mc.crosshairPickEntity instanceof LivingEntity living) {
                 if (!isEntityAllowed(living)) {
-                    if (living instanceof PlayerEntity) {
+                    if (living instanceof Player) {
                         if (friendFilter.get() == FriendFilter.ONLY_FRIENDS) error("§cThat player is not your friend!");
                         else if (friendFilter.get() == FriendFilter.ONLY_NON_FRIENDS) error("§cThat player is your friend!");
                         else error("§cThat entity is not allowed for targeting");
@@ -413,14 +412,14 @@ public class AutoSex extends Module {
                     targetEntity = living;
                     targetName = living.getName().getString();
 
-                    if (message.get() && living instanceof PlayerEntity) {
+                    if (message.get() && living instanceof Player) {
                         startMsg();
                     }
 
                     startFollowing();
                     isFollowing = true;
                 } else {
-                    if (message.get() && targetEntity instanceof PlayerEntity) {
+                    if (message.get() && targetEntity instanceof Player) {
                         endMsg();
                     }
 
@@ -441,7 +440,7 @@ public class AutoSex extends Module {
         if (targetMode.get() == Mode.BindClick && keybind != null) {
             if (keybind.get().isPressed() && !pressed && !alternate) {
                 if (isFollowing) {
-                    if (message.get() && targetEntity instanceof PlayerEntity) {
+                    if (message.get() && targetEntity instanceof Player) {
                         endMsg();
                     }
                     pressed = true;
@@ -457,9 +456,9 @@ public class AutoSex extends Module {
                 pressed = false;
             }
 
-            if (keybind.get().isPressed() && !pressed && alternate && mc.currentScreen == null && mc.targetedEntity != null && mc.targetedEntity instanceof LivingEntity living) {
+            if (keybind.get().isPressed() && !pressed && alternate && mc.screen == null && mc.crosshairPickEntity != null && mc.crosshairPickEntity instanceof LivingEntity living) {
                 if (!isEntityAllowed(living)) {
-                    if (living instanceof PlayerEntity) {
+                    if (living instanceof Player) {
                         if (friendFilter.get() == FriendFilter.ONLY_FRIENDS) error("§cThat player is not your friend!");
                         else if (friendFilter.get() == FriendFilter.ONLY_NON_FRIENDS) error("§cThat player is your friend!");
                         else error("§cThat entity is not allowed.");
@@ -473,7 +472,7 @@ public class AutoSex extends Module {
                     targetEntity = living;
                     targetName = living.getName().getString();
 
-                    if (message.get() && living instanceof PlayerEntity) {
+                    if (message.get() && living instanceof Player) {
                         startMsg();
                     }
 
@@ -491,7 +490,7 @@ public class AutoSex extends Module {
                 LivingEntity potentialTarget = null;
                 double closestDistance = targetRange.get();
 
-                for (Entity entity : mc.world.getEntities()) {
+                for (Entity entity : mc.level.entitiesForRendering()) {
                     if (entity instanceof LivingEntity living && isEntityAllowed(living)) {
                         double dist = mc.player.distanceTo(entity);
                         if (dist <= closestDistance) {
@@ -509,7 +508,7 @@ public class AutoSex extends Module {
                 targetEntity = potentialTarget;
                 targetName = targetEntity.getName().getString();
 
-                if (message.get() && targetEntity instanceof PlayerEntity) {
+                if (message.get() && targetEntity instanceof Player) {
                     startMsg();
                 }
 
@@ -518,7 +517,7 @@ public class AutoSex extends Module {
             }
 
             if (!targetEntity.isAlive() || (targetEntity.distanceTo(mc.player) > maxFollowRange.get() && !ignoreRange.get())) {
-                if (message.get() && targetEntity instanceof PlayerEntity) {
+                if (message.get() && targetEntity instanceof Player) {
                     endMsg();
                 }
                 targetEntity = null;
@@ -532,7 +531,7 @@ public class AutoSex extends Module {
         if (isFollowing && targetEntity != null && baritone != null) {
             BlockPos targetPos = getApproachPosition();
 
-            boolean reachedGoal = mc.player.getBlockPos().equals(targetPos);
+            boolean reachedGoal = mc.player.blockPosition().equals(targetPos);
 
             if (reachedGoal && !isInPosition) {
                 isInPosition = true;
@@ -544,7 +543,7 @@ public class AutoSex extends Module {
                 isInPosition = false;
                 positionStableTimer = 0;
                 if (wasCrouching) {
-                    mc.options.sneakKey.setPressed(false);
+                    mc.options.keyShift.setDown(false);
                     wasCrouching = false;
                     crouchState = false;
                     twerkTimer = 0;
@@ -563,14 +562,14 @@ public class AutoSex extends Module {
                         int ticksBetween = Math.max(1, 20 / twerkSpeed.get());
                         twerkTimer = ticksBetween;
                         crouchState = !crouchState;
-                        mc.options.sneakKey.setPressed(crouchState);
+                        mc.options.keyShift.setDown(crouchState);
                         wasCrouching = true;
                     } else {
                         twerkTimer--;
                     }
                 }
             } else if (!isInPosition && wasCrouching) {
-                mc.options.sneakKey.setPressed(false);
+                mc.options.keyShift.setDown(false);
                 wasCrouching = false;
                 crouchState = false;
                 twerkTimer = 0;
@@ -579,7 +578,7 @@ public class AutoSex extends Module {
             if (!reachedGoal) {
                 if (pathCooldown > 0) pathCooldown--;
 
-                Vec3d targetPosVec = targetEntity.getLerpedPos(1F);
+                Vec3 targetPosVec = targetEntity.getPosition(1F);
                 boolean shouldUpdate = false;
 
                 if (lastTargetPosVec == null) {
@@ -610,7 +609,7 @@ public class AutoSex extends Module {
             }
 
             // Dirty talk only for players
-            if (isInPosition && dirtyTalk.get() && message.get() && targetEntity instanceof PlayerEntity && !messages.get().isEmpty()) {
+            if (isInPosition && dirtyTalk.get() && message.get() && targetEntity instanceof Player && !messages.get().isEmpty()) {
                 if (timer <= 0) {
                     int i;
                     if (random.get()) {
@@ -631,14 +630,14 @@ public class AutoSex extends Module {
     }
 
     private BlockPos getApproachPosition() {
-        if (targetEntity == null) return mc.player.getBlockPos();
+        if (targetEntity == null) return mc.player.blockPosition();
 
-        Vec3d targetPos = targetEntity.getLerpedPos(1F);
+        Vec3 targetPos = targetEntity.getPosition(1F);
 
         return switch (approachMode.get()) {
             case Direct -> new BlockPos((int) Math.floor(targetPos.x), (int) Math.floor(targetPos.y), (int) Math.floor(targetPos.z));
             case Behind -> {
-                float yaw = targetEntity.getBodyYaw();
+                float yaw = targetEntity.getVisualRotationYInDegrees();
                 double rad = Math.toRadians(yaw);
                 double facingX = -Math.sin(rad);
                 double facingZ = Math.cos(rad);
@@ -647,7 +646,7 @@ public class AutoSex extends Module {
                 yield new BlockPos((int) Math.floor(behindX), (int) Math.floor(targetPos.y), (int) Math.floor(behindZ));
             }
             case Side -> {
-                float yaw = targetEntity.getBodyYaw();
+                float yaw = targetEntity.getVisualRotationYInDegrees();
                 double rad = Math.toRadians(yaw + 90);
                 double offsetX = -Math.sin(rad) * sideOffset.get();
                 double offsetZ = Math.cos(rad) * sideOffset.get();
@@ -659,12 +658,12 @@ public class AutoSex extends Module {
     private void updateLookAtBackOfHead() {
         if (targetEntity == null) return;
 
-        float yaw = targetEntity.getBodyYaw();
+        float yaw = targetEntity.getVisualRotationYInDegrees();
         double rad = Math.toRadians(yaw);
         double facingX = -Math.sin(rad);
         double facingZ = Math.cos(rad);
 
-        Vec3d headPos = targetEntity.getLerpedPos(1F).add(
+        Vec3 headPos = targetEntity.getPosition(1F).add(
             facingX * 0.5,
             targetEntity.getEyeHeight(targetEntity.getPose()),
             facingZ * 0.5
@@ -707,7 +706,7 @@ public class AutoSex extends Module {
             baritone.getPathingBehavior().cancelEverything();
         }
         if (wasCrouching) {
-            mc.options.sneakKey.setPressed(false);
+            mc.options.keyShift.setDown(false);
             wasCrouching = false;
             crouchState = false;
             twerkTimer = 0;

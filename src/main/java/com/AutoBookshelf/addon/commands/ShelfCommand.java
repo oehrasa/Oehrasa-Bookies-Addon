@@ -5,22 +5,21 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import meteordevelopment.meteorclient.commands.Command;
 import meteordevelopment.meteorclient.systems.modules.Modules;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.ChiseledBookshelfBlock;
-import net.minecraft.command.CommandSource;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.WrittenBookContentComponent;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.state.property.Properties;
-import net.minecraft.text.Text;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-
+import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.WrittenBookContent;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ChiseledBookShelfBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import com.AutoBookshelf.addon.modules.AutoLogin;
 
 import java.util.ArrayList;
@@ -41,7 +40,7 @@ public class ShelfCommand extends Command {
     }
 
     @Override
-    public void build(LiteralArgumentBuilder<CommandSource> builder) {
+    public void build(LiteralArgumentBuilder<SharedSuggestionProvider> builder) {
         builder.executes(ctx -> {
             AutoLogin autoLogin = Modules.get().get(AutoLogin.class);
             if (autoLogin == null) {
@@ -57,14 +56,14 @@ public class ShelfCommand extends Command {
                 return SINGLE_SUCCESS;
             }
 
-            if (mc.crosshairTarget == null || mc.crosshairTarget.getType() != HitResult.Type.BLOCK) {
+            if (mc.hitResult == null || mc.hitResult.getType() != HitResult.Type.BLOCK) {
                 error("You must point at a chiseled bookshelf!");
                 return SINGLE_SUCCESS;
             }
 
-            BlockHitResult hit = (BlockHitResult) mc.crosshairTarget;
+            BlockHitResult hit = (BlockHitResult) mc.hitResult;
             BlockPos pos = hit.getBlockPos();
-            BlockState state = mc.world.getBlockState(pos);
+            BlockState state = mc.level.getBlockState(pos);
 
             if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) {
                 error("You must point at a chiseled bookshelf!");
@@ -77,7 +76,7 @@ public class ShelfCommand extends Command {
                 return SINGLE_SUCCESS;
             }
 
-            boolean occupied = state.get(ChiseledBookshelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot));
+            boolean occupied = state.getValue(ChiseledBookShelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot));
             if (!occupied) {
                 error("Slot " + (slot + 1) + " is empty!");
                 return SINGLE_SUCCESS;
@@ -85,8 +84,8 @@ public class ShelfCommand extends Command {
 
             autoLogin.extractAndReturn(pos, slot,
                 () -> {
-                    ItemStack book = mc.player.getMainHandStack();
-                    if (book.isEmpty() || !book.isOf(Items.WRITTEN_BOOK)) {
+                    ItemStack book = mc.player.getMainHandItem();
+                    if (book.isEmpty() || !book.is(Items.WRITTEN_BOOK)) {
                         error("Failed to get book!");
                         return;
                     }
@@ -181,7 +180,7 @@ public class ShelfCommand extends Command {
     }
 
     private void inspectBook(ItemStack book) {
-        WrittenBookContentComponent content = book.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+        WrittenBookContent content = book.get(DataComponents.WRITTEN_BOOK_CONTENT);
 
         if (content == null) {
             error("This book has no content!");
@@ -191,7 +190,7 @@ public class ShelfCommand extends Command {
         String title = escapePercent(content.title().raw());
         String author = escapePercent(content.author());
         int generation = content.generation();
-        List<Text> pages = content.getPages(true);
+        List<Component> pages = content.getPages(true);
 
         String generationText = switch (generation) {
             case 0 -> "Original";
@@ -205,7 +204,7 @@ public class ShelfCommand extends Command {
         int totalWords = 0;
         int emptyPages = 0;
 
-        for (Text page : pages) {
+        for (Component page : pages) {
             String text = page.getString();
             if (text.trim().isEmpty()) {
                 emptyPages++;
@@ -243,10 +242,10 @@ public class ShelfCommand extends Command {
     }
 
     private void searchInBook(ItemStack book, String searchWord) {
-        WrittenBookContentComponent content = book.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+        WrittenBookContent content = book.get(DataComponents.WRITTEN_BOOK_CONTENT);
         if (content == null) return;
 
-        List<Text> pages = content.getPages(true);
+        List<Component> pages = content.getPages(true);
         List<Integer> foundPages = new ArrayList<>();
         String escapedSearchWord = escapePercent(searchWord);
 
@@ -268,10 +267,10 @@ public class ShelfCommand extends Command {
     }
 
     private void viewSpecificPage(ItemStack book, int pageNum) {
-        WrittenBookContentComponent content = book.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+        WrittenBookContent content = book.get(DataComponents.WRITTEN_BOOK_CONTENT);
         if (content == null) return;
 
-        List<Text> pages = content.getPages(true);
+        List<Component> pages = content.getPages(true);
         if (pageNum < 1 || pageNum > pages.size()) {
             error("Page " + pageNum + " doesn't exist, The Book has " + pages.size() + " pages");
             return;
@@ -295,13 +294,13 @@ public class ShelfCommand extends Command {
     }
 
     private void showBookStats(ItemStack book) {
-        WrittenBookContentComponent content = book.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+        WrittenBookContent content = book.get(DataComponents.WRITTEN_BOOK_CONTENT);
         if (content == null) {
             error("This book has no content!");
             return;
         }
 
-        List<Text> pages = content.getPages(true);
+        List<Component> pages = content.getPages(true);
 
         int totalChars = 0;
         int totalWords = 0;
@@ -313,7 +312,7 @@ public class ShelfCommand extends Command {
         String mostCommonWord = "";
         int mostCommonWordCount = 0;
 
-        for (Text page : pages) {
+        for (Component page : pages) {
             String text = page.getString();
             int length = text.length();
             int words = text.split("\\s+").length;
@@ -401,12 +400,12 @@ public class ShelfCommand extends Command {
 
     private int getSlotFromHit(BlockHitResult hit) {
         BlockPos pos = hit.getBlockPos();
-        BlockState state = mc.world.getBlockState(pos);
+        BlockState state = mc.level.getBlockState(pos);
         if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) return -1;
 
-        Direction facing = state.get(Properties.HORIZONTAL_FACING);
-        Vec3d hitPos = hit.getPos();
-        Vec3d relative = hitPos.subtract(pos.getX(), pos.getY(), pos.getZ());
+        Direction facing = state.getValue(BlockStateProperties.HORIZONTAL_FACING);
+        Vec3 hitPos = hit.getLocation();
+        Vec3 relative = hitPos.subtract(pos.getX(), pos.getY(), pos.getZ());
 
         double u, v;
         switch (facing) {

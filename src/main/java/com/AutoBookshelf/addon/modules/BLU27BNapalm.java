@@ -9,19 +9,19 @@ import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.Block;
-import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
-import net.minecraft.block.AbstractFireBlock;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.item.Items;
-import net.minecraft.registry.tag.BlockTags;
-import net.minecraft.util.Hand;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.util.math.random.Random;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.BaseFireBlock;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 
 public class BLU27BNapalm extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -92,21 +92,21 @@ public class BLU27BNapalm extends Module {
 
         // Extinguish mode
         if (extinguishFire.get()) {
-            BlockPos playerPos = mc.player.getBlockPos();
+            BlockPos playerPos = mc.player.blockPosition();
             int radius = (int) Math.ceil(range.get());
             int blocksPerTick = 5;
             for (int dx = -radius; dx <= radius; dx++) {
                 for (int dy = -radius; dy <= radius; dy++) {
                     for (int dz = -radius; dz <= radius; dz++) {
-                        BlockPos pos = playerPos.add(dx, dy, dz);
+                        BlockPos pos = playerPos.offset(dx, dy, dz);
                         if (PlayerUtils.distanceTo(pos) > range.get()) continue;
 
-                        BlockState state = mc.world.getBlockState(pos);
-                        if (state.getBlock() != Blocks.FIRE && !(state.getBlock() instanceof AbstractFireBlock)) continue;
+                        BlockState state = mc.level.getBlockState(pos);
+                        if (state.getBlock() != Blocks.FIRE && !(state.getBlock() instanceof BaseFireBlock)) continue;
 
-                        mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, pos, Direction.UP));
-                        mc.player.swingHand(Hand.MAIN_HAND);
-                        mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, pos, Direction.UP));
+                        mc.getConnection().send(new ServerboundPlayerActionPacket(ServerboundPlayerActionPacket.Action.START_DESTROY_BLOCK, pos, Direction.UP));
+                        mc.player.swing(InteractionHand.MAIN_HAND);
+                        mc.getConnection().send(new ServerboundPlayerActionPacket(ServerboundPlayerActionPacket.Action.STOP_DESTROY_BLOCK, pos, Direction.UP));
 
                         if (--blocksPerTick <= 0) return;
                     }
@@ -118,13 +118,13 @@ public class BLU27BNapalm extends Module {
         // Find flint and steel
         FindItemResult findFlintAndSteel = InvUtils.findInHotbar(
             itemStack -> itemStack.getItem() == Items.FLINT_AND_STEEL
-                && (!antiBreak.get() || itemStack.getDamage() < itemStack.getMaxDamage() - 1)
+                && (!antiBreak.get() || itemStack.getDamageValue() < itemStack.getMaxDamage() - 1)
         );
         if (!findFlintAndSteel.found()) return;
 
-        Random random = Random.create();
+        RandomSource random = RandomSource.create();
 
-        BlockPos playerPos = mc.player.getBlockPos();
+        BlockPos playerPos = mc.player.blockPosition();
         int radius = (int) Math.ceil(range.get());
         BlockPos bestPos = null;
         Direction bestFace = null;
@@ -134,11 +134,11 @@ public class BLU27BNapalm extends Module {
         for (int dx = -radius; dx <= radius; dx++) {
             for (int dy = -radius; dy <= radius; dy++) {
                 for (int dz = -radius; dz <= radius; dz++) {
-                    BlockPos pos = playerPos.add(dx, dy, dz);
+                    BlockPos pos = playerPos.offset(dx, dy, dz);
                     double dist = PlayerUtils.distanceTo(pos);
                     if (dist > range.get()) continue;
 
-                    BlockState state = mc.world.getBlockState(pos);
+                    BlockState state = mc.level.getBlockState(pos);
                     if (state.isAir()) continue;
 
                     Direction face = getAnyIgnitionFace(pos, state);
@@ -161,10 +161,10 @@ public class BLU27BNapalm extends Module {
             targetFace = bestFace;
 
             if (!InvUtils.swap(findFlintAndSteel.slot(), true)) return;
-            Hand hand = findFlintAndSteel.getHand();
+            InteractionHand hand = findFlintAndSteel.getHand();
 
             if (rotate.get()) {
-                Vec3d hitVec2 = Vec3d.ofCenter(targetPos.offset(targetFace));
+                Vec3 hitVec2 = Vec3.atCenterOf(targetPos.relative(targetFace));
                 Rotations.rotate(Rotations.getYaw(hitVec2), Rotations.getPitch(hitVec2), -100,
                     () -> interact(hand));
             } else {
@@ -177,22 +177,22 @@ public class BLU27BNapalm extends Module {
         Block block = state.getBlock();
         if (block == Blocks.TNT) {
             for (Direction dir : Direction.values()) {
-                if (mc.world.getBlockState(pos.offset(dir)).isAir()) {
+                if (mc.level.getBlockState(pos.relative(dir)).isAir()) {
                     return dir;
                 }
             }
             return Direction.UP;
         }
 
-        boolean allowed = state.isIn(BlockTags.PLANKS)
-            || state.isIn(BlockTags.WOODEN_SLABS)
-            || state.isIn(BlockTags.WOODEN_STAIRS)
-            || state.isIn(BlockTags.WOODEN_FENCES)
-            || state.isIn(BlockTags.FENCE_GATES)
-            || state.isIn(BlockTags.LOGS_THAT_BURN)
-            || state.isIn(BlockTags.LEAVES)
-            || state.isIn(BlockTags.WOOL)
-            || state.isIn(BlockTags.WOOL_CARPETS)
+        boolean allowed = state.is(BlockTags.PLANKS)
+            || state.is(BlockTags.WOODEN_SLABS)
+            || state.is(BlockTags.WOODEN_STAIRS)
+            || state.is(BlockTags.WOODEN_FENCES)
+            || state.is(BlockTags.FENCE_GATES)
+            || state.is(BlockTags.LOGS_THAT_BURN)
+            || state.is(BlockTags.LEAVES)
+            || state.is(BlockTags.WOOL)
+            || state.is(BlockTags.WOOL_CARPETS)
             || block == Blocks.STRIPPED_OAK_WOOD || block == Blocks.STRIPPED_SPRUCE_WOOD
             || block == Blocks.STRIPPED_BIRCH_WOOD || block == Blocks.STRIPPED_JUNGLE_WOOD
             || block == Blocks.STRIPPED_ACACIA_WOOD || block == Blocks.STRIPPED_CHERRY_WOOD
@@ -222,26 +222,26 @@ public class BLU27BNapalm extends Module {
 
         // Find a valid air neighbor where fire can be placed
         for (Direction dir : Direction.values()) {
-            BlockPos neighborPos = pos.offset(dir);
-            BlockState neighbor = mc.world.getBlockState(neighborPos);
-            if (neighbor.isAir() && AbstractFireBlock.canPlaceAt(mc.world, neighborPos, dir.getOpposite())) {
+            BlockPos neighborPos = pos.relative(dir);
+            BlockState neighbor = mc.level.getBlockState(neighborPos);
+            if (neighbor.isAir() && BaseFireBlock.canBePlacedAt(mc.level, neighborPos, dir.getOpposite())) {
                 return dir;
             }
         }
         return null;
     }
 
-    private void interact(Hand hand) {
+    private void interact(InteractionHand hand) {
         if (targetPos == null || targetFace == null) return;
 
         BlockHitResult hit = new BlockHitResult(
-            Vec3d.ofCenter(targetPos).add(Vec3d.of(targetFace.getVector()).multiply(0.5)),
+            Vec3.atCenterOf(targetPos).add(Vec3.atLowerCornerOf(targetFace.getUnitVec3i()).scale(0.5)),
             targetFace,
             targetPos,
             false
         );
 
-        mc.interactionManager.interactBlock(mc.player, hand, hit);
+        mc.gameMode.useItemOn(mc.player, hand, hit);
         InvUtils.swapBack();
     }
 }

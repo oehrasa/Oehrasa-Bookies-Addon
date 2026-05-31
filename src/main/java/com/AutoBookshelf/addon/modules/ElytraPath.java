@@ -8,16 +8,15 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.entity.EquipmentSlot;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.RaycastContext;
-import net.minecraft.entity.player.PlayerEntity;
-
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -167,7 +166,7 @@ public class ElytraPath extends Module {
     );
 
     // Smoothed velocity for non‑janky movement
-    private Vec3d smoothedVelocity = Vec3d.ZERO;
+    private Vec3 smoothedVelocity = Vec3.ZERO;
 
     public ElytraPath() {
         super(Addon.CATEGORY, "Elytra-Path",
@@ -176,17 +175,17 @@ public class ElytraPath extends Module {
 
     @Override
     public void onActivate() {
-        smoothedVelocity = Vec3d.ZERO;
+        smoothedVelocity = Vec3.ZERO;
     }
 
     @EventHandler
     private void onRender3D(Render3DEvent event) {
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.level == null) return;
 
         renderPlayerPath(event, mc.player);
 
         if (renderOtherPlayers.get()) {
-            for (PlayerEntity player : mc.world.getPlayers()) {
+            for (Player player : mc.level.players()) {
                 if (player == mc.player) continue;
 
                 renderPlayerPath(event, player);
@@ -194,52 +193,52 @@ public class ElytraPath extends Module {
         }
     }
 
-    private void renderPlayerPath(Render3DEvent event, PlayerEntity player) {
-        ItemStack chest = player.getEquippedStack(EquipmentSlot.CHEST);
+    private void renderPlayerPath(Render3DEvent event, Player player) {
+        ItemStack chest = player.getItemBySlot(EquipmentSlot.CHEST);
 
-        if (chest.getItem() != Items.ELYTRA || !player.isGliding()) {
-            if (player == mc.player) smoothedVelocity = Vec3d.ZERO;
+        if (chest.getItem() != Items.ELYTRA || !player.isFallFlying()) {
+            if (player == mc.player) smoothedVelocity = Vec3.ZERO;
             return;
         }
 
-        Vec3d startPos;
+        Vec3 startPos;
 
         if (player == mc.player && startFromCrosshair.get()) {
-            startPos = new Vec3d(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z);
+            startPos = new Vec3(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z);
         } else {
-            Vec3d eyePos = player.getEntityPos().add(0, player.getEyeHeight(player.getPose()), 0);
+            Vec3 eyePos = player.position().add(0, player.getEyeHeight(player.getPose()), 0);
             startPos = eyePos.add(0, startOffset.get(), 0);
         }
 
-        Vec3d rawVel = player.getVelocity();
-        Vec3d rawHorizontal = new Vec3d(rawVel.x, 0.0, rawVel.z);
+        Vec3 rawVel = player.getDeltaMovement();
+        Vec3 rawHorizontal = new Vec3(rawVel.x, 0.0, rawVel.z);
 
-        Vec3d direction;
+        Vec3 direction;
 
         if (player == mc.player) {
             double smoothFactor = velocitySmoothing.get();
 
-            smoothedVelocity = smoothedVelocity.multiply(1.0 - smoothFactor)
-                .add(rawHorizontal.multiply(smoothFactor));
+            smoothedVelocity = smoothedVelocity.scale(1.0 - smoothFactor)
+                .add(rawHorizontal.scale(smoothFactor));
 
-            if (smoothedVelocity.lengthSquared() > speedThreshold.get() * speedThreshold.get()) {
-                direction = smoothedVelocity.normalize().multiply(smoothedVelocity.length());
+            if (smoothedVelocity.lengthSqr() > speedThreshold.get() * speedThreshold.get()) {
+                direction = smoothedVelocity.normalize().scale(smoothedVelocity.length());
             } else {
-                Vec3d forward = player.getRotationVec(1.0F).normalize();
+                Vec3 forward = player.getViewVector(1.0F).normalize();
 
-                direction = new Vec3d(
+                direction = new Vec3(
                     forward.x * idleSpeed.get(),
                     0.0,
                     forward.z * idleSpeed.get()
                 );
             }
         } else {
-            if (rawHorizontal.lengthSquared() > speedThreshold.get() * speedThreshold.get()) {
-                direction = rawHorizontal.normalize().multiply(rawHorizontal.length());
+            if (rawHorizontal.lengthSqr() > speedThreshold.get() * speedThreshold.get()) {
+                direction = rawHorizontal.normalize().scale(rawHorizontal.length());
             } else {
-                Vec3d forward = player.getRotationVec(1.0F).normalize();
+                Vec3 forward = player.getViewVector(1.0F).normalize();
 
-                direction = new Vec3d(
+                direction = new Vec3(
                     forward.x * idleSpeed.get(),
                     0.0,
                     forward.z * idleSpeed.get()
@@ -247,20 +246,20 @@ public class ElytraPath extends Module {
             }
         }
 
-        List<Vec3d> path = new ArrayList<>();
+        List<Vec3> path = new ArrayList<>();
         path.add(startPos);
 
-        Vec3d currentPos = startPos;
+        Vec3 currentPos = startPos;
         BlockHitResult finalHit = null;
 
         for (int i = 0; i < predictionTicks.get(); i++) {
-            Vec3d nextPos = currentPos.add(direction);
+            Vec3 nextPos = currentPos.add(direction);
 
             if (stopAtBlock.get()) {
                 BlockHitResult hit = raytraceBlock(currentPos, nextPos);
 
                 if (hit != null) {
-                    path.add(hit.getPos());
+                    path.add(hit.getLocation());
                     finalHit = hit;
                     break;
                 }
@@ -273,8 +272,8 @@ public class ElytraPath extends Module {
         int segments = path.size() - 1;
 
         for (int i = 0; i < segments; i++) {
-            Vec3d p1 = path.get(i);
-            Vec3d p2 = path.get(i + 1);
+            Vec3 p1 = path.get(i);
+            Vec3 p2 = path.get(i + 1);
 
             SettingColor color;
 
@@ -334,22 +333,22 @@ public class ElytraPath extends Module {
             double vy = rawVel.y;
 
             if (Math.abs(vy) > 0.02) {
-                Vec3d verticalDir = new Vec3d(0, vy, 0);
+                Vec3 verticalDir = new Vec3(0, vy, 0);
 
-                Vec3d vertCurrentPos = startPos;
+                Vec3 vertCurrentPos = startPos;
                 BlockHitResult vertFinalHit = null;
 
-                List<Vec3d> vertPath = new ArrayList<>();
+                List<Vec3> vertPath = new ArrayList<>();
                 vertPath.add(startPos);
 
                 for (int i = 0; i < predictionTicks.get(); i++) {
-                    Vec3d nextPos = vertCurrentPos.add(verticalDir);
+                    Vec3 nextPos = vertCurrentPos.add(verticalDir);
 
                     if (stopAtBlock.get()) {
                         BlockHitResult hit = raytraceBlock(vertCurrentPos, nextPos);
 
                         if (hit != null) {
-                            vertPath.add(hit.getPos());
+                            vertPath.add(hit.getLocation());
                             vertFinalHit = hit;
                             break;
                         }
@@ -364,8 +363,8 @@ public class ElytraPath extends Module {
                     : descendColor.get();
 
                 for (int i = 0; i < vertPath.size() - 1; i++) {
-                    Vec3d p1 = vertPath.get(i);
-                    Vec3d p2 = vertPath.get(i + 1);
+                    Vec3 p1 = vertPath.get(i);
+                    Vec3 p2 = vertPath.get(i + 1);
 
                     event.renderer.line(
                         p1.x, p1.y, p1.z,
@@ -389,14 +388,14 @@ public class ElytraPath extends Module {
         }
     }
 
-    private BlockHitResult raytraceBlock(Vec3d start, Vec3d end) {
-        RaycastContext context = new RaycastContext(
+    private BlockHitResult raytraceBlock(Vec3 start, Vec3 end) {
+        ClipContext context = new ClipContext(
             start, end,
-            RaycastContext.ShapeType.COLLIDER,
-            RaycastContext.FluidHandling.NONE,
+            ClipContext.Block.COLLIDER,
+            ClipContext.Fluid.NONE,
             mc.player
         );
-        BlockHitResult result = mc.world.raycast(context);
+        BlockHitResult result = mc.level.clip(context);
         return result.getType() == HitResult.Type.BLOCK ? result : null;
     }
 }

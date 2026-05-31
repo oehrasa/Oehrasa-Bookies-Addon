@@ -5,13 +5,12 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import meteordevelopment.meteorclient.commands.Command;
 import meteordevelopment.meteorclient.systems.modules.Modules;
-import net.minecraft.command.CommandSource;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.passive.TameableEntity;
-import net.minecraft.entity.projectile.thrown.EnderPearlEntity;
-import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.hit.HitResult;
-
+import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.TamableAnimal;
+import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
@@ -22,21 +21,21 @@ public class AssignOwnerCommand extends Command {
     }
 
     @Override
-    public void build(LiteralArgumentBuilder<CommandSource> builder) {
+    public void build(LiteralArgumentBuilder<SharedSuggestionProvider> builder) {
         builder.then(argument("playerName", StringArgumentType.word()).executes(context -> {
             String playerName = StringArgumentType.getString(context, "playerName");
 
             // 1. Find the target entity
-            if (mc.crosshairTarget == null || mc.crosshairTarget.getType() != HitResult.Type.ENTITY) {
+            if (mc.hitResult == null || mc.hitResult.getType() != HitResult.Type.ENTITY) {
                 error("You must be looking at an entity.");
                 return -1;
             }
 
-            Entity target = ((EntityHitResult) mc.crosshairTarget).getEntity();
+            Entity target = ((EntityHitResult) mc.hitResult).getEntity();
 
             // 2. Only allow entities that the MobOwner module cares about
-            boolean isTameable = target instanceof TameableEntity;
-            boolean isPearl = target instanceof EnderPearlEntity;
+            boolean isTameable = target instanceof TamableAnimal;
+            boolean isPearl = target instanceof ThrownEnderpearl;
             if (!isTameable && !isPearl) {
                 error("You can only assign owners to tamed animals or ender pearls.");
                 return -1;
@@ -57,7 +56,7 @@ public class AssignOwnerCommand extends Command {
             // 5. Store the mapping
             mobOwner.assignOwner(target, ownerUuid, playerName);
 
-            info("Assigned " + playerName + " (offline UUID " + ownerUuid + ") as owner of " + target.getType().getName().getString());
+            info("Assigned " + playerName + " (offline UUID " + ownerUuid + ") as owner of " + target.getType().getDescription().getString());
             return SINGLE_SUCCESS;
         }));
     }

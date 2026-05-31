@@ -7,22 +7,19 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.item.BoneMealItem;
-import net.minecraft.item.Items;
-import net.minecraft.screen.slot.SlotActionType;
-import net.minecraft.util.Hand;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.RaycastContext;
-
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.item.BoneMealItem;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import baritone.api.BaritoneAPI;
-import java.util.HashSet;
-import java.util.Set;
 import java.util.*;
 
 public class AutoMoss extends Module {
@@ -243,7 +240,7 @@ public class AutoMoss extends Module {
     @Override
     public void onDeactivate() {
         if (baritoneRunning) {
-            if (mc.player != null) mc.player.networkHandler.sendChatCommand("stop");
+            if (mc.player != null) mc.player.connection.sendCommand("stop");
             baritoneRunning = false;
         }
         visitedColumns.clear();
@@ -255,7 +252,7 @@ public class AutoMoss extends Module {
             delayTimer--;
             return;
         }
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.level == null) return;
 
         if (roamEnabled.get()) {
             boolean pathing = BaritoneAPI.getProvider().getPrimaryBaritone()
@@ -266,7 +263,7 @@ public class AutoMoss extends Module {
                     baritoneStallTicks = 0;
                 } else if (++baritoneStallTicks >= GOTO_GRACE_TICKS) {
                     // Arrived at target
-                    if (currentGotoTarget != null) markVisited(currentGotoTarget.down());
+                    if (currentGotoTarget != null) markVisited(currentGotoTarget.below());
                     baritoneRunning = false;
                     baritoneStallTicks = 0;
                     gotoRestartCooldown = roamRestartCooldown.get();
@@ -303,23 +300,23 @@ public class AutoMoss extends Module {
         for (BlockPos blockPos : targets) {
             if (uses >= maxUsesPerTick.get()) break;
 
-            BlockState state = mc.world.getBlockState(blockPos);
+            BlockState state = mc.level.getBlockState(blockPos);
             Block block = state.getBlock();
-            boolean isMoss = block.getTranslationKey().contains("moss_block");
+            boolean isMoss = block.getDescriptionId().contains("moss_block");
 
             // Skip moss blocks on cooldown
             if (isMoss && recentlyUsedMoss.containsKey(blockPos)) {
                 continue;
             }
 
-            if (BoneMealItem.useOnFertilizable(mc.player.getInventory().getStack(boneMealSlot), mc.world, blockPos)) {
-                Vec3d hitPos = new Vec3d(blockPos.getX() + 0.5, blockPos.getY() + 0.5, blockPos.getZ() + 0.5);
+            if (BoneMealItem.growCrop(mc.player.getInventory().getItem(boneMealSlot), mc.level, blockPos)) {
+                Vec3 hitPos = new Vec3(blockPos.getX() + 0.5, blockPos.getY() + 0.5, blockPos.getZ() + 0.5);
                 BlockHitResult hit = new BlockHitResult(hitPos, Direction.UP, blockPos, false);
 
                 int prevSelectedSlot = mc.player.getInventory().getSelectedSlot();
                 mc.player.getInventory().setSelectedSlot(boneMealSlot);
 
-                mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hit);
+                mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
 
                 mc.player.getInventory().setSelectedSlot(prevSelectedSlot);
 
@@ -344,17 +341,17 @@ public class AutoMoss extends Module {
         }
 
         // Target the air block on top of the surface so Baritone walks on it, not digs
-        BlockPos stand = surface.up();
+        BlockPos stand = surface.above();
         currentGotoTarget = stand;
 
-        mc.player.networkHandler.sendChatMessage("#goto " + stand.getX() + " " + stand.getY() + " " + stand.getZ());
+        mc.player.connection.sendChat("#goto " + stand.getX() + " " + stand.getY() + " " + stand.getZ());
         baritoneRunning = true;
         baritoneStallTicks = 0;
     }
 
     private void stopBaritone() {
         if (baritoneRunning && mc.player != null) {
-            mc.player.networkHandler.sendChatCommand("stop");
+            mc.player.connection.sendCommand("stop");
             baritoneRunning = false;
         }
     }
@@ -366,13 +363,13 @@ public class AutoMoss extends Module {
         List<BlockPos> surfaces = findSurfaceTargets();
         if (surfaces.isEmpty()) return null;
 
-        BlockPos origin = mc.player.getBlockPos();
+        BlockPos origin = mc.player.blockPosition();
         BlockPos farthest = null;
         double maxDistSq = -1;
 
         for (BlockPos p : surfaces) {
             if (visitedColumns.contains(columnKey(p))) continue;
-            double d = p.getSquaredDistance(origin);
+            double d = p.distSqr(origin);
             if (d > maxDistSq) {
                 maxDistSq = d;
                 farthest = p;
@@ -383,7 +380,7 @@ public class AutoMoss extends Module {
             // All columns visited, clear memory and pick the farthest again
             visitedColumns.clear();
             for (BlockPos p : surfaces) {
-                double d = p.getSquaredDistance(origin);
+                double d = p.distSqr(origin);
                 if (d > maxDistSq) {
                     maxDistSq = d;
                     farthest = p;
@@ -403,7 +400,7 @@ public class AutoMoss extends Module {
         List<Block> wanted = pathfindBlocks.get();
         if (wanted == null || wanted.isEmpty()) return out;
 
-        BlockPos origin = mc.player.getBlockPos();
+        BlockPos origin = mc.player.blockPosition();
         int horiz = roamScanRadius.get();
         int vert  = roamVerticalScan.get();
         int floorY = origin.getY() - 1;
@@ -412,12 +409,12 @@ public class AutoMoss extends Module {
         for (int dx = -horiz; dx <= horiz; dx++) {
             for (int dz = -horiz; dz <= horiz; dz++) {
                 for (int dy = vert; dy >= -vert; dy--) {
-                    BlockPos p = origin.add(dx, dy, dz);
-                    Block b = mc.world.getBlockState(p).getBlock();
+                    BlockPos p = origin.offset(dx, dy, dz);
+                    Block b = mc.level.getBlockState(p).getBlock();
 
                     if (!wanted.contains(b)) continue;
                     if (p.getY() < minTargetY) continue;
-                    if (!mc.world.getBlockState(p.up()).isAir()) continue;
+                    if (!mc.level.getBlockState(p.above()).isAir()) continue;
                     if (surfaceOnly.get() && !isOutdoorSurface(p)) continue;
 
                     out.add(p);
@@ -429,17 +426,17 @@ public class AutoMoss extends Module {
     }
 
     private boolean isOutdoorSurface(BlockPos pos) {
-        if (mc.world == null) return false;
-        BlockPos above = pos.up();
+        if (mc.level == null) return false;
+        BlockPos above = pos.above();
         // Main: sky visibility check
-        if (mc.world.isSkyVisible(above)) return true;
+        if (mc.level.canSeeSky(above)) return true;
 
         // Fallback: scan upward; any solid block overhead means it's covered
         for (int dy = 1; dy <= 64; dy++) {
-            BlockState st = mc.world.getBlockState(pos.up(dy));
+            BlockState st = mc.level.getBlockState(pos.above(dy));
             if (st.isAir()) continue;
             if (!st.getFluidState().isEmpty()) continue;
-            String n = st.getBlock().getTranslationKey().toLowerCase();
+            String n = st.getBlock().getDescriptionId().toLowerCase();
             boolean passable = n.contains("grass") || n.contains("fern") || n.contains("flower")
                 || n.contains("vine") || n.contains("sapling") || n.contains("moss_carpet")
                 || n.contains("snow") || n.contains("leaves");
@@ -454,7 +451,7 @@ public class AutoMoss extends Module {
         int r = visitedRadius.get();
         for (int dx = -r; dx <= r; dx++) {
             for (int dz = -r; dz <= r; dz++) {
-                visitedColumns.add(columnKey(surface.add(dx, 0, dz)));
+                visitedColumns.add(columnKey(surface.offset(dx, 0, dz)));
             }
         }
     }
@@ -478,21 +475,21 @@ public class AutoMoss extends Module {
 
     private List<BlockPos> findTargets() {
         List<BlockPos> targets = new ArrayList<>();
-        if (mc.player == null || mc.world == null) return targets;
+        if (mc.player == null || mc.level == null) return targets;
 
         double rangeSq = range.get() * range.get();
-        BlockPos playerPos = mc.player.getBlockPos();
+        BlockPos playerPos = mc.player.blockPosition();
 
         for (int x = (int) -range.get(); x <= range.get(); x++) {
             for (int y = (int) -range.get(); y <= range.get(); y++) {
                 for (int z = (int) -range.get(); z <= range.get(); z++) {
-                    BlockPos pos = playerPos.add(x, y, z);
-                    if (pos.getSquaredDistance(playerPos) > rangeSq) continue;
+                    BlockPos pos = playerPos.offset(x, y, z);
+                    if (pos.distSqr(playerPos) > rangeSq) continue;
                     if (!hasLineOfSight(pos)) continue;
 
-                    BlockState state = mc.world.getBlockState(pos);
+                    BlockState state = mc.level.getBlockState(pos);
                     Block block = state.getBlock();
-                    String blockName = block.getTranslationKey().toLowerCase();
+                    String blockName = block.getDescriptionId().toLowerCase();
 
                     // Check for tree growables if make-trees is enabled
                     if (makeTrees.get()) {
@@ -502,10 +499,10 @@ public class AutoMoss extends Module {
                         if (isAzalea || isSapling) {
                             if (isAzalea) {
                                 // Use the azalea tree fraction
-                                if (mc.world.random.nextInt(10) < azaleaTreeFraction.get())
+                                if (mc.level.random.nextInt(10) < azaleaTreeFraction.get())
                                     targets.add(pos);
                             } else {
-                                if (mc.world.random.nextInt(100) < treeChance.get())
+                                if (mc.level.random.nextInt(100) < treeChance.get())
                                     targets.add(pos);
                             }
                             continue;
@@ -528,10 +525,10 @@ public class AutoMoss extends Module {
 
     private boolean hasValidNeighbor(BlockPos pos) {
         for (Direction dir : Direction.values()) {
-            BlockPos neighborPos = pos.offset(dir);
-            BlockState neighborState = mc.world.getBlockState(neighborPos);
+            BlockPos neighborPos = pos.relative(dir);
+            BlockState neighborState = mc.level.getBlockState(neighborPos);
             Block neighborBlock = neighborState.getBlock();
-            String blockName = neighborBlock.getTranslationKey().toLowerCase();
+            String blockName = neighborBlock.getDescriptionId().toLowerCase();
 
             // Skip if the neighbour is in our exclusion list
             if (blockName.contains("azalea") ||
@@ -547,9 +544,9 @@ public class AutoMoss extends Module {
     }
 
     private boolean isObstructedAbove(BlockPos pos) {
-        BlockState above = mc.world.getBlockState(pos.up());
+        BlockState above = mc.level.getBlockState(pos.above());
         if (!above.getFluidState().isEmpty()) return true;
-        String n = above.getBlock().getTranslationKey().toLowerCase();
+        String n = above.getBlock().getDescriptionId().toLowerCase();
         return n.contains("torch") || n.contains("lantern") || n.contains("sign")
             || n.contains("lava") || n.contains("water");
     }
@@ -562,11 +559,11 @@ public class AutoMoss extends Module {
         if (!requireSkyAccess.get()) return true;
         int depth = skyAccessDepth.get();
         for (int dy = 1; dy <= depth; dy++) {
-            BlockState state = mc.world.getBlockState(pos.up(dy));
+            BlockState state = mc.level.getBlockState(pos.above(dy));
             if (state.isAir()) continue;
             if (!state.getFluidState().isEmpty()) return false;
             // Vegetation that doesn't block light/sky is okay
-            String n = state.getBlock().getTranslationKey().toLowerCase();
+            String n = state.getBlock().getDescriptionId().toLowerCase();
             if (n.contains("grass") || n.contains("fern") || n.contains("flower")
                 || n.contains("vine") || n.contains("sapling") || n.contains("moss_carpet")
                 || n.contains("snow") || n.contains("leaves")) continue;
@@ -576,28 +573,28 @@ public class AutoMoss extends Module {
     }
 
     private boolean hasLineOfSight(BlockPos pos) {
-        if (mc.player == null || mc.world == null) return false;
-        Vec3d eyePos = mc.player.getEyePos();
-        Vec3d blockPos = new Vec3d(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
-        RaycastContext context = new RaycastContext(
+        if (mc.player == null || mc.level == null) return false;
+        Vec3 eyePos = mc.player.getEyePosition();
+        Vec3 blockPos = new Vec3(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
+        ClipContext context = new ClipContext(
             eyePos, blockPos,
-            RaycastContext.ShapeType.COLLIDER, RaycastContext.FluidHandling.NONE, mc.player
+            ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, mc.player
         );
-        BlockHitResult result = mc.world.raycast(context);
+        BlockHitResult result = mc.level.clip(context);
         return result.getBlockPos().equals(pos);
     }
 
     /** True if any moss block exists within the configured range of the player. */
     private boolean isMossInRange() {
         double rangeSq = range.get() * range.get();
-        BlockPos origin = mc.player.getBlockPos();
+        BlockPos origin = mc.player.blockPosition();
         int r = (int) Math.ceil(range.get());
         for (int x = -r; x <= r; x++) {
             for (int y = -r; y <= r; y++) {
                 for (int z = -r; z <= r; z++) {
-                    BlockPos pos = origin.add(x, y, z);
-                    if (pos.getSquaredDistance(origin) > rangeSq) continue;
-                    if (mc.world.getBlockState(pos).getBlock().getTranslationKey()
+                    BlockPos pos = origin.offset(x, y, z);
+                    if (pos.distSqr(origin) > rangeSq) continue;
+                    if (mc.level.getBlockState(pos).getBlock().getDescriptionId()
                         .toLowerCase().contains("moss_block")) return true;
                 }
             }
@@ -616,36 +613,36 @@ public class AutoMoss extends Module {
     }
 
     private void trySeedMoss() {
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.level == null) return;
         int mossSlot = findMossBlockSlot();
         if (mossSlot == -1) return; // no moss block available
 
-        BlockPos feet = mc.player.getBlockPos();
+        BlockPos feet = mc.player.blockPosition();
         // Floor ring around the player
         BlockPos[] floors = {
-            feet.down().north(), feet.down().south(),
-            feet.down().east(),  feet.down().west(),
-            feet.down().north().east(), feet.down().north().west(),
-            feet.down().south().east(), feet.down().south().west()
+            feet.below().north(), feet.below().south(),
+            feet.below().east(),  feet.below().west(),
+            feet.below().north().east(), feet.below().north().west(),
+            feet.below().south().east(), feet.below().south().west()
         };
 
-        Vec3d eye = mc.player.getEyePos();
-        double maxReachSq = mc.player.getEntityInteractionRange(); // effective reach
+        Vec3 eye = mc.player.getEyePosition();
+        double maxReachSq = mc.player.entityInteractionRange(); // effective reach
         maxReachSq *= maxReachSq;
 
         BlockPos bestFloor = null;
-        Vec3d    bestHit   = null;
+        Vec3    bestHit   = null;
         double   bestDistSq = Double.MAX_VALUE;
 
         for (BlockPos floor : floors) {
-            if (!isMossableSurface(mc.world.getBlockState(floor))) continue;
-            BlockPos placeAt = floor.up();
-            BlockState atState = mc.world.getBlockState(placeAt);
-            if (!atState.isAir() && !atState.isReplaceable()) continue;
-            if (placeAt.equals(feet) || placeAt.equals(feet.up())) continue;
+            if (!isMossableSurface(mc.level.getBlockState(floor))) continue;
+            BlockPos placeAt = floor.above();
+            BlockState atState = mc.level.getBlockState(placeAt);
+            if (!atState.isAir() && !atState.canBeReplaced()) continue;
+            if (placeAt.equals(feet) || placeAt.equals(feet.above())) continue;
 
-            Vec3d hitVec = new Vec3d(floor.getX() + 0.5, floor.getY() + 1.0, floor.getZ() + 0.5);
-            double distSq = eye.squaredDistanceTo(hitVec);
+            Vec3 hitVec = new Vec3(floor.getX() + 0.5, floor.getY() + 1.0, floor.getZ() + 0.5);
+            double distSq = eye.distanceToSqr(hitVec);
             if (distSq > maxReachSq) continue;
 
             if (distSq < bestDistSq) {
@@ -662,12 +659,12 @@ public class AutoMoss extends Module {
         mc.player.getInventory().setSelectedSlot(mossSlot);
 
         // Rotate toward the hit vector and place
-        Vec3d finalHit = bestHit;
+        Vec3 finalHit = bestHit;
         BlockPos finalFloor = bestFloor;
         Rotations.rotate(Rotations.getYaw(finalHit), Rotations.getPitch(finalHit), -100, () -> {
             BlockHitResult hit = new BlockHitResult(finalHit, Direction.UP, finalFloor, false);
-            mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hit);
-            mc.player.swingHand(Hand.MAIN_HAND);
+            mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
+            mc.player.swing(InteractionHand.MAIN_HAND);
         });
 
         mc.player.getInventory().setSelectedSlot(prevSlot);
@@ -678,13 +675,13 @@ public class AutoMoss extends Module {
         if (mc.player == null) return -1;
         // Check hotbar first
         for (int i = 0; i < 9; i++) {
-            if (mc.player.getInventory().getStack(i).getItem() == Items.MOSS_BLOCK) return i;
+            if (mc.player.getInventory().getItem(i).getItem() == Items.MOSS_BLOCK) return i;
         }
         // If inventory allow, move one to hotbar
         if (inventoryAllow.get()) {
             int mossInInv = -1;
             for (int i = 9; i < 36; i++) {
-                if (mc.player.getInventory().getStack(i).getItem() == Items.MOSS_BLOCK) {
+                if (mc.player.getInventory().getItem(i).getItem() == Items.MOSS_BLOCK) {
                     mossInInv = i;
                     break;
                 }
@@ -692,13 +689,13 @@ public class AutoMoss extends Module {
             if (mossInInv != -1) {
                 int emptySlot = -1;
                 for (int j = 0; j < 9; j++) {
-                    if (mc.player.getInventory().getStack(j).isEmpty()) {
+                    if (mc.player.getInventory().getItem(j).isEmpty()) {
                         emptySlot = j;
                         break;
                     }
                 }
                 if (emptySlot != -1) {
-                    mc.interactionManager.clickSlot(0, mossInInv, emptySlot, SlotActionType.SWAP, mc.player);
+                    mc.gameMode.handleInventoryMouseClick(0, mossInInv, emptySlot, ClickType.SWAP, mc.player);
                     return emptySlot;
                 }
             }
@@ -709,14 +706,14 @@ public class AutoMoss extends Module {
     private int findBoneMealSlot() {
         if (mc.player == null) return -1;
         for (int i = 0; i < 9; i++) {
-            if (mc.player.getInventory().getStack(i).getItem() == Items.BONE_MEAL) return i;
+            if (mc.player.getInventory().getItem(i).getItem() == Items.BONE_MEAL) return i;
         }
         if (inventoryAllow.get()) {
             for (int i = 9; i < 36; i++) {
-                if (mc.player.getInventory().getStack(i).getItem() != Items.BONE_MEAL) continue;
+                if (mc.player.getInventory().getItem(i).getItem() != Items.BONE_MEAL) continue;
                 for (int j = 0; j < 9; j++) {
-                    if (mc.player.getInventory().getStack(j).isEmpty()) {
-                        mc.interactionManager.clickSlot(0, i, j, SlotActionType.SWAP, mc.player);
+                    if (mc.player.getInventory().getItem(j).isEmpty()) {
+                        mc.gameMode.handleInventoryMouseClick(0, i, j, ClickType.SWAP, mc.player);
                         return j;
                     }
                 }

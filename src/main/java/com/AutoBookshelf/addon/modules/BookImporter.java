@@ -12,14 +12,14 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.WrittenBookContentComponent;
-import net.minecraft.network.packet.c2s.play.BookUpdateC2SPacket;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.text.RawFilteredPair;
-import net.minecraft.text.StringVisitable;
-import net.minecraft.text.Text;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.FormattedText;
+import net.minecraft.network.protocol.game.ServerboundEditBookPacket;
+import net.minecraft.server.network.Filterable;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.WrittenBookContent;
 import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
 import java.io.File;
@@ -170,7 +170,7 @@ public class BookImporter extends Module {
 
     @Override
     public void onActivate() {
-        if (mc.player == null || mc.world == null) {
+        if (mc.player == null || mc.level == null) {
             error("Cannot activate module while not in a world.");
             toggle();
             return;
@@ -272,7 +272,7 @@ public class BookImporter extends Module {
     private void saveProgress() {
         if (!persistentProgress.get()) return;
         try {
-            Path progressPath = Paths.get(mc.runDirectory.getPath(), PROGRESS_FILE);
+            Path progressPath = Paths.get(mc.gameDirectory.getPath(), PROGRESS_FILE);
             Files.createDirectories(progressPath.getParent());
             Map<String, Object> data = new HashMap<>();
             data.put("completedParts", new ArrayList<>(completedParts));
@@ -289,7 +289,7 @@ public class BookImporter extends Module {
         completedParts.clear();
         if (!persistentProgress.get()) return;
         try {
-            Path progressPath = Paths.get(mc.runDirectory.getPath(), PROGRESS_FILE);
+            Path progressPath = Paths.get(mc.gameDirectory.getPath(), PROGRESS_FILE);
             if (Files.exists(progressPath)) {
                 String json = Files.readString(progressPath);
                 Map<String, Object> data = gson.fromJson(json, Map.class);
@@ -306,7 +306,7 @@ public class BookImporter extends Module {
     private void resetProgressData() {
         completedParts.clear();
         try {
-            Path progressPath = Paths.get(mc.runDirectory.getPath(), PROGRESS_FILE);
+            Path progressPath = Paths.get(mc.gameDirectory.getPath(), PROGRESS_FILE);
             Files.deleteIfExists(progressPath);
         } catch (IOException e) {
             error("Failed to reset progress: " + e.getMessage());
@@ -353,7 +353,7 @@ public class BookImporter extends Module {
             return;
         }
 
-        Path folder = Paths.get(mc.runDirectory.getPath(), importFolder.get());
+        Path folder = Paths.get(mc.gameDirectory.getPath(), importFolder.get());
 
         if (!Files.exists(folder)) {
             try {
@@ -419,7 +419,7 @@ public class BookImporter extends Module {
         selectBtn.action = () -> {
             String path = TinyFileDialogs.tinyfd_openFileDialog(
                 "Select a .txt file",
-                new File(mc.runDirectory, importFolder.get()).getAbsolutePath(),
+                new File(mc.gameDirectory, importFolder.get()).getAbsolutePath(),
                 null,
                 null,
                 false
@@ -450,7 +450,7 @@ public class BookImporter extends Module {
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (!isImporting) return;
-        if (mc.player == null || mc.world == null) {
+        if (mc.player == null || mc.level == null) {
             isImporting = false;
             return;
         }
@@ -515,7 +515,7 @@ public class BookImporter extends Module {
         }
 
         // Normal book signing loop
-        ItemStack mainHand = mc.player.getMainHandStack();
+        ItemStack mainHand = mc.player.getMainHandItem();
         if (mainHand.getItem() != Items.WRITABLE_BOOK) {
             sendMessage("Hold a writable book for: " + currentTask.baseTitle + "-" + String.format("%02d", currentPart));
             tickDelay = 80;
@@ -585,22 +585,22 @@ public class BookImporter extends Module {
             titleStr = currentTask.baseTitle;
         }
 
-        List<RawFilteredPair<Text>> filteredPages = new ArrayList<>();
+        List<Filterable<Component>> filteredPages = new ArrayList<>();
         for (String pageContent : partPages) {
-            Text pageText = Text.literal(pageContent);
-            filteredPages.add(RawFilteredPair.of(pageText));
+            Component pageText = Component.literal(pageContent);
+            filteredPages.add(Filterable.passThrough(pageText));
         }
 
-        WrittenBookContentComponent content = new WrittenBookContentComponent(
-            RawFilteredPair.of(titleStr),
+        WrittenBookContent content = new WrittenBookContent(
+            Filterable.passThrough(titleStr),
             mc.player.getName().getString(),
             0,
             filteredPages,
             true
         );
 
-        mc.player.getMainHandStack().set(DataComponentTypes.WRITTEN_BOOK_CONTENT, content);
-        mc.player.networkHandler.sendPacket(new BookUpdateC2SPacket(
+        mc.player.getMainHandItem().set(DataComponents.WRITTEN_BOOK_CONTENT, content);
+        mc.player.connection.send(new ServerboundEditBookPacket(
             mc.player.getInventory().getSelectedSlot(),
             partPages,
             Optional.of(titleStr)
@@ -620,7 +620,7 @@ public class BookImporter extends Module {
     private void sendMessage(String msg) {
         info(msg);
         if (mc.player != null) {
-            mc.player.sendMessage(Text.literal(msg), false);
+            mc.player.displayClientMessage(Component.literal(msg), false);
         }
     }
 
@@ -711,6 +711,6 @@ public class BookImporter extends Module {
 
     private boolean fitsOnPage(String text) {
         return text.length() < MAX_PAGE_CHARS
-            && mc.textRenderer.getWrappedLinesHeight(StringVisitable.plain(text), MAX_PAGE_WIDTH) <= MAX_PAGE_HEIGHT;
+            && mc.font.wordWrapHeight(FormattedText.of(text), MAX_PAGE_WIDTH) <= MAX_PAGE_HEIGHT;
     }
 }

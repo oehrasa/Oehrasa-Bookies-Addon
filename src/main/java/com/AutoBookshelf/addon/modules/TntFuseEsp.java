@@ -20,8 +20,8 @@ import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.TntEntity;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.item.PrimedTnt;
 
 /**
  * made by cqb13
@@ -131,12 +131,12 @@ public class TntFuseEsp extends Module {
 
     @EventHandler
     private void onRender3D(Render3DEvent event) {
-        if (mc.world == null || mc.player == null || !showTntFuse.get()) {
+        if (mc.level == null || mc.player == null || !showTntFuse.get()) {
             return;
         }
 
-        for (Entity entity : mc.world.getEntities()) {
-            if (!(entity instanceof TntEntity tntEntity)) {
+        for (Entity entity : mc.level.entitiesForRendering()) {
+            if (!(entity instanceof PrimedTnt tntEntity)) {
                 continue;
             }
 
@@ -153,20 +153,20 @@ public class TntFuseEsp extends Module {
 
     @EventHandler
     private void onRender2D(Render2DEvent event) {
-        if (mc.world == null || mc.player == null || !showTntFuseText.get()) {
+        if (mc.level == null || mc.player == null || !showTntFuseText.get()) {
             return;
         }
 
-        for (Entity entity : mc.world.getEntities()) {
-            if (!(entity instanceof TntEntity tntEntity)) {
+        for (Entity entity : mc.level.entitiesForRendering()) {
+            if (!(entity instanceof PrimedTnt tntEntity)) {
                 continue;
             }
 
-            if (PlayerUtils.isWithin(entity.getEntityPos(), (double) nearDistance.get()) && hideWhenNear.get()) {
+            if (PlayerUtils.isWithin(entity.position(), (double) nearDistance.get()) && hideWhenNear.get()) {
                 continue;
             }
 
-            if (!PlayerUtils.isWithin(entity.getEntityPos(), (double) farDistance.get()) && hideWhenFar.get()) {
+            if (!PlayerUtils.isWithin(entity.position(), (double) farDistance.get()) && hideWhenFar.get()) {
                 continue;
             }
 

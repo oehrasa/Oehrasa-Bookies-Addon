@@ -12,16 +12,15 @@ import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.item.Items;
-import net.minecraft.util.Hand;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import java.util.*;
 
 public class UnwaxAura extends Module {
@@ -259,12 +258,12 @@ public class UnwaxAura extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
-        if (mc.player == null || mc.interactionManager == null) return;
-        if (mc.currentScreen != null) return;
+        if (mc.player == null || mc.gameMode == null) return;
+        if (mc.screen != null) return;
 
         if (rotTimer > 0) {
             if (currentTarget != null && rotate.get()) {
-                Vec3d vec = Vec3d.ofCenter(currentTarget);
+                Vec3 vec = Vec3.atCenterOf(currentTarget);
                 Rotations.rotate(Rotations.getYaw(vec), Rotations.getPitch(vec), 100);
             }
             rotTimer--;
@@ -298,15 +297,15 @@ public class UnwaxAura extends Module {
         double closestDistSq = Double.MAX_VALUE;
         BlockPos closest = null;
         int r = range.get();
-        BlockPos playerPos = mc.player.getBlockPos();
-        for (BlockPos pos : BlockPos.iterateOutwards(playerPos, r, r, r)) {
-            BlockState state = mc.world.getBlockState(pos);
+        BlockPos playerPos = mc.player.blockPosition();
+        for (BlockPos pos : BlockPos.withinManhattan(playerPos, r, r, r)) {
+            BlockState state = mc.level.getBlockState(pos);
             boolean matches = lookingForUnwaxed ? isUnwaxedCopper(state) : isWaxedCopper(state);
             if (!matches) continue;
-            double dist = pos.getSquaredDistance(playerPos);
+            double dist = pos.distSqr(playerPos);
             if (dist < closestDistSq) {
                 closestDistSq = dist;
-                closest = pos.toImmutable();
+                closest = pos.immutable();
             }
         }
         if (closest != null) {
@@ -327,7 +326,7 @@ public class UnwaxAura extends Module {
 
     private void performUnwax() {
         if (currentTarget == null) { stage = Stage.SCAN; return; }
-        BlockState state = mc.world.getBlockState(currentTarget);
+        BlockState state = mc.level.getBlockState(currentTarget);
         if (!isWaxedCopper(state)) {
             afterUnwax(); return;
         }
@@ -339,19 +338,19 @@ public class UnwaxAura extends Module {
                 InvUtils.swap(axe.slot(), true);
             }
         }
-        mc.options.sneakKey.setPressed(true);
-        Vec3d hitVec = Vec3d.ofCenter(currentTarget);
+        mc.options.keyShift.setDown(true);
+        Vec3 hitVec = Vec3.atCenterOf(currentTarget);
         BlockHitResult hit = new BlockHitResult(hitVec, Direction.UP, currentTarget, false);
-        mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hit);
-        mc.player.swingHand(Hand.MAIN_HAND);
-        mc.options.sneakKey.setPressed(false);
+        mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
+        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.options.keyShift.setDown(false);
         stage = Stage.WAIT_UNWAX;
         actionTimer = unwaxDelay.get();
     }
 
     private void afterUnwax() {
         if (currentTarget == null) { stage = Stage.SCAN; return; }
-        BlockState state = mc.world.getBlockState(currentTarget);
+        BlockState state = mc.level.getBlockState(currentTarget);
         if (!isUnwaxedCopper(state)) {
             stage = Stage.ROTATE_UNWAX;
             rotTimer = rotate.get() ? 5 : 0;
@@ -386,26 +385,26 @@ public class UnwaxAura extends Module {
             }
         }
         if (!breakingStarted) {
-            mc.interactionManager.attackBlock(currentTarget, Direction.UP);
+            mc.gameMode.startDestroyBlock(currentTarget, Direction.UP);
             breakingStarted = true;
         } else {
-            mc.interactionManager.updateBlockBreakingProgress(currentTarget, Direction.UP);
+            mc.gameMode.continueDestroyBlock(currentTarget, Direction.UP);
         }
-        mc.player.swingHand(Hand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND);
         stage = Stage.BREAKING;
         actionTimer = 1;
     }
 
     private void continueBreaking() {
         if (currentTarget == null) { stage = Stage.SCAN; return; }
-        BlockState state = mc.world.getBlockState(currentTarget);
+        BlockState state = mc.level.getBlockState(currentTarget);
         if (state.isAir()) {
             stage = Stage.WAIT_BREAK;
             actionTimer = breakDelay.get();
             breakingStarted = false;
         } else {
-            mc.interactionManager.updateBlockBreakingProgress(currentTarget, Direction.UP);
-            mc.player.swingHand(Hand.MAIN_HAND);
+            mc.gameMode.continueDestroyBlock(currentTarget, Direction.UP);
+            mc.player.swing(InteractionHand.MAIN_HAND);
             actionTimer = 1;
         }
     }
@@ -426,22 +425,22 @@ public class UnwaxAura extends Module {
 
     @EventHandler
     private void onRender(Render3DEvent event) {
-        if (!espEnabled.get() || mc.player == null || mc.world == null) return;
+        if (!espEnabled.get() || mc.player == null || mc.level == null) return;
         Set<BlockPos> blocks = new HashSet<>();
         if (currentTarget != null) {
             blocks.add(currentTarget);
         } else if (stage == Stage.SCAN) {
             int r = range.get();
-            BlockPos playerPos = mc.player.getBlockPos();
-            for (BlockPos pos : BlockPos.iterateOutwards(playerPos, r, r, r)) {
-                if (isWaxedCopper(mc.world.getBlockState(pos))) {
-                    blocks.add(pos.toImmutable());
+            BlockPos playerPos = mc.player.blockPosition();
+            for (BlockPos pos : BlockPos.withinManhattan(playerPos, r, r, r)) {
+                if (isWaxedCopper(mc.level.getBlockState(pos))) {
+                    blocks.add(pos.immutable());
                 }
             }
         }
         int rangeSq = espRange.get() * espRange.get();
         for (BlockPos pos : blocks) {
-            if (mc.player.getBlockPos().getSquaredDistance(pos) > rangeSq) continue;
+            if (mc.player.blockPosition().distSqr(pos) > rangeSq) continue;
             event.renderer.box(pos, sideColor.get(), lineColor.get(), shapeMode.get(), 0);
             if (tracer.get()) {
                 event.renderer.line(

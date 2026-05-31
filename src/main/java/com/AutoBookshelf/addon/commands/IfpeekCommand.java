@@ -4,16 +4,15 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import meteordevelopment.meteorclient.commands.Command;
-import net.minecraft.command.CommandSource;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.WrittenBookContentComponent;
-import net.minecraft.entity.decoration.ItemFrameEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.text.Text;
-import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.hit.HitResult;
-
+import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.entity.decoration.ItemFrame;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.WrittenBookContent;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -30,35 +29,35 @@ public class IfpeekCommand extends Command {
     }
 
     @Override
-    public void build(LiteralArgumentBuilder<CommandSource> builder) {
+    public void build(LiteralArgumentBuilder<SharedSuggestionProvider> builder) {
         builder.executes(ctx -> {
-            if (mc.crosshairTarget == null || mc.crosshairTarget.getType() != HitResult.Type.ENTITY) {
+            if (mc.hitResult == null || mc.hitResult.getType() != HitResult.Type.ENTITY) {
                 error("You have to point at an item frame first");
                 return SINGLE_SUCCESS;
             }
 
-            if (!(mc.crosshairTarget instanceof EntityHitResult hitResult)) {
+            if (!(mc.hitResult instanceof EntityHitResult hitResult)) {
                 error("You have to point at an item frame first");
                 return SINGLE_SUCCESS;
             }
 
-            if (!(hitResult.getEntity() instanceof ItemFrameEntity itemFrame)) {
+            if (!(hitResult.getEntity() instanceof ItemFrame itemFrame)) {
                 error("You have to point at an item frame first");
                 return SINGLE_SUCCESS;
             }
 
-            ItemStack item = itemFrame.getHeldItemStack();
+            ItemStack item = itemFrame.getItem();
             if (item.isEmpty()) {
                 error("There is no item on the item frame.");
                 return SINGLE_SUCCESS;
             }
 
-            if (item.isOf(Items.WRITTEN_BOOK)) {
+            if (item.is(Items.WRITTEN_BOOK)) {
                 inspectBook(item);
                 return SINGLE_SUCCESS;
             }
 
-            if (item.isOf(Items.WRITABLE_BOOK)) {
+            if (item.is(Items.WRITABLE_BOOK)) {
                 info("This is a writable book (book and quill) Not yet signed");
                 return SINGLE_SUCCESS;
             }
@@ -130,7 +129,7 @@ public class IfpeekCommand extends Command {
     }
 
     private void inspectBook(ItemStack book) {
-        WrittenBookContentComponent content = book.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+        WrittenBookContent content = book.get(DataComponents.WRITTEN_BOOK_CONTENT);
 
         if (content == null) {
             error("This book has no content!");
@@ -140,7 +139,7 @@ public class IfpeekCommand extends Command {
         String title = escapePercent(content.title().raw());
         String author = escapePercent(content.author());
         int generation = content.generation();
-        List<Text> pages = content.getPages(true);
+        List<Component> pages = content.getPages(true);
 
         String generationText = switch (generation) {
             case 0 -> "Original";
@@ -154,7 +153,7 @@ public class IfpeekCommand extends Command {
         int totalWords = 0;
         int emptyPages = 0;
 
-        for (Text page : pages) {
+        for (Component page : pages) {
             String text = page.getString();
             if (text.trim().isEmpty()) {
                 emptyPages++;
@@ -193,10 +192,10 @@ public class IfpeekCommand extends Command {
     }
 
     private void searchInBook(String searchWord) {
-        WrittenBookContentComponent content = getBookFromItemFrame();
+        WrittenBookContent content = getBookFromItemFrame();
         if (content == null) return;
 
-        List<Text> pages = content.getPages(true);
+        List<Component> pages = content.getPages(true);
         List<Integer> foundPages = new ArrayList<>();
         String escapedSearchWord = escapePercent(searchWord);
 
@@ -218,10 +217,10 @@ public class IfpeekCommand extends Command {
     }
 
     private void viewSpecificPage(int pageNum) {
-        WrittenBookContentComponent content = getBookFromItemFrame();
+        WrittenBookContent content = getBookFromItemFrame();
         if (content == null) return;
 
-        List<Text> pages = content.getPages(true);
+        List<Component> pages = content.getPages(true);
         if (pageNum < 1 || pageNum > pages.size()) {
             error("Page " + pageNum + " doesn't exist, The Book has " + pages.size() + " pages");
             return;
@@ -245,13 +244,13 @@ public class IfpeekCommand extends Command {
     }
 
     private void showBookStats() {
-        WrittenBookContentComponent content = getBookFromItemFrame();
+        WrittenBookContent content = getBookFromItemFrame();
         if (content == null) {
             error("This book has no content!");
             return;
         }
 
-        List<Text> pages = content.getPages(true);
+        List<Component> pages = content.getPages(true);
 
         int totalChars = 0;
         int totalWords = 0;
@@ -263,7 +262,7 @@ public class IfpeekCommand extends Command {
         String mostCommonWord = "";
         int mostCommonWordCount = 0;
 
-        for (Text page : pages) {
+        for (Component page : pages) {
             String text = page.getString();
             int length = text.length();
             int words = text.split("\\s+").length;
@@ -351,12 +350,12 @@ public class IfpeekCommand extends Command {
         return "Very Hard";
     }
 
-    private WrittenBookContentComponent getBookFromItemFrame() {
-        if (mc.crosshairTarget instanceof EntityHitResult hitResult &&
-            hitResult.getEntity() instanceof ItemFrameEntity itemFrame) {
-            ItemStack item = itemFrame.getHeldItemStack();
-            if (item.isOf(Items.WRITTEN_BOOK)) {
-                return item.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+    private WrittenBookContent getBookFromItemFrame() {
+        if (mc.hitResult instanceof EntityHitResult hitResult &&
+            hitResult.getEntity() instanceof ItemFrame itemFrame) {
+            ItemStack item = itemFrame.getItem();
+            if (item.is(Items.WRITTEN_BOOK)) {
+                return item.get(DataComponents.WRITTEN_BOOK_CONTENT);
             }
         }
         return null;

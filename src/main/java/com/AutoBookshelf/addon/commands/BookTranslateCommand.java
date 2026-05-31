@@ -7,13 +7,12 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import meteordevelopment.meteorclient.commands.Command;
-import net.minecraft.command.CommandSource;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.WrittenBookContentComponent;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.text.Text;
-
+import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.WrittenBookContent;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -33,7 +32,7 @@ public class BookTranslateCommand extends Command {
     } // Credits to Akgezen for the command idea
 
     @Override
-    public void build(LiteralArgumentBuilder<CommandSource> builder) {
+    public void build(LiteralArgumentBuilder<SharedSuggestionProvider> builder) {
         // 1. Display in chat as the default
         builder.executes(ctx -> {
             displayTranslation("en", 1, -1);
@@ -101,10 +100,10 @@ public class BookTranslateCommand extends Command {
 
     private ItemStack getHeldBook() {
         if (mc.player == null || mc.player.getInventory() == null) return null;
-        ItemStack mainHand = mc.player.getMainHandStack();
-        if (mainHand != null && mainHand.isOf(Items.WRITTEN_BOOK)) return mainHand;
-        ItemStack offHand = mc.player.getOffHandStack();
-        if (offHand != null && offHand.isOf(Items.WRITTEN_BOOK)) return offHand;
+        ItemStack mainHand = mc.player.getMainHandItem();
+        if (mainHand != null && mainHand.is(Items.WRITTEN_BOOK)) return mainHand;
+        ItemStack offHand = mc.player.getOffhandItem();
+        if (offHand != null && offHand.is(Items.WRITTEN_BOOK)) return offHand;
         return null;
     }
 
@@ -150,13 +149,13 @@ public class BookTranslateCommand extends Command {
             return;
         }
 
-        WrittenBookContentComponent content = book.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+        WrittenBookContent content = book.get(DataComponents.WRITTEN_BOOK_CONTENT);
         if (content == null) {
             error("This book has no content!");
             return;
         }
 
-        List<Text> allPages = content.getPages(true);
+        List<Component> allPages = content.getPages(true);
         if (allPages.isEmpty()) {
             error("The book is empty.");
             return;
@@ -171,7 +170,7 @@ public class BookTranslateCommand extends Command {
             return;
         }
 
-        List<Text> pagesToTranslate = new ArrayList<>();
+        List<Component> pagesToTranslate = new ArrayList<>();
         for (int i = startPage - 1; i < endPage; i++) pagesToTranslate.add(allPages.get(i));
 
         final String rangeInfo = (startPage == endPage)
@@ -181,7 +180,7 @@ public class BookTranslateCommand extends Command {
 
         // Translate each page individually – avoids HTTP 400 from oversized requests
         List<CompletableFuture<String>> futures = new ArrayList<>();
-        for (Text page : pagesToTranslate) {
+        for (Component page : pagesToTranslate) {
             futures.add(translateTextAsync(targetLang, page.getString()));
         }
 
@@ -192,13 +191,13 @@ public class BookTranslateCommand extends Command {
                 for (CompletableFuture<String> future : futures) {
                     String translated = future.join(); // safe because all futures are done
                     if (translated == null) {
-                        mc.executeSync(() -> error("Translation failed for one or more pages."));
+                        mc.executeIfPossible(() -> error("Translation failed for one or more pages."));
                         return;
                     }
                     translatedPages.add(translated);
                 }
 
-                mc.executeSync(() -> {
+                mc.executeIfPossible(() -> {
                     info("§6<Translated Book (" + rangeInfo + ")>");
                     for (int i = 0; i < translatedPages.size(); i++) {
                         int actualPage = finalStartPage + i;
@@ -217,7 +216,7 @@ public class BookTranslateCommand extends Command {
                 });
             })
             .exceptionally(e -> {
-                mc.executeSync(() -> error("Translation error: " + e.getMessage()));
+                mc.executeIfPossible(() -> error("Translation error: " + e.getMessage()));
                 return null;
             });
     }
@@ -229,7 +228,7 @@ public class BookTranslateCommand extends Command {
             return;
         }
 
-        WrittenBookContentComponent content = book.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+        WrittenBookContent content = book.get(DataComponents.WRITTEN_BOOK_CONTENT);
         if (content == null) {
             error("This book has no content!");
             return;
@@ -239,7 +238,7 @@ public class BookTranslateCommand extends Command {
         String safeTitle = rawTitle.replaceAll("[\\\\/:*?\"<>|]", "_");
         if (safeTitle.length() > 50) safeTitle = safeTitle.substring(0, 50);
 
-        List<Text> allPages = content.getPages(true);
+        List<Component> allPages = content.getPages(true);
         if (allPages.isEmpty()) {
             error("The book is empty.");
             return;
@@ -254,7 +253,7 @@ public class BookTranslateCommand extends Command {
             return;
         }
 
-        List<Text> pagesToTranslate = new ArrayList<>();
+        List<Component> pagesToTranslate = new ArrayList<>();
         for (int i = startPage - 1; i < endPage; i++) pagesToTranslate.add(allPages.get(i));
 
         final String rangeInfo = (startPage == endPage)
@@ -264,7 +263,7 @@ public class BookTranslateCommand extends Command {
 
         // Translate each page individually, avoids HTTP 400 from oversized requests.
         List<CompletableFuture<String>> futures = new ArrayList<>();
-        for (Text page : pagesToTranslate) {
+        for (Component page : pagesToTranslate) {
             futures.add(translateTextAsync(targetLang, page.getString()));
         }
 
@@ -277,7 +276,7 @@ public class BookTranslateCommand extends Command {
                 for (CompletableFuture<String> future : futures) {
                     String translated = future.join();
                     if (translated == null) {
-                        mc.executeSync(() -> error("Translation failed for one or more pages."));
+                        mc.executeIfPossible(() -> error("Translation failed for one or more pages."));
                         return;
                     }
                     translatedPages.add(translated);
@@ -293,19 +292,19 @@ public class BookTranslateCommand extends Command {
 
                 String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
                 String fileName = finalSafeTitle + "_" + timestamp + ".txt";
-                Path outDir = mc.runDirectory.toPath().resolve("AutoBookshelf");
+                Path outDir = mc.gameDirectory.toPath().resolve("AutoBookshelf");
 
                 try {
                     Files.createDirectories(outDir);
                     Path outFile = outDir.resolve(fileName);
                     Files.writeString(outFile, fileContent.toString(), StandardCharsets.UTF_8);
-                    mc.executeSync(() -> info("§aExported translation to §f" + outFile.toAbsolutePath()));
+                    mc.executeIfPossible(() -> info("§aExported translation to §f" + outFile.toAbsolutePath()));
                 } catch (Exception e) {
-                    mc.executeSync(() -> error("Failed to write file: " + e.getMessage()));
+                    mc.executeIfPossible(() -> error("Failed to write file: " + e.getMessage()));
                 }
             })
             .exceptionally(e -> {
-                mc.executeSync(() -> error("Export error: " + e.getMessage()));
+                mc.executeIfPossible(() -> error("Export error: " + e.getMessage()));
                 return null;
             });
     }

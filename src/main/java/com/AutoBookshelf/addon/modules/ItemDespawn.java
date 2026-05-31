@@ -10,10 +10,9 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.ItemEntity;
-import net.minecraft.util.math.Box;
-
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.phys.AABB;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -126,15 +125,15 @@ public class ItemDespawn extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (mc.world == null) return;
+        if (mc.level == null) return;
 
-        long currentTick = mc.world.getTime();
+        long currentTick = mc.level.getGameTime();
 
         // Update ages for all visible items
-        for (Entity entity : mc.world.getEntities()) {
+        for (Entity entity : mc.level.entitiesForRendering()) {
             if (!(entity instanceof ItemEntity item)) continue;
 
-            UUID uuid = item.getUuid();
+            UUID uuid = item.getUUID();
             TrackedItem tracked = trackedItems.computeIfAbsent(uuid, k -> {
                 TrackedItem t = new TrackedItem();
                 t.totalAge = 0;
@@ -154,17 +153,17 @@ public class ItemDespawn extends Module {
 
     @EventHandler
     private void onRender(Render3DEvent event) {
-        if (mc.world == null || mc.player == null) return;
+        if (mc.level == null || mc.player == null) return;
 
         int rendered = 0;
         int max = maxRender.get();
         double rangeSq = renderRange.get() * renderRange.get();
 
-        for (Entity entity : mc.world.getEntities()) {
+        for (Entity entity : mc.level.entitiesForRendering()) {
             if (!(entity instanceof ItemEntity)) continue;
-            if (mc.player.squaredDistanceTo(entity) > rangeSq) continue;
+            if (mc.player.distanceToSqr(entity) > rangeSq) continue;
 
-            Integer age = renderAges.get(entity.getUuid());
+            Integer age = renderAges.get(entity.getUUID());
             if (age == null) continue;
 
             int timeLeft = despawnTime.get() - age;
@@ -177,7 +176,7 @@ public class ItemDespawn extends Module {
             Color sideColor = new Color(color.r, color.g, color.b, sideOpacity.get());
             Color lineColor = new Color(color.r, color.g, color.b, lineOpacity.get());
 
-            Box box = entity.getBoundingBox();
+            AABB box = entity.getBoundingBox();
             event.renderer.box(box, sideColor, lineColor, shapeMode.get(), 0);
 
             rendered++;
@@ -189,7 +188,7 @@ public class ItemDespawn extends Module {
     private void onEntityRemoved(EntityRemovedEvent event) {
         if (!(event.entity instanceof ItemEntity item)) return;
 
-        UUID uuid = item.getUuid();
+        UUID uuid = item.getUUID();
         // Only remove tracking when the item is truly destroyed
         if (item.getRemovalReason() != Entity.RemovalReason.UNLOADED_TO_CHUNK) {
             trackedItems.remove(uuid);

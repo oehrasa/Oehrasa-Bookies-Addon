@@ -13,24 +13,23 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.ChiseledBookshelfBlock;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.WrittenBookContentComponent;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.screen.slot.SlotActionType;
-import net.minecraft.state.property.Properties;
-import net.minecraft.text.Text;
-import net.minecraft.util.Hand;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.WrittenBookContent;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ChiseledBookShelfBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import java.io.File;
 import java.nio.file.Files;
 import java.util.*;
@@ -439,7 +438,7 @@ public class BookshelfFiller extends Module {
         }
 
         for (int i = 0; i < 9; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
+            ItemStack stack = mc.player.getInventory().getItem(i);
             if (!isProtectedItem(stack)) {
                 return i;
             }
@@ -489,14 +488,14 @@ public class BookshelfFiller extends Module {
     }
 
     private String getWorldName() {
-        if (mc.world == null) return "unknown";
-        return mc.world.getRegistryKey().getValue().toString();
+        if (mc.level == null) return "unknown";
+        return mc.level.dimension().identifier().toString();
     }
 
     private void loadCache() {
         if (!persistentCache.get()) return;
         try {
-            cacheFile = new File(mc.runDirectory, "AutoBookshelf/bookshelf_counts.json");
+            cacheFile = new File(mc.gameDirectory, "AutoBookshelf/bookshelf_counts.json");
             if (cacheFile.exists()) {
                 String json = new String(Files.readAllBytes(cacheFile.toPath()));
                 JsonObject root = JsonParser.parseString(json).getAsJsonObject();
@@ -524,7 +523,7 @@ public class BookshelfFiller extends Module {
     private void saveCache() {
         if (!persistentCache.get()) return;
         if (cacheFile == null) {
-            cacheFile = new File(mc.runDirectory, "AutoBookshelf/bookshelf_counts.json");
+            cacheFile = new File(mc.gameDirectory, "AutoBookshelf/bookshelf_counts.json");
         }
 
         try {
@@ -551,12 +550,12 @@ public class BookshelfFiller extends Module {
     }
 
     private int countBooksInShelf(BlockPos pos) {
-        BlockState state = mc.world.getBlockState(pos);
+        BlockState state = mc.level.getBlockState(pos);
         if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) return 0;
 
         int count = 0;
         for (int slot = 0; slot < 6; slot++) {
-            if (state.get(ChiseledBookshelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot))) {
+            if (state.getValue(ChiseledBookShelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot))) {
                 count++;
             }
         }
@@ -590,7 +589,7 @@ public class BookshelfFiller extends Module {
             for (int x = minX; x <= maxX; x++) {
                 for (int z = minZ; z <= maxZ; z++) {
                     BlockPos pos = new BlockPos(x, y, z);
-                    BlockState state = mc.world.getBlockState(pos);
+                    BlockState state = mc.level.getBlockState(pos);
                     if (state.getBlock() == Blocks.CHISELED_BOOKSHELF) {
                         int bookCount = countBooksInShelf(pos);
                         String key = x + "," + y + "," + z;
@@ -681,15 +680,15 @@ public class BookshelfFiller extends Module {
 
     @EventHandler
     private void onInteract(InteractBlockEvent event) {
-        if (mc.player == null || mc.world == null) return;
-        if (event.hand != Hand.MAIN_HAND) return;
+        if (mc.player == null || mc.level == null) return;
+        if (event.hand != InteractionHand.MAIN_HAND) return;
 
-        ItemStack hand = mc.player.getMainHandStack();
+        ItemStack hand = mc.player.getMainHandItem();
         BlockHitResult hitResult = event.result;
         if (hitResult == null) return;
 
         BlockPos pos = hitResult.getBlockPos();
-        BlockState state = mc.world.getBlockState(pos);
+        BlockState state = mc.level.getBlockState(pos);
         if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) return;
 
         // Counter tool
@@ -745,12 +744,12 @@ public class BookshelfFiller extends Module {
     }
 
     private void startSingleBlockExtract(BlockPos pos) {
-        BlockState state = mc.world.getBlockState(pos);
+        BlockState state = mc.level.getBlockState(pos);
         if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) return;
 
         singleBlockSlots.clear();
         for (int slot = 0; slot < 6; slot++) {
-            boolean occupied = state.get(ChiseledBookshelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot));
+            boolean occupied = state.getValue(ChiseledBookShelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot));
             if (occupied) {
                 singleBlockSlots.add(slot);
             }
@@ -790,11 +789,11 @@ public class BookshelfFiller extends Module {
         }
 
         if (singleBlockSlotIndex >= singleBlockSlots.size()) {
-            BlockState state = mc.world.getBlockState(singleBlockPos);
+            BlockState state = mc.level.getBlockState(singleBlockPos);
             if (state.getBlock() == Blocks.CHISELED_BOOKSHELF && extractionRetryCount < MAX_EXTRACTION_RETRIES) {
                 boolean hasBooksLeft = false;
                 for (int slot = 0; slot < 6; slot++) {
-                    if (state.get(ChiseledBookshelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot))) {
+                    if (state.getValue(ChiseledBookShelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot))) {
                         hasBooksLeft = true;
                         break;
                     }
@@ -804,7 +803,7 @@ public class BookshelfFiller extends Module {
                     extractionRetryCount++;
                     singleBlockSlots.clear();
                     for (int slot = 0; slot < 6; slot++) {
-                        if (state.get(ChiseledBookshelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot))) {
+                        if (state.getValue(ChiseledBookShelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot))) {
                             singleBlockSlots.add(slot);
                         }
                     }
@@ -831,9 +830,9 @@ public class BookshelfFiller extends Module {
 
         int slot = singleBlockSlots.get(singleBlockSlotIndex);
 
-        BlockState state = mc.world.getBlockState(singleBlockPos);
+        BlockState state = mc.level.getBlockState(singleBlockPos);
         if (state.getBlock() != Blocks.CHISELED_BOOKSHELF ||
-            !state.get(ChiseledBookshelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot))) {
+            !state.getValue(ChiseledBookShelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot))) {
             singleBlockSlotIndex++;
             extractDelay = 2;
             return;
@@ -841,7 +840,7 @@ public class BookshelfFiller extends Module {
 
         int emptySlot = -1;
         for (int i = 0; i < 36; i++) {
-            if (mc.player.getInventory().getStack(i).isEmpty()) {
+            if (mc.player.getInventory().getItem(i).isEmpty()) {
                 emptySlot = i;
                 break;
             }
@@ -860,9 +859,9 @@ public class BookshelfFiller extends Module {
     }
 
     private void extractBook(BlockPos pos, int slot, int targetSlot) {
-        BlockState state = mc.world.getBlockState(pos);
-        Direction facing = state.get(Properties.HORIZONTAL_FACING);
-        Vec3d hitVec = getHitVec(pos, facing, slot);
+        BlockState state = mc.level.getBlockState(pos);
+        Direction facing = state.getValue(BlockStateProperties.HORIZONTAL_FACING);
+        Vec3 hitVec = getHitVec(pos, facing, slot);
 
         BlockHitResult hitResult = new BlockHitResult(hitVec, facing, pos, false);
         int previousSlot = mc.player.getInventory().getSelectedSlot();
@@ -871,7 +870,7 @@ public class BookshelfFiller extends Module {
             if (targetSlot >= 9) {
                 int tempHotbarSlot = -1;
                 for (int i = 0; i < 9; i++) {
-                    if (mc.player.getInventory().getStack(i).isEmpty()) {
+                    if (mc.player.getInventory().getItem(i).isEmpty()) {
                         tempHotbarSlot = i;
                         break;
                     }
@@ -879,19 +878,19 @@ public class BookshelfFiller extends Module {
 
                 if (tempHotbarSlot == -1) {
                     tempHotbarSlot = findSwapSlot();
-                    mc.interactionManager.clickSlot(
-                        mc.player.currentScreenHandler.syncId,
+                    mc.gameMode.handleInventoryMouseClick(
+                        mc.player.containerMenu.containerId,
                         targetSlot,
                         tempHotbarSlot,
-                        SlotActionType.SWAP,
+                        ClickType.SWAP,
                         mc.player
                     );
                 } else {
-                    mc.interactionManager.clickSlot(
-                        mc.player.currentScreenHandler.syncId,
+                    mc.gameMode.handleInventoryMouseClick(
+                        mc.player.containerMenu.containerId,
                         targetSlot,
                         tempHotbarSlot,
-                        SlotActionType.SWAP,
+                        ClickType.SWAP,
                         mc.player
                     );
                 }
@@ -901,8 +900,8 @@ public class BookshelfFiller extends Module {
                 mc.player.getInventory().setSelectedSlot(targetSlot);
             }
 
-            mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hitResult);
-            mc.player.swingHand(Hand.MAIN_HAND);
+            mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hitResult);
+            mc.player.swing(InteractionHand.MAIN_HAND);
 
             if (previousSlot != mc.player.getInventory().getSelectedSlot()) {
                 mc.player.getInventory().setSelectedSlot(previousSlot);
@@ -963,7 +962,7 @@ public class BookshelfFiller extends Module {
         Map<Integer, BookInfo> slotBookInfoMap = new HashMap<>();
 
         for (int i = 0; i < 36; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
+            ItemStack stack = mc.player.getInventory().getItem(i);
             if (stack.getItem() == Items.WRITTEN_BOOK && !stack.isEmpty()) {
                 String title = getBookTitle(stack);
                 String author = getBookAuthor(stack);
@@ -1044,7 +1043,7 @@ public class BookshelfFiller extends Module {
     private String getBookTitle(ItemStack bookStack) {
         try {
             if (bookStack.getItem() == Items.WRITTEN_BOOK) {
-                WrittenBookContentComponent content = bookStack.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+                WrittenBookContent content = bookStack.get(DataComponents.WRITTEN_BOOK_CONTENT);
                 if (content != null) {
                     return content.title().raw();
                 }
@@ -1057,7 +1056,7 @@ public class BookshelfFiller extends Module {
     private String getBookAuthor(ItemStack bookStack) {
         try {
             if (bookStack.getItem() == Items.WRITTEN_BOOK) {
-                WrittenBookContentComponent content = bookStack.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+                WrittenBookContent content = bookStack.get(DataComponents.WRITTEN_BOOK_CONTENT);
                 if (content != null) {
                     return content.author();
                 }
@@ -1069,7 +1068,7 @@ public class BookshelfFiller extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.level == null) return;
 
         if (displayTimer > 0) {
             displayTimer--;
@@ -1108,7 +1107,7 @@ public class BookshelfFiller extends Module {
         }
 
         if (selecting && selectionToolSetting.get() != null && requireToolInHand.get()) {
-            ItemStack mainHand = mc.player.getMainHandStack();
+            ItemStack mainHand = mc.player.getMainHandItem();
             Item expectedTool = selectionToolSetting.get();
             boolean hasTool = !mainHand.isEmpty() && mainHand.getItem() == expectedTool;
             wandModeActive = hasTool;
@@ -1176,7 +1175,7 @@ public class BookshelfFiller extends Module {
         }
 
         BlockPos pos = currentRowBlocks.get(currentCol);
-        BlockState state = mc.world.getBlockState(pos);
+        BlockState state = mc.level.getBlockState(pos);
 
         if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) {
             info("§cWarning: Block at " + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + " is no longer a bookshelf! Skipping");
@@ -1189,7 +1188,7 @@ public class BookshelfFiller extends Module {
 
         int slotToFill = fillingBottomHalf ? currentSlot + 3 : currentSlot;
 
-        double distance = mc.player.getEyePos().distanceTo(Vec3d.ofCenter(pos));
+        double distance = mc.player.getEyePosition().distanceTo(Vec3.atCenterOf(pos));
         if (distance > 5.0) {
             delayLeft = 10;
             return;
@@ -1203,7 +1202,7 @@ public class BookshelfFiller extends Module {
             stuckCounter = 0;
         }
 
-        boolean isSlotEmpty = !state.get(ChiseledBookshelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slotToFill));
+        boolean isSlotEmpty = !state.getValue(ChiseledBookShelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slotToFill));
 
         if (isSlotEmpty) {
             int bookSlot = findNextBookToPlace();
@@ -1251,8 +1250,8 @@ public class BookshelfFiller extends Module {
             }
 
             targetPos = pos;
-            Direction facing = state.get(Properties.HORIZONTAL_FACING);
-            Vec3d hitVec = getHitVec(pos, facing, slotToFill);
+            Direction facing = state.getValue(BlockStateProperties.HORIZONTAL_FACING);
+            Vec3 hitVec = getHitVec(pos, facing, slotToFill);
 
             BlockHitResult hitResult = new BlockHitResult(hitVec, facing, pos, false);
             lastPos = pos;
@@ -1268,11 +1267,11 @@ public class BookshelfFiller extends Module {
                     int swapSlot = findSwapSlot();
 
                     if (finalBookSlot >= 9) {
-                        mc.interactionManager.clickSlot(
-                            mc.player.currentScreenHandler.syncId,
+                        mc.gameMode.handleInventoryMouseClick(
+                            mc.player.containerMenu.containerId,
                             finalBookSlot,
                             swapSlot,
-                            SlotActionType.SWAP,
+                            ClickType.SWAP,
                             mc.player
                         );
                         mc.player.getInventory().setSelectedSlot(swapSlot);
@@ -1280,8 +1279,8 @@ public class BookshelfFiller extends Module {
                         mc.player.getInventory().setSelectedSlot(finalBookSlot);
                     }
 
-                    mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hitResult);
-                    mc.player.swingHand(Hand.MAIN_HAND);
+                    mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hitResult);
+                    mc.player.swing(InteractionHand.MAIN_HAND);
 
                     if (previousSlot != mc.player.getInventory().getSelectedSlot()) {
                         mc.player.getInventory().setSelectedSlot(previousSlot);
@@ -1331,16 +1330,16 @@ public class BookshelfFiller extends Module {
         int screenHeight = event.screenHeight;
         double scale = 1.2;
 
-        int x = (int) (screenWidth / 2 - (mc.textRenderer.getWidth(displayText) * scale) / 2);
+        int x = (int) (screenWidth / 2 - (mc.font.width(displayText) * scale) / 2);
         int y = screenHeight - 50;
 
-        event.drawContext.getMatrices().pushMatrix();
-        event.drawContext.getMatrices().translate(x, y);
-        event.drawContext.getMatrices().scale((float) scale, (float) scale);
+        event.drawContext.pose().pushMatrix();
+        event.drawContext.pose().translate(x, y);
+        event.drawContext.pose().scale((float) scale, (float) scale);
 
-        event.drawContext.drawText(mc.textRenderer, displayText, 0, 0, 0xFFFFD700, true);
+        event.drawContext.drawString(mc.font, displayText, 0, 0, 0xFFFFD700, true);
 
-        event.drawContext.getMatrices().popMatrix();
+        event.drawContext.pose().popMatrix();
     }
 
     private void displayBookInfoInChat(String title, String author) {
@@ -1349,7 +1348,7 @@ public class BookshelfFiller extends Module {
 
         if (showBookCooldown.get()) {
             String bookKey = title + "|" + author;
-            int currentTick = mc.player.age;
+            int currentTick = mc.player.tickCount;
 
             if (bookKey.equals(lastDisplayedBookKey) &&
                 (currentTick - lastDisplayedTick) < chatCooldownTicks.get()) {
@@ -1366,7 +1365,7 @@ public class BookshelfFiller extends Module {
 
     private void updateCurrentBookStatus(int slot) {
         currentBookSlot = slot;
-        ItemStack stack = mc.player.getInventory().getStack(slot);
+        ItemStack stack = mc.player.getInventory().getItem(slot);
         if (stack.getItem() == Items.WRITTEN_BOOK) {
             currentBookTitle = getBookTitle(stack);
             currentBookAuthor = getBookAuthor(stack);
@@ -1394,7 +1393,7 @@ public class BookshelfFiller extends Module {
     private int findNextBookToPlace() {
         if (!enableFilter.get()) {
             for (int i = 0; i < 36; i++) {
-                ItemStack stack = mc.player.getInventory().getStack(i);
+                ItemStack stack = mc.player.getInventory().getItem(i);
                 if (stack.getItem() == Items.WRITTEN_BOOK && !stack.isEmpty()) {
                     return i;
                 }
@@ -1404,7 +1403,7 @@ public class BookshelfFiller extends Module {
 
         if (currentBookIndex < sortedBookSlots.size()) {
             int slot = sortedBookSlots.get(currentBookIndex);
-            ItemStack stack = mc.player.getInventory().getStack(slot);
+            ItemStack stack = mc.player.getInventory().getItem(slot);
             if (stack.getItem() == Items.WRITTEN_BOOK && !stack.isEmpty()) {
                 return slot;
             } else {
@@ -1509,7 +1508,7 @@ public class BookshelfFiller extends Module {
             for (int x = minX; x <= maxX; x++) {
                 for (int z = minZ; z <= maxZ; z++) {
                     BlockPos pos = new BlockPos(x, y, z);
-                    if (mc.world.getBlockState(pos).getBlock() == Blocks.CHISELED_BOOKSHELF) {
+                    if (mc.level.getBlockState(pos).getBlock() == Blocks.CHISELED_BOOKSHELF) {
                         list.add(pos);
                     }
                 }
@@ -1539,7 +1538,7 @@ public class BookshelfFiller extends Module {
             int maxY = Math.max(pos1.getY(), pos2.getY());
             int maxZ = Math.max(pos1.getZ(), pos2.getZ());
 
-            event.renderer.box(new Box(minX, minY, minZ, maxX + 1, maxY + 1, maxZ + 1),
+            event.renderer.box(new AABB(minX, minY, minZ, maxX + 1, maxY + 1, maxZ + 1),
                 sideColor.get(), lineColor.get(), ShapeMode.Both, 0);
         }
 
@@ -1548,7 +1547,7 @@ public class BookshelfFiller extends Module {
         }
     }
 
-    private Vec3d getHitVec(BlockPos pos, Direction facing, int slot) {
+    private Vec3 getHitVec(BlockPos pos, Direction facing, int slot) {
         double x = 0, y = 0;
 
         switch (slot) {
@@ -1560,7 +1559,7 @@ public class BookshelfFiller extends Module {
             case 5 -> { x = 0.25; y = -0.25; }
         }
 
-        Vec3d center = Vec3d.ofCenter(pos);
+        Vec3 center = Vec3.atCenterOf(pos);
 
         return switch (facing) {
             case NORTH -> center.add(-x, y, -0.5);
@@ -1573,7 +1572,7 @@ public class BookshelfFiller extends Module {
 
     private void sendMessage(String msg) {
         info(msg);
-        mc.player.sendMessage(Text.literal(msg), true);
+        mc.player.displayClientMessage(Component.literal(msg), true);
     }
 
     public void resetSelection() {

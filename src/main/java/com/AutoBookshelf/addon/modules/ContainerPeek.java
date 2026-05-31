@@ -13,20 +13,24 @@ import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.*;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.BundleContentsComponent;
-import net.minecraft.component.type.ContainerComponent;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.decoration.ItemFrameEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.text.Text;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.World;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.decoration.ItemFrame;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.BundleContents;
+import net.minecraft.world.item.component.ItemContainerContents;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.BarrelBlock;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.ChestBlock;
+import net.minecraft.world.level.block.EnderChestBlock;
+import net.minecraft.world.level.block.ShulkerBoxBlock;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
 import org.joml.Vector3d;
 
 import java.util.ArrayList;
@@ -96,7 +100,7 @@ public class ContainerPeek extends Module {
     private final ChestTrackerDataV2 data = new ChestTrackerDataV2();   // fallback saved data
     private BlockPos lastTargetedPos;
     private TrackedContainer lastContainer;
-    private World lastWorld;
+    private Level lastWorld;
 
     private Entity lastEntity;
     private List<ItemStack> lastEntityItems;
@@ -106,8 +110,8 @@ public class ContainerPeek extends Module {
 
     private record PreviewData(
         BlockPos pos,
-        Text titleText,
-        Text posText,
+        Component titleText,
+        Component posText,
         int panelWidth,
         int panelHeight,
         List<ItemStack> stacks,
@@ -123,7 +127,7 @@ public class ContainerPeek extends Module {
     @Override
     public void onActivate() {
         data.loadData();    // load saved cache on enable
-        lastWorld = mc.world;
+        lastWorld = mc.level;
     }
 
     @Override
@@ -138,9 +142,9 @@ public class ContainerPeek extends Module {
     @EventHandler
     private void onTick(TickEvent.Post event) {
         // Reload data when world changes (relog)
-        if (mc.world != lastWorld) {
-            lastWorld = mc.world;
-            if (mc.world != null) data.loadData();
+        if (mc.level != lastWorld) {
+            lastWorld = mc.level;
+            if (mc.level != null) data.loadData();
             lastTargetedPos = null;
             lastContainer = null;
             lastEntity = null;
@@ -149,7 +153,7 @@ public class ContainerPeek extends Module {
             currentPreview = null;
         }
 
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.level == null) return;
 
         // Clear entity data if the entity is no longer valid
         if (lastEntity != null && (lastEntity.isRemoved() || !lastEntity.isAlive())) {
@@ -160,25 +164,25 @@ public class ContainerPeek extends Module {
         }
 
         // Block containers
-        if (mc.crosshairTarget != null && mc.crosshairTarget.getType() == HitResult.Type.BLOCK) {
+        if (mc.hitResult != null && mc.hitResult.getType() == HitResult.Type.BLOCK) {
             lastEntity = null;
             lastEntityItems = null;
             lastEntityType = null;
 
-            BlockHitResult hit = (BlockHitResult) mc.crosshairTarget;
+            BlockHitResult hit = (BlockHitResult) mc.hitResult;
             BlockPos pos = hit.getBlockPos();
             if (pos.equals(lastTargetedPos)) return;
 
             lastTargetedPos = pos;
 
-            double dist = Math.sqrt(mc.player.squaredDistanceTo(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5));
+            double dist = Math.sqrt(mc.player.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5));
             if (dist > maxDistance.get()) {
                 lastContainer = null;
                 currentPreview = null;
                 return;
             }
 
-            Block block = mc.world.getBlockState(pos).getBlock();
+            Block block = mc.level.getBlockState(pos).getBlock();
 
             // Accept all trackable container types
             if (!(block instanceof ChestBlock || block instanceof BarrelBlock
@@ -189,7 +193,7 @@ public class ContainerPeek extends Module {
             }
 
             // Use active ChestTracker data if available, else fallback saved data
-            String dimension = mc.world.getRegistryKey().getValue().toString();
+            String dimension = mc.level.dimension().identifier().toString();
             ChestTrackerModule tracker = Modules.get().get(ChestTrackerModule.class);
             if (tracker != null && tracker.isActive()) {
                 lastContainer = tracker.getData().getContainer(pos, dimension);
@@ -218,8 +222,8 @@ public class ContainerPeek extends Module {
                 if (textLines > 0) h += 10 * textLines + pad;
 
                 float scale = iconSizeVal / 16.0f;
-                Text titleText = Text.literal(title);
-                Text posText = Text.literal(String.format("%d, %d, %d", pos.getX(), pos.getY(), pos.getZ()));
+                Component titleText = Component.literal(title);
+                Component posText = Component.literal(String.format("%d, %d, %d", pos.getX(), pos.getY(), pos.getZ()));
 
                 currentPreview = new PreviewData(pos, titleText, posText, w, h, stacks, itemsPerRow, scale);
             } else {
@@ -229,7 +233,7 @@ public class ContainerPeek extends Module {
         }
 
         // Entity item frame
-        if (mc.crosshairTarget != null && mc.crosshairTarget instanceof EntityHitResult entityHit) {
+        if (mc.hitResult != null && mc.hitResult instanceof EntityHitResult entityHit) {
             Entity entity = entityHit.getEntity();
             if (entity == lastEntity) return;
 
@@ -237,17 +241,17 @@ public class ContainerPeek extends Module {
             lastEntityItems = null;
             lastEntityType = null;
 
-            if (entity instanceof ItemFrameEntity frame) {
-                ItemStack stack = frame.getHeldItemStack();
+            if (entity instanceof ItemFrame frame) {
+                ItemStack stack = frame.getItem();
                 if (stack.isEmpty()) {
                     currentPreview = null;
                     return;
                 }
 
                 // 1) Standard container component
-                ContainerComponent container = stack.get(DataComponentTypes.CONTAINER);
+                ItemContainerContents container = stack.get(DataComponents.CONTAINER);
                 if (container != null) {
-                    List<ItemStack> nonEmpty = container.streamNonEmpty()
+                    List<ItemStack> nonEmpty = container.nonEmptyStream()
                         .map(ItemStack::copy)
                         .toList();
                     if (!nonEmpty.isEmpty()) {
@@ -261,10 +265,10 @@ public class ContainerPeek extends Module {
                 }
 
                 // 2) Bundle contents
-                BundleContentsComponent bundle = stack.get(DataComponentTypes.BUNDLE_CONTENTS);
+                BundleContents bundle = stack.get(DataComponents.BUNDLE_CONTENTS);
                 if (bundle != null && !bundle.isEmpty()) {
                     List<ItemStack> bundleStacks = new ArrayList<>();
-                    bundle.stream().forEach(s -> bundleStacks.add(s.copy()));
+                    bundle.itemCopyStream().forEach(s -> bundleStacks.add(s.copy()));
                     lastEntityItems = bundleStacks;
                     lastEntityType = "bundle";
 
@@ -303,9 +307,9 @@ public class ContainerPeek extends Module {
         if (showPosition.get()) textLines++;
         if (textLines > 0) h += 10 * textLines + pad;
         float scale = iconSizeVal / 16.0f;
-        BlockPos pos = entity.getBlockPos();
-        Text titleText = Text.literal(title);
-        Text posText = Text.literal(String.format("%d, %d, %d", pos.getX(), pos.getY(), pos.getZ()));
+        BlockPos pos = entity.blockPosition();
+        Component titleText = Component.literal(title);
+        Component posText = Component.literal(String.format("%d, %d, %d", pos.getX(), pos.getY(), pos.getZ()));
         currentPreview = new PreviewData(pos, titleText, posText, w, h, stacks, itemsPerRow, scale);
     }
 
@@ -314,7 +318,7 @@ public class ContainerPeek extends Module {
         PreviewData preview = this.currentPreview;
         if (preview == null) return;
 
-        DrawContext context = event.drawContext;
+        GuiGraphics context = event.drawContext;
         if (context == null) return;
 
         Vector3d vec = new Vector3d(preview.pos.getX() + 0.5, preview.pos.getY() + 0.5, preview.pos.getZ() + 0.5);
@@ -329,10 +333,10 @@ public class ContainerPeek extends Module {
         // Clamp to screen
         if (panelX < 0) panelX = 0;
         if (panelY < 0) panelY = 0;
-        if (panelX + preview.panelWidth > mc.getWindow().getScaledWidth())
-            panelX = mc.getWindow().getScaledWidth() - preview.panelWidth;
-        if (panelY + preview.panelHeight > mc.getWindow().getScaledHeight())
-            panelY = mc.getWindow().getScaledHeight() - preview.panelHeight;
+        if (panelX + preview.panelWidth > mc.getWindow().getGuiScaledWidth())
+            panelX = mc.getWindow().getGuiScaledWidth() - preview.panelWidth;
+        if (panelY + preview.panelHeight > mc.getWindow().getGuiScaledHeight())
+            panelY = mc.getWindow().getGuiScaledHeight() - preview.panelHeight;
 
         int pad = 2;
 
@@ -347,12 +351,12 @@ public class ContainerPeek extends Module {
 
         // Title
         if (showType.get()) {
-            context.drawTextWithShadow(mc.textRenderer, preview.titleText, panelX + pad, textY, 0xFFFFFF);
+            context.drawString(mc.font, preview.titleText, panelX + pad, textY, 0xFFFFFF);
             textY += 10;
         }
         // Position
         if (showPosition.get()) {
-            context.drawTextWithShadow(mc.textRenderer, preview.posText, panelX + pad, textY, 0xCCCCCC);
+            context.drawString(mc.font, preview.posText, panelX + pad, textY, 0xCCCCCC);
             textY += 10;
         }
 

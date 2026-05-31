@@ -1,7 +1,7 @@
 package com.AutoBookshelf.addon.utils;
 
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.Vec3;
 
 public class MathUtils {
     public static double toMapQuad(double v) {
@@ -10,13 +10,13 @@ public class MathUtils {
         return (double) l / 128;
     }
 
-    public static double xzDistanceBetween(Vec3d s, Vec3d e) {
+    public static double xzDistanceBetween(Vec3 s, Vec3 e) {
         var dx = s.x - e.x;
         var dz = s.z - e.z;
         return Math.sqrt(dx * dx + dz * dz);
     }
 
-    public static double xzDistanceBetween(Vec3d s, BlockPos e) {
+    public static double xzDistanceBetween(Vec3 s, BlockPos e) {
         var dx = s.x - e.getX();
         var dz = s.z - e.getZ();
         return Math.sqrt(dx * dx + dz * dz);
@@ -48,7 +48,7 @@ public class MathUtils {
         return Math.sqrt(dx * dx + dy * dy + dz * dz);
     }
 
-    public static double xyzDistanceBetween(Vec3d s, BlockPos e) {
+    public static double xyzDistanceBetween(Vec3 s, BlockPos e) {
         var dx = s.x - e.getX();
         var dy = s.y - e.getY();
         var dz = s.z - e.getZ();

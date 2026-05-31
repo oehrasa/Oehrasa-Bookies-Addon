@@ -8,13 +8,13 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.WritableBookContentComponent;
-import net.minecraft.component.type.WrittenBookContentComponent;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.text.RawFilteredPair;
-import net.minecraft.text.Text;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.network.Filterable;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.WritableBookContent;
+import net.minecraft.world.item.component.WrittenBookContent;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
@@ -159,7 +159,7 @@ public class AudiobookReader extends Module {
         }
 
         if (playKey.get().isPressed() && !isReading) {
-            ItemStack stack = mc.player.getMainHandStack();
+            ItemStack stack = mc.player.getMainHandItem();
             if (isReadableBook(stack)) {
                 startReadingBook(stack);
             }
@@ -178,21 +178,21 @@ public class AudiobookReader extends Module {
         int screenHeight = event.screenHeight;
         double scale = screenScale.get();
 
-        int x = (int) (screenWidth / 2 - (mc.textRenderer.getWidth(displayText) * scale) / 2);
+        int x = (int) (screenWidth / 2 - (mc.font.width(displayText) * scale) / 2);
         int y = screenHeight - 70;
 
-        event.drawContext.getMatrices().pushMatrix();
-        event.drawContext.getMatrices().translate(x, y);
-        event.drawContext.getMatrices().scale((float) scale, (float) scale);
+        event.drawContext.pose().pushMatrix();
+        event.drawContext.pose().translate(x, y);
+        event.drawContext.pose().scale((float) scale, (float) scale);
 
         // Draw text
-        event.drawContext.drawText(mc.textRenderer, displayText, 0, 0, 0xFFFFD700, true);
+        event.drawContext.drawString(mc.font, displayText, 0, 0, 0xFFFFD700, true);
 
         // Draw progress bar if enabled
         if (showProgressBar.get() && isReading && currentPages.size() > 0) {
-            int barWidth = mc.textRenderer.getWidth(displayText);
+            int barWidth = mc.font.width(displayText);
             int barHeight = 3;
-            int barY = mc.textRenderer.fontHeight + 2;
+            int barY = mc.font.lineHeight + 2;
 
             // Background
             event.drawContext.fill(0, barY, barWidth, barY + barHeight, 0x44000000);
@@ -201,7 +201,7 @@ public class AudiobookReader extends Module {
             event.drawContext.fill(0, barY, progressWidth, barY + barHeight, 0xFFFFD700);
         }
 
-        event.drawContext.getMatrices().popMatrix();
+        event.drawContext.pose().popMatrix();
     }
 
     private void sendMessage(String msg) {
@@ -308,16 +308,16 @@ public class AudiobookReader extends Module {
     private List<String> getPagesFromBook(ItemStack stack) {
         List<String> pages = new ArrayList<>();
 
-        WrittenBookContentComponent writtenContent = stack.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+        WrittenBookContent writtenContent = stack.get(DataComponents.WRITTEN_BOOK_CONTENT);
         if (writtenContent != null) {
-            for (Text page : writtenContent.getPages(false)) {
+            for (Component page : writtenContent.getPages(false)) {
                 pages.add(page.getString());
             }
         }
 
-        WritableBookContentComponent writableContent = stack.get(DataComponentTypes.WRITABLE_BOOK_CONTENT);
+        WritableBookContent writableContent = stack.get(DataComponents.WRITABLE_BOOK_CONTENT);
         if (writableContent != null) {
-            for (RawFilteredPair<String> pair : writableContent.pages()) {
+            for (Filterable<String> pair : writableContent.pages()) {
                 pages.add(pair.get(false));
             }
         }
@@ -332,7 +332,7 @@ public class AudiobookReader extends Module {
     }
 
     private String getBookTitle(ItemStack stack) {
-        WrittenBookContentComponent content = stack.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+        WrittenBookContent content = stack.get(DataComponents.WRITTEN_BOOK_CONTENT);
         if (content != null) {
             return content.title().raw();
         }

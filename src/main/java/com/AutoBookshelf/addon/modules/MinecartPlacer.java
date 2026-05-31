@@ -9,20 +9,19 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.Block;
-import net.minecraft.block.Blocks;
-import net.minecraft.entity.vehicle.AbstractMinecartEntity;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.screen.slot.SlotActionType;
-import net.minecraft.util.Hand;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.vehicle.minecart.AbstractMinecart;
+import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -172,19 +171,19 @@ public class MinecartPlacer extends Module {
     }
 
     private void startPlacing() {
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.level == null) return;
 
         // Find all rails in radius
         targetRails.clear();
-        BlockPos center = mc.player.getBlockPos();
+        BlockPos center = mc.player.blockPosition();
         int rad = radius.get();
         Block targetRail = railType.get().block;
 
         for (int x = -rad; x <= rad; x++) {
             for (int y = -rad; y <= rad; y++) {
                 for (int z = -rad; z <= rad; z++) {
-                    BlockPos pos = center.add(x, y, z);
-                    if (mc.world.getBlockState(pos).getBlock() == targetRail) {
+                    BlockPos pos = center.offset(x, y, z);
+                    if (mc.level.getBlockState(pos).getBlock() == targetRail) {
                         targetRails.add(pos);
                     }
                 }
@@ -199,8 +198,8 @@ public class MinecartPlacer extends Module {
 
         // Sort by distance from player
         targetRails.sort((a, b) -> {
-            double distA = a.getSquaredDistance(center);
-            double distB = b.getSquaredDistance(center);
+            double distA = a.distSqr(center);
+            double distB = b.distSqr(center);
             return Double.compare(distA, distB);
         });
 
@@ -216,7 +215,7 @@ public class MinecartPlacer extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.level == null) return;
         if (!placing) return;
 
         // Handle waiting for minecarts
@@ -259,7 +258,7 @@ public class MinecartPlacer extends Module {
             BlockPos railPos = targetRails.get(index);
 
             // Check if block is still the correct rail type
-            if (mc.world.getBlockState(railPos).getBlock() != railType.get().block) {
+            if (mc.level.getBlockState(railPos).getBlock() != railType.get().block) {
                 continue;
             }
 
@@ -302,16 +301,16 @@ public class MinecartPlacer extends Module {
     }
 
     private boolean hasMinecartOnRail(BlockPos railPos) {
-        Box box = new Box(railPos.getX(), railPos.getY(), railPos.getZ(),
+        AABB box = new AABB(railPos.getX(), railPos.getY(), railPos.getZ(),
                           railPos.getX() + 1, railPos.getY() + 1, railPos.getZ() + 1);
-        return !mc.world.getEntitiesByClass(AbstractMinecartEntity.class, box, e -> true).isEmpty();
+        return !mc.level.getEntitiesOfClass(AbstractMinecart.class, box, e -> true).isEmpty();
     }
 
     private int findMinecartInInventory() {
         Item targetItem = minecartType.get().item;
 
         for (int i = 0; i < 36; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
+            ItemStack stack = mc.player.getInventory().getItem(i);
             if (!stack.isEmpty() && stack.getItem() == targetItem) {
                 return i;
             }
@@ -322,7 +321,7 @@ public class MinecartPlacer extends Module {
     private void placeMinecart(BlockPos railPos, int slot) {
         // Target the center of the rail block directly
         // This allows placing through walls
-        Vec3d targetPos = Vec3d.ofCenter(railPos);
+        Vec3 targetPos = Vec3.atCenterOf(railPos);
 
         // Create a hit result pointing directly at the rail
         BlockHitResult hitResult = new BlockHitResult(
@@ -342,31 +341,31 @@ public class MinecartPlacer extends Module {
                 // Swap to hotbar if needed
                 int tempSlot = -1;
                 for (int i = 0; i < 9; i++) {
-                    if (mc.player.getInventory().getStack(i).isEmpty()) {
+                    if (mc.player.getInventory().getItem(i).isEmpty()) {
                         tempSlot = i;
                         break;
                     }
                 }
                 if (tempSlot == -1) tempSlot = 0;
 
-                mc.interactionManager.clickSlot(
-                    mc.player.currentScreenHandler.syncId,
+                mc.gameMode.handleInventoryMouseClick(
+                    mc.player.containerMenu.containerId,
                     slot,
                     tempSlot,
-                    SlotActionType.SWAP,
+                    ClickType.SWAP,
                     mc.player
                 );
                 mc.player.getInventory().setSelectedSlot(tempSlot);
             }
 
             // Place the minecart
-            mc.interactionManager.interactBlock(
+            mc.gameMode.useItemOn(
                 mc.player,
-                Hand.MAIN_HAND,
+                InteractionHand.MAIN_HAND,
                 hitResult
             );
 
-            mc.player.swingHand(Hand.MAIN_HAND);
+            mc.player.swing(InteractionHand.MAIN_HAND);
 
             // Restore previous slot
             if (previousSlot != mc.player.getInventory().getSelectedSlot()) {
@@ -391,7 +390,7 @@ public class MinecartPlacer extends Module {
             BlockPos railPos = targetRails.get(index);
 
             // Check if block is still the correct rail type
-            if (mc.world.getBlockState(railPos).getBlock() != railType.get().block) {
+            if (mc.level.getBlockState(railPos).getBlock() != railType.get().block) {
                 continue;
             }
 

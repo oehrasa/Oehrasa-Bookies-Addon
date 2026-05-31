@@ -7,12 +7,10 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.entity.BeaconBlockEntity;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.BeaconBlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import com.AutoBookshelf.addon.Addon;
 
 public class BeaconRange extends Module {
@@ -78,7 +76,7 @@ public class BeaconRange extends Module {
 
     @EventHandler
     private void onRender(Render3DEvent event) {
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.level == null) return;
         
         beaconBoxes.clear();
         
@@ -86,7 +84,7 @@ public class BeaconRange extends Module {
         for (BlockEntity blockEntity : Utils.blockEntities()) {
             if (!(blockEntity instanceof BeaconBlockEntity)) continue;
             
-            BlockPos pos = blockEntity.getPos();
+            BlockPos pos = blockEntity.getBlockPos();
             int level = getBeaconLevel(pos);
             if (level < 1) continue;
             
@@ -146,14 +144,14 @@ public class BeaconRange extends Module {
         
         for (int y = 1; y <= 4; y++) {
             int layerY = beaconPos.getY() - y;
-            if (layerY < mc.world.getBottomY()) break;
+            if (layerY < mc.level.getMinY()) break;
             
             boolean validLayer = true;
             
             for (int x = -y; x <= y; x++) {
                 for (int z = -y; z <= y; z++) {
-                    BlockPos checkPos = beaconPos.add(x, -y, z);
-                    if (!isValidBeaconBase(mc.world.getBlockState(checkPos).getBlock())) {
+                    BlockPos checkPos = beaconPos.offset(x, -y, z);
+                    if (!isValidBeaconBase(mc.level.getBlockState(checkPos).getBlock())) {
                         validLayer = false;
                         break;
                     }
@@ -171,7 +169,7 @@ public class BeaconRange extends Module {
         return level;
     }
     
-    private boolean isValidBeaconBase(net.minecraft.block.Block block) {
+    private boolean isValidBeaconBase(net.minecraft.world.level.block.Block block) {
         return block == Blocks.IRON_BLOCK ||
                block == Blocks.GOLD_BLOCK ||
                block == Blocks.EMERALD_BLOCK ||

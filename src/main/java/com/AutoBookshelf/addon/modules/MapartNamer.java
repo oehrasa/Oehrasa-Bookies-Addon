@@ -11,17 +11,16 @@ import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.AnvilBlock;
-import net.minecraft.client.gui.screen.ingame.AnvilScreen;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
-import net.minecraft.network.packet.c2s.play.RenameItemC2SPacket;
-import net.minecraft.network.packet.s2c.play.CloseScreenS2CPacket;
-import net.minecraft.network.packet.s2c.play.InventoryS2CPacket;
-import net.minecraft.screen.slot.SlotActionType;
-import net.minecraft.util.math.BlockPos;
-
+import net.minecraft.client.gui.screens.inventory.AnvilScreen;
+import net.minecraft.core.BlockPos;
+import net.minecraft.network.protocol.game.ClientboundContainerClosePacket;
+import net.minecraft.network.protocol.game.ClientboundContainerSetContentPacket;
+import net.minecraft.network.protocol.game.ServerboundRenameItemPacket;
+import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
+import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.AnvilBlock;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -158,7 +157,7 @@ public class MapartNamer extends Module {
         mapStep = -1;
 
         // If the anvil screen is already open, skip the "await interact" step
-        if (mc.currentScreen instanceof AnvilScreen) {
+        if (mc.screen instanceof AnvilScreen) {
             state = State.AwaitScreen;
             info("Anvil screen already open – waiting for inventory packet…");
         } else {
@@ -180,14 +179,14 @@ public class MapartNamer extends Module {
 
     // Returns true if the current screen is NOT an anvil
     private boolean isNotAnvilScreen() {
-        return !(mc.currentScreen instanceof AnvilScreen);
+        return !(mc.screen instanceof AnvilScreen);
     }
 
     @EventHandler
     private void onSendPacket(PacketEvent.Send event) {
-        if (state == State.AwaitInteract && event.packet instanceof PlayerInteractBlockC2SPacket packet) {
-            BlockPos blockPos = packet.getBlockHitResult().getBlockPos();
-            if (mc.world.getBlockState(blockPos).getBlock() instanceof AnvilBlock) {
+        if (state == State.AwaitInteract && event.packet instanceof ServerboundUseItemOnPacket packet) {
+            BlockPos blockPos = packet.getHitResult().getBlockPos();
+            if (mc.level.getBlockState(blockPos).getBlock() instanceof AnvilBlock) {
                 state = State.AwaitScreen;
             }
         }
@@ -195,21 +194,21 @@ public class MapartNamer extends Module {
 
     @EventHandler
     private void onReceivePacket(PacketEvent.Receive event) {
-        if (state == State.HandleMaps && event.packet instanceof CloseScreenS2CPacket) {
+        if (state == State.HandleMaps && event.packet instanceof ClientboundContainerClosePacket) {
             info("Anvil closed. Next batch starts at Y = " + getNextBatchStartY());
             state = State.AwaitInteract;
             return;
         }
         if (state != State.AwaitScreen) return;
-        if (!(event.packet instanceof InventoryS2CPacket)) return;
+        if (!(event.packet instanceof ClientboundContainerSetContentPacket)) return;
 
         // Collect all filled maps
         List<MapSlotInfo> allMaps = new ArrayList<>();
         for (int invSlot = 0; invSlot < 36; invSlot++) {
-            ItemStack stack = mc.player.getInventory().getStack(invSlot);
+            ItemStack stack = mc.player.getInventory().getItem(invSlot);
             if (stack.getItem() != Items.FILLED_MAP) continue;
 
-            String currentName = stack.getName().getString();
+            String currentName = stack.getHoverName().getString();
             if (!renameAlreadyNamed.get() && !currentName.equals("Map")) continue;
 
             int visualRow = invSlot < 9 ? 3 : (invSlot - 9) / 9;
@@ -288,12 +287,12 @@ public class MapartNamer extends Module {
 
         switch (mapStep) {
             case STEP_PICKUP_SOURCE -> {
-                clickSlot(currentMap.containerSlot, 0, SlotActionType.PICKUP);
+                clickSlot(currentMap.containerSlot, 0, ClickType.PICKUP);
                 mapStep = STEP_PLACE_ANVIL;
                 mapStepTimer = actionDelay.get();
             }
             case STEP_PLACE_ANVIL -> {
-                clickSlot(0, 0, SlotActionType.PICKUP);
+                clickSlot(0, 0, ClickType.PICKUP);
                 mapStep = STEP_SEND_RENAME;
                 mapStepTimer = actionDelay.get();
             }
@@ -303,7 +302,7 @@ public class MapartNamer extends Module {
                     currentMap = null;
                     mapStep = -1;
                     state = State.AwaitInteract;
-                    if (mc.currentScreen != null) mc.player.closeHandledScreen();
+                    if (mc.screen != null) mc.player.closeContainer();
                     return;
                 }
 
@@ -319,7 +318,7 @@ public class MapartNamer extends Module {
                     newName = mapName.get() + coordPart;
                 }
                 info("Renaming inv slot " + currentMap.invSlot + " (row " + currentMap.row + ", col " + currentMap.col + ") to " + newName);
-                mc.getNetworkHandler().sendPacket(new RenameItemC2SPacket(newName));
+                mc.getConnection().send(new ServerboundRenameItemPacket(newName));
                 mapStep = STEP_WAIT_RENAME;
                 mapStepTimer = renamePause.get();
             }
@@ -328,13 +327,13 @@ public class MapartNamer extends Module {
                 mapStepTimer = actionDelay.get();
             }
             case STEP_PICKUP_OUTPUT -> {
-                clickSlot(2, 0, SlotActionType.PICKUP);
+                clickSlot(2, 0, ClickType.PICKUP);
                 mapStep = STEP_VERIFY_CURSOR;
                 mapStepTimer = 2;
                 verifyTimeout = 20;
             }
             case STEP_VERIFY_CURSOR -> {
-                ItemStack cursorStack = mc.player.currentScreenHandler.getCursorStack();
+                ItemStack cursorStack = mc.player.containerMenu.getCarried();
                 if (cursorStack.getItem() == Items.FILLED_MAP) {
                     mapStep = STEP_PLACE_SOURCE;
                     mapStepTimer = actionDelay.get();
@@ -350,7 +349,7 @@ public class MapartNamer extends Module {
                 }
             }
             case STEP_PLACE_SOURCE -> {
-                clickSlot(currentMap.containerSlot, 0, SlotActionType.PICKUP);
+                clickSlot(currentMap.containerSlot, 0, ClickType.PICKUP);
                 currentMap = null;
                 mapStep = -1;
 
@@ -365,7 +364,7 @@ public class MapartNamer extends Module {
                         info("Batch finished. Next Y-offset = " + (nextBaseY + off));
                         baseY.set(nextBaseY);
                     }
-                    if (mc.currentScreen != null) mc.player.closeHandledScreen();
+                    if (mc.screen != null) mc.player.closeContainer();
                     state = State.AwaitInteract;
                 } else {
                     ticks = renameDelay.get();
@@ -374,9 +373,9 @@ public class MapartNamer extends Module {
         }
     }
 
-    private void clickSlot(int slot, int button, SlotActionType action) {
-        IClientPlayerInteractionManager cim = (IClientPlayerInteractionManager) mc.interactionManager;
-        cim.clickSlot(mc.player.currentScreenHandler.syncId, slot, button, action, mc.player);
+    private void clickSlot(int slot, int button, ClickType action) {
+        IClientPlayerInteractionManager cim = (IClientPlayerInteractionManager) mc.gameMode;
+        cim.clickSlot(mc.player.containerMenu.containerId, slot, button, action, mc.player);
     }
 
     private int getNextBatchStartY() {

@@ -6,22 +6,21 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
-import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.client.gui.screen.ingame.HandledScreen;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.ContainerComponent;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.registry.tag.ItemTags;
-import net.minecraft.screen.slot.SlotActionType;
-import net.minecraft.util.Hand;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
+import net.minecraft.tags.ItemTags;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.ItemContainerContents;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import java.util.*;
 
 public class MaterialsRefill extends Module {
@@ -95,7 +94,7 @@ public class MaterialsRefill extends Module {
     private String lastFailItem = "";
     private String lastFailReason = "";
     private Direction placedFace;
-    private Vec3d placedHitVec;
+    private Vec3 placedHitVec;
     private BlockPos placedSupportBlock;
 
     public MaterialsRefill() {
@@ -119,7 +118,7 @@ public class MaterialsRefill extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.level == null) return;
         if (delayTicks > 0) { delayTicks--; return; }
 
         switch (stage) {
@@ -131,7 +130,7 @@ public class MaterialsRefill extends Module {
             case CLOSE_AND_BREAK -> closeAndBreak();
             case WAIT_MANUAL_CLOSE -> {
                 // Wait until the player closes the GUI, then break the shulker
-                if (!(mc.currentScreen instanceof HandledScreen)) {
+                if (!(mc.screen instanceof AbstractContainerScreen)) {
                     stage = Stage.CLOSE_AND_BREAK;
                 }
             }
@@ -150,12 +149,12 @@ public class MaterialsRefill extends Module {
 
     private void selectShulker() {
         shulkerSlot = -1;
-        for (int i = 0; i < mc.player.getInventory().size(); i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
+        for (int i = 0; i < mc.player.getInventory().getContainerSize(); i++) {
+            ItemStack stack = mc.player.getInventory().getItem(i);
             if (!isShulkerBox(stack)) continue;
-            ContainerComponent container = stack.get(DataComponentTypes.CONTAINER);
+            ItemContainerContents container = stack.get(DataComponents.CONTAINER);
             if (container == null) continue;
-            for (ItemStack content : container.iterateNonEmpty()) {
+            for (ItemStack content : container.nonEmptyItems()) {
                 if (content.getItem() == currentTargetItem) {
                     shulkerSlot = i; break;
                 }
@@ -194,19 +193,19 @@ public class MaterialsRefill extends Module {
         BlockPos placePos = null;
         Direction placeFace = null;
         BlockPos supportBlock = null;
-        Vec3d hitVec = null;
+        Vec3 hitVec = null;
 
         // Normal crosshair placement
-        if (mc.crosshairTarget instanceof BlockHitResult blockHit) {
+        if (mc.hitResult instanceof BlockHitResult blockHit) {
             BlockPos clickedBlock = blockHit.getBlockPos();
-            Direction clickedFace = blockHit.getSide();
-            BlockPos candidate = clickedBlock.offset(clickedFace);
+            Direction clickedFace = blockHit.getDirection();
+            BlockPos candidate = clickedBlock.relative(clickedFace);
 
-            double reach = mc.player.getEntityInteractionRange();
+            double reach = mc.player.entityInteractionRange();
 
-            if ((mc.world.getBlockState(candidate).isAir()
-                || mc.world.getBlockState(candidate).isReplaceable())
-                && mc.player.getEntityPos().squaredDistanceTo(
+            if ((mc.level.getBlockState(candidate).isAir()
+                || mc.level.getBlockState(candidate).canBeReplaced())
+                && mc.player.position().distanceToSqr(
                 candidate.getX() + 0.5,
                 candidate.getY() + 0.5,
                 candidate.getZ() + 0.5
@@ -215,25 +214,25 @@ public class MaterialsRefill extends Module {
                 placePos = candidate;
                 placeFace = clickedFace;
                 supportBlock = clickedBlock;
-                hitVec = blockHit.getPos();
+                hitVec = blockHit.getLocation();
             }
         }
 
         // Fallback placement
         if (placePos == null) {
-            Vec3d eyePos = mc.player.getEyePos();
-            Vec3d lookVec = mc.player.getRotationVec(1.0F);
+            Vec3 eyePos = mc.player.getEyePosition();
+            Vec3 lookVec = mc.player.getViewVector(1.0F);
 
-            BlockPos targetBlock = BlockPos.ofFloored(
-                eyePos.add(lookVec.multiply(placeRange.get()))
+            BlockPos targetBlock = BlockPos.containing(
+                eyePos.add(lookVec.scale(placeRange.get()))
             );
 
             BlockPos solidBlock = null;
 
             for (int dy = -2; dy <= 2; dy++) {
-                BlockPos check = targetBlock.add(0, dy, 0);
+                BlockPos check = targetBlock.offset(0, dy, 0);
 
-                if (mc.world.getBlockState(check).isSolidBlock(mc.world, check)) {
+                if (mc.level.getBlockState(check).isRedstoneConductor(mc.level, check)) {
                     solidBlock = check;
                     break;
                 }
@@ -249,16 +248,16 @@ public class MaterialsRefill extends Module {
                 return;
             }
 
-            BlockPos candidate = solidBlock.up();
+            BlockPos candidate = solidBlock.above();
             Direction candidateFace = Direction.UP;
 
-            if (!mc.world.getBlockState(candidate).isReplaceable()) {
+            if (!mc.level.getBlockState(candidate).canBeReplaced()) {
                 boolean found = false;
 
-                for (Direction dir : Direction.Type.HORIZONTAL) {
-                    BlockPos sidePos = solidBlock.offset(dir);
+                for (Direction dir : Direction.Plane.HORIZONTAL) {
+                    BlockPos sidePos = solidBlock.relative(dir);
 
-                    if (mc.world.getBlockState(sidePos).isReplaceable()) {
+                    if (mc.level.getBlockState(sidePos).canBeReplaced()) {
                         candidate = sidePos;
                         candidateFace = dir;
                         found = true;
@@ -277,9 +276,9 @@ public class MaterialsRefill extends Module {
                 }
             }
 
-            double reach = mc.player.getEntityInteractionRange();
+            double reach = mc.player.entityInteractionRange();
 
-            if (mc.player.getEntityPos().squaredDistanceTo(
+            if (mc.player.position().distanceToSqr(
                 candidate.getX() + 0.5,
                 candidate.getY() + 0.5,
                 candidate.getZ() + 0.5
@@ -296,10 +295,10 @@ public class MaterialsRefill extends Module {
             placePos = candidate;
             placeFace = candidateFace;
 
-            supportBlock = candidate.offset(candidateFace.getOpposite());
+            supportBlock = candidate.relative(candidateFace.getOpposite());
 
-            hitVec = Vec3d.ofCenter(supportBlock)
-                .add(Vec3d.of(candidateFace.getVector()).multiply(0.5));
+            hitVec = Vec3.atCenterOf(supportBlock)
+                .add(Vec3.atLowerCornerOf(candidateFace.getUnitVec3i()).scale(0.5));
         }
 
         // Save placement data for later opening
@@ -309,7 +308,7 @@ public class MaterialsRefill extends Module {
         placedSupportBlock = supportBlock;
 
         if (rotate.get()) {
-            Vec3d finalHitVec = hitVec;
+            Vec3 finalHitVec = hitVec;
             Direction finalPlaceFace = placeFace;
             BlockPos finalSupportBlock = supportBlock;
 
@@ -325,13 +324,13 @@ public class MaterialsRefill extends Module {
                         false
                     );
 
-                    mc.interactionManager.interactBlock(
+                    mc.gameMode.useItemOn(
                         mc.player,
-                        Hand.MAIN_HAND,
+                        InteractionHand.MAIN_HAND,
                         hit
                     );
 
-                    mc.player.swingHand(Hand.MAIN_HAND);
+                    mc.player.swing(InteractionHand.MAIN_HAND);
                 }
             );
         } else {
@@ -342,13 +341,13 @@ public class MaterialsRefill extends Module {
                 false
             );
 
-            mc.interactionManager.interactBlock(
+            mc.gameMode.useItemOn(
                 mc.player,
-                Hand.MAIN_HAND,
+                InteractionHand.MAIN_HAND,
                 hit
             );
 
-            mc.player.swingHand(Hand.MAIN_HAND);
+            mc.player.swing(InteractionHand.MAIN_HAND);
         }
 
         delayTicks = 4;
@@ -362,7 +361,7 @@ public class MaterialsRefill extends Module {
             return;
         }
 
-        if (mc.currentScreen instanceof HandledScreen) {
+        if (mc.screen instanceof AbstractContainerScreen) {
             if (!autoTake.get()) {
                 stage = Stage.WAIT_MANUAL_CLOSE;
                 return;
@@ -374,14 +373,14 @@ public class MaterialsRefill extends Module {
         }
 
         // Wait until the shulker block actually exists
-        if (!(mc.world.getBlockState(placedShulkerPos).getBlock() instanceof net.minecraft.block.ShulkerBoxBlock)) {
+        if (!(mc.level.getBlockState(placedShulkerPos).getBlock() instanceof net.minecraft.world.level.block.ShulkerBoxBlock)) {
             delayTicks = 2;
             return;
         }
 
         // Check reach
-        double reach = mc.player.getEntityInteractionRange();
-        if (mc.player.squaredDistanceTo(
+        double reach = mc.player.entityInteractionRange();
+        if (mc.player.distanceToSqr(
             placedShulkerPos.getX() + 0.5,
             placedShulkerPos.getY() + 0.5,
             placedShulkerPos.getZ() + 0.5
@@ -394,18 +393,18 @@ public class MaterialsRefill extends Module {
 
         // Always open by clicking the centre of the shulker with UP face
         BlockHitResult hit = new BlockHitResult(
-            Vec3d.ofCenter(placedShulkerPos),
+            Vec3.atCenterOf(placedShulkerPos),
             Direction.UP,
             placedShulkerPos,
             false
         );
-        mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(Hand.MAIN_HAND, hit, 0));
-        mc.player.swingHand(Hand.MAIN_HAND);
+        mc.player.connection.send(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND, hit, 0));
+        mc.player.swing(InteractionHand.MAIN_HAND);
         delayTicks = 4;
     }
 
     private void doRestock() {
-        if (!(mc.currentScreen instanceof HandledScreen<?> screen)) {
+        if (!(mc.screen instanceof AbstractContainerScreen<?> screen)) {
             stage = Stage.CLOSE_AND_BREAK;
             return;
         }
@@ -413,25 +412,25 @@ public class MaterialsRefill extends Module {
         // Count empty slots in main inventory
         int emptySlots = 0;
         for (int i = 0; i < 36; i++) {
-            if (mc.player.getInventory().getStack(i).isEmpty()) emptySlots++;
+            if (mc.player.getInventory().getItem(i).isEmpty()) emptySlots++;
         }
 
         // If we have only the required number of empty slots, stop
         if (emptySlots <= keepFree) {
-            mc.player.closeHandledScreen();
+            mc.player.closeContainer();
             delayTicks = 2;
             stage = Stage.CLOSE_AND_BREAK;
             return;
         }
 
-        var handler = screen.getScreenHandler();
+        var handler = screen.getMenu();
         int moved = 0;
 
         // Loop over all shulker slots and shiftclick each matching stack instantly
         for (int i = 0; i < 27; i++) {
-            ItemStack stack = handler.getSlot(i).getStack();
+            ItemStack stack = handler.getSlot(i).getItem();
             if (stack.getItem() == currentTargetItem) {
-                mc.interactionManager.clickSlot(handler.syncId, i, 0, SlotActionType.QUICK_MOVE, mc.player);
+                mc.gameMode.handleInventoryMouseClick(handler.containerId, i, 0, ClickType.QUICK_MOVE, mc.player);
                 moved++;
 
                 // Stop if we have filled all slots
@@ -441,7 +440,7 @@ public class MaterialsRefill extends Module {
         }
 
         // After moving everything, close and proceed to break
-        mc.player.closeHandledScreen();
+        mc.player.closeContainer();
         delayTicks = 2;
         stage = Stage.CLOSE_AND_BREAK;
     }
@@ -455,8 +454,8 @@ public class MaterialsRefill extends Module {
     }
 
     private void closeAndBreak() {
-        if (mc.currentScreen != null) {
-            mc.player.closeHandledScreen();
+        if (mc.screen != null) {
+            mc.player.closeContainer();
             delayTicks = 2;
             return;
         }
@@ -468,7 +467,7 @@ public class MaterialsRefill extends Module {
             if (autoToggle.get()) toggle();
             return;
         }
-        if (mc.world.getBlockState(placedShulkerPos).isAir()) {
+        if (mc.level.getBlockState(placedShulkerPos).isAir()) {
             // Block already gone, restore slot and finish
             restorePickaxeSlot();
             stage = Stage.IDLE;
@@ -482,7 +481,7 @@ public class MaterialsRefill extends Module {
             int pickSlot = -1;
             // Search hotbar for any pickaxe item
             for (int i = 0; i < 9; i++) {
-                if (mc.player.getInventory().getStack(i).isIn(ItemTags.PICKAXES)) {
+                if (mc.player.getInventory().getItem(i).is(ItemTags.PICKAXES)) {
                     pickSlot = i;
                     break;
                 }
@@ -496,8 +495,8 @@ public class MaterialsRefill extends Module {
         }
 
         // Continuous mining until broken
-        mc.interactionManager.updateBlockBreakingProgress(placedShulkerPos, Direction.UP);
-        mc.player.swingHand(Hand.MAIN_HAND);
+        mc.gameMode.continueDestroyBlock(placedShulkerPos, Direction.UP);
+        mc.player.swing(InteractionHand.MAIN_HAND);
         delayTicks = 2;
     }
 

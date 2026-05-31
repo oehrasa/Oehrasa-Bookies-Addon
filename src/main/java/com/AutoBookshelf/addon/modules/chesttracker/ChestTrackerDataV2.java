@@ -2,12 +2,12 @@ package com.AutoBookshelf.addon.modules.chesttracker;
 
 import com.google.gson.*;
 import meteordevelopment.meteorclient.MeteorClient;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.registry.RegistryKey;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.World;
+import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.io.*;
@@ -25,7 +25,7 @@ public class ChestTrackerDataV2 {
     private static final int CURRENT_VERSION = 2;
     private final Map<String, Map<BlockPos, TrackedContainer>> containers;
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
-    private final MinecraftClient mc;
+    private final Minecraft mc;
     private File dataFile;
     private File backupFile;
     private File tempFile;
@@ -90,7 +90,7 @@ public class ChestTrackerDataV2 {
             return dimContainers.values().stream()
                 .filter(c -> c.containsItem(item))
                 .sorted((a, b) -> {
-                    String itemId = net.minecraft.registry.Registries.ITEM.getId(item).toString();
+                    String itemId = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(item).toString();
                     return Integer.compare(b.getItemCount(itemId), a.getItemCount(itemId));
                 })
                 .collect(Collectors.toList());
@@ -345,8 +345,8 @@ public class ChestTrackerDataV2 {
     }
 
     private String getCurrentDimension() {
-        if (mc.world == null) return "unknown";
-        RegistryKey<World> key = mc.world.getRegistryKey();
-        return key.getValue().toString();
+        if (mc.level == null) return "unknown";
+        ResourceKey<Level> key = mc.level.dimension();
+        return key.identifier().toString();
     }
 }

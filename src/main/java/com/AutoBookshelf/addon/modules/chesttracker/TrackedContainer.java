@@ -1,15 +1,15 @@
 package com.AutoBookshelf.addon.modules.chesttracker;
 
-import net.minecraft.registry.Registries;
-import net.minecraft.util.Identifier;
 import com.google.gson.JsonObject;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.util.math.BlockPos;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 
 public class TrackedContainer {
     private final BlockPos position;
@@ -35,7 +35,7 @@ public class TrackedContainer {
         itemStacks.clear();
         for (ItemStack stack : stacks) {
             if (stack != null && !stack.isEmpty()) {
-                String itemId = Registries.ITEM.getId(stack.getItem()).toString();
+                String itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
                 items.put(itemId, items.getOrDefault(itemId, 0) + stack.getCount());
                 itemStacks.add(stack.copy());
             }
@@ -45,7 +45,7 @@ public class TrackedContainer {
 
     public boolean containsItem(String itemId) { return items.containsKey(itemId); }
     public boolean containsItem(Item item) {
-        return items.containsKey(Registries.ITEM.getId(item).toString());
+        return items.containsKey(BuiltInRegistries.ITEM.getKey(item).toString());
     }
     public int getItemCount(String itemId) { return items.getOrDefault(itemId, 0); }
     public Map<String, Integer> getItems() { return new HashMap<>(items); }
@@ -60,10 +60,10 @@ public class TrackedContainer {
         for (Map.Entry<String, Integer> entry : items.entrySet()) {
             Identifier id = Identifier.tryParse(entry.getKey());
             if (id == null) continue;
-            Item item = Registries.ITEM.get(id);
+            Item item = BuiltInRegistries.ITEM.getValue(id);
             if (item == null) continue;               // mod removed?
             int count = entry.getValue();
-            int maxStack = item.getMaxCount();
+            int maxStack = item.getDefaultMaxStackSize();
             while (count > 0) {
                 int stackSize = Math.min(count, maxStack);
                 stacks.add(new ItemStack(item, stackSize));

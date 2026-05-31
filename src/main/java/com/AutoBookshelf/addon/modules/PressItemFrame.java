@@ -7,14 +7,14 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.entity.decoration.ItemFrameEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.registry.Registries;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.RaycastContext;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.entity.decoration.ItemFrame;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 
 public class PressItemFrame extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -68,50 +68,50 @@ public class PressItemFrame extends Module {
         timer = 0;
     }
 
-    private boolean canSee(ItemFrameEntity frame) {
-        Vec3d eyes = mc.player.getEyePos();
+    private boolean canSee(ItemFrame frame) {
+        Vec3 eyes = mc.player.getEyePosition();
         // Accurate centre of the frame's bounding box
-        Vec3d center = frame.getBoundingBox().getCenter();
+        Vec3 center = frame.getBoundingBox().getCenter();
         // Direction the frame's front is facing (opposite of the attached wall/ceiling/floor)
-        Vec3d facing = Vec3d.of(frame.getHorizontalFacing().getVector());
+        Vec3 facing = Vec3.atLowerCornerOf(frame.getDirection().getUnitVec3i());
         // Move the target 0.1 blocks outward so the ray doesn't hit the solid block behind
-        Vec3d target = center.add(facing.multiply(0.1));
+        Vec3 target = center.add(facing.scale(0.1));
 
-        RaycastContext context = new RaycastContext(
+        ClipContext context = new ClipContext(
             eyes, target,
-            RaycastContext.ShapeType.COLLIDER,
-            RaycastContext.FluidHandling.NONE,
+            ClipContext.Block.COLLIDER,
+            ClipContext.Fluid.NONE,
             mc.player
         );
 
-        BlockHitResult hit = mc.world.raycast(context);
+        BlockHitResult hit = mc.level.clip(context);
         if (hit.getType() == HitResult.Type.MISS) return true;
 
-        double distToHit = eyes.squaredDistanceTo(hit.getPos());
-        double distToTarget = eyes.squaredDistanceTo(target);
+        double distToHit = eyes.distanceToSqr(hit.getLocation());
+        double distToTarget = eyes.distanceToSqr(target);
         // Allow a tiny tolerance to handle floating‑point inaccuracies
         return distToHit >= distToTarget - 0.01;
     }
 
     @EventHandler
     public void onTick(TickEvent.Post event) {
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.level == null) return;
 
         if (timer > 0) {
             timer--;
             return;
         }
 
-        double reach = mc.player.getEntityInteractionRange();
-        ItemFrameEntity target = null;
-        for (ItemFrameEntity frame : mc.world.getEntitiesByClass(
-            ItemFrameEntity.class,
-            mc.player.getBoundingBox().expand(reach),
+        double reach = mc.player.entityInteractionRange();
+        ItemFrame target = null;
+        for (ItemFrame frame : mc.level.getEntitiesOfClass(
+            ItemFrame.class,
+            mc.player.getBoundingBox().inflate(reach),
             e -> true
         )) {
             if (frame.isInvisible()) continue;
             if (!PlayerUtils.isWithinReach(frame)) continue;
-            if (onlyWithItem.get() && frame.getHeldItemStack().isEmpty()) continue;
+            if (onlyWithItem.get() && frame.getItem().isEmpty()) continue;
             if (!canSee(frame)) continue;
 
             target = frame;
@@ -122,23 +122,23 @@ public class PressItemFrame extends Module {
 
         // Safety: if not rotating, ensure crosshair is on the specific frame
         if (!rotate.get()) {
-            HitResult hit = mc.crosshairTarget;
+            HitResult hit = mc.hitResult;
             if (hit == null || hit.getType() != HitResult.Type.ENTITY) return;
             EntityHitResult entityHit = (EntityHitResult) hit;
             if (entityHit.getEntity() != target) return;
         }
 
-        ItemStack held = target.getHeldItemStack();
+        ItemStack held = target.getItem();
         String itemName = "";
         if (!held.isEmpty()) {
-            itemName = Registries.ITEM.getId(held.getItem()).getPath();
+            itemName = BuiltInRegistries.ITEM.getKey(held.getItem()).getPath();
         }
 
         String rawCmd = commandTemplate.get()
-            .replace("{x}", String.valueOf(target.getBlockPos().getX()))
-            .replace("{y}", String.valueOf(target.getBlockPos().getY()))
-            .replace("{z}", String.valueOf(target.getBlockPos().getZ()))
-            .replace("{uuid}", target.getUuid().toString())
+            .replace("{x}", String.valueOf(target.blockPosition().getX()))
+            .replace("{y}", String.valueOf(target.blockPosition().getY()))
+            .replace("{z}", String.valueOf(target.blockPosition().getZ()))
+            .replace("{uuid}", target.getUUID().toString())
             .replace("{i}", itemName);
 
         if (rawCmd.startsWith("/")) {
@@ -146,17 +146,17 @@ public class PressItemFrame extends Module {
         }
 
         if (showInfo.get()) {
-            info("Sending command for frame at " + target.getBlockPos().toShortString());
+            info("Sending command for frame at " + target.blockPosition().toShortString());
         }
 
         final String finalCmd = rawCmd;
         if (rotate.get()) {
-            Vec3d center = target.getEntityPos().add(0, target.getHeight() / 2.0, 0);
+            Vec3 center = target.position().add(0, target.getBbHeight() / 2.0, 0);
             Rotations.rotate(Rotations.getYaw(center), Rotations.getPitch(center), () -> {
-                mc.player.networkHandler.sendChatCommand(finalCmd);
+                mc.player.connection.sendCommand(finalCmd);
             });
         } else {
-            mc.player.networkHandler.sendChatCommand(finalCmd);
+            mc.player.connection.sendCommand(finalCmd);
         }
 
         timer = delay.get();

@@ -6,23 +6,39 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.projectile.*;
-import net.minecraft.entity.projectile.thrown.EggEntity;
-import net.minecraft.entity.projectile.thrown.EnderPearlEntity;
-import net.minecraft.entity.projectile.thrown.ExperienceBottleEntity;
-import net.minecraft.entity.projectile.thrown.SnowballEntity;
-import net.minecraft.entity.projectile.thrown.PotionEntity;
-import net.minecraft.entity.projectile.WindChargeEntity;
-import net.minecraft.item.*;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.RaycastContext;
-
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.projectile.ShulkerBullet;
+import net.minecraft.world.entity.projectile.arrow.Arrow;
+import net.minecraft.world.entity.projectile.arrow.SpectralArrow;
+import net.minecraft.world.entity.projectile.arrow.ThrownTrident;
+import net.minecraft.world.entity.projectile.hurtingprojectile.DragonFireball;
+import net.minecraft.world.entity.projectile.hurtingprojectile.LargeFireball;
+import net.minecraft.world.entity.projectile.hurtingprojectile.SmallFireball;
+import net.minecraft.world.entity.projectile.hurtingprojectile.WitherSkull;
+import net.minecraft.world.entity.projectile.hurtingprojectile.windcharge.WindCharge;
+import net.minecraft.world.entity.projectile.throwableitemprojectile.AbstractThrownPotion;
+import net.minecraft.world.entity.projectile.throwableitemprojectile.Snowball;
+import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEgg;
+import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl;
+import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownExperienceBottle;
+import net.minecraft.world.item.BowItem;
+import net.minecraft.world.item.CrossbowItem;
+import net.minecraft.world.item.EggItem;
+import net.minecraft.world.item.EnderpearlItem;
+import net.minecraft.world.item.ExperienceBottleItem;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.PotionItem;
+import net.minecraft.world.item.SnowballItem;
+import net.minecraft.world.item.TridentItem;
+import net.minecraft.world.item.WindChargeItem;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -129,7 +145,7 @@ public class TrajectoryPlus extends Module {
     );
 
     // Store projectile trails
-    private final ConcurrentHashMap<UUID, List<Vec3d>> projectileTrails = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, List<Vec3>> projectileTrails = new ConcurrentHashMap<>();
 
     public TrajectoryPlus() {
         super(Addon.CATEGORY2, "Trajectory-Plus", "Smooth projectile prediction and tracking.");
@@ -142,7 +158,7 @@ public class TrajectoryPlus extends Module {
 
     @EventHandler
     private void onRender(Render3DEvent event) {
-        if (mc.player == null || mc.world == null) return;
+        if (mc.player == null || mc.level == null) return;
 
         // Always predict player's own projectile
         predictPlayerProjectile(event);
@@ -154,41 +170,41 @@ public class TrajectoryPlus extends Module {
     }
 
     private void predictPlayerProjectile(Render3DEvent event) {
-        ItemStack stack = mc.player.getMainHandStack();
+        ItemStack stack = mc.player.getMainHandItem();
         if (!isValidItem(stack.getItem())) {
-            stack = mc.player.getOffHandStack();
+            stack = mc.player.getOffhandItem();
             if (!isValidItem(stack.getItem())) return;
         }
 
         float delta = (updateMode.get() == Mode.Frame) ? event.tickDelta : 1.0f;
 
-        Vec3d pos = getInterpolatedPos(mc.player, delta);
-        Vec3d vel = getInitialVelocity(stack.getItem(), delta);
+        Vec3 pos = getInterpolatedPos(mc.player, delta);
+        Vec3 vel = getInitialVelocity(stack.getItem(), delta);
 
-        List<Vec3d> path = new ArrayList<>();
+        List<Vec3> path = new ArrayList<>();
         path.add(pos);
 
         boolean hitEntity = false;
         Entity hitEntityObj = null;
-        Vec3d currentPos = pos;
-        Vec3d currentVel = vel;
+        Vec3 currentPos = pos;
+        Vec3 currentVel = vel;
 
         for (int i = 0; i < 100; i++) {
-            Vec3d nextPos = currentPos.add(currentVel);
+            Vec3 nextPos = currentPos.add(currentVel);
 
-            BlockHitResult blockHit = mc.world.raycast(new RaycastContext(
-                currentPos, nextPos, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, mc.player
+            BlockHitResult blockHit = mc.level.clip(new ClipContext(
+                currentPos, nextPos, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, mc.player
             ));
 
             EntityHitResult entityHit = findEntityHit(currentPos, nextPos);
 
             if (entityHit != null) {
-                path.add(entityHit.getPos());
+                path.add(entityHit.getLocation());
                 hitEntityObj = entityHit.getEntity();
                 hitEntity = true;
                 break;
             } else if (blockHit.getType() != HitResult.Type.MISS) {
-                path.add(blockHit.getPos());
+                path.add(blockHit.getLocation());
                 if (renderBox.get()) {
                     event.renderer.box(blockHit.getBlockPos(), boxColor.get(), boxColor.get(), boxShapeMode.get(), 0);
                 }
@@ -200,7 +216,7 @@ public class TrajectoryPlus extends Module {
 
             double drag = getDrag(stack.getItem());
             double gravity = getGravity(stack.getItem());
-            currentVel = currentVel.multiply(drag).subtract(0, gravity, 0);
+            currentVel = currentVel.scale(drag).subtract(0, gravity, 0);
         }
 
         // Render trail
@@ -220,12 +236,12 @@ public class TrajectoryPlus extends Module {
     }
 
     private void trackExistingProjectiles(Render3DEvent event) {
-        for (Entity entity : mc.world.getEntities()) {
+        for (Entity entity : mc.level.entitiesForRendering()) {
             if (isProjectile(entity)) {
-                UUID id = entity.getUuid();
-                Vec3d currentPos = entity.getEntityPos();
+                UUID id = entity.getUUID();
+                Vec3 currentPos = entity.position();
 
-                List<Vec3d> trail = projectileTrails.computeIfAbsent(id, k -> new ArrayList<>());
+                List<Vec3> trail = projectileTrails.computeIfAbsent(id, k -> new ArrayList<>());
                 trail.add(currentPos);
 
                 while (trail.size() > trailLength.get()) {
@@ -251,39 +267,39 @@ public class TrajectoryPlus extends Module {
         }
 
         projectileTrails.keySet().removeIf(id -> {
-            Entity e = mc.world.getEntityById(id.hashCode());
+            Entity e = mc.level.getEntity(id.hashCode());
             return e == null;
         });
     }
 
     private void predictProjectilePath(Render3DEvent event, Entity projectile) {
-        Vec3d pos = projectile.getLerpedPos(event.tickDelta);
-        Vec3d vel = projectile.getVelocity();
+        Vec3 pos = projectile.getPosition(event.tickDelta);
+        Vec3 vel = projectile.getDeltaMovement();
 
-        List<Vec3d> path = new ArrayList<>();
+        List<Vec3> path = new ArrayList<>();
         path.add(pos);
 
         boolean hitEntity = false;
         Entity hitEntityObj = null;
-        Vec3d currentPos = pos;
-        Vec3d currentVel = vel;
+        Vec3 currentPos = pos;
+        Vec3 currentVel = vel;
 
         for (int i = 0; i < 60; i++) {
-            Vec3d nextPos = currentPos.add(currentVel);
+            Vec3 nextPos = currentPos.add(currentVel);
 
-            BlockHitResult blockHit = mc.world.raycast(new RaycastContext(
-                currentPos, nextPos, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, mc.player
+            BlockHitResult blockHit = mc.level.clip(new ClipContext(
+                currentPos, nextPos, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, mc.player
             ));
 
             EntityHitResult entityHit = findEntityHit(currentPos, nextPos, projectile);
 
             if (entityHit != null) {
-                path.add(entityHit.getPos());
+                path.add(entityHit.getLocation());
                 hitEntityObj = entityHit.getEntity();
                 hitEntity = true;
                 break;
             } else if (blockHit.getType() != HitResult.Type.MISS) {
-                path.add(blockHit.getPos());
+                path.add(blockHit.getLocation());
                 if (renderBox.get()) {
                     event.renderer.box(blockHit.getBlockPos(), existingProjectileColor.get(), existingProjectileColor.get(), boxShapeMode.get(), 0);
                 }
@@ -295,7 +311,7 @@ public class TrajectoryPlus extends Module {
 
             double drag = 0.99;
             double gravity = getProjectileGravity(projectile);
-            currentVel = currentVel.multiply(drag).subtract(0, gravity, 0);
+            currentVel = currentVel.scale(drag).subtract(0, gravity, 0);
         }
 
         // Render prediction trail for existing projectile
@@ -315,52 +331,52 @@ public class TrajectoryPlus extends Module {
     }
 
     private boolean isProjectile(Entity entity) {
-        return entity instanceof ArrowEntity ||
-               entity instanceof SpectralArrowEntity ||
-               entity instanceof TridentEntity ||
-               entity instanceof FireballEntity ||
-               entity instanceof SmallFireballEntity ||
-               entity instanceof DragonFireballEntity ||
-               entity instanceof WitherSkullEntity ||
-               entity instanceof ShulkerBulletEntity ||
-               entity instanceof SnowballEntity ||
-               entity instanceof EggEntity ||
-               entity instanceof EnderPearlEntity ||
-               entity instanceof ExperienceBottleEntity ||
-               entity instanceof PotionEntity ||
-               entity instanceof WindChargeEntity;
+        return entity instanceof Arrow ||
+               entity instanceof SpectralArrow ||
+               entity instanceof ThrownTrident ||
+               entity instanceof LargeFireball ||
+               entity instanceof SmallFireball ||
+               entity instanceof DragonFireball ||
+               entity instanceof WitherSkull ||
+               entity instanceof ShulkerBullet ||
+               entity instanceof Snowball ||
+               entity instanceof ThrownEgg ||
+               entity instanceof ThrownEnderpearl ||
+               entity instanceof ThrownExperienceBottle ||
+               entity instanceof AbstractThrownPotion ||
+               entity instanceof WindCharge;
     }
 
     private double getProjectileGravity(Entity projectile) {
-        if (projectile instanceof ArrowEntity) return 0.05;
-        if (projectile instanceof SpectralArrowEntity) return 0.05;
-        if (projectile instanceof TridentEntity) return 0.05;
-        if (projectile instanceof SnowballEntity) return 0.03;
-        if (projectile instanceof EggEntity) return 0.03;
-        if (projectile instanceof EnderPearlEntity) return 0.03;
-        if (projectile instanceof ExperienceBottleEntity) return 0.03;
-        if (projectile instanceof PotionEntity) return 0.05;
-        if (projectile instanceof FireballEntity) return 0.0;
-        if (projectile instanceof SmallFireballEntity) return 0.0;
-        if (projectile instanceof DragonFireballEntity) return 0.0;
-        if (projectile instanceof WitherSkullEntity) return 0.0;
-        if (projectile instanceof ShulkerBulletEntity) return 0.0;
-        if (projectile instanceof WindChargeEntity) return 0.0;
+        if (projectile instanceof Arrow) return 0.05;
+        if (projectile instanceof SpectralArrow) return 0.05;
+        if (projectile instanceof ThrownTrident) return 0.05;
+        if (projectile instanceof Snowball) return 0.03;
+        if (projectile instanceof ThrownEgg) return 0.03;
+        if (projectile instanceof ThrownEnderpearl) return 0.03;
+        if (projectile instanceof ThrownExperienceBottle) return 0.03;
+        if (projectile instanceof AbstractThrownPotion) return 0.05;
+        if (projectile instanceof LargeFireball) return 0.0;
+        if (projectile instanceof SmallFireball) return 0.0;
+        if (projectile instanceof DragonFireball) return 0.0;
+        if (projectile instanceof WitherSkull) return 0.0;
+        if (projectile instanceof ShulkerBullet) return 0.0;
+        if (projectile instanceof WindCharge) return 0.0;
         return 0.03;
     }
 
-    private EntityHitResult findEntityHit(Vec3d start, Vec3d end) {
+    private EntityHitResult findEntityHit(Vec3 start, Vec3 end) {
         return findEntityHit(start, end, null);
     }
 
-    private EntityHitResult findEntityHit(Vec3d start, Vec3d end, Entity ignoreEntity) {
-        for (Entity entity : mc.world.getEntities()) {
+    private EntityHitResult findEntityHit(Vec3 start, Vec3 end, Entity ignoreEntity) {
+        for (Entity entity : mc.level.entitiesForRendering()) {
             if (entity == mc.player || entity == ignoreEntity) continue;
             if (!(entity instanceof LivingEntity)) continue;
 
-            Box box = entity.getBoundingBox().expand(0.3);
-            if (box.raycast(start, end).isPresent()) {
-                return new EntityHitResult(entity, box.raycast(start, end).get());
+            AABB box = entity.getBoundingBox().inflate(0.3);
+            if (box.clip(start, end).isPresent()) {
+                return new EntityHitResult(entity, box.clip(start, end).get());
             }
         }
         return null;
@@ -370,7 +386,7 @@ public class TrajectoryPlus extends Module {
         return item instanceof BowItem ||
                item instanceof CrossbowItem ||
                item instanceof TridentItem ||
-               item instanceof EnderPearlItem ||
+               item instanceof EnderpearlItem ||
                item instanceof EggItem ||
                item instanceof SnowballItem ||
                item instanceof ExperienceBottleItem ||
@@ -378,11 +394,11 @@ public class TrajectoryPlus extends Module {
                item instanceof PotionItem;
     }
 
-    private Vec3d getInitialVelocity(Item item, float delta) {
-        Vec3d look = mc.player.getRotationVec(delta);
+    private Vec3 getInitialVelocity(Item item, float delta) {
+        Vec3 look = mc.player.getViewVector(delta);
         double mult;
         if (item instanceof BowItem || item instanceof CrossbowItem) {
-            int useTime = mc.player.getItemUseTime();
+            int useTime = mc.player.getTicksUsingItem();
             float pullTime = Math.min(useTime, 20) / 20.0f;
             float power = (pullTime * pullTime + pullTime * 2.0f) / 3.0f;
             if (power > 1.0f) power = 1.0f;
@@ -394,7 +410,7 @@ public class TrajectoryPlus extends Module {
         } else {
             mult = 1.5;
         }
-        return look.multiply(mult);
+        return look.scale(mult);
     }
 
     private double getGravity(Item item) {
@@ -409,8 +425,8 @@ public class TrajectoryPlus extends Module {
         return 0.99;
     }
 
-    private Vec3d getInterpolatedPos(Entity entity, float delta) {
-        Vec3d pos = entity.getLerpedPos(delta);           // interpolated foot position
-        return new Vec3d(pos.x, pos.y + entity.getEyeHeight(entity.getPose()), pos.z);  // eye position
+    private Vec3 getInterpolatedPos(Entity entity, float delta) {
+        Vec3 pos = entity.getPosition(delta);           // interpolated foot position
+        return new Vec3(pos.x, pos.y + entity.getEyeHeight(entity.getPose()), pos.z);  // eye position
     }
 }

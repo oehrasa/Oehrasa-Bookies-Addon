@@ -6,8 +6,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.FileReader;
 import java.io.BufferedReader;
-import net.minecraft.text.Text;
-
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
@@ -17,19 +15,19 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
-
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.ChiseledBookshelfBlock;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.state.property.Properties;
-import net.minecraft.util.Hand;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.screen.slot.SlotActionType;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ChiseledBookShelfBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 
 public class AutoLogin extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -94,7 +92,7 @@ public class AutoLogin extends Module {
     public boolean isProcessingBook = false;
     private BlockPos targetBookPos = null;
     private Direction targetFacing = null;
-    private Vec3d targetHitVec = null;
+    private Vec3 targetHitVec = null;
     private double targetYaw = 0;
     private double targetPitch = 0;
     private int bookDelayTicks = 0;
@@ -140,13 +138,13 @@ public class AutoLogin extends Module {
             return;
         }
 
-        BlockState state = mc.world.getBlockState(pos);
+        BlockState state = mc.level.getBlockState(pos);
         if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) {
             sendMessage("§cNot a chiseled bookshelf!");
             return;
         }
 
-        boolean occupied = state.get(ChiseledBookshelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot));
+        boolean occupied = state.getValue(ChiseledBookShelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot));
         if (!occupied) {
             sendMessage("§cSlot " + (slot + 1) + " is empty!");
             return;
@@ -159,7 +157,7 @@ public class AutoLogin extends Module {
 
         isProcessingBook = true;
         targetBookPos = pos;
-        targetFacing = state.get(Properties.HORIZONTAL_FACING);
+        targetFacing = state.getValue(BlockStateProperties.HORIZONTAL_FACING);
         targetHitVec = getHitVec(pos, targetFacing, slot);
 
         targetYaw = Rotations.getYaw(targetHitVec);
@@ -179,7 +177,7 @@ public class AutoLogin extends Module {
 
     private boolean isInventoryFull() {
         for (int i = 0; i < 36; i++) {
-            if (mc.player.getInventory().getStack(i).isEmpty()) return false;
+            if (mc.player.getInventory().getItem(i).isEmpty()) return false;
         }
         return true;
     }
@@ -217,11 +215,11 @@ public class AutoLogin extends Module {
                         mc.player.getInventory().setSelectedSlot(bookSlot);
                         didSwap = false;
                     } else {
-                        mc.interactionManager.clickSlot(
-                            mc.player.playerScreenHandler.syncId,
+                        mc.gameMode.handleInventoryMouseClick(
+                            mc.player.inventoryMenu.containerId,
                             bookSlot,
                             originalSelectedSlot,
-                            SlotActionType.SWAP,
+                            ClickType.SWAP,
                             mc.player
                         );
                         didSwap = true;
@@ -243,11 +241,11 @@ public class AutoLogin extends Module {
             }
             case 3 -> {
                 if (didSwap) {
-                    mc.interactionManager.clickSlot(
-                        mc.player.playerScreenHandler.syncId,
+                    mc.gameMode.handleInventoryMouseClick(
+                        mc.player.inventoryMenu.containerId,
                         bookSlot,
                         originalSelectedSlot,
-                        SlotActionType.SWAP,
+                        ClickType.SWAP,
                         mc.player
                     );
                 }
@@ -267,15 +265,15 @@ public class AutoLogin extends Module {
         BlockHitResult hitResult = new BlockHitResult(targetHitVec, targetFacing, targetBookPos, false);
 
         Rotations.rotate(targetYaw, targetPitch, () -> {
-            mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hitResult);
-            mc.player.swingHand(Hand.MAIN_HAND);
+            mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hitResult);
+            mc.player.swing(InteractionHand.MAIN_HAND);
         });
     }
 
     private int findBookInInventory() {
         for (int i = 0; i < 36; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
-            if (stack.isOf(Items.WRITTEN_BOOK) && !stack.isEmpty()) {
+            ItemStack stack = mc.player.getInventory().getItem(i);
+            if (stack.is(Items.WRITTEN_BOOK) && !stack.isEmpty()) {
                 return i;
             }
         }
@@ -303,7 +301,7 @@ public class AutoLogin extends Module {
         }
     }
 
-    private Vec3d getHitVec(BlockPos pos, Direction facing, int slot) {
+    private Vec3 getHitVec(BlockPos pos, Direction facing, int slot) {
         double x = 0, y = 0;
 
         switch (slot) {
@@ -315,7 +313,7 @@ public class AutoLogin extends Module {
             case 5 -> { x = 0.25; y = -0.25; }
         }
 
-        Vec3d center = Vec3d.ofCenter(pos);
+        Vec3 center = Vec3.atCenterOf(pos);
 
         return switch (facing) {
             case NORTH -> center.add(-x, y, -0.5);
@@ -329,7 +327,7 @@ public class AutoLogin extends Module {
     private void sendMessage(String msg) {
         info(msg);
         if (mc.player != null) {
-            mc.player.sendMessage(Text.literal(msg), true);
+            mc.player.displayClientMessage(Component.literal(msg), true);
         }
     }
 
@@ -337,7 +335,7 @@ public class AutoLogin extends Module {
     private void onTick(TickEvent.Post event) {
         if (isActive()) updateBookProcessing();
 
-        if (serverOnly.get() && mc.getServer() != null && mc.getServer().isSingleplayer()) return;
+        if (serverOnly.get() && mc.getSingleplayerServer() != null && mc.getSingleplayerServer().isSingleplayer()) return;
 
         if ( !(timer >= delay.get() && !loginCommand.get().isEmpty() && work) ) {
             timer ++;

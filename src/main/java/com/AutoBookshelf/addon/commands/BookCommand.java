@@ -4,13 +4,12 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import meteordevelopment.meteorclient.commands.Command;
-import net.minecraft.command.CommandSource;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.WrittenBookContentComponent;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.text.Text;
-
+import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.WrittenBookContent;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -21,7 +20,7 @@ public class BookCommand extends Command {
     }
 
     @Override
-    public void build(LiteralArgumentBuilder<CommandSource> builder) {
+    public void build(LiteralArgumentBuilder<SharedSuggestionProvider> builder) {
         builder.executes(ctx -> {
             ItemStack item = getHeldBook();
 
@@ -30,12 +29,12 @@ public class BookCommand extends Command {
                 return SINGLE_SUCCESS;
             }
 
-            if (item.isOf(Items.WRITTEN_BOOK)) {
+            if (item.is(Items.WRITTEN_BOOK)) {
                 inspectBook(item);
                 return SINGLE_SUCCESS;
             }
 
-            if (item.isOf(Items.WRITABLE_BOOK)) {
+            if (item.is(Items.WRITABLE_BOOK)) {
                 info("This is a writable book (book and quill), Not yet signed");
                 return SINGLE_SUCCESS;
             }
@@ -73,13 +72,13 @@ public class BookCommand extends Command {
     }
 
     private ItemStack getHeldBook() {
-        ItemStack mainHand = mc.player.getMainHandStack();
-        if (mainHand.isOf(Items.WRITTEN_BOOK) || mainHand.isOf(Items.WRITABLE_BOOK)) {
+        ItemStack mainHand = mc.player.getMainHandItem();
+        if (mainHand.is(Items.WRITTEN_BOOK) || mainHand.is(Items.WRITABLE_BOOK)) {
             return mainHand;
         }
 
-        ItemStack offHand = mc.player.getOffHandStack();
-        if (offHand.isOf(Items.WRITTEN_BOOK) || offHand.isOf(Items.WRITABLE_BOOK)) {
+        ItemStack offHand = mc.player.getOffhandItem();
+        if (offHand.is(Items.WRITTEN_BOOK) || offHand.is(Items.WRITABLE_BOOK)) {
             return offHand;
         }
 
@@ -107,7 +106,7 @@ public class BookCommand extends Command {
     }
 
     private void inspectBook(ItemStack book) {
-        WrittenBookContentComponent content = book.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+        WrittenBookContent content = book.get(DataComponents.WRITTEN_BOOK_CONTENT);
 
         if (content == null) {
             error("This book has no content!");
@@ -117,7 +116,7 @@ public class BookCommand extends Command {
         String title = escapePercent(content.title().raw());
         String author = escapePercent(content.author());
         int generation = content.generation();
-        List<Text> pages = content.getPages(true);
+        List<Component> pages = content.getPages(true);
 
         String generationText = switch (generation) {
             case 0 -> "Original";
@@ -131,7 +130,7 @@ public class BookCommand extends Command {
         int totalWords = 0;
         int emptyPages = 0;
 
-        for (Text page : pages) {
+        for (Component page : pages) {
             String text = page.getString();
             if (text.trim().isEmpty()) {
                 emptyPages++;
@@ -170,18 +169,18 @@ public class BookCommand extends Command {
 
     private void searchInBook(String searchWord) {
         ItemStack book = getHeldBook();
-        if (book == null || !book.isOf(Items.WRITTEN_BOOK)) {
+        if (book == null || !book.is(Items.WRITTEN_BOOK)) {
             error("You must hold a written book!");
             return;
         }
 
-        WrittenBookContentComponent content = book.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+        WrittenBookContent content = book.get(DataComponents.WRITTEN_BOOK_CONTENT);
         if (content == null) {
             error("This book has no content!");
             return;
         }
 
-        List<Text> pages = content.getPages(true);
+        List<Component> pages = content.getPages(true);
         List<Integer> foundPages = new ArrayList<>();
         String escapedSearchWord = escapePercent(searchWord);
 
@@ -204,18 +203,18 @@ public class BookCommand extends Command {
 
     private void viewSpecificPage(int pageNum) {
         ItemStack book = getHeldBook();
-        if (book == null || !book.isOf(Items.WRITTEN_BOOK)) {
+        if (book == null || !book.is(Items.WRITTEN_BOOK)) {
             error("You must hold a written book!");
             return;
         }
 
-        WrittenBookContentComponent content = book.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+        WrittenBookContent content = book.get(DataComponents.WRITTEN_BOOK_CONTENT);
         if (content == null) {
             error("This book has no content!");
             return;
         }
 
-        List<Text> pages = content.getPages(true);
+        List<Component> pages = content.getPages(true);
         if (pageNum < 1 || pageNum > pages.size()) {
             error("Page " + pageNum + " does not exist. Book has " + pages.size() + " pages");
             return;
@@ -240,18 +239,18 @@ public class BookCommand extends Command {
 
     private void showBookStats() {
         ItemStack book = getHeldBook();
-        if (book == null || !book.isOf(Items.WRITTEN_BOOK)) {
+        if (book == null || !book.is(Items.WRITTEN_BOOK)) {
             error("You must hold a written book!");
             return;
         }
 
-        WrittenBookContentComponent content = book.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+        WrittenBookContent content = book.get(DataComponents.WRITTEN_BOOK_CONTENT);
         if (content == null) {
             error("This book has no content!");
             return;
         }
 
-        List<Text> pages = content.getPages(true);
+        List<Component> pages = content.getPages(true);
 
         int totalChars = 0;
         int totalWords = 0;
@@ -259,7 +258,7 @@ public class BookCommand extends Command {
         int longestPage = 0;
         int shortestPage = Integer.MAX_VALUE;
 
-        for (Text page : pages) {
+        for (Component page : pages) {
             String text = page.getString();
             int length = text.length();
 

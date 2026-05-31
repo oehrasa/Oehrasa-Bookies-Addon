@@ -5,13 +5,12 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.ShulkerBoxBlock;
-import net.minecraft.item.BlockItem;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.screen.slot.SlotActionType;
-
+import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.ShulkerBoxBlock;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -106,7 +105,7 @@ public class ShulkBookRestock extends Module {
 
         for (int i = 0; i < 9; i++) {
             try {
-                ItemStack stack = mc.player.getInventory().getStack(i);
+                ItemStack stack = mc.player.getInventory().getItem(i);
                 previousCounts[i] = (stack != null && isValidItem(stack)) ? stack.getCount() : 0;
             } catch (Exception e) {
                 previousCounts[i] = 0;
@@ -117,7 +116,7 @@ public class ShulkBookRestock extends Module {
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.player.getInventory() == null) return;
-        if (mc.currentScreen != null) return;   // never restock while a GUI is open
+        if (mc.screen != null) return;   // never restock while a GUI is open
 
         if (switchCooldown > 0) switchCooldown--;
         if (pendingRestock && timer > 0) {
@@ -149,7 +148,7 @@ public class ShulkBookRestock extends Module {
 
         for (int i = 0; i < 9; i++) {
             try {
-                ItemStack stack = mc.player.getInventory().getStack(i);
+                ItemStack stack = mc.player.getInventory().getItem(i);
                 int currentCount = (stack == null || stack.isEmpty()) ? 0 : stack.getCount();
 
                 if (isValidItem(stack)) {
@@ -173,7 +172,7 @@ public class ShulkBookRestock extends Module {
         if (mc.player == null || mc.player.getInventory() == null) return;
         if (lastUsedSlot == -1) return;
 
-        ItemStack usedStack = mc.player.getInventory().getStack(lastUsedSlot);
+        ItemStack usedStack = mc.player.getInventory().getItem(lastUsedSlot);
         boolean isSlotEmpty = usedStack == null || usedStack.isEmpty() || !isValidItem(usedStack);
 
         if (isSlotEmpty) {
@@ -195,7 +194,7 @@ public class ShulkBookRestock extends Module {
         if (mc.player == null || mc.player.getInventory() == null) return validSlots;
 
         for (int i = 0; i < 9; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
+            ItemStack stack = mc.player.getInventory().getItem(i);
             if (stack != null && isValidItem(stack) && !stack.isEmpty()) {
                 validSlots.add(i);
             }
@@ -206,7 +205,7 @@ public class ShulkBookRestock extends Module {
     private boolean isHotbarEmpty() {
         if (mc.player == null || mc.player.getInventory() == null) return true;
         for (int i = 0; i < 9; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
+            ItemStack stack = mc.player.getInventory().getItem(i);
             if (stack != null && isValidItem(stack) && !stack.isEmpty()) return false;
         }
         return true;
@@ -218,11 +217,11 @@ public class ShulkBookRestock extends Module {
 
         if (targetSlot == 0) {
             if (lastUsedSlot != -1 && lastUsedSlot < 9) {
-                ItemStack stack = mc.player.getInventory().getStack(lastUsedSlot);
+                ItemStack stack = mc.player.getInventory().getItem(lastUsedSlot);
                 if (stack == null || stack.isEmpty() || !isValidItem(stack)) return lastUsedSlot;
             }
             for (int i = 0; i < 9; i++) {
-                ItemStack stack = mc.player.getInventory().getStack(i);
+                ItemStack stack = mc.player.getInventory().getItem(i);
                 if (stack == null || stack.isEmpty() || !isValidItem(stack)) return i;
             }
             return -1;
@@ -232,11 +231,11 @@ public class ShulkBookRestock extends Module {
     }
 
     private void performRestock() {
-        if (mc.player == null || mc.player.getInventory() == null || mc.interactionManager == null) return;
+        if (mc.player == null || mc.player.getInventory() == null || mc.gameMode == null) return;
         int targetSlot = slotToRestock;
         if (targetSlot < 0 || targetSlot > 8) return;
 
-        ItemStack currentStack = mc.player.getInventory().getStack(targetSlot);
+        ItemStack currentStack = mc.player.getInventory().getItem(targetSlot);
         if (currentStack != null && isValidItem(currentStack) && !currentStack.isEmpty()) return;
 
         int itemSlot = findValidItemInInventoryExcludingHotbar();
@@ -252,7 +251,7 @@ public class ShulkBookRestock extends Module {
 
         for (int i = 9; i < 36; i++) {
             try {
-                ItemStack stack = mc.player.getInventory().getStack(i);
+                ItemStack stack = mc.player.getInventory().getItem(i);
                 if (stack != null && isValidItem(stack) && !stack.isEmpty()) {
                     totalCount += stack.getCount();
                     candidateSlots.add(i);
@@ -273,7 +272,7 @@ public class ShulkBookRestock extends Module {
         int count = 0;
         for (int i = 0; i < 9; i++) {
             try {
-                ItemStack stack = mc.player.getInventory().getStack(i);
+                ItemStack stack = mc.player.getInventory().getItem(i);
                 if (stack != null && isValidItem(stack) && !stack.isEmpty()) count++;
             } catch (Exception ignored) {}
         }
@@ -291,13 +290,13 @@ public class ShulkBookRestock extends Module {
     }
 
     private void moveToHotbar(int fromSlot, int toHotbarSlot) {
-        if (fromSlot < 0 || toHotbarSlot < 0 || mc.player == null || mc.interactionManager == null) return;
+        if (fromSlot < 0 || toHotbarSlot < 0 || mc.player == null || mc.gameMode == null) return;
 
-        mc.interactionManager.clickSlot(
-            mc.player.playerScreenHandler.syncId,
+        mc.gameMode.handleInventoryMouseClick(
+            mc.player.inventoryMenu.containerId,
             fromSlot,
             toHotbarSlot,
-            SlotActionType.SWAP,
+            ClickType.SWAP,
             mc.player
         );
     }

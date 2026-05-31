@@ -7,13 +7,13 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.entity.EquipmentSlot;
-import net.minecraft.item.FireworkRocketItem;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
-import net.minecraft.util.Hand;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.protocol.game.ServerboundPlayerCommandPacket;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.item.FireworkRocketItem;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 
 public class AutoTakeOff extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -185,14 +185,14 @@ public class AutoTakeOff extends Module {
 
     private boolean isElytraUsable(ItemStack chest) {
         if (chest.getItem() != Items.ELYTRA) return false;
-        if (!chest.contains(DataComponentTypes.GLIDER)) return false;
-        int damage = chest.getDamage();
+        if (!chest.has(DataComponents.GLIDER)) return false;
+        int damage = chest.getDamageValue();
         int maxDamage = chest.getMaxDamage();
         return damage < maxDamage;
     }
 
     private void sendStartFlyingPacket() {
-        mc.player.networkHandler.sendPacket(new ClientCommandC2SPacket(mc.player, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
+        mc.player.connection.send(new ServerboundPlayerCommandPacket(mc.player, ServerboundPlayerCommandPacket.Action.START_FALL_FLYING));
     }
 
     // Rotation helper using Rotations.rotate (like reference)
@@ -202,7 +202,7 @@ public class AutoTakeOff extends Module {
 
     private int findFireworkInHotbar() {
         for (int i = 0; i < 9; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
+            ItemStack stack = mc.player.getInventory().getItem(i);
             if (stack.getItem() instanceof FireworkRocketItem) {
                 return i;
             }
@@ -214,7 +214,7 @@ public class AutoTakeOff extends Module {
         if (fireworkSlot == -1) return;
         originalHotbarSlot = mc.player.getInventory().getSelectedSlot();
         InvUtils.swap(fireworkSlot, false);
-        mc.interactionManager.interactItem(mc.player, Hand.MAIN_HAND);
+        mc.gameMode.useItem(mc.player, InteractionHand.MAIN_HAND);
         mc.execute(() -> {
             if (originalHotbarSlot != -1 && originalHotbarSlot != mc.player.getInventory().getSelectedSlot()) {
                 InvUtils.swap(originalHotbarSlot, false);
@@ -240,7 +240,7 @@ public class AutoTakeOff extends Module {
             return;
         }
 
-        if (mc.player.isGliding()) {
+        if (mc.player.isFallFlying()) {
             takeOffDelay = 0;
             waitingForGlide = 0;
             simpleJumped = false;
@@ -248,7 +248,7 @@ public class AutoTakeOff extends Module {
             return;
         }
 
-        ItemStack chest = mc.player.getEquippedStack(EquipmentSlot.CHEST);
+        ItemStack chest = mc.player.getItemBySlot(EquipmentSlot.CHEST);
         if (chest.getItem() != Items.ELYTRA) return;
 
         if (!isElytraUsable(chest)) {
@@ -277,7 +277,7 @@ public class AutoTakeOff extends Module {
         if (mode.get() == Mode.Simple) {
             if (simpleWaitingForGlide > 0) {
                 simpleWaitingForGlide--;
-                if (mc.player.isGliding()) {
+                if (mc.player.isFallFlying()) {
                     simpleWaitingForGlide = 0;
                     if (useFirework.get()) fireworkTimer = fireworkDelay.get() + 1;
                     if (disableAfterTakeoff.get()) disableTimer = disableDelay.get();
@@ -286,15 +286,15 @@ public class AutoTakeOff extends Module {
             }
 
             // Ground takeoff: double jump
-            if (mc.player.isOnGround()) {
+            if (mc.player.onGround()) {
                 if (!simpleJumped) {
-                    mc.player.jump();
+                    mc.player.jumpFromGround();
                     simpleJumped = true;
                     takeOffDelay = 2;
                 } else if (takeOffDelay > 0) {
                     takeOffDelay--;
                     if (takeOffDelay == 0) {
-                        mc.player.jump();
+                        mc.player.jumpFromGround();
                         sendStartFlyingPacket();
                         cooldownTimer = cooldown.get();
                         simpleJumped = false;
@@ -305,8 +305,8 @@ public class AutoTakeOff extends Module {
             }
 
             // Falling takeoff
-            if (takeOffWhenFalling.get() && !mc.player.isOnGround() && mc.player.getVelocity().y < fallingVelocityThreshold.get()) {
-                mc.player.jump();
+            if (takeOffWhenFalling.get() && !mc.player.onGround() && mc.player.getDeltaMovement().y < fallingVelocityThreshold.get()) {
+                mc.player.jumpFromGround();
                 sendStartFlyingPacket();
                 cooldownTimer = cooldown.get();
                 simpleWaitingForGlide = 10;
@@ -339,7 +339,7 @@ public class AutoTakeOff extends Module {
 
         if (waitingForGlide > 0) {
             waitingForGlide--;
-            if (mc.player.isGliding()) {
+            if (mc.player.isFallFlying()) {
                 if (restorePitch.get() && setPitch.get()) {
                     // Restore original pitch, client‑side only (no packet)
                     setRotation(originalYaw, originalPitch, true);
@@ -357,12 +357,12 @@ public class AutoTakeOff extends Module {
         }
 
         // Ground takeoff
-        if (takeOffOnGround.get() && mc.player.isOnGround()) {
+        if (takeOffOnGround.get() && mc.player.onGround()) {
             if (setPitch.get()) {
-                originalYaw = mc.player.getYaw();
-                originalPitch = mc.player.getPitch();
+                originalYaw = mc.player.getYRot();
+                originalPitch = mc.player.getXRot();
             }
-            mc.player.jump();
+            mc.player.jumpFromGround();
             takeOffDelay = 2;
             return;
         }
@@ -370,8 +370,8 @@ public class AutoTakeOff extends Module {
         // Lava takeoff
         if (takeOffInLava.get() && mc.player.isInLava()) {
             if (setPitch.get()) {
-                originalYaw = mc.player.getYaw();
-                originalPitch = mc.player.getPitch();
+                originalYaw = mc.player.getYRot();
+                originalPitch = mc.player.getXRot();
                 boolean silent = (rotationMode.get() == RotationMode.Silent);
                 setRotation(originalYaw, (float) takeoffPitch.get().doubleValue(), silent);
             }
@@ -382,12 +382,12 @@ public class AutoTakeOff extends Module {
         }
 
         // Falling takeoff
-        if (takeOffWhenFalling.get() && !mc.player.isOnGround() && mc.player.getVelocity().y < fallingVelocityThreshold.get()) {
+        if (takeOffWhenFalling.get() && !mc.player.onGround() && mc.player.getDeltaMovement().y < fallingVelocityThreshold.get()) {
             if (setPitch.get()) {
-                originalYaw = mc.player.getYaw();
-                originalPitch = mc.player.getPitch();
+                originalYaw = mc.player.getYRot();
+                originalPitch = mc.player.getXRot();
             }
-            mc.player.jump();
+            mc.player.jumpFromGround();
             takeOffDelay = 2;
             return;
         }
