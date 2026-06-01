@@ -9,6 +9,7 @@ import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -16,7 +17,6 @@ import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -292,7 +292,7 @@ public class B36 extends Module {
         // Get current revision for accurate packet
         int currentRevision = mc.player.containerMenu.getStateId();
 
-        // Send the 3-packet sequence for airplace
+        // Send the 3 packet sequence for airplace
         mc.player.connection.send(new ServerboundPlayerActionPacket(
             ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
 
@@ -412,14 +412,8 @@ public class B36 extends Module {
         // If no empty slot, use slot 0 as a fallback
         if (targetHotbarSlot == -1) targetHotbarSlot = 0;
 
-        // Swap the items - this is a direct inventory operation
-        mc.gameMode.handleInventoryMouseClick(
-            mc.player.containerMenu.containerId,
-            tntInvSlot,          // Source slot
-            targetHotbarSlot,    // Target slot
-            ClickType.SWAP, // Action type - swap the items
-            mc.player            // Player
-        );
+        // Swap the items using InvUtils
+        InvUtils.quickSwap().from(tntInvSlot).to(targetHotbarSlot);
 
         // Return true to indicate success
         return true;

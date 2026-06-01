@@ -1,15 +1,10 @@
 package com.AutoBookshelf.addon.modules;
 
 import meteordevelopment.meteorclient.systems.modules.Category;
-
-import java.io.File;
-import java.io.IOException;
-import java.io.FileReader;
-import java.io.BufferedReader;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
+import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
-
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
@@ -19,7 +14,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
@@ -28,6 +22,8 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
+
+import java.io.*;
 
 public class AutoLogin extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -102,7 +98,6 @@ public class AutoLogin extends Module {
 
     private int originalSelectedSlot = -1;
     private int bookSlot = -1;
-    private boolean didSwap = false;
     private int timeout = 0;
 
     public AutoLogin(Category cat) {
@@ -165,7 +160,6 @@ public class AutoLogin extends Module {
 
         originalSelectedSlot = mc.player.getInventory().getSelectedSlot();
         bookSlot = -1;
-        didSwap = false;
         bookStage = 0;
         bookDelayTicks = 0;
         timeout = 0;
@@ -210,23 +204,9 @@ public class AutoLogin extends Module {
                     return;
                 }
 
-                if (bookSlot != originalSelectedSlot) {
-                    if (bookSlot < 9) {
-                        mc.player.getInventory().setSelectedSlot(bookSlot);
-                        didSwap = false;
-                    } else {
-                        mc.gameMode.handleInventoryMouseClick(
-                            mc.player.inventoryMenu.containerId,
-                            bookSlot,
-                            originalSelectedSlot,
-                            ClickType.SWAP,
-                            mc.player
-                        );
-                        didSwap = true;
-                    }
-                } else {
-                    didSwap = false;
-                }
+                // Move book from its slot to the currently selected hotbar slot (originalSelectedSlot)
+                // This performs a swap if the target slot is occupied, keeping the old item.
+                InvUtils.move().from(bookSlot).to(originalSelectedSlot);
 
                 if (onBookInHand != null) {
                     onBookInHand.run();
@@ -240,18 +220,10 @@ public class AutoLogin extends Module {
                 bookStage = 3;
             }
             case 3 -> {
-                if (didSwap) {
-                    mc.gameMode.handleInventoryMouseClick(
-                        mc.player.inventoryMenu.containerId,
-                        bookSlot,
-                        originalSelectedSlot,
-                        ClickType.SWAP,
-                        mc.player
-                    );
-                }
-                if (mc.player.getInventory().getSelectedSlot() != originalSelectedSlot) {
-                    mc.player.getInventory().setSelectedSlot(originalSelectedSlot);
-                }
+                // Move the book (now in originalSelectedSlot) back to its original slot (bookSlot).
+                // This restores the old item to the selected slot.
+                InvUtils.move().from(originalSelectedSlot).to(bookSlot);
+
                 if (onBookReturned != null) {
                     onBookReturned.run();
                 }
@@ -288,7 +260,6 @@ public class AutoLogin extends Module {
         onBookReturned = null;
         originalSelectedSlot = -1;
         bookSlot = -1;
-        didSwap = false;
         timeout = 0;
     }
 
@@ -327,7 +298,7 @@ public class AutoLogin extends Module {
     private void sendMessage(String msg) {
         info(msg);
         if (mc.player != null) {
-            mc.player.displayClientMessage(Component.literal(msg), true);
+            mc.player.sendSystemMessage(Component.literal(msg));
         }
     }
 
@@ -335,22 +306,23 @@ public class AutoLogin extends Module {
     private void onTick(TickEvent.Post event) {
         if (isActive()) updateBookProcessing();
 
+        // Server-only check
         if (serverOnly.get() && mc.getSingleplayerServer() != null && mc.getSingleplayerServer().isSingleplayer()) return;
 
-        if ( !(timer >= delay.get() && !loginCommand.get().isEmpty() && work) ) {
-            timer ++;
+        if (!(timer >= delay.get() && !loginCommand.get().isEmpty() && work)) {
+            timer++;
             return;
         }
 
         timer = 0;
         work = false;
-        if (!fromFile.get()){
+        if (!fromFile.get()) {
             ChatUtils.sendPlayerMsg("/" + loginCommand.get());
             return;
         }
-        if (debugPrint.get()){
+        if (debugPrint.get()) {
             info("reading file...");
-            if ( debugServer.get()){
+            if (debugServer.get()) {
                 info("Server is " + Utils.getWorldName());
             }
         }
@@ -364,7 +336,7 @@ public class AutoLogin extends Module {
             while ((line = bufferedReader.readLine()) != null) {
                 String[] Dataa = line.split(" ");
 
-                if (Dataa[0].equals(Utils.getWorldName()) && Dataa[1].equals((mc.player.getName().getString()))){
+                if (Dataa[0].equals(Utils.getWorldName()) && Dataa[1].equals((mc.player.getName().getString()))) {
                     ChatUtils.sendPlayerMsg("/login " + Dataa[2]);
                     reader.close();
                     return;

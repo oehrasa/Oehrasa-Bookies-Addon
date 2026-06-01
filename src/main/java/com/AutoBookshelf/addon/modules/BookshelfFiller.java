@@ -10,6 +10,7 @@ import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
@@ -18,7 +19,6 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -878,21 +878,9 @@ public class BookshelfFiller extends Module {
 
                 if (tempHotbarSlot == -1) {
                     tempHotbarSlot = findSwapSlot();
-                    mc.gameMode.handleInventoryMouseClick(
-                        mc.player.containerMenu.containerId,
-                        targetSlot,
-                        tempHotbarSlot,
-                        ClickType.SWAP,
-                        mc.player
-                    );
+                    InvUtils.quickSwap().from(targetSlot).to(tempHotbarSlot);
                 } else {
-                    mc.gameMode.handleInventoryMouseClick(
-                        mc.player.containerMenu.containerId,
-                        targetSlot,
-                        tempHotbarSlot,
-                        ClickType.SWAP,
-                        mc.player
-                    );
+                    InvUtils.quickSwap().from(targetSlot).to(tempHotbarSlot);
                 }
 
                 mc.player.getInventory().setSelectedSlot(tempHotbarSlot);
@@ -1267,13 +1255,7 @@ public class BookshelfFiller extends Module {
                     int swapSlot = findSwapSlot();
 
                     if (finalBookSlot >= 9) {
-                        mc.gameMode.handleInventoryMouseClick(
-                            mc.player.containerMenu.containerId,
-                            finalBookSlot,
-                            swapSlot,
-                            ClickType.SWAP,
-                            mc.player
-                        );
+                        InvUtils.quickSwap().from(finalBookSlot).to(swapSlot);
                         mc.player.getInventory().setSelectedSlot(swapSlot);
                     } else {
                         mc.player.getInventory().setSelectedSlot(finalBookSlot);
@@ -1333,13 +1315,13 @@ public class BookshelfFiller extends Module {
         int x = (int) (screenWidth / 2 - (mc.font.width(displayText) * scale) / 2);
         int y = screenHeight - 50;
 
-        event.drawContext.pose().pushMatrix();
-        event.drawContext.pose().translate(x, y);
-        event.drawContext.pose().scale((float) scale, (float) scale);
+        event.graphics.pose().pushMatrix();
+        event.graphics.pose().translate(x, y);
+        event.graphics.pose().scale((float) scale, (float) scale);
 
-        event.drawContext.drawString(mc.font, displayText, 0, 0, 0xFFFFD700, true);
+        event.graphics.text(mc.font, displayText, 0, 0, 0xFFFFD700, true);
 
-        event.drawContext.pose().popMatrix();
+        event.graphics.pose().popMatrix();
     }
 
     private void displayBookInfoInChat(String title, String author) {
@@ -1572,7 +1554,9 @@ public class BookshelfFiller extends Module {
 
     private void sendMessage(String msg) {
         info(msg);
-        mc.player.displayClientMessage(Component.literal(msg), true);
+        if (mc.player != null) {
+            mc.player.sendSystemMessage(Component.literal(msg));
+        }
     }
 
     public void resetSelection() {
@@ -1597,9 +1581,9 @@ public class BookshelfFiller extends Module {
     public void onActivate() {
         fullReset();
         loadCache();
-        String toolName = selectionToolSetting.get().getName().getString();
-        String extractToolName = extractTool.get().getName().getString();
-        String counterToolName = counterTool.get().getName().getString();
+        String toolName = selectionToolSetting.get().getName(selectionToolSetting.get().getDefaultInstance()).getString();
+        String extractToolName = extractTool.get().getName(extractTool.get().getDefaultInstance()).getString();
+        String counterToolName = counterTool.get().getName(counterTool.get().getDefaultInstance()).getString();
         info("§aBookshelf Filler is activated.");
         info("§7- §f" + toolName + " §7= select area & fill");
         info("§7- §f" + extractToolName + " §7= extract books from a bookshelf");

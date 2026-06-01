@@ -50,7 +50,7 @@ public class TrackedContainer {
     public int getItemCount(String itemId) { return items.getOrDefault(itemId, 0); }
     public Map<String, Integer> getItems() { return new HashMap<>(items); }
     public List<ItemStack> getItemStacks() {
-        // If we already have stacks (e.g. freshly tracked), return them directly
+        // If we already have stacks (freshly tracked), return them directly
         if (!itemStacks.isEmpty()) {
             return new ArrayList<>(itemStacks);
         }

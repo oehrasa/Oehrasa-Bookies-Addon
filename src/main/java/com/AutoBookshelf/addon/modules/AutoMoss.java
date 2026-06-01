@@ -10,7 +10,6 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.item.BoneMealItem;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ClipContext;
@@ -302,10 +301,10 @@ public class AutoMoss extends Module {
 
             BlockState state = mc.level.getBlockState(blockPos);
             Block block = state.getBlock();
-            boolean isMoss = block.getDescriptionId().contains("moss_block");
+            String blockName = block.getDescriptionId().toLowerCase();
 
             // Skip moss blocks on cooldown
-            if (isMoss && recentlyUsedMoss.containsKey(blockPos)) {
+            if (blockName.contains("moss_block") && recentlyUsedMoss.containsKey(blockPos)) {
                 continue;
             }
 
@@ -321,7 +320,7 @@ public class AutoMoss extends Module {
                 mc.player.getInventory().setSelectedSlot(prevSelectedSlot);
 
                 // Add moss blocks to cooldown map
-                if (isMoss) {
+                if (blockName.contains("moss_block")) {
                     recentlyUsedMoss.put(new BlockPos(blockPos), mossSpreadCooldown.get());
                 }
 
@@ -499,10 +498,10 @@ public class AutoMoss extends Module {
                         if (isAzalea || isSapling) {
                             if (isAzalea) {
                                 // Use the azalea tree fraction
-                                if (mc.level.random.nextInt(10) < azaleaTreeFraction.get())
+                                if (mc.level.getRandom().nextInt(10) < azaleaTreeFraction.get())
                                     targets.add(pos);
                             } else {
-                                if (mc.level.random.nextInt(100) < treeChance.get())
+                                if (mc.level.getRandom().nextInt(100) < treeChance.get())
                                     targets.add(pos);
                             }
                             continue;
@@ -695,7 +694,7 @@ public class AutoMoss extends Module {
                     }
                 }
                 if (emptySlot != -1) {
-                    mc.gameMode.handleInventoryMouseClick(0, mossInInv, emptySlot, ClickType.SWAP, mc.player);
+                    InvUtils.quickSwap().from(mossInInv).to(emptySlot);
                     return emptySlot;
                 }
             }
@@ -713,7 +712,7 @@ public class AutoMoss extends Module {
                 if (mc.player.getInventory().getItem(i).getItem() != Items.BONE_MEAL) continue;
                 for (int j = 0; j < 9; j++) {
                     if (mc.player.getInventory().getItem(j).isEmpty()) {
-                        mc.gameMode.handleInventoryMouseClick(0, i, j, ClickType.SWAP, mc.player);
+                        InvUtils.quickSwap().from(i).to(j);
                         return j;
                     }
                 }

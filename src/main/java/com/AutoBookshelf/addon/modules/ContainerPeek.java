@@ -13,7 +13,7 @@ import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
@@ -251,7 +251,7 @@ public class ContainerPeek extends Module {
                 // 1) Standard container component
                 ItemContainerContents container = stack.get(DataComponents.CONTAINER);
                 if (container != null) {
-                    List<ItemStack> nonEmpty = container.nonEmptyStream()
+                    List<ItemStack> nonEmpty = container.nonEmptyItemCopyStream()
                         .map(ItemStack::copy)
                         .toList();
                     if (!nonEmpty.isEmpty()) {
@@ -318,7 +318,7 @@ public class ContainerPeek extends Module {
         PreviewData preview = this.currentPreview;
         if (preview == null) return;
 
-        GuiGraphics context = event.drawContext;
+        GuiGraphicsExtractor context = event.graphics;
         if (context == null) return;
 
         Vector3d vec = new Vector3d(preview.pos.getX() + 0.5, preview.pos.getY() + 0.5, preview.pos.getZ() + 0.5);
@@ -351,12 +351,12 @@ public class ContainerPeek extends Module {
 
         // Title
         if (showType.get()) {
-            context.drawString(mc.font, preview.titleText, panelX + pad, textY, 0xFFFFFF);
+            context.text(mc.font, preview.titleText, panelX + pad, textY, 0xFFFFFF);
             textY += 10;
         }
         // Position
         if (showPosition.get()) {
-            context.drawString(mc.font, preview.posText, panelX + pad, textY, 0xCCCCCC);
+            context.text(mc.font, preview.posText, panelX + pad, textY, 0xCCCCCC);
             textY += 10;
         }
 
@@ -369,7 +369,7 @@ public class ContainerPeek extends Module {
             int row = i / preview.itemsPerRow;
             int x = itemStartX + col * (iconSize.get() + pad);
             int y = itemStartY + row * (iconSize.get() + pad);
-            RenderUtils.drawItem(event.drawContext, preview.stacks.get(i), x, y, itemScale, true);
+            RenderUtils.drawItem(event.graphics, preview.stacks.get(i), x, y, itemScale, true);
         }
     }
 }

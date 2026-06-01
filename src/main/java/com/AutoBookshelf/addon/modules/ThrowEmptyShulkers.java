@@ -7,10 +7,11 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.component.DataComponents;
-import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.ItemStackTemplate;
 import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
 import java.util.ArrayList;
@@ -270,17 +271,15 @@ ThrowEmptyShulkers extends Module {
     private boolean isShulkerEmpty(ItemStack stack) {
         ItemContainerContents container = stack.get(DataComponents.CONTAINER);
         if (container == null) return true;
-        for (ItemStack stored : container.nonEmptyItems()) {
-            if (!stored.isEmpty()) return false;
-        }
-        return true;
+        // nonEmptyItems() returns Iterable<ItemStackTemplate> – if it has any item, it's not empty
+        return !container.nonEmptyItems().iterator().hasNext();
     }
 
     private boolean shulkerContainsAny(ItemStack shulker, List<Item> items) {
         ItemContainerContents container = shulker.get(DataComponents.CONTAINER);
         if (container == null) return false;
-        for (ItemStack stored : container.nonEmptyItems()) {
-            if (!stored.isEmpty() && items.contains(stored.getItem())) return true;
+        for (ItemStackTemplate stored : container.nonEmptyItems()) {
+            if (items.contains(stored.item())) return true;
         }
         return false;
     }
@@ -288,11 +287,11 @@ ThrowEmptyShulkers extends Module {
     private void executeDrop(int invSlot) {
         if (mc.player == null || mc.player.containerMenu == null) return;
         int networkSlot = (invSlot < 9) ? 36 + invSlot : invSlot;
-        mc.gameMode.handleInventoryMouseClick(
+        mc.gameMode.handleContainerInput(
             mc.player.containerMenu.containerId,
             networkSlot,
             1,
-            ClickType.THROW,
+            ContainerInput.THROW,
             mc.player
         );
     }

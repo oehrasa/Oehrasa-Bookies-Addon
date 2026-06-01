@@ -4,7 +4,7 @@ import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.entity.EntityMoveEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.mixininterface.IVec3d;
+import meteordevelopment.meteorclient.mixininterface.IVec3;               // changed
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
@@ -14,6 +14,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.vehicle.boat.Boat;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.EntityHitResult;                         // added
 import net.minecraft.world.phys.Vec3;
 import java.util.List;
 
@@ -113,7 +114,7 @@ public class BetterBoatFly extends Module {
         }
 
         assert mc.gameMode != null;
-        mc.gameMode.interact(mc.player, boat, InteractionHand.MAIN_HAND);
+        mc.gameMode.interact(mc.player, boat, new EntityHitResult(boat), InteractionHand.MAIN_HAND);   // fixed
     }
 
     @EventHandler
@@ -138,7 +139,7 @@ public class BetterBoatFly extends Module {
         else velY -= fallSpeed.get() / 20.0;
 
         boat.setYRot(mc.player.getYRot());
-        ((IVec3d) event.movement).meteor$set(velX, velY, velZ);
+        ((IVec3) event.movement).meteor$set(velX, velY, velZ);   // fixed IVec3
     }
 
     @EventHandler

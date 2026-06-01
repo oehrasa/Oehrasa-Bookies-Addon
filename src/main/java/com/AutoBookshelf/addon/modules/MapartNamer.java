@@ -17,7 +17,7 @@ import net.minecraft.network.protocol.game.ClientboundContainerClosePacket;
 import net.minecraft.network.protocol.game.ClientboundContainerSetContentPacket;
 import net.minecraft.network.protocol.game.ServerboundRenameItemPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
-import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.AnvilBlock;
@@ -287,12 +287,12 @@ public class MapartNamer extends Module {
 
         switch (mapStep) {
             case STEP_PICKUP_SOURCE -> {
-                clickSlot(currentMap.containerSlot, 0, ClickType.PICKUP);
+                clickSlot(currentMap.containerSlot, 0, ContainerInput.PICKUP);
                 mapStep = STEP_PLACE_ANVIL;
                 mapStepTimer = actionDelay.get();
             }
             case STEP_PLACE_ANVIL -> {
-                clickSlot(0, 0, ClickType.PICKUP);
+                clickSlot(0, 0, ContainerInput.PICKUP);
                 mapStep = STEP_SEND_RENAME;
                 mapStepTimer = actionDelay.get();
             }
@@ -327,7 +327,7 @@ public class MapartNamer extends Module {
                 mapStepTimer = actionDelay.get();
             }
             case STEP_PICKUP_OUTPUT -> {
-                clickSlot(2, 0, ClickType.PICKUP);
+                clickSlot(2, 0, ContainerInput.PICKUP);
                 mapStep = STEP_VERIFY_CURSOR;
                 mapStepTimer = 2;
                 verifyTimeout = 20;
@@ -349,7 +349,7 @@ public class MapartNamer extends Module {
                 }
             }
             case STEP_PLACE_SOURCE -> {
-                clickSlot(currentMap.containerSlot, 0, ClickType.PICKUP);
+                clickSlot(currentMap.containerSlot, 0, ContainerInput.PICKUP);
                 currentMap = null;
                 mapStep = -1;
 
@@ -373,7 +373,7 @@ public class MapartNamer extends Module {
         }
     }
 
-    private void clickSlot(int slot, int button, ClickType action) {
+    private void clickSlot(int slot, int button, ContainerInput action) {
         IClientPlayerInteractionManager cim = (IClientPlayerInteractionManager) mc.gameMode;
         cim.clickSlot(mc.player.containerMenu.containerId, slot, button, action, mc.player);
     }

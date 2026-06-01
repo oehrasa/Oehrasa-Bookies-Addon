@@ -9,8 +9,7 @@
   ],
   "contact": {
     "repo": "https://github.com/oehrasa",
-    "issues": "https://github.com/oehrasa/Oehrasa-Bookies-Addon/issues",
-    "sources": "https://github.com/oehrasa/Oehrasa-Bookies-Addon"
+    "issues": "https://github.com/oehrasa/Oehrasa-Bookies-Addon/issues"
   },
   "license": "GPL-3.0",
   "icon": "assets/oehrasa/textures/icon.png",
@@ -25,11 +24,16 @@
     "oehrasa-addon.mixins.json"
   ],
   "custom": {
-    "meteor-client:color": "225,225,28"
+    "meteor-client:color": "225,25,28",
+    "modmenu": {
+      "parent": {
+        "id": "meteor-client"
+      }
+    }
   },
   "depends": {
-    "java": ">=21",
-    "minecraft": ["${mc_version}"],
+    "java": ">=${jdk_version}",
+    "minecraft": "${minecraft_version}",
     "meteor-client": "*"
   }
 }

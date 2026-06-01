@@ -20,7 +20,7 @@ import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -576,7 +576,7 @@ public class ChestTrackerModule extends Module {
         if (!renderLabels.get()) return;
         if (currentSearchItem == null) return;
 
-        GuiGraphics context = event.drawContext;
+        GuiGraphicsExtractor context = event.graphics;
         double maxDist = labelMaxDistance.get();
         double maxDistSq = maxDist * maxDist;
         Vector3d tempVec = new Vector3d();
@@ -603,9 +603,9 @@ public class ChestTrackerModule extends Module {
                 matrices.translate(renderX + itemSize / 2.0f, renderY + itemSize / 2.0f);
                 matrices.scale(scale, scale);
                 matrices.translate(-8.0f, -8.0f);
-                context.renderItem(new ItemStack(currentSearchItem), 0, 0);
+                context.item(new ItemStack(currentSearchItem), 0, 0);
             } else {
-                context.renderItem(new ItemStack(currentSearchItem), renderX, renderY);
+                context.item(new ItemStack(currentSearchItem), renderX, renderY);
             }
             matrices.popMatrix();
         }
@@ -707,9 +707,9 @@ public class ChestTrackerModule extends Module {
         }
         currentSearchItem = held.getItem();
         List<TrackedContainer> results = data.searchItem(currentSearchItem);
-        if (debugMode.get()) info("Found " + results.size() + " containers with " + currentSearchItem.getName().getString());
+        if (debugMode.get())
+            info("Found " + results.size() + " containers with " + currentSearchItem.getName(currentSearchItem.getDefaultInstance()).getString());
     }
-
     private boolean isTrackableContainer(Block block) {
         if (block instanceof ChestBlock || block instanceof TrappedChestBlock) {
             return trackChests.get();

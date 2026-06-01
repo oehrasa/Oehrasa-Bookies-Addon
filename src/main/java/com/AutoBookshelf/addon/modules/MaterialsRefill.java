@@ -14,7 +14,8 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.inventory.ContainerInput;
+import net.minecraft.world.item.ItemStackTemplate;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -154,16 +155,16 @@ public class MaterialsRefill extends Module {
             if (!isShulkerBox(stack)) continue;
             ItemContainerContents container = stack.get(DataComponents.CONTAINER);
             if (container == null) continue;
-            for (ItemStack content : container.nonEmptyItems()) {
-                if (content.getItem() == currentTargetItem) {
+            for (ItemStackTemplate content : container.nonEmptyItems()) {
+                if (content.item() == currentTargetItem) {
                     shulkerSlot = i; break;
                 }
             }
             if (shulkerSlot != -1) break;
         }
         if (shulkerSlot == -1) {
-            if (PrintInfo(currentTargetItem.getName().getString(), "no shulker")) {
-                info("No shulker with " + currentTargetItem.getName().getString());
+            if (PrintInfo(currentTargetItem.getName(currentTargetItem.getDefaultInstance()).getString(), "no shulker")) {
+                info("No shulker with " + currentTargetItem.getName(currentTargetItem.getDefaultInstance()).getString());
             }
             stage = Stage.IDLE;
             resetState();
@@ -430,7 +431,7 @@ public class MaterialsRefill extends Module {
         for (int i = 0; i < 27; i++) {
             ItemStack stack = handler.getSlot(i).getItem();
             if (stack.getItem() == currentTargetItem) {
-                mc.gameMode.handleInventoryMouseClick(handler.containerId, i, 0, ClickType.QUICK_MOVE, mc.player);
+                mc.gameMode.handleContainerInput(handler.containerId, i, 0, ContainerInput.QUICK_MOVE, mc.player);
                 moved++;
 
                 // Stop if we have filled all slots

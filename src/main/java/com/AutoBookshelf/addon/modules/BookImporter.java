@@ -620,7 +620,7 @@ public class BookImporter extends Module {
     private void sendMessage(String msg) {
         info(msg);
         if (mc.player != null) {
-            mc.player.displayClientMessage(Component.literal(msg), false);
+            mc.player.sendSystemMessage(Component.literal(msg));
         }
     }
 

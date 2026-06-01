@@ -6,6 +6,7 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
@@ -13,7 +14,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.vehicle.minecart.AbstractMinecart;
-import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -319,11 +320,8 @@ public class MinecartPlacer extends Module {
     }
 
     private void placeMinecart(BlockPos railPos, int slot) {
-        // Target the center of the rail block directly
-        // This allows placing through walls
         Vec3 targetPos = Vec3.atCenterOf(railPos);
 
-        // Create a hit result pointing directly at the rail
         BlockHitResult hitResult = new BlockHitResult(
             targetPos,
             Direction.UP,
@@ -338,7 +336,7 @@ public class MinecartPlacer extends Module {
             if (slot < 9) {
                 mc.player.getInventory().setSelectedSlot(slot);
             } else {
-                // Swap to hotbar if needed
+                // Swap to hotbar if needed – find an empty hotbar slot or use slot 0
                 int tempSlot = -1;
                 for (int i = 0; i < 9; i++) {
                     if (mc.player.getInventory().getItem(i).isEmpty()) {
@@ -348,13 +346,7 @@ public class MinecartPlacer extends Module {
                 }
                 if (tempSlot == -1) tempSlot = 0;
 
-                mc.gameMode.handleInventoryMouseClick(
-                    mc.player.containerMenu.containerId,
-                    slot,
-                    tempSlot,
-                    ClickType.SWAP,
-                    mc.player
-                );
+                InvUtils.quickSwap().from(slot).to(tempSlot);
                 mc.player.getInventory().setSelectedSlot(tempSlot);
             }
 

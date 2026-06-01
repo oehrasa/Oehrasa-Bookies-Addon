@@ -1,5 +1,12 @@
-accessWidener v2 named
+accessWidener v2 official
 
+accessible class net/minecraft/world/level/chunk/PalettedContainer$Data
+accessible field net/minecraft/world/level/chunk/PalettedContainer data Lnet/minecraft/world/level/chunk/PalettedContainer$Data;
+accessible field net/minecraft/world/level/BaseSpawner spawnDelay I
+accessible field net/minecraft/world/level/BaseSpawner nextSpawnData Lnet/minecraft/world/level/SpawnData;
+accessible field net/minecraft/world/level/block/entity/DecoratedPotBlockEntity item Lnet/minecraft/world/item/ItemStack;
+accessible method net/minecraft/client/Minecraft startUseItem ()V
 accessible field net/minecraft/client/multiplayer/ClientChunkCache storage Lnet/minecraft/client/multiplayer/ClientChunkCache$Storage;
-accessible class net/minecraft/client/multiplayer/ClientChunkCache$Storage
 accessible field net/minecraft/client/multiplayer/ClientChunkCache$Storage chunks Ljava/util/concurrent/atomic/AtomicReferenceArray;
+accessible method net/minecraft/network/Connection genericsFtw (Lnet/minecraft/network/protocol/Packet;Lnet/minecraft/network/PacketListener;)V
+accessible field net/minecraft/client/multiplayer/ClientLevel blockStatePredictionHandler Lnet/minecraft/client/multiplayer/prediction/BlockStatePredictionHandler;

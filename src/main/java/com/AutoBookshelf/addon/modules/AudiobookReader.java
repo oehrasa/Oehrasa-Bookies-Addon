@@ -181,12 +181,19 @@ public class AudiobookReader extends Module {
         int x = (int) (screenWidth / 2 - (mc.font.width(displayText) * scale) / 2);
         int y = screenHeight - 70;
 
-        event.drawContext.pose().pushMatrix();
-        event.drawContext.pose().translate(x, y);
-        event.drawContext.pose().scale((float) scale, (float) scale);
+        event.graphics.pose().pushMatrix();
+        event.graphics.pose().translate(x, y);
+        event.graphics.pose().scale((float) scale, (float) scale);
 
         // Draw text
-        event.drawContext.drawString(mc.font, displayText, 0, 0, 0xFFFFD700, true);
+        event.graphics.text(
+            mc.font,
+            displayText,
+            0,
+            0,
+            0xFFFFD700,
+            true
+        );
 
         // Draw progress bar if enabled
         if (showProgressBar.get() && isReading && currentPages.size() > 0) {
@@ -195,13 +202,13 @@ public class AudiobookReader extends Module {
             int barY = mc.font.lineHeight + 2;
 
             // Background
-            event.drawContext.fill(0, barY, barWidth, barY + barHeight, 0x44000000);
+            event.graphics.fill(0, barY, barWidth, barY + barHeight, 0x44000000);
             // Global progress
             int progressWidth = (int) (barWidth * pageProgress);
-            event.drawContext.fill(0, barY, progressWidth, barY + barHeight, 0xFFFFD700);
+            event.graphics.fill(0, barY, progressWidth, barY + barHeight, 0xFFFFD700);
         }
 
-        event.drawContext.pose().popMatrix();
+        event.graphics.pose().popMatrix();
     }
 
     private void sendMessage(String msg) {
@@ -310,15 +317,15 @@ public class AudiobookReader extends Module {
 
         WrittenBookContent writtenContent = stack.get(DataComponents.WRITTEN_BOOK_CONTENT);
         if (writtenContent != null) {
-            for (Component page : writtenContent.getPages(false)) {
-                pages.add(page.getString());
+            for (Filterable<Component> page : writtenContent.pages()) {
+                pages.add(page.raw().getString());
             }
         }
 
         WritableBookContent writableContent = stack.get(DataComponents.WRITABLE_BOOK_CONTENT);
         if (writableContent != null) {
-            for (Filterable<String> pair : writableContent.pages()) {
-                pages.add(pair.get(false));
+            for (Filterable<String> page : writableContent.pages()) {
+                pages.add(page.raw());
             }
         }
 

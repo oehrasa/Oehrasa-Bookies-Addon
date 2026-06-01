@@ -4,7 +4,7 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import meteordevelopment.meteorclient.commands.Command;
-import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.client.multiplayer.ClientSuggestionProvider;          // changed
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
@@ -20,7 +20,7 @@ public class BookCommand extends Command {
     }
 
     @Override
-    public void build(LiteralArgumentBuilder<SharedSuggestionProvider> builder) {
+    public void build(LiteralArgumentBuilder<ClientSuggestionProvider> builder) {
         builder.executes(ctx -> {
             ItemStack item = getHeldBook();
 
@@ -85,13 +85,11 @@ public class BookCommand extends Command {
         return null;
     }
 
-    // Helper to escape % symbols to prevent crashes
     private String escapePercent(String input) {
         if (input == null) return "";
         return input.replace("%", "%%");
     }
 
-    // Helper to add commas without String.format
     private String addCommas(int number) {
         StringBuilder result = new StringBuilder();
         String numStr = String.valueOf(number);
