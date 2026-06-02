@@ -295,7 +295,10 @@ public class TeleportTimer extends HudElement {
         if (tpaWarmupTicks > 0 && tpaWarmupTotal > 0) visibleBars++;
         if (homeTicksRemaining > 0 && homeTotalTicks > 0) visibleBars++;
         if (tpaTicksRemaining > 0 && tpaTotalTicks > 0) visibleBars++;
-        if (visibleBars == 0) return;
+        if (visibleBars == 0) {
+            setSize(100, renderer.textHeight(false, scale) * 2);
+            return;
+        }
 
         double lineH = renderer.textHeight(false, scale);
         double barGap = 2;

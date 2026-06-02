@@ -4,7 +4,7 @@ import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.player.InvUtils;
+import meteordevelopment.meteorclient.utils.player.SlotUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.BlockItem;
@@ -243,6 +243,9 @@ public class ShulkBookRestock extends Module {
         if (itemSlot == -1) return;
 
         moveToHotbar(itemSlot, targetSlot);
+
+        // Automatically select the restocked slot so you can use the item immediately
+        mc.player.getInventory().setSelectedSlot(targetSlot);
     }
 
     private int findValidItemInInventoryExcludingHotbar() {
@@ -292,8 +295,14 @@ public class ShulkBookRestock extends Module {
 
     private void moveToHotbar(int fromSlot, int toHotbarSlot) {
         if (fromSlot < 0 || toHotbarSlot < 0 || mc.player == null || mc.gameMode == null) return;
-
-        InvUtils.quickSwap().from(fromSlot).to(toHotbarSlot);
+        int slotId = SlotUtils.indexToId(fromSlot);
+        mc.gameMode.handleContainerInput(
+            mc.player.inventoryMenu.containerId,
+            slotId,
+            toHotbarSlot,
+            ContainerInput.SWAP,
+            mc.player
+        );
     }
 
     @Override

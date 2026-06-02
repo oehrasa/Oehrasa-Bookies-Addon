@@ -6,6 +6,7 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
+import meteordevelopment.meteorclient.utils.player.SlotUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.core.BlockPos;
@@ -155,13 +156,17 @@ public class MaterialsRefill extends Module {
             if (!isShulkerBox(stack)) continue;
             ItemContainerContents container = stack.get(DataComponents.CONTAINER);
             if (container == null) continue;
-            for (ItemStackTemplate content : container.nonEmptyItems()) {
-                if (content.item() == currentTargetItem) {
-                    shulkerSlot = i; break;
+
+            // 26.1: returns real ItemStacks
+            for (ItemStack content : container.nonEmptyItemCopyStream().toList()) {
+                if (content.getItem() == currentTargetItem) {
+                    shulkerSlot = i;
+                    break;
                 }
             }
             if (shulkerSlot != -1) break;
         }
+
         if (shulkerSlot == -1) {
             if (PrintInfo(currentTargetItem.getName(currentTargetItem.getDefaultInstance()).getString(), "no shulker")) {
                 info("No shulker with " + currentTargetItem.getName(currentTargetItem.getDefaultInstance()).getString());
@@ -183,7 +188,14 @@ public class MaterialsRefill extends Module {
         }
 
         if (shulkerSlot >= 9) {
-            InvUtils.move().from(shulkerSlot).toHotbar(0);
+            int slotId = SlotUtils.indexToId(shulkerSlot);
+            mc.gameMode.handleContainerInput(
+                mc.player.inventoryMenu.containerId,
+                slotId,
+                0,
+                ContainerInput.SWAP,
+                mc.player
+            );
             shulkerSlot = 0;
             delayTicks = 2;
             return;

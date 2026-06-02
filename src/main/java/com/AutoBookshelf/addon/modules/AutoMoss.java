@@ -6,10 +6,12 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
+import meteordevelopment.meteorclient.utils.player.SlotUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.BoneMealItem;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ClipContext;
@@ -23,8 +25,8 @@ import java.util.*;
 
 public class AutoMoss extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
-    private final SettingGroup sgMoss    = settings.createGroup("Moss");
-    private final SettingGroup sgTrees   = settings.createGroup("Trees");
+    private final SettingGroup sgMoss = settings.createGroup("Moss");
+    private final SettingGroup sgTrees = settings.createGroup("Trees");
     private final SettingGroup sgRoaming = settings.createGroup("Roaming");
 
     private final Setting<Double> range = sgGeneral.add(new DoubleSetting.Builder()
@@ -401,7 +403,7 @@ public class AutoMoss extends Module {
 
         BlockPos origin = mc.player.blockPosition();
         int horiz = roamScanRadius.get();
-        int vert  = roamVerticalScan.get();
+        int vert = roamVerticalScan.get();
         int floorY = origin.getY() - 1;
         int minTargetY = floorY - maxDescend.get();
 
@@ -583,7 +585,9 @@ public class AutoMoss extends Module {
         return result.getBlockPos().equals(pos);
     }
 
-    /** True if any moss block exists within the configured range of the player. */
+    /**
+     * True if any moss block exists within the configured range of the player.
+     */
     private boolean isMossInRange() {
         double rangeSq = range.get() * range.get();
         BlockPos origin = mc.player.blockPosition();
@@ -601,7 +605,9 @@ public class AutoMoss extends Module {
         return false;
     }
 
-    /** Is this block one that moss naturally spreads onto / can be placed against? */
+    /**
+     * Is this block one that moss naturally spreads onto / can be placed against?
+     */
     private boolean isMossableSurface(BlockState state) {
         Block b = state.getBlock();
         return b == Blocks.DIRT || b == Blocks.GRASS_BLOCK || b == Blocks.STONE
@@ -620,7 +626,7 @@ public class AutoMoss extends Module {
         // Floor ring around the player
         BlockPos[] floors = {
             feet.below().north(), feet.below().south(),
-            feet.below().east(),  feet.below().west(),
+            feet.below().east(), feet.below().west(),
             feet.below().north().east(), feet.below().north().west(),
             feet.below().south().east(), feet.below().south().west()
         };
@@ -630,8 +636,8 @@ public class AutoMoss extends Module {
         maxReachSq *= maxReachSq;
 
         BlockPos bestFloor = null;
-        Vec3    bestHit   = null;
-        double   bestDistSq = Double.MAX_VALUE;
+        Vec3 bestHit = null;
+        double bestDistSq = Double.MAX_VALUE;
 
         for (BlockPos floor : floors) {
             if (!isMossableSurface(mc.level.getBlockState(floor))) continue;
@@ -646,8 +652,8 @@ public class AutoMoss extends Module {
 
             if (distSq < bestDistSq) {
                 bestDistSq = distSq;
-                bestFloor  = floor;
-                bestHit    = hitVec;
+                bestFloor = floor;
+                bestHit = hitVec;
             }
         }
 
@@ -678,14 +684,8 @@ public class AutoMoss extends Module {
         }
         // If inventory allow, move one to hotbar
         if (inventoryAllow.get()) {
-            int mossInInv = -1;
             for (int i = 9; i < 36; i++) {
-                if (mc.player.getInventory().getItem(i).getItem() == Items.MOSS_BLOCK) {
-                    mossInInv = i;
-                    break;
-                }
-            }
-            if (mossInInv != -1) {
+                if (mc.player.getInventory().getItem(i).getItem() != Items.BONE_MEAL) continue;
                 int emptySlot = -1;
                 for (int j = 0; j < 9; j++) {
                     if (mc.player.getInventory().getItem(j).isEmpty()) {
@@ -693,13 +693,20 @@ public class AutoMoss extends Module {
                         break;
                     }
                 }
-                if (emptySlot != -1) {
-                    InvUtils.quickSwap().from(mossInInv).to(emptySlot);
-                    return emptySlot;
-                }
+                if (emptySlot == -1) emptySlot = 0;
+
+                int slotId = SlotUtils.indexToId(i);
+                mc.gameMode.handleContainerInput(
+                    mc.player.inventoryMenu.containerId,
+                    slotId,
+                    emptySlot,
+                    ContainerInput.SWAP,
+                    mc.player
+                );
+                return emptySlot;
             }
         }
-        return -1;
+        return 0;
     }
 
     private int findBoneMealSlot() {
@@ -710,15 +717,26 @@ public class AutoMoss extends Module {
         if (inventoryAllow.get()) {
             for (int i = 9; i < 36; i++) {
                 if (mc.player.getInventory().getItem(i).getItem() != Items.BONE_MEAL) continue;
+                int emptySlot = -1;
                 for (int j = 0; j < 9; j++) {
                     if (mc.player.getInventory().getItem(j).isEmpty()) {
-                        InvUtils.quickSwap().from(i).to(j);
-                        return j;
+                        emptySlot = j;
+                        break;
                     }
                 }
-                break;
+                if (emptySlot == -1) emptySlot = 0;
+
+                int slotId = SlotUtils.indexToId(i);
+                mc.gameMode.handleContainerInput(
+                    mc.player.inventoryMenu.containerId,
+                    slotId,
+                    emptySlot,
+                    ContainerInput.SWAP,
+                    mc.player
+                );
+                return emptySlot;
             }
         }
-        return -1;
+        return 0;
     }
 }

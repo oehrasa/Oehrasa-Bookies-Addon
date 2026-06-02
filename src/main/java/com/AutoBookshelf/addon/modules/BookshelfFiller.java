@@ -12,6 +12,7 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
+import meteordevelopment.meteorclient.utils.player.SlotUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
@@ -19,6 +20,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -876,12 +878,16 @@ public class BookshelfFiller extends Module {
                     }
                 }
 
-                if (tempHotbarSlot == -1) {
-                    tempHotbarSlot = findSwapSlot();
-                    InvUtils.quickSwap().from(targetSlot).to(tempHotbarSlot);
-                } else {
-                    InvUtils.quickSwap().from(targetSlot).to(tempHotbarSlot);
-                }
+                if (tempHotbarSlot == -1) tempHotbarSlot = findSwapSlot();
+
+                int slotId = SlotUtils.indexToId(targetSlot);
+                mc.gameMode.handleContainerInput(
+                    mc.player.inventoryMenu.containerId,
+                    slotId,
+                    tempHotbarSlot,
+                    ContainerInput.SWAP,
+                    mc.player
+                );
 
                 mc.player.getInventory().setSelectedSlot(tempHotbarSlot);
             } else {
@@ -1255,7 +1261,14 @@ public class BookshelfFiller extends Module {
                     int swapSlot = findSwapSlot();
 
                     if (finalBookSlot >= 9) {
-                        InvUtils.quickSwap().from(finalBookSlot).to(swapSlot);
+                        int slotId = SlotUtils.indexToId(finalBookSlot);
+                        mc.gameMode.handleContainerInput(
+                            mc.player.inventoryMenu.containerId,
+                            slotId,
+                            swapSlot,
+                            ContainerInput.SWAP,
+                            mc.player
+                        );
                         mc.player.getInventory().setSelectedSlot(swapSlot);
                     } else {
                         mc.player.getInventory().setSelectedSlot(finalBookSlot);

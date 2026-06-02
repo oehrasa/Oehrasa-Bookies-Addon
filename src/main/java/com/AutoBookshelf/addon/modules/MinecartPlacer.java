@@ -8,6 +8,7 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
+import meteordevelopment.meteorclient.utils.player.SlotUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
@@ -321,51 +322,42 @@ public class MinecartPlacer extends Module {
 
     private void placeMinecart(BlockPos railPos, int slot) {
         Vec3 targetPos = Vec3.atCenterOf(railPos);
-
-        BlockHitResult hitResult = new BlockHitResult(
-            targetPos,
-            Direction.UP,
-            railPos,
-            false
-        );
-
+        BlockHitResult hitResult = new BlockHitResult(targetPos, Direction.UP, railPos, false);
         int previousSlot = mc.player.getInventory().getSelectedSlot();
 
-        Rotations.rotate(Rotations.getYaw(targetPos), Rotations.getPitch(targetPos), () -> {
-            // Switch to minecart slot
-            if (slot < 9) {
-                mc.player.getInventory().setSelectedSlot(slot);
-            } else {
-                // Swap to hotbar if needed – find an empty hotbar slot or use slot 0
-                int tempSlot = -1;
-                for (int i = 0; i < 9; i++) {
-                    if (mc.player.getInventory().getItem(i).isEmpty()) {
-                        tempSlot = i;
-                        break;
-                    }
+        // If the minecart is in the main inventory, swap it into a hotbar slot
+        if (slot >= 9) {
+            int hotbarSlot = -1;
+            for (int i = 0; i < 9; i++) {
+                if (mc.player.getInventory().getItem(i).isEmpty()) {
+                    hotbarSlot = i;
+                    break;
                 }
-                if (tempSlot == -1) tempSlot = 0;
-
-                InvUtils.quickSwap().from(slot).to(tempSlot);
-                mc.player.getInventory().setSelectedSlot(tempSlot);
             }
+            if (hotbarSlot == -1) hotbarSlot = 0;
 
-            // Place the minecart
-            mc.gameMode.useItemOn(
-                mc.player,
-                InteractionHand.MAIN_HAND,
-                hitResult
+            int slotId = SlotUtils.indexToId(slot);
+            mc.gameMode.handleContainerInput(
+                mc.player.inventoryMenu.containerId,
+                slotId,
+                hotbarSlot,
+                ContainerInput.SWAP,
+                mc.player
             );
+            slot = hotbarSlot;
+        }
 
+        mc.player.getInventory().setSelectedSlot(slot);
+
+        Rotations.rotate(Rotations.getYaw(targetPos), Rotations.getPitch(targetPos), () -> {
+            mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hitResult);
             mc.player.swing(InteractionHand.MAIN_HAND);
-
-            // Restore previous slot
-            if (previousSlot != mc.player.getInventory().getSelectedSlot()) {
-                mc.player.getInventory().setSelectedSlot(previousSlot);
-            }
         });
 
-        info("§aPlaced " + minecartType.get().name + " on " + railType.get().name + " at §f" + railPos.getX() + ", " + railPos.getY() + ", " + railPos.getZ());
+        mc.player.getInventory().setSelectedSlot(previousSlot);
+
+        info("§aPlaced " + minecartType.get().name + " on " + railType.get().name + " at §f"
+            + railPos.getX() + ", " + railPos.getY() + ", " + railPos.getZ());
     }
 
     @EventHandler
