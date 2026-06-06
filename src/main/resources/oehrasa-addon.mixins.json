@@ -6,6 +6,7 @@
     "ClientPlayerInteractionManagerMixin",
     "HandledScreenMixin",
     "InGameHudMixin",
+    "InventoryScreenMixin",
     "MixinHandledScreen"
   ],
   "injectors": {

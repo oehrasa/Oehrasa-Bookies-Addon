@@ -88,7 +88,7 @@ public class ContainerPeek extends Module {
     private final Setting<SettingColor> backgroundColor = sgGeneral.add(new ColorSetting.Builder()
         .name("background-color")
         .description("Background color of the preview panel.")
-        .defaultValue(new SettingColor(0, 0, 0, 180))
+        .defaultValue(new SettingColor(0, 0, 0, 0))
         .build()
     );
 

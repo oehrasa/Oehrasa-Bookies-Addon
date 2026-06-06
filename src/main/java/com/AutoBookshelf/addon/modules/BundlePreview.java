@@ -38,14 +38,14 @@ public class BundlePreview extends Module {
     public final Setting<IconPosition> iconPosition = sgGeneral.add(new EnumSetting.Builder<IconPosition>()
         .name("icon-position")
         .description("Position of the overlay icon on the bundle slot.")
-        .defaultValue(IconPosition.Center)
+        .defaultValue(IconPosition.TopRight)
         .build()
     );
 
     public final Setting<String> multipleText = sgGeneral.add(new StringSetting.Builder()
         .name("multiple-indicator")
         .description("Text to show when the bundle contains multiple item types.")
-        .defaultValue("+")
+        .defaultValue(" ")
         .build()
     );
 

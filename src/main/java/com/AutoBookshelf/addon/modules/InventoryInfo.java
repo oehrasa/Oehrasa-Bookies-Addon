@@ -105,6 +105,9 @@ public class InventoryInfo extends Module {
 
     @EventHandler
     private void onRenderScreen(ScreenRenderEvent event) {
+        if (mc.currentScreen instanceof HandledScreen<?> screen) {
+            refresh(screen);
+        }
         // Enable scissors that covers the entire screen, preventing clipping
         int screenWidth = mc.getWindow().getScaledWidth();
         int screenHeight = mc.getWindow().getScaledHeight();
@@ -135,7 +138,34 @@ public class InventoryInfo extends Module {
         float scale = (isCompact ? slotSize / 16.0f : 1.0f) * iconScale.get().floatValue();
 
         for (ShulkerInfo shulkerInfo : info) {
-            int count = 0, x = baseX, startY = y, maxX = baseX + slotSize;
+            int count = 0, x = baseX, startY = y;
+            int maxX = baseX;   // track the rightmost edge of this shulker's items
+
+            // count rows needed for this shulker (excluding trailing empties in full mode)
+            int nonEmpty = 0;
+            for (ItemStack s : shulkerInfo.stacks()) {
+                if (!s.isEmpty()) nonEmpty++;
+                else if (shulkerInfo.type() == Type.COMPACT) break;
+            }
+            if (nonEmpty == 0) continue;   // skip empty shulkers entirely
+
+            int rows = (nonEmpty + columns - 1) / columns;
+            int bottomY = y + rows * slotSize;
+
+            // Update maxX based on the last row (could be partial)
+            int lastRowCount = nonEmpty % columns;
+            if (lastRowCount == 0) lastRowCount = columns;
+            maxX = baseX + lastRowCount * slotSize;
+            if (rows > 1) {
+                // previous rows are full
+                maxX = Math.max(maxX, baseX + columns * slotSize);
+            }
+
+            // draw background before the items
+            event.drawContext.fill(baseX, startY, maxX, bottomY, BACKGROUND.hashCode());
+            event.drawContext.fill(baseX, startY - 1, maxX, startY, shulkerInfo.color());
+
+            // Draw items
             for (ItemStack stack : shulkerInfo.stacks()) {
                 if (shulkerInfo.type() == Type.COMPACT && stack.isEmpty()) break;
                 if (count > 0 && count % columns == 0) {
@@ -146,23 +176,22 @@ public class InventoryInfo extends Module {
                 drawScaledItem(event, stack, drawX, drawY, slotSize, scale);
                 x += slotSize;
                 count++;
-                if (x > maxX) maxX = x;
             }
-            y += slotSize;
-            if (clicked != null && clicked.x >= baseX && clicked.x <= maxX && clicked.y >= startY && clicked.y <= y) {
+
+            // Click detection uses the same maxX
+            if (clicked != null && clicked.x >= baseX && clicked.x <= maxX && clicked.y >= startY && clicked.y <= bottomY) {
                 mc.interactionManager.clickSlot(mc.player.currentScreenHandler.syncId, shulkerInfo.slot(), 0, SlotActionType.PICKUP, mc.player);
                 setClicked(null);
             }
-            event.drawContext.fill(baseX, startY, maxX, y, BACKGROUND.hashCode());
-            event.drawContext.fill(baseX, startY - 1, maxX, startY, shulkerInfo.color());
-            y += 2;
+
+            y = bottomY + 2;   // move to next shulker group, with 2px gap
         }
+
         height = y - offset;
         setClicked(null);
     }
 
     private void renderCombinedGrid(ScreenRenderEvent event, int baseX, int baseY) {
-        // Count items, remember first shulker slot, and keep the original stack
         Map<Item, Integer> combined = new HashMap<>();
         Map<Item, Integer> itemToSlot = new HashMap<>();
         Map<Item, ItemStack> itemToStack = new HashMap<>();
@@ -172,11 +201,10 @@ public class InventoryInfo extends Module {
                 Item item = stack.getItem();
                 combined.merge(item, stack.getCount(), Integer::sum);
                 itemToSlot.putIfAbsent(item, shulkerInfo.slot());
-                itemToStack.putIfAbsent(item, stack.copy());   // preserve original components
+                itemToStack.putIfAbsent(item, stack.copy());
             }
         }
 
-        // Build display list
         List<DisplayEntry> entries = new ArrayList<>();
         for (Map.Entry<Item, Integer> e : combined.entrySet()) {
             Item item = e.getKey();
@@ -184,7 +212,7 @@ public class InventoryInfo extends Module {
             int slot = itemToSlot.get(item);
             ItemStack template = itemToStack.get(item);
             ItemStack displayStack = template.copy();
-            displayStack.setCount(total);               // full total – formatCount() will abbreviate if >999
+            displayStack.setCount(total);
             entries.add(new DisplayEntry(displayStack, slot));
         }
         entries.sort(Comparator.comparingInt((DisplayEntry e) -> -e.stack().getCount()).thenComparing(e -> e.stack().getName().getString()));
@@ -195,13 +223,15 @@ public class InventoryInfo extends Module {
         float scale = (isCompact ? slotSize / 16.0f : 1.0f) * iconScale.get().floatValue();
 
         int y = baseY;
-        int maxX = baseX + slotSize;
         int startY = y;
+        int totalRows = (entries.size() + columns - 1) / columns;
+        int totalHeight = totalRows * slotSize;
+        int maxX = baseX + columns * slotSize;
+
+        event.drawContext.fill(baseX, startY, maxX, startY + totalHeight, BACKGROUND.hashCode());
+        event.drawContext.fill(baseX, startY - 1, maxX, startY, new Color(255, 255, 255, 100).hashCode());
 
         for (int i = 0; i < entries.size(); i++) {
-            if (i > 0 && i % columns == 0) {
-                y += slotSize;
-            }
             int col = i % columns;
             int row = i / columns;
             int drawX = baseX + col * slotSize;
@@ -216,14 +246,9 @@ public class InventoryInfo extends Module {
                 mc.interactionManager.clickSlot(mc.player.currentScreenHandler.syncId, entry.slot(), 0, SlotActionType.PICKUP, mc.player);
                 setClicked(null);
             }
-
-            if (drawX + slotSize > maxX) maxX = drawX + slotSize;
         }
-        y = baseY + ((entries.size() + columns - 1) / columns) * slotSize;
 
-        event.drawContext.fill(baseX, startY, maxX, y, BACKGROUND.hashCode());
-        event.drawContext.fill(baseX, startY - 1, maxX, startY, new Color(255, 255, 255, 100).hashCode());
-        height = y - offset;
+        height = (baseY + totalHeight) - offset;
         setClicked(null);
     }
 
