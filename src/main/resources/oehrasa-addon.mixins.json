@@ -3,7 +3,10 @@
   "package": "com.AutoBookshelf.addon.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "ClientPlayerInteractionManagerMixin"
+    "ClientPlayerInteractionManagerMixin",
+    "HandledScreenMixin",
+    "InGameHudMixin",
+    "MixinHandledScreen"
   ],
   "injectors": {
     "defaultRequire": 1

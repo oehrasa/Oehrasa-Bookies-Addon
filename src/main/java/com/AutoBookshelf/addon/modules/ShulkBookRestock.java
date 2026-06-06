@@ -2,7 +2,10 @@ package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.IntSetting;
+import meteordevelopment.meteorclient.settings.Setting;
+import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.ShulkerBoxBlock;
@@ -87,7 +90,7 @@ public class ShulkBookRestock extends Module {
     private int lastUsedSlot = -1;
 
     public ShulkBookRestock() {
-        super(Addon.CATEGORY, "SBB-Restock", "Automatically restocks shulkers and books in your hotbar when used");
+        super(Addon.CATEGORY2, "SBB-Restock", "Automatically restocks shulkers and books in your hotbar when used");
     }
 
     @Override

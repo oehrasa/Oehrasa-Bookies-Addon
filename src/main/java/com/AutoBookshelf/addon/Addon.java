@@ -1,16 +1,8 @@
 package com.AutoBookshelf.addon;
 
-import com.AutoBookshelf.addon.commands.BookTranslateCommand;
-import com.AutoBookshelf.addon.hud.MayaChan;
-import com.AutoBookshelf.addon.hud.ElytraTime;
-import com.AutoBookshelf.addon.hud.OnlineFriendsHUD;
-import com.AutoBookshelf.addon.hud.AnimePics;
-import com.AutoBookshelf.addon.hud.NeboM;
-import com.AutoBookshelf.addon.hud.TeleportTimer;
-import com.AutoBookshelf.addon.commands.IfpeekCommand;
-import com.AutoBookshelf.addon.commands.ShelfCommand;
-import com.AutoBookshelf.addon.commands.BookCommand;
-import com.AutoBookshelf.addon.commands.AssignOwnerCommand;
+import com.AutoBookshelf.addon.commands.*;
+import com.AutoBookshelf.addon.hud.*;
+import com.AutoBookshelf.addon.modules.*;
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
@@ -19,8 +11,6 @@ import meteordevelopment.meteorclient.systems.hud.Hud;
 import meteordevelopment.meteorclient.systems.hud.HudGroup;
 import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.systems.modules.Modules;
-
-import com.AutoBookshelf.addon.modules.*;
 import net.minecraft.item.Items;
 import org.slf4j.Logger;
 
@@ -45,6 +35,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new AudiobookReader());
         // B
         Modules.get().add(new B36());
+        Modules.get().add(new BundlePreview());
         Modules.get().add(new BeaconRange());
         Modules.get().add(new BLU27BNapalm());
         Modules.get().add(new BookImporter());
@@ -59,6 +50,7 @@ public class Addon extends MeteorAddon {
         // E I M
         Modules.get().add(new ElytraPath());
         Modules.get().add(new ItemDespawn());
+        Modules.get().add(new InventoryInfo());
         Modules.get().add(new MobOwner());
         Modules.get().add(new MapartNamer());
         Modules.get().add(new MapGridZone());
