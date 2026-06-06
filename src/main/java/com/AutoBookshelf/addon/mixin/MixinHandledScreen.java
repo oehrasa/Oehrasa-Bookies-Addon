@@ -17,13 +17,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(HandledScreen.class)
-public class MixinHandledScreen extends Screen {
+public abstract class MixinHandledScreen extends Screen {
     protected MixinHandledScreen(Text title) {
         super(title);
     }
 
-    @Inject(method = "drawMouseoverTooltip", at = @At("HEAD"))
-    private void drawMouseoverTooltipHook(DrawContext context, int x, int y, CallbackInfo ci) {
+    @Inject(method = "render", at = @At("TAIL"))
+    private void onRenderTail(DrawContext context, int mouseX, int mouseY, float delta, CallbackInfo ci) {
         MeteorClient.EVENT_BUS.post(ScreenRenderEvent.get(context, MinecraftClient.getInstance().getRenderTickCounter().getTickDelta(true)));
     }
 
@@ -31,16 +31,15 @@ public class MixinHandledScreen extends Screen {
     private void click(double mouseX, double mouseY, int button, CallbackInfoReturnable<Boolean> cir) {
         if (button != 0) return;
         InventoryInfo m = Modules.get().get(InventoryInfo.class);
-        if (!m.isActive()) return;
-        Modules.get().get(InventoryInfo.class).setClicked(new Vec2f((float) mouseX, (float) mouseY));
+        if (m == null || !m.isActive()) return;
+        m.setClicked(new Vec2f((float) mouseX, (float) mouseY));
     }
 
-    @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+    @Inject(method = "mouseScrolled", at = @At("HEAD"))
+    private void onMouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount, CallbackInfoReturnable<Boolean> cir) {
         InventoryInfo m = Modules.get().get(InventoryInfo.class);
-        if (!m.isActive() && verticalAmount == 0)
-            return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
-        m.setOffset((int) (m.getOffset() + Math.ceil(verticalAmount) * 18));
-        return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
+        if (m != null && m.isActive() && verticalAmount != 0) {
+            m.setOffset((int) (m.getOffset() + Math.ceil(verticalAmount) * 18));
+        }
     }
 }

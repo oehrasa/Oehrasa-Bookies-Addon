@@ -3,7 +3,6 @@ package com.AutoBookshelf.addon.modules;
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.BundleContentsComponent;
@@ -87,7 +86,7 @@ public class BundlePreview extends Module {
     }
 
     public BundlePreview() {
-        super(Addon.CATEGORY, "bundle-preview", "Shows an item preview overlay on bundle.");
+        super(Addon.CATEGORY, "bundle-preview", "Shows an item preview overlay on bundles.");
     }
 
     public void renderBundleOverlay(DrawContext context, int x, int y, ItemStack stack) {
@@ -108,7 +107,6 @@ public class BundlePreview extends Module {
             switch (previewMode.get()) {
                 case FirstItem -> previewStack = items.get(0).copy();
                 case MostCommon -> {
-                    // Find the most common item type and pick a stack of that type
                     Map<Item, Integer> counts = new HashMap<>();
                     for (ItemStack s : items) counts.merge(s.getItem(), s.getCount(), Integer::sum);
                     Item dominant = counts.entrySet().stream()
@@ -116,7 +114,6 @@ public class BundlePreview extends Module {
                         .map(Map.Entry::getKey)
                         .orElse(null);
                     if (dominant != null) {
-                        // Use the first stack of that dominant Mommy type
                         previewStack = items.stream()
                             .filter(s -> s.getItem() == dominant)
                             .findFirst()
@@ -131,11 +128,14 @@ public class BundlePreview extends Module {
             bundleCache.put(stack, data);
         }
 
-        // Draw the preview stack
+        // Prepare the display stack
+        ItemStack displayStack = data.previewStack.copy();
+        displayStack.setCount(1);
+
+        // Calculate position
         int border = 1;
         int effectiveSize = iconSize.get() - 2 * border;
         float scale = effectiveSize / 16.0f;
-
         int iconX, iconY;
         switch (iconPosition.get()) {
             case BottomLeft -> {
@@ -150,16 +150,21 @@ public class BundlePreview extends Module {
                 iconX = x + border;
                 iconY = y + border;
             }
-            default -> {
+            default -> { // Center
                 iconX = x + (16 - effectiveSize) / 2;
                 iconY = y + (16 - effectiveSize) / 2;
             }
         }
 
-        // Set count to 1 so the overlay doesn't show a big number
-        ItemStack displayStack = data.previewStack.copy();
-        displayStack.setCount(1);
-        RenderUtils.drawItem(context, displayStack, iconX, iconY, scale, true);
+        // Draw overlay
+        var matrices = context.getMatrices();
+        matrices.push();
+        matrices.translate(iconX, iconY, 200);
+        matrices.scale(scale, scale, 1);
+        context.drawItem(displayStack, 0, 0);
+        // drawStackOverlay triggers the map mixin (map at z=200)
+        context.drawStackOverlay(mc.textRenderer, displayStack, 0, 0);
+        matrices.pop();
 
         // Multiple indicator
         if (data.hasMultiple && !multipleText.get().isEmpty()) {

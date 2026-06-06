@@ -20,7 +20,6 @@ import net.minecraft.util.math.Vec2f;
 import java.awt.*;
 import java.util.*;
 import java.util.List;
-import java.util.Queue;
 
 public class InventoryInfo extends Module {
     private static final Color BACKGROUND = new Color(0, 0, 0, 75);
@@ -36,7 +35,7 @@ public class InventoryInfo extends Module {
     public final Setting<Boolean> combineShulkers = sgGeneral.add(new BoolSetting.Builder()
         .name("combine-shulkers")
         .description("Merge all shulker contents into a single combined grid (more compact).")
-        .defaultValue(true)
+        .defaultValue(false)
         .build()
     );
 
@@ -67,6 +66,7 @@ public class InventoryInfo extends Module {
         .build()
     );
 
+    // Compact grid settings (only used when compact is enabled)
     public final Setting<Integer> compactSlotSize = sgGeneral.add(new IntSetting.Builder()
         .name("compact-slot-size")
         .defaultValue(14)
@@ -87,7 +87,6 @@ public class InventoryInfo extends Module {
     );
 
     private final List<ShulkerInfo> info = new ArrayList<>();
-    private final Queue<Runnable> renderQueue = new ArrayDeque<>();
     private int height, offset;
     private Vec2f clicked;
 
@@ -107,7 +106,15 @@ public class InventoryInfo extends Module {
 
     @EventHandler
     private void onRenderScreen(ScreenRenderEvent event) {
-        if (info.isEmpty()) return;
+        // Enable a scissor that covers the entire screen, preventing clipping
+        int screenWidth = mc.getWindow().getScaledWidth();
+        int screenHeight = mc.getWindow().getScaledHeight();
+        event.drawContext.enableScissor(0, 0, screenWidth, screenHeight);
+
+        if (info.isEmpty()) {
+            event.drawContext.disableScissor();
+            return;
+        }
 
         int baseX = 2 + panelXOffset.get();
         int baseY = 3 + offset + panelYOffset.get();
@@ -117,6 +124,8 @@ public class InventoryInfo extends Module {
         } else {
             renderPerShulkerGrid(event, baseX, baseY);
         }
+
+        event.drawContext.disableScissor();
     }
 
     private void renderPerShulkerGrid(ScreenRenderEvent event, int baseX, int baseY) {
@@ -135,33 +144,36 @@ public class InventoryInfo extends Module {
                     y += slotSize;
                 }
                 int drawX = x, drawY = y;
-                renderQueue.add(() -> drawScaledItem(event, stack, drawX + 2, drawY, scale));
+                drawScaledItem(event, stack, drawX + 2, drawY, scale);
                 x += slotSize;
                 count++;
                 if (x > maxX) maxX = x;
             }
             y += slotSize;
             if (clicked != null && clicked.x >= baseX && clicked.x <= maxX && clicked.y >= startY && clicked.y <= y) {
-                renderQueue.add(() -> mc.interactionManager.clickSlot(mc.player.currentScreenHandler.syncId, shulkerInfo.slot(), 0, SlotActionType.PICKUP, mc.player));
+                mc.interactionManager.clickSlot(mc.player.currentScreenHandler.syncId, shulkerInfo.slot(), 0, SlotActionType.PICKUP, mc.player);
                 setClicked(null);
             }
             event.drawContext.fill(baseX, startY, maxX, y, BACKGROUND.hashCode());
             event.drawContext.fill(baseX, startY - 1, maxX, startY, shulkerInfo.color());
             y += 2;
         }
-        flushAndUpdateHeight(y);
+        height = y - offset;
+        setClicked(null);
     }
 
     private void renderCombinedGrid(ScreenRenderEvent event, int baseX, int baseY) {
-        // Count items and remember first shulker slot
+        // Count items, remember first shulker slot, and keep the original stack
         Map<Item, Integer> combined = new HashMap<>();
         Map<Item, Integer> itemToSlot = new HashMap<>();
+        Map<Item, ItemStack> itemToStack = new HashMap<>();
         for (ShulkerInfo shulkerInfo : info) {
             for (ItemStack stack : shulkerInfo.stacks()) {
                 if (stack.isEmpty()) continue;
                 Item item = stack.getItem();
                 combined.merge(item, stack.getCount(), Integer::sum);
                 itemToSlot.putIfAbsent(item, shulkerInfo.slot());
+                itemToStack.putIfAbsent(item, stack.copy());   // preserve original components
             }
         }
 
@@ -170,20 +182,18 @@ public class InventoryInfo extends Module {
         for (Map.Entry<Item, Integer> e : combined.entrySet()) {
             Item item = e.getKey();
             int total = e.getValue();
-            int max = item.getMaxCount();
             int slot = itemToSlot.get(item);
-            while (total > 0) {
-                int size = Math.min(total, max);
-                entries.add(new DisplayEntry(new ItemStack(item, size), slot));
-                total -= size;
-            }
+            ItemStack template = itemToStack.get(item);
+            ItemStack displayStack = template.copy();
+            displayStack.setCount(total);               // full total – formatCount() will abbreviate if >999
+            entries.add(new DisplayEntry(displayStack, slot));
         }
         entries.sort(Comparator.comparingInt((DisplayEntry e) -> -e.stack().getCount()).thenComparing(e -> e.stack().getName().getString()));
 
         boolean isCompact = compact.get();
         int slotSize = isCompact ? compactSlotSize.get() : 20;
         int columns = isCompact ? compactColumns.get() : 9;
-        float scale = isCompact ? slotSize / 16.0f : 1.0f;
+        float scale = (isCompact ? slotSize / 16.0f : 1.0f) * iconScale.get().floatValue();
 
         int y = baseY;
         int maxX = baseX + slotSize;
@@ -199,12 +209,12 @@ public class InventoryInfo extends Module {
             int drawY = baseY + row * slotSize;
             DisplayEntry entry = entries.get(i);
 
-            renderQueue.add(() -> drawScaledItem(event, entry.stack(), drawX + 2, drawY, scale));
+            drawScaledItem(event, entry.stack(), drawX + 2, drawY, scale);
 
             if (clicked != null
                 && clicked.x >= drawX && clicked.x <= drawX + slotSize
                 && clicked.y >= drawY && clicked.y <= drawY + slotSize) {
-                renderQueue.add(() -> mc.interactionManager.clickSlot(mc.player.currentScreenHandler.syncId, entry.slot(), 0, SlotActionType.PICKUP, mc.player));
+                mc.interactionManager.clickSlot(mc.player.currentScreenHandler.syncId, entry.slot(), 0, SlotActionType.PICKUP, mc.player);
                 setClicked(null);
             }
 
@@ -214,18 +224,13 @@ public class InventoryInfo extends Module {
 
         event.drawContext.fill(baseX, startY, maxX, y, BACKGROUND.hashCode());
         event.drawContext.fill(baseX, startY - 1, maxX, startY, new Color(255, 255, 255, 100).hashCode());
-        flushAndUpdateHeight(y);
+        height = y - offset;
+        setClicked(null);
     }
 
     private void drawScaledItem(ScreenRenderEvent event, ItemStack stack, int px, int py, float scale) {
         String countText = stack.getCount() > 999 ? formatCount(stack.getCount()) : null;
         RenderUtils.drawItem(event.drawContext, stack, px, py, scale, true, countText);
-    }
-
-    private void flushAndUpdateHeight(int bottomY) {
-        while (!renderQueue.isEmpty()) renderQueue.poll().run();
-        height = bottomY - offset;
-        setClicked(null);
     }
 
     private String formatCount(int count) {

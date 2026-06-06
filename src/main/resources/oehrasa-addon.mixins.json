@@ -5,6 +5,7 @@
   "client": [
     "ClientPlayerInteractionManagerMixin",
     "HandledScreenMixin",
+    "InGameHudMixin",
     "MixinHandledScreen"
   ],
   "injectors": {
