@@ -1,32 +1,35 @@
 package com.AutoBookshelf.addon.modules.chesttracker;
 
 import com.google.gson.JsonArray;
-import net.minecraft.registry.Registries;
-import net.minecraft.util.Identifier;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import net.minecraft.block.ShulkerBoxBlock;
+import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.ContainerComponent;
+import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.*;
 
 public class TrackedContainer {
     private final BlockPos position;
     private final String dimension;
     private String customName;
-    private final Map<String, Integer> items;
+    private final Map<String, Integer> items = new LinkedHashMap<>();
     private final List<ItemStack> itemStacks;
     private long lastUpdated;
     private String containerType;
+    private final Map<Integer, String> dominantItems = new HashMap<>();   // slot index -> item ID string
 
     public TrackedContainer(BlockPos position, String dimension, String containerType) {
         this.position = position;
         this.dimension = dimension;
         this.containerType = containerType;
-        this.items = new HashMap<>();
         this.itemStacks = new ArrayList<>();
         this.customName = null;
         this.lastUpdated = System.currentTimeMillis();
@@ -35,12 +38,25 @@ public class TrackedContainer {
     public void updateContents(List<ItemStack> stacks) {
         items.clear();
         itemStacks.clear();
+        dominantItems.clear();
+
+        int index = 0;
         for (ItemStack stack : stacks) {
             if (stack != null && !stack.isEmpty()) {
                 String itemId = Registries.ITEM.getId(stack.getItem()).toString();
                 items.put(itemId, items.getOrDefault(itemId, 0) + stack.getCount());
                 itemStacks.add(stack.copy());
+
+                // Compute dominant item for shulker boxes
+                String dominantId = getDominantShulkerItemId(stack);
+
+                if (dominantId != null) {
+                    dominantItems.put(index, dominantId);
+                }
+            } else {
+                itemStacks.add(ItemStack.EMPTY);
             }
+            index++;
         }
         this.lastUpdated = System.currentTimeMillis();
     }
@@ -101,6 +117,22 @@ public class TrackedContainer {
             itemsJson.addProperty(entry.getKey(), entry.getValue());
         }
         json.add("items", itemsJson);
+        if (!dominantItems.isEmpty()) {
+            JsonObject domJson = new JsonObject();
+            for (Map.Entry<Integer, String> entry : dominantItems.entrySet()) {
+                domJson.addProperty(entry.getKey().toString(), entry.getValue());
+            }
+            json.add("dominantItems", domJson);
+        }
+        JsonArray slotArray = new JsonArray();
+        for (ItemStack stack : itemStacks) {
+            if (stack == null || stack.isEmpty()) {
+                slotArray.add("minecraft:air");
+            } else {
+                slotArray.add(Registries.ITEM.getId(stack.getItem()).toString());
+            }
+        }
+        json.add("slotContents", slotArray);
         return json;
     }
 
@@ -125,7 +157,58 @@ public class TrackedContainer {
                 container.items.put(key, itemsJson.get(key).getAsInt());
             }
         }
+        if (json.has("slotContents")) {
+            JsonArray slotArray = json.getAsJsonArray("slotContents");
+            for (JsonElement element : slotArray) {
+                String idStr = element.getAsString();
+                if ("minecraft:air".equals(idStr)) {
+                    container.itemStacks.add(ItemStack.EMPTY);
+                } else {
+                    Identifier id = Identifier.tryParse(idStr);
+                    if (id != null) {
+                        Item item = Registries.ITEM.get(id);
+                        if (item != null) {
+                            container.itemStacks.add(new ItemStack(item));
+                        } else {
+                            container.itemStacks.add(ItemStack.EMPTY);
+                        }
+                    } else {
+                        container.itemStacks.add(ItemStack.EMPTY);
+                    }
+                }
+            }
+        }
+        if (json.has("dominantItems")) {
+            JsonObject domJson = json.getAsJsonObject("dominantItems");
+            for (Map.Entry<String, JsonElement> entry : domJson.entrySet()) {
+                try {
+                    int slot = Integer.parseInt(entry.getKey());
+                    String id = entry.getValue().getAsString();
+                    container.dominantItems.put(slot, id);
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+
         return container;
+    }
+
+    @Nullable
+    private static String getDominantShulkerItemId(ItemStack stack) {
+        if (!(stack.getItem() instanceof BlockItem bi && bi.getBlock() instanceof ShulkerBoxBlock)) return null;
+        ContainerComponent container = stack.get(DataComponentTypes.CONTAINER);
+        if (container == null) return null;
+        Map<Item, Integer> counts = new HashMap<>();
+        container.streamNonEmpty().forEach(s -> counts.merge(s.getItem(), s.getCount(), Integer::sum));
+        if (counts.isEmpty()) return null;
+        return counts.entrySet().stream()
+            .max(Map.Entry.comparingByValue())
+            .map(e -> Registries.ITEM.getId(e.getKey()).toString())
+            .orElse(null);
+    }
+
+    public Map<Integer, String> getDominantItems() {
+        return new HashMap<>(dominantItems);
     }
 
     public String getDisplayName() {
