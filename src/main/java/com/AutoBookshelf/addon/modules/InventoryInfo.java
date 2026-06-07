@@ -95,8 +95,11 @@ public class InventoryInfo extends Module {
     }
 
     public InventoryInfo() {
-        super(Addon.CATEGORY, "inventory-info", "prigozhinplugg");
+        super(Addon.CATEGORY, "Inventory-Info", "prigozhinplugg");
     }
+    //TODO Change upper-case
+    // Make Inventory-Info to also work with map-in-slot
+    // Maybe finally address Material refill placement and add profile/hold to add feature
 
     @EventHandler
     private void onTick(TickEvent.Post event) {

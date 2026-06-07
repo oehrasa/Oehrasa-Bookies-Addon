@@ -86,7 +86,7 @@ public class BundlePreview extends Module {
     }
 
     public BundlePreview() {
-        super(Addon.CATEGORY, "bundle-preview", "Shows an item preview overlay on bundles.");
+        super(Addon.CATEGORY, "Bundle-Preview", "Shows an item preview overlay on bundles.");
     }
 
     public void renderBundleOverlay(DrawContext context, int x, int y, ItemStack stack) {

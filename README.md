@@ -24,12 +24,12 @@ Tested successfully with these mods, but other might work as well
 - baritone-api-fabric-1.13.1.jar
 - BepHax-0.4.4.0.jar
 - meteor-client-1.21.4-42.jar
-- client_maps-1.3.2+1.21.4.jar (Recommended for Mapart-Namer module)
+- client_maps-1.3.2+1.21.4.jar (Not compatible with ev-mod vice-versa)
 - map-in-slot-3.3.0.jar (Recommended for Mapart-Namer module)
 
 ## Features
 
-**33 modules**, **4 commands**, **7 HUD elements**, and **1 mixin**
+**33 modules**, **4 commands**, **7 HUD elements**, and **4 mixin**
 
 ## Modules (33 total)
 <details>
@@ -45,8 +45,7 @@ Tested successfully with these mods, but other might work as well
 - **Beacon-Range** - Renders the range of powered beacons
 - **BLU-27/B-Napalm** - I love the smell of Napalm in the morning, Commit some trolling against the Vietnamese
 - **Better-BoatFly** - Transforms your boat into a plane
-- **BoatPhase6b6t** - For 6b6t BoatPhase
-- **BoatGlitch6b6t** - Dependency for BoatPhase
+- **Bundle-Preview** - Shows an item preview overlay on bundles
 - **Bookshelf-Filler** - oeh Yuri romcom bookshelves restocker
 - **Book-Import** - Automatically imports text files into signed books
 - **Cart-Placer** - Places any minecarts on any rails in range
@@ -54,7 +53,8 @@ Tested successfully with these mods, but other might work as well
 - **Chest-Tracker** - Track items in containers
 - **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block
 - **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
-- **Item-Despawn** - Highlights items that are about to despawn.
+- **Item-Despawn** - Highlights items that are about to despawn
+- **Inventory-Info** - SHoiGu!! GEraShimov!!!
 - **Map-Grid** - Highlights map grid boundaries around the player
 - **Mapart-Namer** - Auto‑names maps based on inventory slot layout
 - **Mats-Refill** - Automatically restocks materials from shulker boxes
@@ -156,6 +156,7 @@ List of addons I used as reference(skid? mwhehe), You should check them out it's
 - **[JanitorAddon](https://github.com/Sleeepyv/JanitorAddon)** - ThrowEmptyShulker
 - **[delirious](https://github.com/underscore-zi/delirious)** - Platform Builder
 - **[Trouser](https://github.com/etianl/Trouser-Streak)** - PortalPatternFinder
+- **[PathSeeker](https://github.com/FaxHack/PathSeeker)** - InventoryInfo
 
 ## Contributing
 
