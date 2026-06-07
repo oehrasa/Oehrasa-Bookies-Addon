@@ -24,7 +24,7 @@
     "oehrasa-addon.mixins.json"
   ],
   "custom": {
-    "meteor-client:color": "225,25,28",
+    "meteor-client:color": "225,225,28",
     "modmenu": {
       "parent": {
         "id": "meteor-client"

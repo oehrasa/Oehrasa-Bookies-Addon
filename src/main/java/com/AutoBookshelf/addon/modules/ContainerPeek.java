@@ -16,25 +16,26 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.decoration.ItemFrame;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.BundleContents;
 import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.BarrelBlock;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.ChestBlock;
-import net.minecraft.world.level.block.EnderChestBlock;
-import net.minecraft.world.level.block.ShulkerBoxBlock;
+import net.minecraft.world.level.block.*;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
+import org.jetbrains.annotations.Nullable;
 import org.joml.Vector3d;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 public class ContainerPeek extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -87,7 +88,7 @@ public class ContainerPeek extends Module {
         .name("background-color")
         .description("Background color of the preview panel.")
         .defaultValue(new SettingColor(0, 0, 0, 0))
-        .build()    // F ts
+        .build()
     );
 
     private final Setting<SettingColor> borderColor = sgGeneral.add(new ColorSetting.Builder()
@@ -97,7 +98,14 @@ public class ContainerPeek extends Module {
         .build()
     );
 
-    private final ChestTrackerDataV2 data = new ChestTrackerDataV2();   // fallback saved data
+    private final Setting<Boolean> shulkerIconPreview = sgGeneral.add(new BoolSetting.Builder()
+        .name("shulker-preview")
+        .description("Display a compact icon for shulker boxes instead of the full grid.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final ChestTrackerDataV2 data = new ChestTrackerDataV2();
     private BlockPos lastTargetedPos;
     private TrackedContainer lastContainer;
     private Level lastWorld;
@@ -116,7 +124,8 @@ public class ContainerPeek extends Module {
         int panelHeight,
         List<ItemStack> stacks,
         int itemsPerRow,
-        float itemScale
+        float itemScale,
+        Map<Integer, Item> dominantItems
     ) {}
 
     public ContainerPeek() {
@@ -126,7 +135,7 @@ public class ContainerPeek extends Module {
 
     @Override
     public void onActivate() {
-        data.loadData();    // load saved cache on enable
+        data.loadData();
         lastWorld = mc.level;
     }
 
@@ -137,11 +146,11 @@ public class ContainerPeek extends Module {
         lastEntity = null;
         lastEntityItems = null;
         lastEntityType = null;
+        currentPreview = null;
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        // Reload data when world changes (relog)
         if (mc.level != lastWorld) {
             lastWorld = mc.level;
             if (mc.level != null) data.loadData();
@@ -155,7 +164,6 @@ public class ContainerPeek extends Module {
 
         if (mc.player == null || mc.level == null) return;
 
-        // Clear entity data if the entity is no longer valid
         if (lastEntity != null && (lastEntity.isRemoved() || !lastEntity.isAlive())) {
             lastEntity = null;
             lastEntityItems = null;
@@ -172,7 +180,6 @@ public class ContainerPeek extends Module {
             BlockHitResult hit = (BlockHitResult) mc.hitResult;
             BlockPos pos = hit.getBlockPos();
             if (pos.equals(lastTargetedPos)) return;
-
             lastTargetedPos = pos;
 
             double dist = Math.sqrt(mc.player.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5));
@@ -183,8 +190,6 @@ public class ContainerPeek extends Module {
             }
 
             Block block = mc.level.getBlockState(pos).getBlock();
-
-            // Accept all trackable container types
             if (!(block instanceof ChestBlock || block instanceof BarrelBlock
                 || block instanceof ShulkerBoxBlock || block instanceof EnderChestBlock)) {
                 lastContainer = null;
@@ -192,40 +197,14 @@ public class ContainerPeek extends Module {
                 return;
             }
 
-            // Use active ChestTracker data if available, else fallback saved data
             String dimension = mc.level.dimension().identifier().toString();
             ChestTrackerModule tracker = Modules.get().get(ChestTrackerModule.class);
-            if (tracker != null && tracker.isActive()) {
-                lastContainer = tracker.getData().getContainer(pos, dimension);
-            } else {
-                lastContainer = data.getContainer(pos, dimension);
-            }
+            lastContainer = (tracker != null && tracker.isActive())
+                ? tracker.getData().getContainer(pos, dimension)
+                : data.getContainer(pos, dimension);
 
-            // Build lightweight preview snapshot
             if (lastContainer != null) {
-                List<ItemStack> stacks = lastContainer.getItemStacks();
-                String title = lastContainer.getCustomName() != null
-                    ? lastContainer.getCustomName()
-                    : lastContainer.getContainerType();
-
-                int itemsPerRow = maxItemsPerRow.get();
-                int total = stacks.size();
-                int rows = (int) Math.ceil((double) total / itemsPerRow);
-                int iconSizeVal = iconSize.get();
-                int pad = 2;
-                int w = itemsPerRow * iconSizeVal + (itemsPerRow + 1) * pad;
-                int h = rows * iconSizeVal + (rows + 1) * pad;
-
-                int textLines = 0;
-                if (showType.get()) textLines++;
-                if (showPosition.get()) textLines++;
-                if (textLines > 0) h += 10 * textLines + pad;
-
-                float scale = iconSizeVal / 16.0f;
-                Component titleText = Component.literal(title);
-                Component posText = Component.literal(String.format("%d, %d, %d", pos.getX(), pos.getY(), pos.getZ()));
-
-                currentPreview = new PreviewData(pos, titleText, posText, w, h, stacks, itemsPerRow, scale);
+                buildContainerPreview(pos, lastContainer);
             } else {
                 currentPreview = null;
             }
@@ -248,17 +227,15 @@ public class ContainerPeek extends Module {
                     return;
                 }
 
-                // 1) Standard container component
+                // 1) Standard container component (shulker box)
                 ItemContainerContents container = stack.get(DataComponents.CONTAINER);
                 if (container != null) {
                     List<ItemStack> nonEmpty = container.nonEmptyItemCopyStream()
                         .map(ItemStack::copy)
-                        .toList();
+                        .collect(Collectors.toList());
                     if (!nonEmpty.isEmpty()) {
                         lastEntityItems = nonEmpty;
                         lastEntityType = "shulker_box";
-
-                        // Build snapshot for entity frame
                         buildEntityPreview(entity, nonEmpty, "shulker_box");
                         return;
                     }
@@ -271,7 +248,6 @@ public class ContainerPeek extends Module {
                     bundle.itemCopyStream().forEach(s -> bundleStacks.add(s.copy()));
                     lastEntityItems = bundleStacks;
                     lastEntityType = "bundle";
-
                     buildEntityPreview(entity, bundleStacks, "bundle");
                     return;
                 }
@@ -293,8 +269,62 @@ public class ContainerPeek extends Module {
         currentPreview = null;
     }
 
+    private void buildContainerPreview(BlockPos pos, TrackedContainer container) {
+        List<ItemStack> stacks = container.getItemStacks();
+        String title = container.getCustomName() != null ? container.getCustomName() : container.getContainerType();
+
+        Map<Integer, Item> dominantMap = new HashMap<>();
+
+        // From stored dominant item data
+        for (Map.Entry<Integer, String> entry : container.getDominantItems().entrySet()) {
+            Identifier id = Identifier.tryParse(entry.getValue());
+            if (id == null) continue;
+            Item item = BuiltInRegistries.ITEM.getValue(id);
+            if (item != null) {
+                dominantMap.put(entry.getKey(), item);
+            }
+        }
+
+        // Recompute from stacks if needed
+        dominantMap.putAll(computeDominantMap(stacks));
+
+        buildPreview(pos, title, stacks, dominantMap);
+    }
+
     private void buildEntityPreview(Entity entity, List<ItemStack> stacks, String type) {
         String title = type != null ? type : "container";
+        BlockPos pos = entity.blockPosition();
+        Map<Integer, Item> dominantMap = computeDominantMap(stacks);
+        buildPreview(pos, title, stacks, dominantMap);
+    }
+
+    private Map<Integer, Item> computeDominantMap(List<ItemStack> stacks) {
+        if (!shulkerIconPreview.get()) return Collections.emptyMap();
+        Map<Integer, Item> map = new HashMap<>();
+        for (int i = 0; i < stacks.size(); i++) {
+            Item dominant = getDominantShulkerItem(stacks.get(i));
+            if (dominant != null) {
+                map.put(i, dominant);
+            }
+        }
+        return map;
+    }
+
+    @Nullable
+    private Item getDominantShulkerItem(ItemStack stack) {
+        if (!(stack.getItem() instanceof BlockItem bi && bi.getBlock() instanceof ShulkerBoxBlock)) return null;
+        ItemContainerContents container = stack.get(DataComponents.CONTAINER);
+        if (container == null) return null;
+        Map<Item, Integer> counts = new HashMap<>();
+        container.nonEmptyItemCopyStream().forEach(s -> counts.merge(s.getItem(), s.getCount(), Integer::sum));
+        if (counts.isEmpty()) return null;
+        return counts.entrySet().stream()
+            .max(Map.Entry.comparingByValue())
+            .map(Map.Entry::getKey)
+            .orElse(null);
+    }
+
+    private void buildPreview(BlockPos pos, String title, List<ItemStack> stacks, Map<Integer, Item> dominantMap) {
         int itemsPerRow = maxItemsPerRow.get();
         int total = stacks.size();
         int rows = (int) Math.ceil((double) total / itemsPerRow);
@@ -302,15 +332,18 @@ public class ContainerPeek extends Module {
         int pad = 2;
         int w = itemsPerRow * iconSizeVal + (itemsPerRow + 1) * pad;
         int h = rows * iconSizeVal + (rows + 1) * pad;
+
         int textLines = 0;
         if (showType.get()) textLines++;
         if (showPosition.get()) textLines++;
         if (textLines > 0) h += 10 * textLines + pad;
+
         float scale = iconSizeVal / 16.0f;
-        BlockPos pos = entity.blockPosition();
+
         Component titleText = Component.literal(title);
         Component posText = Component.literal(String.format("%d, %d, %d", pos.getX(), pos.getY(), pos.getZ()));
-        currentPreview = new PreviewData(pos, titleText, posText, w, h, stacks, itemsPerRow, scale);
+
+        currentPreview = new PreviewData(pos, titleText, posText, w, h, stacks, itemsPerRow, scale, dominantMap);
     }
 
     @EventHandler
@@ -330,7 +363,6 @@ public class ContainerPeek extends Module {
         int panelX = screenX - preview.panelWidth / 2;
         int panelY = screenY - preview.panelHeight - 20;
 
-        // Clamp to screen
         if (panelX < 0) panelX = 0;
         if (panelY < 0) panelY = 0;
         if (panelX + preview.panelWidth > mc.getWindow().getGuiScaledWidth())
@@ -369,7 +401,20 @@ public class ContainerPeek extends Module {
             int row = i / preview.itemsPerRow;
             int x = itemStartX + col * (iconSize.get() + pad);
             int y = itemStartY + row * (iconSize.get() + pad);
+
+            // Draw original item
             RenderUtils.drawItem(event.graphics, preview.stacks.get(i), x, y, itemScale, true);
+
+            // Overlay dominant shulker item
+            Item dominant = preview.dominantItems.get(i);
+            if (dominant != null) {
+                int border = 1;
+                int overlaySize = iconSize.get() - 2 * border;
+                float overlayScale = overlaySize / 16.0f;
+                int overlayX = x + border;
+                int overlayY = y + border;
+                RenderUtils.drawItem(event.graphics, new ItemStack(dominant), overlayX, overlayY, overlayScale, false);
+            }
         }
     }
 }
