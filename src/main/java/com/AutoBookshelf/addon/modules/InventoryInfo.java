@@ -7,7 +7,6 @@ import com.AutoBookshelf.addon.utils.Type;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.item.Item;
@@ -66,7 +65,6 @@ public class InventoryInfo extends Module {
         .build()
     );
 
-    // Compact grid settings (only used when compact is enabled)
     public final Setting<Integer> compactSlotSize = sgGeneral.add(new IntSetting.Builder()
         .name("compact-slot-size")
         .defaultValue(14)
@@ -97,9 +95,10 @@ public class InventoryInfo extends Module {
     public InventoryInfo() {
         super(Addon.CATEGORY, "Inventory-Info", "prigozhinplugg");
     }
-    //TODO Change upper-case
-    // Make Inventory-Info to also work with map-in-slot
-    // Maybe finally address Material refill placement and add profile/hold to add feature
+    //TODO
+    // Make Proper display.
+    // Add profile/hold to add, litematica Material list feature.
+    // Whisper/info panel
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
@@ -233,7 +232,17 @@ public class InventoryInfo extends Module {
 
     private void drawScaledItem(ScreenRenderEvent event, ItemStack stack, int px, int py, float scale) {
         String countText = stack.getCount() > 999 ? formatCount(stack.getCount()) : null;
-        RenderUtils.drawItem(event.drawContext, stack, px, py, scale, true, countText);
+
+        var context = event.drawContext;
+        var matrices = context.getMatrices();
+        matrices.push();
+        matrices.translate(px, py, 0);
+        matrices.scale(scale, scale, 1);
+
+        context.drawItem(stack, 0, 0);
+        context.drawStackOverlay(mc.textRenderer, stack, 0, 0, countText);
+
+        matrices.pop();
     }
 
     private String formatCount(int count) {

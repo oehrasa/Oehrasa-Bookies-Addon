@@ -1,6 +1,6 @@
 package com.AutoBookshelf.addon.mixin;
 
-import com.AutoBookshelf.addon.modules.BundlePreview;
+import com.AutoBookshelf.addon.modules.GetPreview;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
@@ -17,7 +17,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class InGameHudMixin {
     @Inject(method = "renderHotbar", at = @At("TAIL"))
     private void onRenderHotbar(DrawContext context, RenderTickCounter tickCounter, CallbackInfo ci) {
-        BundlePreview module = Modules.get().get(BundlePreview.class);
+        GetPreview module = Modules.get().get(GetPreview.class);
         if (module == null || !module.isActive()) return;
 
         MinecraftClient mc = MinecraftClient.getInstance();

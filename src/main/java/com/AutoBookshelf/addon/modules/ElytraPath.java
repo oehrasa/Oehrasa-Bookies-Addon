@@ -9,6 +9,7 @@ import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.entity.EquipmentSlot;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.util.hit.BlockHitResult;
@@ -16,7 +17,6 @@ import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
-import net.minecraft.entity.player.PlayerEntity;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -81,6 +81,13 @@ public class ElytraPath extends Module {
         .name("stop-at-block")
         .description("Stop the line at the first solid block.")
         .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> thirdPersonOnly = sgGeneral.add(new BoolSetting.Builder()
+        .name("third-person-only")
+        .description("Only render the path in third‑person view.")
+        .defaultValue(false)
         .build()
     );
 
@@ -182,13 +189,12 @@ public class ElytraPath extends Module {
     @EventHandler
     private void onRender3D(Render3DEvent event) {
         if (mc.player == null || mc.world == null) return;
+        if (thirdPersonOnly.get() && mc.options.getPerspective().isFirstPerson()) return;
 
         renderPlayerPath(event, mc.player);
-
         if (renderOtherPlayers.get()) {
             for (PlayerEntity player : mc.world.getPlayers()) {
                 if (player == mc.player) continue;
-
                 renderPlayerPath(event, player);
             }
         }

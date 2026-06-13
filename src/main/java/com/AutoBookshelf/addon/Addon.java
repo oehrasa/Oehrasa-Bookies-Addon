@@ -35,7 +35,6 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new AudiobookReader());
         // B
         Modules.get().add(new B36());
-        Modules.get().add(new BundlePreview());
         Modules.get().add(new BeaconRange());
         Modules.get().add(new BLU27BNapalm());
         Modules.get().add(new BookImporter());
@@ -45,10 +44,15 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new ChestAura());
         Modules.get().add(new ContainerPeek());
         Modules.get().add(new com.AutoBookshelf.addon.modules.chesttracker.ChestTrackerModule());
-        // E I M
+        // E G
         Modules.get().add(new ElytraPath());
+        Modules.get().add(new GetPreview());
+        // I
         Modules.get().add(new ItemDespawn());
         Modules.get().add(new InventoryInfo());
+        // K
+        Modules.get().add(new KMDB());
+        // M
         Modules.get().add(new MobOwner());
         Modules.get().add(new MapartNamer());
         Modules.get().add(new MapGridZone());

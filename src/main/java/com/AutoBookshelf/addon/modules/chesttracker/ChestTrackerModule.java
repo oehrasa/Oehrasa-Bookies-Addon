@@ -1,15 +1,13 @@
 package com.AutoBookshelf.addon.modules.chesttracker;
 
 import com.AutoBookshelf.addon.Addon;
+import meteordevelopment.meteorclient.events.game.GameLeftEvent;
+import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
 import meteordevelopment.meteorclient.events.packets.InventoryEvent;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.BlockActivateEvent;
 import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
-import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
-import net.minecraft.client.gui.screen.ingame.HandledScreen;
-import net.minecraft.text.Text;
-import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.widgets.WWidget;
@@ -25,12 +23,24 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.*;
 import net.minecraft.block.enums.ChestType;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.screen.ingame.HandledScreen;
+import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.ContainerComponent;
+import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.NbtIo;
+import net.minecraft.nbt.NbtList;
+import net.minecraft.nbt.NbtSizeTracker;
+import net.minecraft.registry.Registries;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.Slot;
+import net.minecraft.screen.slot.SlotActionType;
+import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
@@ -38,15 +48,16 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import org.joml.Vector3d;
 import org.lwjgl.glfw.GLFW;
+import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.*;
-
-import static meteordevelopment.meteorclient.utils.Utils.hasItems;
-import static meteordevelopment.meteorclient.utils.Utils.getItemsInContainerItem;
 
 public class ChestTrackerModule extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgAutoOpen = settings.createGroup("Auto-Open");
+    private final SettingGroup sgMaterial = settings.createGroup("Material Auto-Take");
     private final SettingGroup sgRender = settings.createGroup("Render");
     private final SettingGroup sgLabels = settings.createGroup("Labels");
     private final SettingGroup sgFilter = settings.createGroup("Filter");
@@ -102,6 +113,24 @@ public class ChestTrackerModule extends Module {
         .max(40)
         .sliderRange(0, 40)
         .visible(autoOpenEnabled::get)
+        .build()
+    );
+
+    public final Setting<Boolean> materialAutoTake = sgMaterial.add(new BoolSetting.Builder()
+        .name("material-auto-take")
+        .description("When auto-opening a container, pull items needed for the material list.")
+        .defaultValue(false)
+        .build()
+    );
+
+    public final Setting<Integer> maxStacksPerItem = sgMaterial.add(new IntSetting.Builder()
+        .name("max-stacks-per-item")
+        .description("Maximum stacks to pull per needed item (does not apply to whole shulker boxes).")
+        .defaultValue(2)
+        .min(1)
+        .max(10)
+        .sliderRange(1, 10)
+        .visible(materialAutoTake::get)
         .build()
     );
 
@@ -233,6 +262,7 @@ public class ChestTrackerModule extends Module {
         .build()
     );
 
+    // Data and state
     private final ChestTrackerDataV2 data;
     private Item currentSearchItem;
     private BlockPos lastInteractedBlock = null;
@@ -247,6 +277,7 @@ public class ChestTrackerModule extends Module {
     private static final int AWAITING_TIMEOUT = 40;
     private final Map<BlockPos, Integer> blockedContainers = new HashMap<>();
     private static final int BLOCKED_COOLDOWN_TICKS = 100;
+    private final Map<Identifier, Integer> materialList = new LinkedHashMap<>();
 
     public ChestTrackerModule() {
         super(Addon.CATEGORY, "Chest-Tracker", "Track items in containers.");
@@ -279,14 +310,73 @@ public class ChestTrackerModule extends Module {
         shouldAutoClose = false;
         ticksUntilClose = 0;
         blockedContainers.clear();
+        materialList.clear();
     }
 
-    // Capture right click on container blocks
+    public void setMaterialList(Map<Identifier, Integer> list) {
+        materialList.clear();
+        materialList.putAll(list);
+    }
+
+    public Map<Identifier, Integer> getMaterialList() {
+        return Collections.unmodifiableMap(materialList);
+    }
+
+    public Map<Identifier, Integer> parseNBTMaterialList(File nbtFile) throws IOException {
+        NbtSizeTracker sizeTracker = new NbtSizeTracker(0x20000000L, 100);
+        NbtCompound nbt = NbtIo.readCompressed(nbtFile.toPath(), sizeTracker);
+
+        // 1. Build palette: index -> Block
+        NbtList paletteList = nbt.getList("palette", 10);
+        Block[] palette = new Block[paletteList.size()];
+        for (int i = 0; i < paletteList.size(); i++) {
+            NbtCompound entry = paletteList.getCompound(i);
+            String rawName = entry.getString("Name");
+            // Strip block state properties (e.g., remove "[facing=north]")
+            String cleanName = rawName.contains("[") ? rawName.substring(0, rawName.indexOf('[')) : rawName;
+            Identifier blockId = Identifier.tryParse(cleanName);
+            if (blockId == null) continue;
+            Block block = Registries.BLOCK.get(blockId);
+            palette[i] = block;
+        }
+
+        // 2. Count blocks from the block list
+        Map<Block, Integer> blockCounts = new HashMap<>();
+        NbtList blockList = nbt.getList("blocks", 10);
+        for (int j = 0; j < blockList.size(); j++) {
+            NbtCompound blockEntry = blockList.getCompound(j);
+            int state = blockEntry.getInt("state");
+            if (state < 0 || state >= palette.length) continue;
+            Block block = palette[state];
+            if (block != null) {
+                blockCounts.merge(block, 1, Integer::sum);
+            }
+        }
+
+        // 3. Convert to item identifiers (block -> item)
+        Map<Identifier, Integer> materialList = new LinkedHashMap<>();
+        for (Map.Entry<Block, Integer> entry : blockCounts.entrySet()) {
+            Item item = entry.getKey().asItem();
+            Identifier id = Registries.ITEM.getId(item);
+            if (id != null) {
+                materialList.merge(id, entry.getValue(), Integer::sum);
+            }
+        }
+
+        if (debugMode.get()) {
+            info("Loaded materials:");
+            for (Map.Entry<Identifier, Integer> e : materialList.entrySet()) {
+                info("  " + e.getKey() + " : " + e.getValue());
+            }
+        }
+
+        return materialList;
+    }
+
     @EventHandler
     private void onBlockActivate(BlockActivateEvent event) {
         if (!isActive()) return;
         if (mc.player == null || mc.world == null) return;
-        // Use crosshair target to get the block position, because the event only gives state
         if (mc.crosshairTarget == null || mc.crosshairTarget.getType() != HitResult.Type.BLOCK) return;
         BlockPos pos = ((BlockHitResult) mc.crosshairTarget).getBlockPos();
         Block block = mc.world.getBlockState(pos).getBlock();
@@ -305,7 +395,6 @@ public class ChestTrackerModule extends Module {
                 int ticksRemaining = entry.getValue() - 1;
                 if (ticksRemaining <= 0) {
                     it.remove();
-                    if (debugMode.get()) info("Removed " + entry.getKey().toShortString() + " from blocked list (cooldown expired)");
                 } else {
                     entry.setValue(ticksRemaining);
                 }
@@ -317,17 +406,13 @@ public class ChestTrackerModule extends Module {
             if (!isInContainerScreen()) {
                 shouldAutoClose = false;
                 ticksUntilClose = 0;
-                if (debugMode.get()) info("Container closed manually, cancelling auto-close");
             } else if (ticksUntilClose > 0) {
                 ticksUntilClose--;
-                if (ticksUntilClose % 5 == 0 && debugMode.get()) {
-                    info("Auto-close countdown: " + ticksUntilClose + " ticks remaining");
-                }
                 if (ticksUntilClose == 0) {
                     shouldAutoClose = false;
                     if (mc.player != null) {
                         mc.player.closeHandledScreen();
-                        if (debugMode.get()) info("Auto-closed container after " + autoOpenCloseDelay.get() + " tick delay");
+                        if (debugMode.get()) info("Auto-closed container after delay");
                     }
                 }
             }
@@ -338,7 +423,7 @@ public class ChestTrackerModule extends Module {
             if (isInContainerScreen()) {
                 awaitingTicks++;
                 if (awaitingTicks > 5) {
-                    if (debugMode.get()) info("InventoryEvent didn't fire : manually processing container");
+                    // Manual processing if inventory event didn't fire
                     ScreenHandler handler = mc.player.currentScreenHandler;
                     if (handler != null && currentOpenPositions[0] != null) {
                         BlockPos trackPos = currentOpenPositions[0];
@@ -355,36 +440,31 @@ public class ChestTrackerModule extends Module {
                             ItemStack stack = slot.getStack();
                             if (!stack.isEmpty()) {
                                 items.add(stack.copy());
-                                if (hasItems(stack)) {
-                                    ItemStack[] nestedItems = new ItemStack[27];
-                                    getItemsInContainerItem(stack, nestedItems);
-                                    for (ItemStack nestedItem : nestedItems) {
-                                        if (nestedItem != null && !nestedItem.isEmpty()) {
-                                            items.add(nestedItem.copy());
-                                        }
-                                    }
-                                }
                             }
                         }
                         String currentDim = getCurrentDimension();
                         String containerType = getContainerType(trackPos);
                         data.trackContainer(trackPos, currentDim, containerType, items);
-                        if (debugMode.get()) info("Manually tracked " + containerType + " (" + items.size() + " items)");
-                        int closeDelay = autoOpenCloseDelay.get();
-                        if (closeDelay == 0) {
-                            mc.player.closeHandledScreen();
-                            if (debugMode.get()) info("Closed immediately (0 tick delay)");
+
+                        // Auto-take
+                        if (materialAutoTake.get() && !materialList.isEmpty()) {
+                            takeNeededItems(handler, containerSlots);
+                            // After taking, block this container so auto-open moves on
+                            blockedContainers.put(trackPos.toImmutable(), BLOCKED_COOLDOWN_TICKS);
+                            // takeNeededItems already sets shouldAutoClose – no extra logic needed
                         } else {
-                            shouldAutoClose = true;
-                            ticksUntilClose = closeDelay;
-                            if (debugMode.get()) info("Set shouldAutoClose=true, ticksUntilClose=" + closeDelay);
+                            int closeDelay = autoOpenCloseDelay.get();
+                            if (closeDelay == 0) mc.player.closeHandledScreen();
+                            else {
+                                shouldAutoClose = true;
+                                ticksUntilClose = closeDelay;
+                            }
                         }
                         currentOpenPositions = new BlockPos[2];
                     } else {
                         awaiting = false;
                         awaitingTicks = 0;
                         currentOpenPositions = new BlockPos[2];
-                        if (debugMode.get()) info("Reset awaiting flag (can't process inventory)");
                     }
                 }
             } else {
@@ -392,20 +472,25 @@ public class ChestTrackerModule extends Module {
                 if (awaitingTicks > AWAITING_TIMEOUT) {
                     if (currentOpenPositions[0] != null) {
                         blockedContainers.put(currentOpenPositions[0], BLOCKED_COOLDOWN_TICKS);
-                        if (debugMode.get()) info("Container at " + currentOpenPositions[0].toShortString() + " failed to open (timeout), adding to blocked list");
                     }
                     awaiting = false;
                     awaitingTicks = 0;
                     currentOpenPositions = new BlockPos[2];
-                    if (debugMode.get()) info("Reset awaiting flag (timeout - container never opened or closed without inventory event)");
                 }
             }
         }
 
-        // Auto-open loop
+        // Container opening loop
+        // This loop runs when:
+        //  - auto-open is enabled (to discover untracked containers), OR
+        //  - material auto-take is enabled and we have a material list (to open tracked containers)
         if (isInContainerScreen()) return;
-        if (!autoOpenEnabled.get()) return;
         if (awaiting) return;
+
+        boolean shouldSearch = autoOpenEnabled.get()
+            || (materialAutoTake.get() && !materialList.isEmpty());
+        if (!shouldSearch) return;
+
         if (tickCounter < autoOpenDelay.get()) {
             tickCounter++;
             return;
@@ -425,53 +510,66 @@ public class ChestTrackerModule extends Module {
                     BlockState blockState = mc.world.getBlockState(blockPos);
                     Block block = blockState.getBlock();
                     if (!isTrackableContainer(block)) continue;
+                    if (blockedContainers.containsKey(blockPos)) continue;
+
+                    // Determine whether the container should be opened
                     boolean isAlreadyTracked = data.getContainer(blockPos, currentDim) != null;
                     if (!isAlreadyTracked && block instanceof ChestBlock) {
                         ChestType chestType = blockState.get(ChestBlock.CHEST_TYPE);
                         if (chestType == ChestType.LEFT || chestType == ChestType.RIGHT) {
                             Direction facing = blockState.get(ChestBlock.FACING);
                             BlockPos otherHalf = blockPos.offset(chestType == ChestType.LEFT ? facing.rotateYClockwise() : facing.rotateYCounterclockwise());
-                            if (data.getContainer(otherHalf, currentDim) != null) {
-                                isAlreadyTracked = true;
+                            if (data.getContainer(otherHalf, currentDim) != null) isAlreadyTracked = true;
+                        }
+                    }
+
+                    boolean shouldOpen = false;
+
+                    // Untracked containers are only opened when auto-open is enabled
+                    if (autoOpenEnabled.get() && !isAlreadyTracked) {
+                        shouldOpen = true;
+                    }
+                    // Already-tracked containers are opened only if they contain a needed item
+                    else if (materialAutoTake.get() && !materialList.isEmpty() && isAlreadyTracked) {
+                        TrackedContainer tc = data.getContainer(blockPos, currentDim);
+                        if (tc != null) {
+                            for (Identifier neededId : materialList.keySet()) {
+                                if (tc.getItems().containsKey(neededId.toString())) {
+                                    shouldOpen = true;
+                                    break;
+                                }
                             }
                         }
                     }
-                    if (blockedContainers.containsKey(blockPos)) continue;
-                    if (!isAlreadyTracked) {
-                        Vec3d vec = new Vec3d(blockPos.getX() + 0.5, blockPos.getY() + 0.5, blockPos.getZ() + 0.5);
-                        BlockHitResult hitResult = new BlockHitResult(vec, Direction.UP, blockPos, false);
-                        ActionResult result = mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hitResult);
-                        if (result == ActionResult.SUCCESS || result == ActionResult.CONSUME) {
-                            blockedContainers.remove(blockPos);
-                            awaiting = true;
-                            awaitingTicks = 0;
-                            currentOpenPositions[0] = blockPos.toImmutable();
-                            currentOpenPositions[1] = null;
-                            if (block instanceof ChestBlock) {
-                                ChestType chestType = blockState.get(ChestBlock.CHEST_TYPE);
-                                if (chestType == ChestType.LEFT || chestType == ChestType.RIGHT) {
-                                    Direction facing = blockState.get(ChestBlock.FACING);
-                                    BlockPos otherPos = blockPos.offset(chestType == ChestType.LEFT ? facing.rotateYClockwise() : facing.rotateYCounterclockwise());
-                                    currentOpenPositions[1] = otherPos;
-                                }
+
+                    if (!shouldOpen) continue;
+
+                    Vec3d vec = new Vec3d(blockPos.getX() + 0.5, blockPos.getY() + 0.5, blockPos.getZ() + 0.5);
+                    BlockHitResult hitResult = new BlockHitResult(vec, Direction.UP, blockPos, false);
+                    ActionResult result = mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hitResult);
+                    if (result == ActionResult.SUCCESS || result == ActionResult.CONSUME) {
+                        blockedContainers.remove(blockPos);
+                        awaiting = true;
+                        awaitingTicks = 0;
+                        currentOpenPositions[0] = blockPos.toImmutable();
+                        currentOpenPositions[1] = null;
+                        if (block instanceof ChestBlock) {
+                            ChestType chestType = blockState.get(ChestBlock.CHEST_TYPE);
+                            if (chestType == ChestType.LEFT || chestType == ChestType.RIGHT) {
+                                Direction facing = blockState.get(ChestBlock.FACING);
+                                BlockPos otherPos = blockPos.offset(chestType == ChestType.LEFT ? facing.rotateYClockwise() : facing.rotateYCounterclockwise());
+                                currentOpenPositions[1] = otherPos;
                             }
-                            mc.player.swingHand(Hand.MAIN_HAND);
-                            if (debugMode.get()) info("Auto-opening container at " + blockPos.toShortString());
-                            return;
-                        } else if (result == ActionResult.FAIL) {
-                            blockedContainers.put(blockPos.toImmutable(), BLOCKED_COOLDOWN_TICKS);
-                            if (debugMode.get()) info("Container at " + blockPos.toShortString() + " is blocked, adding to cooldown list");
-                            continue;
                         }
+                        mc.player.swingHand(Hand.MAIN_HAND);
+                        if (debugMode.get()) info("Auto-opening container at " + blockPos.toShortString());
+                        return;
+                    } else if (result == ActionResult.FAIL) {
+                        blockedContainers.put(blockPos.toImmutable(), BLOCKED_COOLDOWN_TICKS);
                     }
                 }
             }
         }
-    }
-
-    @EventHandler
-    private void onGameLeft(GameLeftEvent event) {
-        data.saveData();
     }
 
     @EventHandler
@@ -490,59 +588,172 @@ public class ChestTrackerModule extends Module {
         awaiting = false;
         awaitingTicks = 0;
         blockedContainers.remove(trackPos);
-        if (currentOpenPositions[1] != null) {
-            blockedContainers.remove(currentOpenPositions[1]);
-        }
-        if (debugMode.get()) info("Inventory event fired, wasAutoOpened: " + wasAutoOpened);
+        if (currentOpenPositions[1] != null) blockedContainers.remove(currentOpenPositions[1]);
+
+        // Track items
         List<ItemStack> items = new ArrayList<>();
         int containerSlots = handler.slots.size() - 36;
         for (int i = 0; i < containerSlots && i < handler.slots.size(); i++) {
             Slot slot = handler.slots.get(i);
-            ItemStack stack = slot.getStack();
-            if (!stack.isEmpty()) {
-                items.add(stack.copy());
-            }
+            if (!slot.getStack().isEmpty()) items.add(slot.getStack().copy());
         }
-        String currentDim = getCurrentDimension();
-        String containerType = getContainerType(trackPos);
-        data.trackContainer(trackPos, currentDim, containerType, items);
-        if (debugMode.get()) info("Tracked " + containerType + " (" + items.size() + " items)");
-        if (wasAutoOpened) {
+        data.trackContainer(trackPos, getCurrentDimension(), getContainerType(trackPos), items);
+        if (debugMode.get()) info("Tracked " + getContainerType(trackPos) + " (" + items.size() + " items)");
+
+        // Auto-take
+        if (wasAutoOpened && materialAutoTake.get() && !materialList.isEmpty()) {
+            takeNeededItems(handler, containerSlots);
+            // After taking, block this container so auto-open moves on
+            blockedContainers.put(trackPos.toImmutable(), BLOCKED_COOLDOWN_TICKS);
+            // takeNeededItems already sets shouldAutoClose
+        } else if (wasAutoOpened) {
+            // Only close if we didn’t take anything
             int closeDelay = autoOpenCloseDelay.get();
-            if (debugMode.get()) info("Scheduling auto-close with delay: " + closeDelay + " ticks");
-            if (closeDelay == 0) {
-                mc.player.closeHandledScreen();
-                if (debugMode.get()) info("Closed immediately (0 tick delay)");
-            } else {
+            if (closeDelay == 0) mc.player.closeHandledScreen();
+            else {
                 shouldAutoClose = true;
                 ticksUntilClose = closeDelay;
-                if (debugMode.get()) info("Set shouldAutoClose=true, ticksUntilClose=" + closeDelay);
             }
         }
+
         lastInteractedBlock = null;
         currentOpenPositions = new BlockPos[2];
+    }
+
+    private void takeNeededItems(ScreenHandler handler, int containerSlots) {
+        if (materialList.isEmpty()) return;
+
+        int emptySlots = 0;
+        for (int i = 0; i < 36; i++) {
+            if (mc.player.getInventory().getStack(i).isEmpty()) emptySlots++;
+        }
+        if (emptySlots <= 0) return;
+
+        int maxStacks = maxStacksPerItem.get();
+        Set<Identifier> toRemove = new HashSet<>();
+        boolean tookSomething = false;
+
+        Iterator<Map.Entry<Identifier, Integer>> it = materialList.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<Identifier, Integer> entry = it.next();
+            Item neededItem = Registries.ITEM.get(entry.getKey());
+            if (neededItem == null) continue;
+
+            int stillMissing = entry.getValue();
+            if (stillMissing <= 0) {
+                toRemove.add(entry.getKey());
+                continue;
+            }
+
+            // 1. Try to find a shulker box containing the item
+            int bestShulkerSlot = -1;
+            int bestCoverage = 0;
+            ContainerComponent bestContents = null;
+            for (int slot = 0; slot < containerSlots; slot++) {
+                ItemStack stack = handler.getSlot(slot).getStack();
+                if (!isShulkerBox(stack)) continue;
+                ContainerComponent contents = stack.get(DataComponentTypes.CONTAINER);
+                if (contents == null) continue;
+
+                int coverage = 0;
+                boolean hasTarget = false;
+                for (ItemStack inner : contents.iterateNonEmpty()) {
+                    Identifier innerId = Registries.ITEM.getId(inner.getItem());
+                    if (materialList.containsKey(innerId) && materialList.get(innerId) > 0) {
+                        coverage++;
+                        if (innerId.equals(entry.getKey())) hasTarget = true;
+                    }
+                }
+                if (hasTarget && coverage > bestCoverage) {
+                    bestCoverage = coverage;
+                    bestShulkerSlot = slot;
+                    bestContents = contents;
+                }
+            }
+
+            if (bestShulkerSlot != -1 && bestContents != null) {
+                mc.interactionManager.clickSlot(handler.syncId, bestShulkerSlot, 0,
+                    SlotActionType.QUICK_MOVE, mc.player);
+                tookSomething = true;
+
+                // Update material list with everything inside the shulker
+                for (ItemStack inner : bestContents.iterateNonEmpty()) {
+                    Identifier innerId = Registries.ITEM.getId(inner.getItem());
+                    if (materialList.containsKey(innerId)) {
+                        int newMissing = materialList.get(innerId) - inner.getCount();
+                        if (newMissing <= 0) toRemove.add(innerId);
+                        else materialList.put(innerId, newMissing);
+                    }
+                }
+                emptySlots--;
+                break; // only one action per container
+            }
+
+            // 2. No suitable shulker – take loose stacks
+            int takenStacks = 0;
+            for (int slot = 0; slot < containerSlots; slot++) {
+                ItemStack stack = handler.getSlot(slot).getStack();
+                if (stack.getItem() == neededItem) {
+                    if (stillMissing <= 0 || takenStacks >= maxStacks) break;
+                    mc.interactionManager.clickSlot(handler.syncId, slot, 0,
+                        SlotActionType.QUICK_MOVE, mc.player);
+                    tookSomething = true;
+                    int removed = Math.min(stillMissing, stack.getCount());
+                    stillMissing -= removed;
+                    takenStacks++;
+                    break; // only one stack per container
+                }
+            }
+
+            if (stillMissing <= 0) toRemove.add(entry.getKey());
+            else materialList.put(entry.getKey(), stillMissing);
+
+            if (tookSomething) break; // one action per container
+        }
+
+        for (Identifier id : toRemove) materialList.remove(id);
+
+        // Force close after any action so auto-open continues
+        if (tookSomething) {
+            shouldAutoClose = true;
+            ticksUntilClose = Math.max(autoOpenCloseDelay.get(), 2);
+        }
+    }
+
+    private boolean isShulkerBox(ItemStack stack) {
+        return stack.getItem() instanceof BlockItem bi && bi.getBlock() instanceof ShulkerBoxBlock;
+    }
+
+    @EventHandler
+    private void onGameLeft(GameLeftEvent event) {
+        data.saveData();
     }
 
     @EventHandler
     private void onRender(Render3DEvent event) {
         if (mc.player == null || mc.world == null) return;
         if (!renderTracked.get() && !renderSearchResults.get()) return;
+
         long currentTime = System.currentTimeMillis();
         if (currentTime - lastRenderCacheUpdate > 1000) {
             String currentDim = getCurrentDimension();
             renderCache = new ArrayList<>(data.getAllContainers(currentDim));
             lastRenderCacheUpdate = currentTime;
         }
+
         double maxDist = renderDistance.get();
         double maxDistSq = maxDist * maxDist;
+
         for (TrackedContainer container : renderCache) {
             BlockPos pos = container.getPosition();
             double distSq = mc.player.squaredDistanceTo(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
             if (distSq > maxDistSq) continue;
+
             boolean isSearchResult = currentSearchItem != null && container.containsItem(currentSearchItem);
             boolean shouldRender = false;
             SettingColor sideCol = null;
             SettingColor lineCol = null;
+
             if (isSearchResult && renderSearchResults.get()) {
                 shouldRender = true;
                 sideCol = searchColor.get();
@@ -552,7 +763,9 @@ public class ChestTrackerModule extends Module {
                 sideCol = trackedColor.get();
                 lineCol = trackedColor.get();
             }
+
             if (!shouldRender) continue;
+
             event.renderer.box(pos, sideCol, lineCol, shapeMode.get(), 0);
             BlockPos otherHalf = findDoubleChestOtherHalf(pos);
             if (otherHalf != null) {
@@ -602,7 +815,6 @@ public class ChestTrackerModule extends Module {
         }
     }
 
-    // Remove entries when a block is broken/mined
     @EventHandler
     private void onBlockUpdate(BlockUpdateEvent event) {
         if (!isActive()) return;
@@ -614,7 +826,7 @@ public class ChestTrackerModule extends Module {
         Block block = newState.getBlock();
         if (!isTrackableContainer(block)) {
             data.removeContainer(pos, dim);
-            if (debugMode.get()) info("Removed container at " + pos.toShortString() + " (block broken/replaced)");
+            if (debugMode.get()) info("Removed container at " + pos.toShortString() + " (block broken)");
         }
     }
 
@@ -622,7 +834,6 @@ public class ChestTrackerModule extends Module {
     private void onOpenScreen(OpenScreenEvent event) {
         if (!isActive()) return;
         if (!(event.screen instanceof HandledScreen<?> handledScreen)) return;
-
         BlockPos trackPos = currentOpenPositions[0];
         if (trackPos == null) trackPos = lastInteractedBlock;
         if (trackPos == null) return;
@@ -635,7 +846,6 @@ public class ChestTrackerModule extends Module {
         TrackedContainer tracked = data.getContainer(trackPos, currentDim);
         if (tracked != null && !screenTitle.equals(defaultName)) {
             tracked.setCustomName(screenTitle);
-            if (debugMode.get()) info("Captured custom name: " + screenTitle);
         }
     }
 
@@ -659,52 +869,13 @@ public class ChestTrackerModule extends Module {
                     }
                 }
             }
-        } catch (Exception e) {}
+        } catch (Exception ignored) {
+        }
         return null;
     }
 
-    @Override
-    public WWidget getWidget(GuiTheme theme) {
-        WTable table = theme.table();
-        WButton openBrowser = table.add(theme.button("Open Browser (" + browserKey.get() + ")")).expandX().widget();
-        openBrowser.action = () -> mc.setScreen(new ChestTrackerScreen(this));
-        table.row();
-        WButton searchHeld = table.add(theme.button("Search Held Item")).expandX().widget();
-        searchHeld.action = this::searchHeldItem;
-        table.row();
-        WButton clearSearch = table.add(theme.button("Clear Search")).expandX().widget();
-        clearSearch.action = () -> {
-            currentSearchItem = null;
-            if (debugMode.get()) info("Search cleared");
-        };
-        table.row();
-        WButton saveData = table.add(theme.button("Save Data")).expandX().widget();
-        saveData.action = () -> data.saveData();
-        table.row();
-        WButton clearAll = table.add(theme.button("Clear All Data")).expandX().widget();
-        clearAll.action = () -> {
-            data.clearAll();
-            if (debugMode.get()) info("All data cleared");
-        };
-        return table;
-    }
-
-    private void searchHeldItem() {
-        if (mc.player == null) return;
-        ItemStack held = mc.player.getMainHandStack();
-        if (held.isEmpty()) {
-            if (debugMode.get()) warning("No item in hand");
-            return;
-        }
-        currentSearchItem = held.getItem();
-        List<TrackedContainer> results = data.searchItem(currentSearchItem);
-        if (debugMode.get()) info("Found " + results.size() + " containers with " + currentSearchItem.getName().getString());
-    }
-
     private boolean isTrackableContainer(Block block) {
-        if (block instanceof ChestBlock || block instanceof TrappedChestBlock) {
-            return trackChests.get();
-        }
+        if (block instanceof ChestBlock || block instanceof TrappedChestBlock) return trackChests.get();
         if (block instanceof BarrelBlock) return trackBarrels.get();
         if (block instanceof ShulkerBoxBlock) return trackShulkers.get();
         if (block instanceof EnderChestBlock) return trackEnderChests.get();
@@ -737,9 +908,91 @@ public class ChestTrackerModule extends Module {
         return mc.world.getRegistryKey().getValue().toString();
     }
 
-    public Item getCurrentSearchItem() { return currentSearchItem; }
-    public void setCurrentSearchItem(Item item) { this.currentSearchItem = item; }
-    public ChestTrackerDataV2 getData() { return data; }
-    public void searchItem(Item item) { currentSearchItem = item; }
-    public double getRenderDistance() { return renderDistance.get(); }
+    // Public accessors (used by screen)
+    public Item getCurrentSearchItem() {
+        return currentSearchItem;
+    }
+
+    public void setCurrentSearchItem(Item item) {
+        this.currentSearchItem = item;
+    }
+
+    public ChestTrackerDataV2 getData() {
+        return data;
+    }
+
+    public void searchItem(Item item) {
+        currentSearchItem = item;
+    }
+
+    public double getRenderDistance() {
+        return renderDistance.get();
+    }
+
+    @Override
+    public WWidget getWidget(GuiTheme theme) {
+        WTable table = theme.table();
+
+        WButton openBrowser = table.add(theme.button("Open Browser (" + browserKey.get() + ")")).expandX().widget();
+        openBrowser.action = () -> mc.setScreen(new ChestTrackerScreen(this));
+        table.row();
+
+        WButton searchHeld = table.add(theme.button("Search Held Item")).expandX().widget();
+        searchHeld.action = this::searchHeldItem;
+        table.row();
+
+        WButton clearSearch = table.add(theme.button("Clear Search")).expandX().widget();
+        clearSearch.action = () -> {
+            currentSearchItem = null;
+            if (debugMode.get()) info("Search cleared");
+        };
+        table.row();
+
+        WButton loadMatList = table.add(theme.button("Load Material List (NBT)")).expandX().widget();
+        loadMatList.action = () -> {
+            String path = TinyFileDialogs.tinyfd_openFileDialog(
+                "Select NBT Map File",
+                new File(mc.runDirectory, "schematics").getAbsolutePath(),
+                null, null, false
+            );
+            if (path != null) {
+                try {
+                    Map<Identifier, Integer> materials = parseNBTMaterialList(new File(path));
+                    if (materials.isEmpty()) {
+                        warning("No valid blocks found in NBT file.");
+                    } else {
+                        setMaterialList(materials);
+                        info("Loaded material list from NBT: " + materials.size() + " items.");
+                    }
+                } catch (IOException e) {
+                    error("Failed to read NBT file: " + e.getMessage());
+                }
+            }
+        };
+        table.row();
+
+        WButton saveData = table.add(theme.button("Save Data")).expandX().widget();
+        saveData.action = () -> data.saveData();
+        table.row();
+
+        WButton clearAll = table.add(theme.button("Clear All Data")).expandX().widget();
+        clearAll.action = () -> {
+            data.clearAll();
+            if (debugMode.get()) info("All data cleared");
+        };
+
+        return table;
+    }
+
+    private void searchHeldItem() {
+        if (mc.player == null) return;
+        ItemStack held = mc.player.getMainHandStack();
+        if (held.isEmpty()) {
+            if (debugMode.get()) warning("No item in hand");
+            return;
+        }
+        currentSearchItem = held.getItem();
+        List<TrackedContainer> results = data.searchItem(currentSearchItem);
+        if (debugMode.get()) info("Found " + results.size() + " containers with " + currentSearchItem.getName().getString());
+    }
 }

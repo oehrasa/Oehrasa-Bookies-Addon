@@ -117,6 +117,12 @@ public class ContainerPeek extends Module {
 
     private PreviewData currentPreview = null;
 
+    public static final ThreadLocal<Boolean> IS_RENDERING = ThreadLocal.withInitial(() -> false);
+
+    public boolean isShulkerIconPreviewEnabled() {
+        return shulkerIconPreview.get();
+    }
+
     private record PreviewData(
         BlockPos pos,
         Text titleText,
@@ -367,6 +373,8 @@ public class ContainerPeek extends Module {
             textY += 10;
         }
 
+        ContainerPeek.IS_RENDERING.set(true);
+
         // Full item grid
         int itemStartX = panelX + pad;
         int itemStartY = textY + pad;
@@ -382,7 +390,6 @@ public class ContainerPeek extends Module {
 
             Item dominant = preview.dominantItems.get(i);
             if (dominant != null) {
-                // Make the overlay almost fill the slot, leaving a 1-pixel border
                 int border = 1;
                 int overlaySize = iconSize.get() - 2 * border;
                 float overlayScale = overlaySize / 16.0f;
@@ -397,5 +404,6 @@ public class ContainerPeek extends Module {
                 matrices.pop();
             }
         }
+        ContainerPeek.IS_RENDERING.set(false);
     }
 }
