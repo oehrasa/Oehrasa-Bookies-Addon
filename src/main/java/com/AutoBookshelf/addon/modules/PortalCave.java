@@ -30,16 +30,14 @@ import net.minecraft.block.Blocks;
 import net.minecraft.client.gui.screen.DisconnectedScreen;
 import net.minecraft.client.gui.screen.world.LevelLoadingScreen;
 import net.minecraft.text.Text;
-import net.minecraft.util.math.*;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
+import net.minecraft.util.math.ChunkPos;
+import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
-import net.minecraft.world.chunk.*;
+import net.minecraft.world.chunk.WorldChunk;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileReader;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.Writer;
+import java.io.*;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.atomic.AtomicReferenceArray;
@@ -162,7 +160,7 @@ public class PortalCave extends Module {
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
 	public PortalCave() {
-		super(Addon.CATEGORY,"Portal-Cave", "Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in 1.13+ chunks. **May be useful for finding portal skips in the Nether**");
+        super(Addon.CATEGORY2, "Portal-Cave", "Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in 1.13+ chunks. **May be useful for finding portal skips in the Nether**");
 	}
 
 	@Override

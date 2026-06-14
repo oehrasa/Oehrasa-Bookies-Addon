@@ -1,5 +1,6 @@
 plugins {
     id("fabric-loom") version "1.14-SNAPSHOT"
+    kotlin("jvm")
 }
 
 base {
@@ -22,6 +23,7 @@ repositories {
         url = uri("https://raw.githubusercontent.com/cabaletta/baritone/master/build/maven")
     }
     maven { url = uri("https://jitpack.io") }
+    mavenCentral()
 }
 
 loom {
@@ -39,6 +41,7 @@ dependencies {
 
     // Baritone - use the same version as meteor-client
     modImplementation("meteordevelopment:baritone:${properties["minecraft_version"] as String}-SNAPSHOT")
+    implementation(kotlin("stdlib-jdk8"))
 
 }
 
@@ -62,12 +65,13 @@ tasks {
     }
 
     java {
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
     }
 
     withType<JavaCompile> {
         options.encoding = "UTF-8"
         options.release = 21
     }
+}
+kotlin {
+    jvmToolchain(21)
 }

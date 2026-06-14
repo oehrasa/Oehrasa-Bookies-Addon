@@ -117,6 +117,12 @@ public class ContainerPeek extends Module {
 
     private PreviewData currentPreview = null;
 
+    public static final ThreadLocal<Boolean> IS_RENDERING = ThreadLocal.withInitial(() -> false);
+
+    public boolean isShulkerIconPreviewEnabled() {
+        return shulkerIconPreview.get();
+    }
+
     private record PreviewData(
         BlockPos pos,
         Text titleText,

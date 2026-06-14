@@ -29,11 +29,11 @@ Tested successfully with these mods, but other might work as well
 
 ## Features
 
-**30 modules**, **4 commands**, **6 HUD elements**, and **1 mixin**
+**35 modules**, **5 commands**, **6 HUD elements**, and **6 mixin**
 
-## Modules (30 total)
+## Modules (35 total)
 <details>
-<summary><b>Modules</b> (30 modules)</summary>
+<summary><b>Modules</b> (Bookies modules)</summary>
 
 - **AudiobookReader** - Reads books aloud using narrator feature
 - **Auto-Beacon** - Builds a 4‑beacon pyramid at a selected location
@@ -41,7 +41,7 @@ Tested successfully with these mods, but other might work as well
 - **Auto-Moss** - Automatically uses bone meal on specific blocks
 - **Auto-Take-Off** - Automatically starts elytra flight when on ground, in lava, or falling
 - **Auto-Sex** - Tries to have sex with the player or mob in freaky ways
-- **B36 Peacemaker** - Created this to make peace. Named after Convair B-36 Peacemaker
+- **B36-Peacemaker** - Created this to make peace. Named after Convair B-36 Peacemaker
 - **Beacon-Range** - Renders the range of powered beacons
 - **BLU-27/B-Napalm** - I love the smell of Napalm in the morning, Commit some trolling against the Vietnamese
 - **Better-BoatFly** - Transforms your boat into a plane
@@ -53,11 +53,14 @@ Tested successfully with these mods, but other might work as well
 - **Dried-Ghast** - Give these cute and tiny little creatures a second chances
 - **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block
 - **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
-- **Item-Despawn** - Highlights items that are about to despawn.
+- **Get-Preview** - Shows an item preview overlay on bundles, shulkers, and books
+- **Item-Despawn** - Highlights items that are about to despawn
+- **KMDB** - Builds a Wither, Iron Golem, or Snow Golem in front of you
 - **Map-Grid** - Highlights map grid boundaries around the player
 - **Mapart-Namer** - Auto‑names maps based on inventory slot layout
 - **Mob-Owner** - Shows entity owner by saving into cache
 - **Mats-Refill** - Automatically restocks materials from shulker boxes
+- **PacketEat** - Allows you to eat without interrupting other actions
 - **Platform** - Build a platform at a given y-level once in range
 - **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
 - **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in 1.13+ chunks
@@ -82,7 +85,7 @@ Tested successfully with these mods, but other might work as well
 ## Commands (4)
 | Command          | Description                                                                |
 |------------------|----------------------------------------------------------------------------|
-| `assowner`       | Assign a cracked account name as the owner of the entity you're looking at |
+| `.assowner`      | Assign a cracked account name as the owner of the entity you're looking at |
 | `.book`          | Shows book information from your held item                                 |
 | `.booktranslate` | Translates the held written book into another language                     |
 | `.ifpeek`        | Shows book information from an item frame                                  |
@@ -140,7 +143,7 @@ https://github.com/user-attachments/assets/023f2df1-003e-4c12-bd4f-9119999ad11e
 ## Credits
 List of addons I used as reference(skid? mwhehe), You should check them out it's pretty awesome!
 - **[FileAutoLogin](https://github.com/DortyTheGreat/FileAutoLogin)** - Base of this addon
-- **[Clarity](https://github.com/ck-clarity/addon)** - Boat modules and image HUD
+- **[Clarity](https://github.com/ck-clarity/addon)** - Boat module and image HUD
 - **[meerhax](https://github.com/dekrom/meeerhax)** - ELytra time HUD
 - **[BepHax](https://github.com/dekrom/BepHaxAddon)** - Basically a bunch including this README
 - **[lambda meteor utilities](https://github.com/lambda505/lambda-meteor-utilities)** - Online Friends HUD
@@ -148,11 +151,11 @@ List of addons I used as reference(skid? mwhehe), You should check them out it's
 - **[InvincibleMachineGun](https://github.com/adaxiaohu/InvincibleMachineGun)** - AutoChestAura module
 - **[meteor community addon](https://github.com/lapoliciarobomiquesofrances/meteor-community-addon)** - AutoSex base
 - **[hybridious mod](https://github.com/Hybridious/hybridious_mod)** - B36, AutoMoss
-- **[lu public](https://github.com/CunnyCorp/lu-public)** - Auto Animal for Tsundere Furry module message, Highlighter for Map Grid
+- **[lu public](https://github.com/CunnyCorp/lu-public)** - Auto Animal, Highlighter
 - **[nerv printer addon](https://github.com/Julflips/nerv-printer-addon)** - Map Namer base reference
-- **[JanitorAddon](https://github.com/Sleeepyv/JanitorAddon)** - ThrowEmptyShulker
-- **[delirious](https://github.com/underscore-zi/delirious)** - Platform Builder
-- **[Trouser](https://github.com/etianl/Trouser-Streak)** - PortalPatternFinder
+- **[JanitorAddon](https://github.com/Sleeepyv/JanitorAddon)** - ThrowEmptyShulker module
+- **[delirious](https://github.com/underscore-zi/delirious)** - Platform Builder module
+- **[Trouser](https://github.com/etianl/Trouser-Streak)** - PortalPatternFinder module
 
 ## Contributing
 

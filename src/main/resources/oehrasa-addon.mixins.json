@@ -4,6 +4,7 @@
   "compatibilityLevel": "JAVA_21",
   "client": [
     "ClientPlayerInteractionManagerMixin",
+    "DrawContextMixin",
     "HandledScreenMixin",
     "InGameHudMixin",
     "InventoryScreenMixin",

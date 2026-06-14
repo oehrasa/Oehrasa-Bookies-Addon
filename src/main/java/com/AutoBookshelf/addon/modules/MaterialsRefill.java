@@ -4,16 +4,16 @@ import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
-import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.ContainerComponent;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
+import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.registry.tag.ItemTags;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.Hand;
@@ -22,19 +22,22 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
 
 public class MaterialsRefill extends Module {
     private enum Stage {
-        IDLE, FIND_SHULKER, PLACE_SHULKER, OPEN_SHULKER, RESTOCK, CLOSE_AND_BREAK, WAIT_MANUAL_CLOSE
+        IDLE, FIND_SHULKER, PLACE_SHULKER, OPEN_SHULKER, RESTOCK,
+        CLOSE_AND_BREAK, WAIT_MANUAL_CLOSE
     }
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgControls = settings.createGroup("Controls");
 
     private final Setting<List<Item>> targetItems = sgGeneral.add(new ItemListSetting.Builder()
         .name("target-items")
         .description("Items to keep stocked.")
-        .defaultValue(List.of(Items.BROWN_MUSHROOM))
+        .defaultValue(new ArrayList<>())
         .build()
     );
 
@@ -52,7 +55,7 @@ public class MaterialsRefill extends Module {
         .description("how far is the placement range.")
         .defaultValue(2)
         .min(1)
-        .sliderMax(4)
+        .sliderMax(5)
         .build()
     );
 
@@ -79,8 +82,23 @@ public class MaterialsRefill extends Module {
 
     private final Setting<Boolean> rotate = sgGeneral.add(new BoolSetting.Builder()
         .name("rotate")
-        .description("Rotate when placing.")
+        .description("Rotate when placing / interacting.")
         .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Keybind> setTargetFromHeld = sgControls.add(new KeybindSetting.Builder()
+        .name("set-target-from-held")
+        .description("Set the held item as the target item for restocking.")
+        .defaultValue(Keybind.none())
+        .action(() -> {
+            if (!isActive()) return;
+            ItemStack held = mc.player.getMainHandStack();
+            if (!held.isEmpty()) {
+                targetItems.set(List.of(held.getItem()));
+                info("Target item set to: " + held.getItem().getName().getString());
+            }
+        })
         .build()
     );
 
@@ -107,6 +125,7 @@ public class MaterialsRefill extends Module {
         stage = Stage.IDLE;
         resetState();
     }
+
     @Override public void onDeactivate() { resetState(); }
 
     private void resetState() {
@@ -115,6 +134,8 @@ public class MaterialsRefill extends Module {
         placedShulkerPos = null;
         delayTicks = 0;
         keepFree = breakAfterFill.get() ? 1 : 0;
+        pickaxeEquipped = false;
+        preBreakSlot = -1;
     }
 
     @EventHandler
@@ -191,168 +212,102 @@ public class MaterialsRefill extends Module {
 
         mc.player.getInventory().setSelectedSlot(shulkerSlot);
 
-        BlockPos placePos = null;
-        Direction placeFace = null;
-        BlockPos supportBlock = null;
-        Vec3d hitVec = null;
-
-        // Normal crosshair placement
-        if (mc.crosshairTarget instanceof BlockHitResult blockHit) {
-            BlockPos clickedBlock = blockHit.getBlockPos();
-            Direction clickedFace = blockHit.getSide();
-            BlockPos candidate = clickedBlock.offset(clickedFace);
-
-            double reach = mc.player.getEntityInteractionRange();
-
-            if ((mc.world.getBlockState(candidate).isAir()
-                || mc.world.getBlockState(candidate).isReplaceable())
-                && mc.player.getEntityPos().squaredDistanceTo(
-                candidate.getX() + 0.5,
-                candidate.getY() + 0.5,
-                candidate.getZ() + 0.5
-            ) <= reach * reach) {
-
-                placePos = candidate;
-                placeFace = clickedFace;
-                supportBlock = clickedBlock;
-                hitVec = blockHit.getPos();
-            }
-        }
-
-        // Fallback placement
+        BlockPos placePos = findPlacement();
         if (placePos == null) {
-            Vec3d eyePos = mc.player.getEyePos();
-            Vec3d lookVec = mc.player.getRotationVec(1.0F);
-
-            BlockPos targetBlock = BlockPos.ofFloored(
-                eyePos.add(lookVec.multiply(placeRange.get()))
-            );
-
-            BlockPos solidBlock = null;
-
-            for (int dy = -2; dy <= 2; dy++) {
-                BlockPos check = targetBlock.add(0, dy, 0);
-
-                if (mc.world.getBlockState(check).isSolidBlock(mc.world, check)) {
-                    solidBlock = check;
-                    break;
-                }
-            }
-
-            if (solidBlock == null) {
-                if (PrintInfo("fallback", "no solid block")) {
-                    info("No valid fallback placement found.");
-                }
-                stage = Stage.IDLE;
-                resetState();
-                delayTicks = 20;
-                return;
-            }
-
-            BlockPos candidate = solidBlock.up();
-            Direction candidateFace = Direction.UP;
-
-            if (!mc.world.getBlockState(candidate).isReplaceable()) {
-                boolean found = false;
-
-                for (Direction dir : Direction.Type.HORIZONTAL) {
-                    BlockPos sidePos = solidBlock.offset(dir);
-
-                    if (mc.world.getBlockState(sidePos).isReplaceable()) {
-                        candidate = sidePos;
-                        candidateFace = dir;
-                        found = true;
-                        break;
-                    }
-                }
-
-                if (!found) {
-                    if (PrintInfo("fallback", "no free side")) {
-                        info("No free side around fallback block.");
-                    }
-                    stage = Stage.IDLE;
-                    resetState();
-                    delayTicks = 20;
-                    return;
-                }
-            }
-
-            double reach = mc.player.getEntityInteractionRange();
-
-            if (mc.player.getEntityPos().squaredDistanceTo(
-                candidate.getX() + 0.5,
-                candidate.getY() + 0.5,
-                candidate.getZ() + 0.5
-            ) > reach * reach) {
-                if (PrintInfo("fallback", "out of reach")) {
-                    info("Fallback placement out of reach.");
-                }
-                stage = Stage.IDLE;
-                resetState();
-                delayTicks = 20;
-                return;
-            }
-
-            placePos = candidate;
-            placeFace = candidateFace;
-
-            supportBlock = candidate.offset(candidateFace.getOpposite());
-
-            hitVec = Vec3d.ofCenter(supportBlock)
-                .add(Vec3d.of(candidateFace.getVector()).multiply(0.5));
+            stage = Stage.IDLE;
+            resetState();
+            delayTicks = 20;
+            return;
         }
 
-        // Save placement data for later opening
+        // Save placement data
         placedShulkerPos = placePos;
-        placedFace = placeFace;
-        placedHitVec = hitVec;
-        placedSupportBlock = supportBlock;
+        placedFace = Direction.UP; // we don't need exact face for opening, just position
+        placedHitVec = Vec3d.ofCenter(placePos);
+        placedSupportBlock = placePos.down();
 
+        // Perform the placement
         if (rotate.get()) {
-            Vec3d finalHitVec = hitVec;
-            Direction finalPlaceFace = placeFace;
-            BlockPos finalSupportBlock = supportBlock;
-
             Rotations.rotate(
-                Rotations.getYaw(finalHitVec),
-                Rotations.getPitch(finalHitVec),
+                Rotations.getYaw(placedHitVec),
+                Rotations.getPitch(placedHitVec),
                 -100,
                 () -> {
-                    BlockHitResult hit = new BlockHitResult(
-                        finalHitVec,
-                        finalPlaceFace,
-                        finalSupportBlock,
-                        false
-                    );
-
-                    mc.interactionManager.interactBlock(
-                        mc.player,
-                        Hand.MAIN_HAND,
-                        hit
-                    );
-
+                    BlockHitResult hit = new BlockHitResult(placedHitVec, Direction.UP, placedShulkerPos, false);
+                    mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hit);
                     mc.player.swingHand(Hand.MAIN_HAND);
                 }
             );
         } else {
-            BlockHitResult hit = new BlockHitResult(
-                hitVec,
-                Direction.UP,
-                placedShulkerPos,
-                false
-            );
-
-            mc.interactionManager.interactBlock(
-                mc.player,
-                Hand.MAIN_HAND,
-                hit
-            );
-
+            BlockHitResult hit = new BlockHitResult(placedHitVec, Direction.UP, placedShulkerPos, false);
+            mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hit);
             mc.player.swingHand(Hand.MAIN_HAND);
         }
 
         delayTicks = 4;
         stage = Stage.OPEN_SHULKER;
+    }
+
+    /**
+     * Hybrid placement logic: first try crosshair, then the radius search.
+     */
+    private BlockPos findPlacement() {
+        // 1. Crosshair placement
+        if (mc.crosshairTarget instanceof BlockHitResult blockHit) {
+            BlockPos candidate = blockHit.getBlockPos().offset(blockHit.getSide());
+            if (isValidPlacePosition(candidate) && mc.player.getEntityPos().squaredDistanceTo(Vec3d.ofCenter(candidate)) <= placeRange.get() * placeRange.get()) {
+                return candidate;
+            }
+        }
+
+        // 2. Fallback: Radius around player
+        BlockPos playerPos = mc.player.getBlockPos();
+        Direction facing = mc.player.getHorizontalFacing();
+
+        // try facing direction first
+        BlockPos testPos = playerPos.offset(facing);
+        if (isValidPlacePosition(testPos) && inRange(testPos)) return testPos;
+
+        // adjacent sides
+        Direction[] adjacents = {facing.rotateYClockwise(), facing.rotateYCounterclockwise(), facing.getOpposite()};
+        for (Direction dir : adjacents) {
+            testPos = playerPos.offset(dir);
+            if (isValidPlacePosition(testPos) && inRange(testPos)) return testPos;
+        }
+
+        // vertical
+        for (int y = 1; y >= -1; y -= 2) {
+            testPos = playerPos.add(0, y, 0);
+            if (isValidPlacePosition(testPos) && inRange(testPos)) return testPos;
+        }
+
+        // diagonals up to 3 blocks
+        for (int d = 1; d <= placeRange.get(); d++) {
+            for (int x = -d; x <= d; x++) {
+                for (int z = -d; z <= d; z++) {
+                    // skip direct adjacents we already tested
+                    if ((Math.abs(x) == 1 && z == 0) || (x == 0 && Math.abs(z) == 1) || (x == 0 && z == 0)) continue;
+                    if (Math.abs(x) == d || Math.abs(z) == d) {
+                        for (int y = -1; y <= 1; y++) {
+                            testPos = playerPos.add(x, y, z);
+                            if (isValidPlacePosition(testPos) && inRange(testPos)) return testPos;
+                        }
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private boolean isValidPlacePosition(BlockPos pos) {
+        return mc.world.getBlockState(pos).isAir()
+            && mc.world.getBlockState(pos.down()).isSolidBlock(mc.world, pos.down())
+            && mc.player.getEntityPos().squaredDistanceTo(Vec3d.ofCenter(pos)) <= placeRange.get() * placeRange.get();
+    }
+
+    private boolean inRange(BlockPos pos) {
+        return mc.player.getEntityPos().squaredDistanceTo(Vec3d.ofCenter(pos)) <= placeRange.get() * placeRange.get();
     }
 
     private void openShulker() {
@@ -373,32 +328,20 @@ public class MaterialsRefill extends Module {
             return;
         }
 
-        // Wait until the shulker block actually exists
         if (!(mc.world.getBlockState(placedShulkerPos).getBlock() instanceof net.minecraft.block.ShulkerBoxBlock)) {
             delayTicks = 2;
             return;
         }
 
-        // Check reach
         double reach = mc.player.getEntityInteractionRange();
-        if (mc.player.squaredDistanceTo(
-            placedShulkerPos.getX() + 0.5,
-            placedShulkerPos.getY() + 0.5,
-            placedShulkerPos.getZ() + 0.5
-        ) > reach * reach) {
+        if (mc.player.squaredDistanceTo(Vec3d.ofCenter(placedShulkerPos)) > reach * reach) {
             info("Shulker is too far to open. Resetting.");
             stage = Stage.IDLE;
             resetState();
             return;
         }
 
-        // Always open by clicking the centre of the shulker with UP face
-        BlockHitResult hit = new BlockHitResult(
-            Vec3d.ofCenter(placedShulkerPos),
-            Direction.UP,
-            placedShulkerPos,
-            false
-        );
+        BlockHitResult hit = new BlockHitResult(Vec3d.ofCenter(placedShulkerPos), Direction.UP, placedShulkerPos, false);
         mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(Hand.MAIN_HAND, hit, 0));
         mc.player.swingHand(Hand.MAIN_HAND);
         delayTicks = 4;
@@ -410,13 +353,11 @@ public class MaterialsRefill extends Module {
             return;
         }
 
-        // Count empty slots in main inventory
         int emptySlots = 0;
         for (int i = 0; i < 36; i++) {
             if (mc.player.getInventory().getStack(i).isEmpty()) emptySlots++;
         }
 
-        // If we have only the required number of empty slots, stop
         if (emptySlots <= keepFree) {
             mc.player.closeHandledScreen();
             delayTicks = 2;
@@ -425,22 +366,15 @@ public class MaterialsRefill extends Module {
         }
 
         var handler = screen.getScreenHandler();
-        int moved = 0;
-
-        // Loop over all shulker slots and shiftclick each matching stack instantly
         for (int i = 0; i < 27; i++) {
             ItemStack stack = handler.getSlot(i).getStack();
             if (stack.getItem() == currentTargetItem) {
                 mc.interactionManager.clickSlot(handler.syncId, i, 0, SlotActionType.QUICK_MOVE, mc.player);
-                moved++;
-
-                // Stop if we have filled all slots
                 emptySlots--;
                 if (emptySlots <= keepFree) break;
             }
         }
 
-        // After moving everything, close and proceed to break
         mc.player.closeHandledScreen();
         delayTicks = 2;
         stage = Stage.CLOSE_AND_BREAK;
@@ -461,26 +395,18 @@ public class MaterialsRefill extends Module {
             return;
         }
         if (!breakAfterFill.get()) {
-            // Restore pickaxe if we had swapped
             restorePickaxeSlot();
-            stage = Stage.IDLE;
-            resetState();
-            if (autoToggle.get()) toggle();
+            finish();
             return;
         }
         if (mc.world.getBlockState(placedShulkerPos).isAir()) {
-            // Block already gone, restore slot and finish
             restorePickaxeSlot();
-            stage = Stage.IDLE;
-            resetState();
-            if (autoToggle.get()) toggle();
+            finish();
             return;
         }
 
-        // Equip a pickaxe (if there is one)
         if (!pickaxeEquipped) {
             int pickSlot = -1;
-            // Search hotbar for any pickaxe item
             for (int i = 0; i < 9; i++) {
                 if (mc.player.getInventory().getStack(i).isIn(ItemTags.PICKAXES)) {
                     pickSlot = i;
@@ -492,33 +418,30 @@ public class MaterialsRefill extends Module {
                 mc.player.getInventory().setSelectedSlot(pickSlot);
                 pickaxeEquipped = true;
             }
-            // If no pickaxe found, we just use whatever is in hand
         }
 
-        // Continuous mining until broken
         mc.interactionManager.updateBlockBreakingProgress(placedShulkerPos, Direction.UP);
         mc.player.swingHand(Hand.MAIN_HAND);
-        delayTicks = 2;
+
+        // Block is broken. finish immediately
+        if (mc.world.getBlockState(placedShulkerPos).isAir()) {
+            restorePickaxeSlot();
+            finish();
+        } else {
+            delayTicks = 2; // continue breaking
+        }
+    }
+
+    private void finish() {
+        restorePickaxeSlot();
+        stage = Stage.IDLE;
+        resetState();
+        if (autoToggle.get()) toggle();
     }
 
     private boolean isShulkerBox(ItemStack stack) {
-        return stack.getItem() == Items.SHULKER_BOX ||
-            stack.getItem() == Items.WHITE_SHULKER_BOX ||
-            stack.getItem() == Items.ORANGE_SHULKER_BOX ||
-            stack.getItem() == Items.MAGENTA_SHULKER_BOX ||
-            stack.getItem() == Items.LIGHT_BLUE_SHULKER_BOX ||
-            stack.getItem() == Items.YELLOW_SHULKER_BOX ||
-            stack.getItem() == Items.LIME_SHULKER_BOX ||
-            stack.getItem() == Items.PINK_SHULKER_BOX ||
-            stack.getItem() == Items.GRAY_SHULKER_BOX ||
-            stack.getItem() == Items.LIGHT_GRAY_SHULKER_BOX ||
-            stack.getItem() == Items.CYAN_SHULKER_BOX ||
-            stack.getItem() == Items.PURPLE_SHULKER_BOX ||
-            stack.getItem() == Items.BLUE_SHULKER_BOX ||
-            stack.getItem() == Items.BROWN_SHULKER_BOX ||
-            stack.getItem() == Items.GREEN_SHULKER_BOX ||
-            stack.getItem() == Items.RED_SHULKER_BOX ||
-            stack.getItem() == Items.BLACK_SHULKER_BOX;
+        return stack.getItem() instanceof net.minecraft.item.BlockItem bi
+            && bi.getBlock() instanceof net.minecraft.block.ShulkerBoxBlock;
     }
 
     private boolean PrintInfo(String itemName, String reason) {

@@ -1,5 +1,6 @@
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
@@ -15,7 +16,6 @@ import net.minecraft.block.Blocks;
 import net.minecraft.block.FluidBlock;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.math.BlockPos;
-import com.AutoBookshelf.addon.Addon;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -174,7 +174,6 @@ public class PlatformBuilder extends Module {
         return positions.toArray(new BlockPos[0]);
     }
 
-    // Fixed: accepts BlockPos, uses correct position for isFullCube
     private boolean canPlaceAtPosition(BlockPos pos) {
         BlockState state = mc.world.getBlockState(pos);
 
@@ -190,7 +189,7 @@ public class PlatformBuilder extends Module {
             return replaceBlocks.get();
         }
 
-        // Air‑place: allow any non‑solid block (use the real position, not ORIGIN)
+        // Air-place: allow any non‑solid block
         if (airPlace.get()) {
             return !state.isFullCube(mc.world, pos);
         }
@@ -267,7 +266,6 @@ public class PlatformBuilder extends Module {
 
         if (!item.found()) return false;
 
-        // Use the reliable Meteor placement method (handles air‑place, rotation, etc.)
         return BlockUtils.place(pos, item, true, 50, true, true);
     }
 }
