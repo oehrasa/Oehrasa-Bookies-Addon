@@ -6,30 +6,29 @@ import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.friends.Friends;
-import meteordevelopment.meteorclient.systems.hud.*;
+import meteordevelopment.meteorclient.systems.hud.Alignment;
+import meteordevelopment.meteorclient.systems.hud.HudElement;
+import meteordevelopment.meteorclient.systems.hud.HudElementInfo;
+import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.core.BlockPos;
+import net.minecraft.client.gui.components.PlayerFaceExtractor;
+import net.minecraft.client.multiplayer.PlayerInfo;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundBlockDestructionPacket;
-import net.minecraft.network.protocol.game.ClientboundLevelEventPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.BlockItem;
-import net.minecraft.world.item.BowItem;
-import net.minecraft.world.item.CrossbowItem;
-import net.minecraft.world.item.Item;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
-import net.minecraft.world.item.PotionItem;
+import net.minecraft.world.entity.player.PlayerSkin;
+import net.minecraft.world.item.*;
 import net.minecraft.world.phys.Vec3;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.Nullable;  // added missing import
 
 import java.util.*;
+
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 public class NeboM extends HudElement {
@@ -108,6 +107,30 @@ public class NeboM extends HudElement {
     private final Setting<Boolean> includeSelf = sgGeneral.add(new BoolSetting.Builder()
         .name("include-self")
         .description("Show yourself in the radar.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Boolean> showHead = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-head")
+        .description("Show the player's face icon.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> headSize = sgGeneral.add(new IntSetting.Builder()
+        .name("head-size")
+        .description("Size of the player head icon (pixels).")
+        .defaultValue(8)
+        .min(6)
+        .sliderRange(6, 16)
+        .visible(showHead::get)
+        .build()
+    );
+
+    private final Setting<Boolean> showDirection = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-direction")
+        .description("Show the cardinal direction the player is facing.")
         .defaultValue(false)
         .build()
     );
@@ -193,9 +216,10 @@ public class NeboM extends HudElement {
     private static final int ICON_SIZE = 16;  // normal size
     private static final int ICON_TEXT_GAP = 2;
     private final Map<UUID, Integer> crystalPlaceTicks = new HashMap<>(); // player UUID -> ticks left
-    private final Map<Integer, Integer> crystalPlaceTicksByEntity = new HashMap<>();
     private final Map<Integer, Integer> miningTicks = new HashMap<>(); // entity ID -> ticks left
-    private final Map<UUID, Integer> containerOpenTicks = new HashMap<>();
+
+    // Cache for head textures (per player UUID)
+    private final Map<UUID, PlayerSkin> headTextureCache = new HashMap<>();
 
     public NeboM() { super(INFO); MeteorClient.EVENT_BUS.subscribe(this); }
 
@@ -221,12 +245,21 @@ public class NeboM extends HudElement {
         double width = renderer.textWidth("Players:", shadow.get(), scl);
         double height = renderer.textHeight(shadow.get(), scl);
 
-        if (mc.level == null) { setSize(width, height); return; }
+        if (mc.level == null) {
+            setSize(width, height);
+            return;
+        }
 
         for (Player player : getNearbyPlayers()) {
             if (!shouldShow(player)) continue;
 
             double lineWidth = 0;
+
+            // Head icon width
+            if (showHead.get()) {
+                lineWidth += headSize.get() + 2; // icon + gap
+            }
+
             // name
             String name = player.getName().getString();
             lineWidth += renderer.textWidth(name, shadow.get(), scl);
@@ -234,6 +267,11 @@ public class NeboM extends HudElement {
             if (showDistance.get()) {
                 String dist = String.format(" (%.0fm)", player.distanceTo(mc.player));
                 lineWidth += renderer.textWidth(dist, shadow.get(), scl);
+            }
+            // direction
+            if (showDirection.get()) {
+                String dir = getDirectionString(player.getYRot());
+                lineWidth += renderer.textWidth(" " + dir, shadow.get(), scl);
             }
             // states + icons
             if (showState.get()) {
@@ -273,6 +311,11 @@ public class NeboM extends HudElement {
                 ? String.format(" (%.0fm)", player.distanceTo(mc.player))
                 : "";
 
+            String dirStr = "";
+            if (showDirection.get()) {
+                dirStr = " " + getDirectionString(player.getYRot());
+            }
+
             String statePart = "";
             if (showState.get()) {
                 List<String> states = getActiveStates(player);
@@ -282,13 +325,29 @@ public class NeboM extends HudElement {
                 }
             }
 
-            String fullLine = name + distanceStr + statePart;
-            double fullWidth = renderer.textWidth(fullLine, shadow.get(), scl);
-            double x = this.x + border.get() + alignX(fullWidth, alignment.get());
-            y += renderer.textHeight(shadow.get(), scl) + 2;
+            // Build the line (excluding the head) to measure total text width for alignment
+            String lineWithoutHead = name + distanceStr + dirStr + statePart;
+            double fullLineWidth = renderer.textWidth(lineWithoutHead, shadow.get(), scl);
+            if (showHead.get()) {
+                fullLineWidth += headSize.get() + 2; // head icon + gap
+            }
 
-            // name + distance
-            x = renderer.text(name + distanceStr, x, y, nameColor, shadow.get(), scl);
+            y += renderer.textHeight(shadow.get(), scl) + 2;
+            double x = this.x + border.get() + alignX(fullLineWidth, alignment.get());
+
+            // Draw head icon
+            if (showHead.get()) {
+                PlayerSkin skinTextures = getSkinTextures(player);
+                double textHeight = renderer.textHeight(shadow.get(), scl);
+                int headY = (int) (y - textHeight + (textHeight - headSize.get()) / 2);
+                if (skinTextures != null) {
+                    PlayerFaceExtractor.extractRenderState(renderer.graphics, skinTextures, (int) x, headY, headSize.get(), -1);
+                }
+                x += headSize.get() + 2;
+            }
+
+            // name + distance + direction
+            x = renderer.text(name + distanceStr + dirStr, x, y, nameColor, shadow.get(), scl);
 
             // states with optional icons
             if (!statePart.isEmpty()) {
@@ -319,6 +378,21 @@ public class NeboM extends HudElement {
                 }
             }
         }
+    }
+
+    private PlayerSkin getSkinTextures(Player player) {
+        return headTextureCache.computeIfAbsent(player.getUUID(), uuid -> {
+            if (mc.getConnection() == null) return null;
+            PlayerInfo entry = mc.getConnection().getPlayerInfo(uuid);
+            return entry != null ? entry.getSkin() : null;
+        });
+    }
+
+    private String getDirectionString(float yaw) {
+        float y = (yaw % 360 + 360) % 360;
+        String[] dirs = {"S", "SW", "W", "NW", "N", "NE", "E", "SE"};
+        int index = Math.round(y / 45) % 8;
+        return dirs[index];
     }
 
     private boolean shouldShow(Player player) {
@@ -373,11 +447,6 @@ public class NeboM extends HudElement {
             states.add("Mining");
         }
 
-        // Container
-        Integer containerTicks = containerOpenTicks.get(player.getUUID());
-        if (containerTicks != null && containerTicks > 0) {
-            states.add("Container");
-        }
         return states;
     }
 
@@ -454,28 +523,6 @@ public class NeboM extends HudElement {
                 crystalPlaceTicks.put(nearest.getUUID(), actionDisplayTicks.get());
             }
         }
-
-        // Container open detection
-        if (event.packet instanceof ClientboundLevelEventPacket worldEvent) {
-            int eventId = worldEvent.getType();
-            if (eventId == 1008 || eventId == 1010 || eventId == 1012 || eventId == 1013) {
-                BlockPos pos = worldEvent.getPos();
-                Vec3 containerPos = pos.getCenter();
-
-                Player nearest = null;
-                double nearestDist = Double.MAX_VALUE;
-                for (Player p : mc.level.players()) {
-                    double dist = p.position().distanceToSqr(containerPos);
-                    if (dist < 256.0 && dist < nearestDist) {   // 16 blocks reach
-                        nearestDist = dist;
-                        nearest = p;
-                    }
-                }
-                if (nearest != null) {
-                    containerOpenTicks.put(nearest.getUUID(), actionDisplayTicks.get());
-                }
-            }
-        }
     }
 
     @EventHandler
@@ -487,10 +534,6 @@ public class NeboM extends HudElement {
         });
         // Decrement mining timers
         miningTicks.entrySet().removeIf(entry -> {
-            entry.setValue(entry.getValue() - 1);
-            return entry.getValue() <= 0;
-        });
-        containerOpenTicks.entrySet().removeIf(entry -> {
             entry.setValue(entry.getValue() - 1);
             return entry.getValue() <= 0;
         });

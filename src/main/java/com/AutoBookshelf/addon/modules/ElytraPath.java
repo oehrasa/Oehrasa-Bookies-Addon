@@ -83,6 +83,13 @@ public class ElytraPath extends Module {
         .build()
     );
 
+    public final Setting<Boolean> thirdPersonOnly = sgGeneral.add(new BoolSetting.Builder()
+        .name("third-person-only")
+        .description("Only render the overlay when in third person.")
+        .defaultValue(false)
+        .build()
+    );
+
     public enum ColorMode { Solid, Fade, Gradient }
 
     private final Setting<ColorMode> colorMode = sgGeneral.add(new EnumSetting.Builder<ColorMode>()
@@ -181,13 +188,12 @@ public class ElytraPath extends Module {
     @EventHandler
     private void onRender3D(Render3DEvent event) {
         if (mc.player == null || mc.level == null) return;
+        if (thirdPersonOnly.get() && mc.options.getCameraType().isFirstPerson()) return;
 
         renderPlayerPath(event, mc.player);
-
         if (renderOtherPlayers.get()) {
             for (Player player : mc.level.players()) {
                 if (player == mc.player) continue;
-
                 renderPlayerPath(event, player);
             }
         }

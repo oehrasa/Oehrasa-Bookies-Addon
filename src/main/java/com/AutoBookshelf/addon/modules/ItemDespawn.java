@@ -92,13 +92,6 @@ public class ItemDespawn extends Module {
         .build()
     );
 
-    private final Setting<Boolean> trackItems = sgGeneral.add(new BoolSetting.Builder()
-        .name("track-items")
-        .description("Store UUIDs of all item entities while the module is active (cleared on disable).")
-        .defaultValue(false)
-        .build()
-    );
-
     private static class TrackedItem {
         int totalAge;   // estimated total age in ticks
         long lastTickSeen;  // world time when last present

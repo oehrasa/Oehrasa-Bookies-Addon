@@ -1,6 +1,6 @@
 package com.AutoBookshelf.addon.mixin;
 
-import com.AutoBookshelf.addon.modules.BundlePreview;
+import com.AutoBookshelf.addon.modules.GetPreview;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
@@ -20,7 +20,7 @@ public abstract class HandledScreenMixin extends Screen {
 
     @Inject(method = "extractSlot", at = @At("TAIL"))
     private void onExtractSlotTail(GuiGraphicsExtractor graphics, Slot slot, int mouseX, int mouseY, CallbackInfo ci) {
-        BundlePreview bundleModule = Modules.get().get(BundlePreview.class);
+        GetPreview bundleModule = Modules.get().get(GetPreview.class);
         if (bundleModule != null && bundleModule.isActive()) {
             bundleModule.renderBundleOverlay(graphics, slot.x, slot.y, slot.getItem());
         }

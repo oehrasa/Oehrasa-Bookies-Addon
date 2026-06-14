@@ -1,6 +1,6 @@
 package com.AutoBookshelf.addon.mixin;
 
-import com.AutoBookshelf.addon.modules.BundlePreview;
+import com.AutoBookshelf.addon.modules.GetPreview;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
@@ -16,7 +16,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class InGameHudMixin {
     @Inject(method = "extractRenderState", at = @At("TAIL"))
     private void onExtractRenderState(GuiGraphicsExtractor graphics, DeltaTracker deltaTracker, CallbackInfo ci) {
-        BundlePreview module = Modules.get().get(BundlePreview.class);
+        GetPreview module = Modules.get().get(GetPreview.class);
         if (module == null || !module.isActive()) return;
 
         Minecraft mc = Minecraft.getInstance();
