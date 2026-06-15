@@ -30,9 +30,9 @@ Tested successfully with these mods, but other might work as well.
 
 ## Features
 
-**33 modules**, **4 commands**, **7 HUD elements**, and **4 mixin**
+**36 modules**, **5 commands**, **7 HUD elements**, and **5 mixin**
 
-## Modules (33 total)
+## Modules (36 total)
 <details>
 <summary><b>Modules</b> (Bookies modules)</summary>
 
@@ -85,7 +85,7 @@ Tested successfully with these mods, but other might work as well.
 - **Online-Friends** - Displays online friends from your friend list
 - **Teleport-Timer** - Shows a countdown bar for teleports and cooldowns
 
-## Commands (4)
+## Commands (5)
 | Command          | Description                                                                |
 |------------------|----------------------------------------------------------------------------|
 | `.assowner`      | Assign a cracked account name as the owner by looking at it                |
