@@ -28,6 +28,7 @@ public class Addon extends MeteorAddon {
 
         // Modules
         Modules.get().add(new AutoLogin(CATEGORY));
+        Modules.get().add(new AutoPot());
         Modules.get().add(new AutoSex());
         Modules.get().add(new AutoMoss());
         Modules.get().add(new AutoBeacon());
@@ -59,6 +60,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new MinecartPlacer());
         Modules.get().add(new MaterialsRefill());
         // P
+        Modules.get().add(new PacketEat());
         Modules.get().add(new PortalCave());
         Modules.get().add(new PressItemFrame());
         Modules.get().add(new PlatformBuilder());

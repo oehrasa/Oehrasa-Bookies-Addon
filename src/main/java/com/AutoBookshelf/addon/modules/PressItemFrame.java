@@ -60,7 +60,7 @@ public class PressItemFrame extends Module {
     private int timer;
 
     public PressItemFrame() {
-        super(Addon.CATEGORY, "Press-Frame", "Flatten any nearby item frame because You're an Elite Rank.");
+        super(Addon.CATEGORY2, "Press-Frame", "Flatten any nearby item frame because You're an Elite Rank.");
     }
 
     @Override

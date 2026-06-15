@@ -20,11 +20,12 @@
 
 ## Dependencies
 
-Tested successfully with these mods, but other might work as well
+Tested successfully with these mods, but other might work as well.
+<font color="turquoise">Switch the branch repo if You want to see the other version config</font>
 - baritone-api-fabric-1.13.1.jar
 - BepHax-0.4.4.0.jar
 - meteor-client-1.21.4-42.jar
-- client_maps-1.3.2+1.21.4.jar (Not compatible with ev-mod vice-versa)
+- client_maps-1.3.2+1.21.4.jar (Not compatible with ev-mod vice versa)
 - map-in-slot-3.3.0.jar (Recommended for Mapart-Namer module)
 
 ## Features
@@ -39,6 +40,7 @@ Tested successfully with these mods, but other might work as well
 - **Auto-Beacon** - Builds a 4‑beacon pyramid at a selected location
 - **Auto-Login** - Automatically logs in your account via file Data
 - **Auto-Moss** - Automatically uses bone meal on specific blocks
+- **Auto-Pot** - Then, Shalltear. Sorry but I'll have you wait a bit before we engage
 - **Auto-Take-Off** - Automatically starts elytra flight when on ground, in lava, or falling
 - **Auto-Sex** - Tries to have sex with the player or mob in freaky ways
 - **B36 Peacemaker** - Created this to make peace. Named after Convair B-36 Peacemaker
@@ -59,6 +61,7 @@ Tested successfully with these mods, but other might work as well
 - **Mapart-Namer** - Auto‑names maps based on inventory slot layout
 - **Mats-Refill** - Automatically restocks materials from shulker boxes
 - **Mob-Owner** - Shows entity owner by saving into cache
+- **PacketEat** - Allows you to eat without interrupting other actions
 - **Platform** - Build a platform at a given y-level once in range
 - **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
 - **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in 1.13+ chunks
@@ -130,7 +133,8 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 2. Put the .txt file into folder : `\minecraft\AutoBookshelf\books`
 3. _Recommend to use alongside Bookshelf-Filler module_
 4. Press set key in the module settings to continue to next file
-> I will post the Python code soon
+
+> I will post the Python code soon if qbasty finally decided to fix written book
 </details>
 
 <details>
@@ -143,7 +147,7 @@ https://github.com/user-attachments/assets/023f2df1-003e-4c12-bd4f-9119999ad11e
 ## Credits
 List of addons I used as reference(skid? mwhehe), You should check them out it's pretty awesome!
 - **[FileAutoLogin](https://github.com/DortyTheGreat/FileAutoLogin)** - Base of this addon
-- **[Clarity](https://github.com/ck-clarity/addon)** - Boat modules and image HUD
+- **[Clarity](https://github.com/ck-clarity/addon)** - Boat module and image HUD
 - **[meerhax](https://github.com/dekrom/meeerhax)** - ELytra time HUD
 - **[BepHax](https://github.com/dekrom/BepHaxAddon)** - Basically a bunch including this README
 - **[lambda meteor utilities](https://github.com/lambda505/lambda-meteor-utilities)** - Online Friends HUD
@@ -151,12 +155,13 @@ List of addons I used as reference(skid? mwhehe), You should check them out it's
 - **[InvincibleMachineGun](https://github.com/adaxiaohu/InvincibleMachineGun)** - AutoChestAura module
 - **[meteor community addon](https://github.com/lapoliciarobomiquesofrances/meteor-community-addon)** - AutoSex base
 - **[hybridious mod](https://github.com/Hybridious/hybridious_mod)** - B36, AutoMoss
-- **[lu public](https://github.com/CunnyCorp/lu-public)** - Auto Animal for Tsundere Furry module message, Highlighter for Map Grid
+- **[lu public](https://github.com/CunnyCorp/lu-public)** - Auto Animal, Highlighter
 - **[nerv printer addon](https://github.com/Julflips/nerv-printer-addon)** - Map Namer base reference
 - **[JanitorAddon](https://github.com/Sleeepyv/JanitorAddon)** - ThrowEmptyShulker
 - **[delirious](https://github.com/underscore-zi/delirious)** - Platform Builder
 - **[Trouser](https://github.com/etianl/Trouser-Streak)** - PortalPatternFinder
 - **[PathSeeker](https://github.com/FaxHack/PathSeeker)** - InventoryInfo
+- **[MeteorPlusPlus](https://github.com/zychen027/MeteorPlusPlusAddon)** - PacketEat
 
 ## Contributing
 
