@@ -1,5 +1,6 @@
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
@@ -15,7 +16,6 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.state.BlockState;
-import com.AutoBookshelf.addon.Addon;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -95,7 +95,7 @@ public class PlatformBuilder extends Module {
     );
 
     public PlatformBuilder() {
-        super(Addon.CATEGORY, "Platform", "Build a platform at a given y-level once in range");
+        super(Addon.CATEGORY2, "Platform", "Build a platform at a given y-level once in range");
     }
 
     @Override
