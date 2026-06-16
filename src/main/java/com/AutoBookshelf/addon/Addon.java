@@ -28,6 +28,7 @@ public class Addon extends MeteorAddon {
 
         // Modules
         Modules.get().add(new AutoLogin(CATEGORY));
+        Modules.get().add(new AutoPot());
         Modules.get().add(new AutoSex());
         Modules.get().add(new AutoMoss());
         Modules.get().add(new AutoBeacon());
