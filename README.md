@@ -141,6 +141,13 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 https://github.com/user-attachments/assets/023f2df1-003e-4c12-bd4f-9119999ad11e
 </details>
 
+<details>
+<summary><b>Dried-Ghast-Placer</b> - Yt Video</summary>
+
+https://youtu.be/tDzfNo_uWMA
+ 
+</details>
+
 ## Credits
 List of addons I used as reference(skid? mwhehe), You should check them out it's pretty awesome!
 - **[FileAutoLogin](https://github.com/DortyTheGreat/FileAutoLogin)** - Base of this addon
