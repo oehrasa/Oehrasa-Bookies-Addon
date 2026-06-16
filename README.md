@@ -29,9 +29,9 @@ Tested successfully with these mods, but other might work as well
 
 ## Features
 
-**35 modules**, **5 commands**, **6 HUD elements**, and **6 mixin**
+**36 modules**, **5 commands**, **6 HUD elements**, and **6 mixin**
 
-## Modules (35 total)
+## Modules (36 total)
 <details>
 <summary><b>Modules</b> (Bookies modules)</summary>
 
@@ -39,6 +39,7 @@ Tested successfully with these mods, but other might work as well
 - **Auto-Beacon** - Builds a 4‑beacon pyramid at a selected location
 - **Auto-Login** - Automatically logs in your account via file Data
 - **Auto-Moss** - Automatically uses bone meal on specific blocks
+- **Auto-Pot** - Amrita
 - **Auto-Take-Off** - Automatically starts elytra flight when on ground, in lava, or falling
 - **Auto-Sex** - Tries to have sex with the player or mob in freaky ways
 - **B36-Peacemaker** - Created this to make peace. Named after Convair B-36 Peacemaker
@@ -82,7 +83,7 @@ Tested successfully with these mods, but other might work as well
 - **Online-Friends** - Displays online friends from your friend list
 - **Teleport-Timer** - Shows a countdown bar on pending teleportation
 
-## Commands (4)
+## Commands (5)
 | Command          | Description                                                                |
 |------------------|----------------------------------------------------------------------------|
 | `.assowner`      | Assign a cracked account name as the owner of the entity you're looking at |
@@ -156,6 +157,7 @@ List of addons I used as reference(skid? mwhehe), You should check them out it's
 - **[JanitorAddon](https://github.com/Sleeepyv/JanitorAddon)** - ThrowEmptyShulker module
 - **[delirious](https://github.com/underscore-zi/delirious)** - Platform Builder module
 - **[Trouser](https://github.com/etianl/Trouser-Streak)** - PortalPatternFinder module
+- **[MeteorPlusPlus](https://github.com/zychen027/MeteorPlusPlusAddon)** - PacketEat
 
 ## Contributing
 
