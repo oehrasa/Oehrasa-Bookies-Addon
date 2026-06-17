@@ -4,11 +4,10 @@
   <h1>AutoBookshelf</h1>
   <p>Meteor Addon for Timid bookkeeper and Yuri Enjoyers</p>
 <img src="https://img.shields.io/badge/Meteor Addon-6f1ab1?logo=meteor&logoColor=white" alt="Meteor Addon"/>
-<img src="https://img.shields.io/github/repo-size/oehrasa/Oehrasa-Bookies-Addon?color=magenta" alt="Repo Size">
-<img src="https://img.shields.io/github/release/oehrasa/Oehrasa-Bookies-Addon?color=blue" alt="Release">
-<a href="https://github.com/oehrasa/Oehrasa-Bookies-Addon/commits/main"><img src="https://img.shields.io/github/last-commit/oehrasa/Oehrasa-Bookies-Addon?logo=github&color=light_green" alt="Last commit"></a>
-<img src="https://img.shields.io/github/stars/oehrasa/Oehrasa-Bookies-Addon?style=flat&color=yellow" alt="Stars">
-<img src="https://img.shields.io/github/downloads/oehrasa/Oehrasa-Bookies-Addon/total?color=red" alt="Downloads">
+<img src="https://img.shields.io/github/repo-size/oehrasa/Oehrasa-Bookies-Addon?style=flat&color=blue" alt="Repo Size">
+<img src="https://img.shields.io/github/release/oehrasa/Oehrasa-Bookies-Addon?style=flat&color=light_green" alt="Release">
+<a href="https://github.com/oehrasa/Oehrasa-Bookies-Addon/commits/main"><img src="https://img.shields.io/github/last-commit/oehrasa/Oehrasa-Bookies-Addon?logo=github&color=yellow&style=flat" alt="Last commit"></a>
+<img src="https://img.shields.io/github/downloads/oehrasa/Oehrasa-Bookies-Addon/total?style=flat&color=red" alt="Downloads">
 </div>
 
 ## Installation
