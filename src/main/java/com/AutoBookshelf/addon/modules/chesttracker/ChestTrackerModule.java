@@ -1,15 +1,13 @@
 package com.AutoBookshelf.addon.modules.chesttracker;
 
 import com.AutoBookshelf.addon.Addon;
+import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
+import meteordevelopment.meteorclient.events.game.GameLeftEvent;
+import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
 import meteordevelopment.meteorclient.events.packets.InventoryEvent;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
-import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
 import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
-import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
-import net.minecraft.client.gui.screen.ingame.HandledScreen;
-import net.minecraft.text.Text;
-import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.widgets.WWidget;
@@ -25,10 +23,12 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.*;
 import net.minecraft.block.enums.ChestType;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.Slot;
+import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
@@ -39,9 +39,6 @@ import org.joml.Vector3d;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.*;
-
-import static meteordevelopment.meteorclient.utils.Utils.hasItems;
-import static meteordevelopment.meteorclient.utils.Utils.getItemsInContainerItem;
 
 public class ChestTrackerModule extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -246,7 +243,7 @@ public class ChestTrackerModule extends Module {
     private static final int AWAITING_TIMEOUT = 40;
     private final Map<BlockPos, Integer> blockedContainers = new HashMap<>();
     private static final int BLOCKED_COOLDOWN_TICKS = 100;
-    private boolean wasAutoOpened = false;
+    private boolean wasAutoOpened = false;   // tracks how the current container was opened
 
     public ChestTrackerModule() {
         super(Addon.CATEGORY, "Chest-Tracker", "Track items in containers.");
@@ -279,9 +276,10 @@ public class ChestTrackerModule extends Module {
         shouldAutoClose = false;
         ticksUntilClose = 0;
         blockedContainers.clear();
+        wasAutoOpened = false;
     }
 
-    // Capture right click on container blocks
+    // Manual right-click capture
     @EventHandler
     private void onInteractBlock(InteractBlockEvent event) {
         if (!isActive()) return;
@@ -292,7 +290,7 @@ public class ChestTrackerModule extends Module {
         if (isTrackableContainer(block)) {
             lastInteractedBlock = pos.toImmutable();
             if (!awaiting) {
-                wasAutoOpened = false;
+                wasAutoOpened = false;          // manual open
                 awaiting = true;
                 awaitingTicks = 0;
                 currentOpenPositions[0] = pos.toImmutable();
@@ -313,6 +311,8 @@ public class ChestTrackerModule extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
+        if (mc.player == null || mc.world == null) return;
+
         // Cooldown management
         if (!blockedContainers.isEmpty()) {
             Iterator<Map.Entry<BlockPos, Integer>> it = blockedContainers.entrySet().iterator();
@@ -328,7 +328,7 @@ public class ChestTrackerModule extends Module {
             }
         }
 
-        // Auto close logic
+        // Auto close logic (only for auto-opened containers)
         if (shouldAutoClose) {
             if (!isInContainerScreen()) {
                 shouldAutoClose = false;
@@ -343,18 +343,18 @@ public class ChestTrackerModule extends Module {
                     shouldAutoClose = false;
                     if (mc.player != null) {
                         mc.player.closeHandledScreen();
-                        if (debugMode.get()) info("Auto-closed container after " + autoOpenCloseDelay.get() + " tick delay");
+                        if (debugMode.get()) info("Auto-closed container after delay");
                     }
                 }
             }
         }
 
-        // Awaiting container inventory
+        // Awaiting container inventory (fallback for both manual and auto opens)
         if (awaiting) {
             if (isInContainerScreen()) {
                 awaitingTicks++;
                 if (awaitingTicks > 5) {
-                    if (debugMode.get()) info("InventoryEvent didn't fire : manually processing container");
+                    if (debugMode.get()) info("InventoryEvent didn't fire – manually processing container");
                     ScreenHandler handler = mc.player.currentScreenHandler;
                     if (handler != null && currentOpenPositions[0] != null) {
                         BlockPos trackPos = currentOpenPositions[0];
@@ -371,29 +371,24 @@ public class ChestTrackerModule extends Module {
                             ItemStack stack = slot.getStack();
                             if (!stack.isEmpty()) {
                                 items.add(stack.copy());
-                                if (hasItems(stack)) {
-                                    ItemStack[] nestedItems = new ItemStack[27];
-                                    getItemsInContainerItem(stack, nestedItems);
-                                    for (ItemStack nestedItem : nestedItems) {
-                                        if (nestedItem != null && !nestedItem.isEmpty()) {
-                                            items.add(nestedItem.copy());
-                                        }
-                                    }
-                                }
                             }
                         }
                         String currentDim = getCurrentDimension();
                         String containerType = getContainerType(trackPos);
                         data.trackContainer(trackPos, currentDim, containerType, items);
                         if (debugMode.get()) info("Manually tracked " + containerType + " (" + items.size() + " items)");
-                        int closeDelay = autoOpenCloseDelay.get();
-                        if (closeDelay == 0) {
-                            mc.player.closeHandledScreen();
-                            if (debugMode.get()) info("Closed immediately (0 tick delay)");
-                        } else {
-                            shouldAutoClose = true;
-                            ticksUntilClose = closeDelay;
-                            if (debugMode.get()) info("Set shouldAutoClose=true, ticksUntilClose=" + closeDelay);
+
+                        // Only auto-close if this was an auto-open
+                        if (wasAutoOpened) {
+                            int closeDelay = autoOpenCloseDelay.get();
+                            if (closeDelay == 0) {
+                                mc.player.closeHandledScreen();
+                                if (debugMode.get()) info("Closed immediately (0 tick delay)");
+                            } else {
+                                shouldAutoClose = true;
+                                ticksUntilClose = closeDelay;
+                                if (debugMode.get()) info("Set shouldAutoClose=true, ticksUntilClose=" + closeDelay);
+                            }
                         }
                         currentOpenPositions = new BlockPos[2];
                     } else {
@@ -413,7 +408,7 @@ public class ChestTrackerModule extends Module {
                     awaiting = false;
                     awaitingTicks = 0;
                     currentOpenPositions = new BlockPos[2];
-                    if (debugMode.get()) info("Reset awaiting flag (timeout - container never opened or closed without inventory event)");
+                    if (debugMode.get()) info("Reset awaiting flag (timeout)");
                 }
             }
         }
@@ -459,7 +454,7 @@ public class ChestTrackerModule extends Module {
                         ActionResult result = mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hitResult);
                         if (result == ActionResult.SUCCESS || result == ActionResult.CONSUME) {
                             blockedContainers.remove(blockPos);
-                            wasAutoOpened = true;
+                            wasAutoOpened = true;   // auto-open
                             awaiting = true;
                             awaitingTicks = 0;
                             currentOpenPositions[0] = blockPos.toImmutable();
@@ -503,14 +498,15 @@ public class ChestTrackerModule extends Module {
             awaitingTicks = 0;
             return;
         }
-        boolean wasAutoOpened = awaiting;
+        boolean openedByAuto = this.wasAutoOpened;   // use the field, not awaiting
         awaiting = false;
         awaitingTicks = 0;
         blockedContainers.remove(trackPos);
         if (currentOpenPositions[1] != null) {
             blockedContainers.remove(currentOpenPositions[1]);
         }
-        if (debugMode.get()) info("Inventory event fired, wasAutoOpened: " + wasAutoOpened);
+        if (debugMode.get()) info("Inventory event fired, wasAutoOpened: " + openedByAuto);
+
         List<ItemStack> items = new ArrayList<>();
         int containerSlots = handler.slots.size() - 36;
         for (int i = 0; i < containerSlots && i < handler.slots.size(); i++) {
@@ -524,7 +520,8 @@ public class ChestTrackerModule extends Module {
         String containerType = getContainerType(trackPos);
         data.trackContainer(trackPos, currentDim, containerType, items);
         if (debugMode.get()) info("Tracked " + containerType + " (" + items.size() + " items)");
-        if (wasAutoOpened) {
+
+        if (openedByAuto) {
             int closeDelay = autoOpenCloseDelay.get();
             if (debugMode.get()) info("Scheduling auto-close with delay: " + closeDelay + " ticks");
             if (closeDelay == 0) {
@@ -536,6 +533,7 @@ public class ChestTrackerModule extends Module {
                 if (debugMode.get()) info("Set shouldAutoClose=true, ticksUntilClose=" + closeDelay);
             }
         }
+
         lastInteractedBlock = null;
         currentOpenPositions = new BlockPos[2];
     }
@@ -619,7 +617,6 @@ public class ChestTrackerModule extends Module {
         }
     }
 
-    // Remove entries when a block is broken/mined
     @EventHandler
     private void onBlockUpdate(BlockUpdateEvent event) {
         if (!isActive()) return;
@@ -719,9 +716,7 @@ public class ChestTrackerModule extends Module {
     }
 
     private boolean isTrackableContainer(Block block) {
-        if (block instanceof ChestBlock || block instanceof TrappedChestBlock) {
-            return trackChests.get();
-        }
+        if (block instanceof ChestBlock || block instanceof TrappedChestBlock) return trackChests.get();
         if (block instanceof BarrelBlock) return trackBarrels.get();
         if (block instanceof ShulkerBoxBlock) return trackShulkers.get();
         if (block instanceof EnderChestBlock) return trackEnderChests.get();

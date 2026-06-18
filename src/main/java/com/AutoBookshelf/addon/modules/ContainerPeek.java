@@ -267,19 +267,21 @@ public class ContainerPeek extends Module {
 
         Map<Integer, Item> dominantMap = new HashMap<>();
 
-        for (Map.Entry<Integer, String> entry : container.getDominantItems().entrySet()) {
-            Identifier id = Identifier.tryParse(entry.getValue());
-
-            if (id == null) continue;
-
-            Item item = Registries.ITEM.get(id);
-
-            if (item != null) {
-                dominantMap.put(entry.getKey(), item);
+        // Only use tracker stored dominant items
+        if (shulkerIconPreview.get()) {
+            for (Map.Entry<Integer, String> entry : container.getDominantItems().entrySet()) {
+                Identifier id = Identifier.tryParse(entry.getValue());
+                if (id == null) continue;
+                Item item = Registries.ITEM.get(id);
+                if (item != null) {
+                    dominantMap.put(entry.getKey(), item);
+                }
             }
         }
 
+        // Add locally computed dominant items
         dominantMap.putAll(computeDominantMap(stacks));
+
         buildPreview(pos, title, stacks, false, dominantMap);
     }
 
