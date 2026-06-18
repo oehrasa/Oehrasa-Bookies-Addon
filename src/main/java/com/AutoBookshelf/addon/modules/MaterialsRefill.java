@@ -102,6 +102,28 @@ public class MaterialsRefill extends Module {
         .build()
     );
 
+    private boolean singleItemMode = false;
+    private int singleItemIndex = 0;
+
+    private final Setting<Keybind> cycleSingleTarget = sgControls.add(new KeybindSetting.Builder()
+        .name("cycle-single-target")
+        .description("Cycle through target items to refill only one at a time. Press to start single‑mode and cycle.")
+        .defaultValue(Keybind.none())
+        .action(() -> {
+            if (!isActive()) return;
+            List<Item> items = targetItems.get();
+            if (items.isEmpty()) return;
+            if (!singleItemMode) {
+                singleItemMode = true;
+                singleItemIndex = 0;
+            } else {
+                singleItemIndex = (singleItemIndex + 1) % items.size();
+            }
+            info("Now refilling only: " + items.get(singleItemIndex).getName().getString());
+        })
+        .build()
+    );
+
     private Stage stage = Stage.IDLE;
     private Item currentTargetItem;
     private int shulkerSlot = -1;
@@ -126,7 +148,11 @@ public class MaterialsRefill extends Module {
         resetState();
     }
 
-    @Override public void onDeactivate() { resetState(); }
+    @Override
+    public void onDeactivate() {
+        resetState();
+        singleItemMode = false;   // back to default all items target
+    }
 
     private void resetState() {
         currentTargetItem = null;
@@ -160,11 +186,22 @@ public class MaterialsRefill extends Module {
     }
 
     private void checkStock() {
-        for (Item item : targetItems.get()) {
-            if (InvUtils.find(item).count() < restockThreshold.get()) {
-                currentTargetItem = item;
-                stage = Stage.FIND_SHULKER;
-                return;
+        List<Item> items = targetItems.get();
+        if (singleItemMode) {
+            if (singleItemIndex < items.size()) {
+                Item item = items.get(singleItemIndex);
+                if (InvUtils.find(item).count() < restockThreshold.get()) {
+                    currentTargetItem = item;
+                    stage = Stage.FIND_SHULKER;
+                }
+            }
+        } else {
+            for (Item item : items) {
+                if (InvUtils.find(item).count() < restockThreshold.get()) {
+                    currentTargetItem = item;
+                    stage = Stage.FIND_SHULKER;
+                    return;
+                }
             }
         }
     }

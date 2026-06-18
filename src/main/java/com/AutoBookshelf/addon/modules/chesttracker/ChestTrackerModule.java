@@ -4,7 +4,7 @@ import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.packets.InventoryEvent;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
-import meteordevelopment.meteorclient.events.world.BlockActivateEvent;
+import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
 import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
 import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
@@ -32,7 +32,6 @@ import net.minecraft.screen.slot.Slot;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
@@ -247,6 +246,7 @@ public class ChestTrackerModule extends Module {
     private static final int AWAITING_TIMEOUT = 40;
     private final Map<BlockPos, Integer> blockedContainers = new HashMap<>();
     private static final int BLOCKED_COOLDOWN_TICKS = 100;
+    private boolean wasAutoOpened = false;
 
     public ChestTrackerModule() {
         super(Addon.CATEGORY, "Chest-Tracker", "Track items in containers.");
@@ -283,15 +283,31 @@ public class ChestTrackerModule extends Module {
 
     // Capture right click on container blocks
     @EventHandler
-    private void onBlockActivate(BlockActivateEvent event) {
+    private void onInteractBlock(InteractBlockEvent event) {
         if (!isActive()) return;
         if (mc.player == null || mc.world == null) return;
-        // Use crosshair target to get the block position, because the event only gives state
-        if (mc.crosshairTarget == null || mc.crosshairTarget.getType() != HitResult.Type.BLOCK) return;
-        BlockPos pos = ((BlockHitResult) mc.crosshairTarget).getBlockPos();
+
+        BlockPos pos = event.result.getBlockPos();
         Block block = mc.world.getBlockState(pos).getBlock();
         if (isTrackableContainer(block)) {
             lastInteractedBlock = pos.toImmutable();
+            if (!awaiting) {
+                wasAutoOpened = false;
+                awaiting = true;
+                awaitingTicks = 0;
+                currentOpenPositions[0] = pos.toImmutable();
+                currentOpenPositions[1] = null;
+                // Handle double chest
+                if (block instanceof ChestBlock) {
+                    ChestType chestType = mc.world.getBlockState(pos).get(ChestBlock.CHEST_TYPE);
+                    if (chestType == ChestType.LEFT || chestType == ChestType.RIGHT) {
+                        Direction facing = mc.world.getBlockState(pos).get(ChestBlock.FACING);
+                        currentOpenPositions[1] = pos.offset(
+                            chestType == ChestType.LEFT ? facing.rotateYClockwise() : facing.rotateYCounterclockwise()
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -443,6 +459,7 @@ public class ChestTrackerModule extends Module {
                         ActionResult result = mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hitResult);
                         if (result == ActionResult.SUCCESS || result == ActionResult.CONSUME) {
                             blockedContainers.remove(blockPos);
+                            wasAutoOpened = true;
                             awaiting = true;
                             awaitingTicks = 0;
                             currentOpenPositions[0] = blockPos.toImmutable();
