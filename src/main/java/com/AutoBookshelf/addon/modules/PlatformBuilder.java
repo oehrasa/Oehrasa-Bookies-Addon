@@ -95,7 +95,7 @@ public class PlatformBuilder extends Module {
     );
 
     public PlatformBuilder() {
-        super(Addon.CATEGORY, "Platform", "Build a platform at a given y-level once in range");
+        super(Addon.CATEGORY2, "Platform", "Build a platform at a given y-level once in range");
     }
 
     @Override
