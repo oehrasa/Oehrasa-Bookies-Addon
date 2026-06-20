@@ -94,9 +94,37 @@ public class MaterialsRefill extends Module {
             if (!isActive()) return;
             ItemStack held = mc.player.getMainHandStack();
             if (!held.isEmpty()) {
-                targetItems.set(List.of(held.getItem()));
-                info("Target item set to: " + held.getItem().getName().getString());
+                List<Item> current = new ArrayList<>(targetItems.get());
+                if (!current.contains(held.getItem())) {
+                    current.add(held.getItem());
+                    targetItems.set(current);
+                    info("Added target item: " + held.getItem().getName().getString());
+                } else {
+                    info("Item already in target list.");
+                }
             }
+        })
+        .build()
+    );
+
+    private boolean singleItemMode = false;
+    private int singleItemIndex = 0;
+
+    private final Setting<Keybind> cycleSingleTarget = sgControls.add(new KeybindSetting.Builder()
+        .name("cycle-single-target")
+        .description("Cycle through target items to refill only one at a time. Press to start single‑mode and cycle.")
+        .defaultValue(Keybind.none())
+        .action(() -> {
+            if (!isActive()) return;
+            List<Item> items = targetItems.get();
+            if (items.isEmpty()) return;
+            if (!singleItemMode) {
+                singleItemMode = true;
+                singleItemIndex = 0;
+            } else {
+                singleItemIndex = (singleItemIndex + 1) % items.size();
+            }
+            info("Now refilling only: " + items.get(singleItemIndex).getName().getString());
         })
         .build()
     );
@@ -125,7 +153,11 @@ public class MaterialsRefill extends Module {
         resetState();
     }
 
-    @Override public void onDeactivate() { resetState(); }
+    @Override
+    public void onDeactivate() {
+        resetState();
+        singleItemMode = false;   // back to default all items target
+    }
 
     private void resetState() {
         currentTargetItem = null;
@@ -159,11 +191,22 @@ public class MaterialsRefill extends Module {
     }
 
     private void checkStock() {
-        for (Item item : targetItems.get()) {
-            if (InvUtils.find(item).count() < restockThreshold.get()) {
-                currentTargetItem = item;
-                stage = Stage.FIND_SHULKER;
-                return;
+        List<Item> items = targetItems.get();
+        if (singleItemMode) {
+            if (singleItemIndex < items.size()) {
+                Item item = items.get(singleItemIndex);
+                if (InvUtils.find(item).count() < restockThreshold.get()) {
+                    currentTargetItem = item;
+                    stage = Stage.FIND_SHULKER;
+                }
+            }
+        } else {
+            for (Item item : items) {
+                if (InvUtils.find(item).count() < restockThreshold.get()) {
+                    currentTargetItem = item;
+                    stage = Stage.FIND_SHULKER;
+                    return;
+                }
             }
         }
     }
@@ -247,19 +290,9 @@ public class MaterialsRefill extends Module {
         stage = Stage.OPEN_SHULKER;
     }
 
-    /**
-     * Hybrid placement logic: first try crosshair, then the radius search.
-     */
     private BlockPos findPlacement() {
-        // 1. Crosshair placement
-        if (mc.crosshairTarget instanceof BlockHitResult blockHit) {
-            BlockPos candidate = blockHit.getBlockPos().offset(blockHit.getSide());
-            if (isValidPlacePosition(candidate) && mc.player.getPos().squaredDistanceTo(Vec3d.ofCenter(candidate)) <= placeRange.get() * placeRange.get()) {
-                return candidate;
-            }
-        }
 
-        // 2. Fallback: Radius around player
+        // Find place radius around player
         BlockPos playerPos = mc.player.getBlockPos();
         Direction facing = mc.player.getHorizontalFacing();
 

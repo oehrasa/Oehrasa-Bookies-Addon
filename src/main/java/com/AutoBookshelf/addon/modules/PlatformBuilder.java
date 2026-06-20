@@ -1,5 +1,6 @@
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
@@ -15,7 +16,6 @@ import net.minecraft.block.Blocks;
 import net.minecraft.block.FluidBlock;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.math.BlockPos;
-import com.AutoBookshelf.addon.Addon;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -98,7 +98,7 @@ public class PlatformBuilder extends Module {
     private final HashSet<BlockPos> recentPlacements = new HashSet<>();
 
     public PlatformBuilder() {
-        super(Addon.CATEGORY, "Platform", "Build a platform at a given y-level once in range");
+        super(Addon.CATEGORY2, "Platform", "Build a platform at a given y-level once in range");
     }
 
     @Override

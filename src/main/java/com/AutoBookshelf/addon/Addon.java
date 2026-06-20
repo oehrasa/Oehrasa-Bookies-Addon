@@ -48,6 +48,8 @@ public class Addon extends MeteorAddon {
         // E G
         Modules.get().add(new ElytraPath());
         Modules.get().add(new GetPreview());
+        // H
+        Modules.get().add(new Homes());
         // I
         Modules.get().add(new ItemDespawn());
         Modules.get().add(new InventoryInfo());
