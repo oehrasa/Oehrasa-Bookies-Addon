@@ -36,6 +36,17 @@ public class MaterialsRefill extends Module {
         CLOSE_AND_BREAK, WAIT_MANUAL_CLOSE
     }
 
+    private Stage stage = Stage.IDLE;
+    private Item currentTargetItem;
+    private int shulkerSlot = -1;
+    private BlockPos placedShulkerPos;
+    private int delayTicks;
+    private int keepFree = 0;
+    private boolean pickaxeEquipped = false;
+    private int preBreakSlot = -1;
+    private String lastFailItem = "";
+    private String lastFailReason = "";
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgControls = settings.createGroup("Controls");
 
@@ -57,7 +68,7 @@ public class MaterialsRefill extends Module {
 
     private final Setting<Integer> placeRange = sgGeneral.add(new IntSetting.Builder()
         .name("place-range")
-        .description("how far is the placement range.")
+        .description("How far the placement range is.")
         .defaultValue(2)
         .min(1)
         .sliderMax(5)
@@ -66,7 +77,7 @@ public class MaterialsRefill extends Module {
 
     private final Setting<Boolean> airPlace = sgGeneral.add(new BoolSetting.Builder()
         .name("air-place")
-        .description("Place the shulker in mid-air using packet-based airplace (SWAP_ITEM_WITH_OFFHAND sequence).")
+        .description("Place the shulker in mid-air (no solid block needed below).")
         .defaultValue(false)
         .build()
     );
@@ -99,6 +110,24 @@ public class MaterialsRefill extends Module {
         .build()
     );
 
+    private final Setting<Integer> shulkerHotbarSlot = sgGeneral.add(new IntSetting.Builder()
+        .name("shulker-hotbar-slot")
+        .description("Hotbar slot (1‑9) used when moving the shulker from inventory.")
+        .defaultValue(1)
+        .min(1)
+        .max(9)
+        .sliderRange(1, 9)
+        .build()
+    );
+
+    private final Setting<List<Item>> protectedItems = sgGeneral.add(new ItemListSetting.Builder()
+        .name("protected-items")
+        .description("Items in the hotbar that must never be swapped out.")
+        .defaultValue(new ArrayList<>())
+        .build()
+    );
+
+    @SuppressWarnings("unused")
     private final Setting<Keybind> setTargetFromHeld = sgControls.add(new KeybindSetting.Builder()
         .name("set-target-from-held")
         .description("Set the held item as the target item for restocking.")
@@ -120,39 +149,6 @@ public class MaterialsRefill extends Module {
         .build()
     );
 
-    private boolean singleItemMode = false;
-    private int singleItemIndex = 0;
-
-    private final Setting<Keybind> cycleSingleTarget = sgControls.add(new KeybindSetting.Builder()
-        .name("cycle-single-target")
-        .description("Cycle through target items to refill only one at a time. Press to start single‑mode and cycle.")
-        .defaultValue(Keybind.none())
-        .action(() -> {
-            if (!isActive()) return;
-            List<Item> items = targetItems.get();
-            if (items.isEmpty()) return;
-            if (!singleItemMode) {
-                singleItemMode = true;
-                singleItemIndex = 0;
-            } else {
-                singleItemIndex = (singleItemIndex + 1) % items.size();
-            }
-            info("Now refilling only: " + items.get(singleItemIndex).getName().getString());
-        })
-        .build()
-    );
-
-    private Stage stage = Stage.IDLE;
-    private Item currentTargetItem;
-    private int shulkerSlot = -1;
-    private BlockPos placedShulkerPos;
-    private int delayTicks;
-    private int keepFree = 0;   // number of empty slots to preserve (0 if not breaking, 1 if breaking)
-    private boolean pickaxeEquipped = false;
-    private int preBreakSlot = -1;
-    private String lastFailItem = "";
-    private String lastFailReason = "";
-
     public MaterialsRefill() {
         super(Addon.CATEGORY, "Mats-Refill",
             "Automatically restocks materials from shulker boxes.");
@@ -166,7 +162,6 @@ public class MaterialsRefill extends Module {
     @Override
     public void onDeactivate() {
         resetState();
-        singleItemMode = false;   // back to default all items target
     }
 
     private void resetState() {
@@ -192,7 +187,6 @@ public class MaterialsRefill extends Module {
             case RESTOCK -> doRestock();
             case CLOSE_AND_BREAK -> closeAndBreak();
             case WAIT_MANUAL_CLOSE -> {
-                // Wait until the player closes the GUI, then break the shulker
                 if (!(mc.currentScreen instanceof HandledScreen)) {
                     stage = Stage.CLOSE_AND_BREAK;
                 }
@@ -202,21 +196,13 @@ public class MaterialsRefill extends Module {
 
     private void checkStock() {
         List<Item> items = targetItems.get();
-        if (singleItemMode) {
-            if (singleItemIndex < items.size()) {
-                Item item = items.get(singleItemIndex);
-                if (InvUtils.find(item).count() < restockThreshold.get()) {
-                    currentTargetItem = item;
-                    stage = Stage.FIND_SHULKER;
-                }
-            }
-        } else {
-            for (Item item : items) {
-                if (InvUtils.find(item).count() < restockThreshold.get()) {
-                    currentTargetItem = item;
-                    stage = Stage.FIND_SHULKER;
-                    return;
-                }
+        if (items.isEmpty()) return;
+
+        for (Item item : items) {
+            if (InvUtils.find(item).count() < restockThreshold.get()) {
+                currentTargetItem = item;
+                stage = Stage.FIND_SHULKER;
+                return;
             }
         }
     }
@@ -256,8 +242,15 @@ public class MaterialsRefill extends Module {
         }
 
         if (shulkerSlot >= 9) {
-            InvUtils.move().from(shulkerSlot).toHotbar(0);
-            shulkerSlot = 0;
+            int targetSlot = resolveHotbarSlot();
+            if (targetSlot == -1) {
+                info("No available hotbar slot to place shulker (all slots are protected).");
+                stage = Stage.IDLE;
+                resetState();
+                return;
+            }
+            InvUtils.move().from(shulkerSlot).toHotbar(targetSlot);
+            shulkerSlot = targetSlot;
             delayTicks = 2;
             return;
         }
@@ -277,7 +270,6 @@ public class MaterialsRefill extends Module {
         Vec3d hitVec = Vec3d.ofCenter(placePos);
 
         if (airPlace.get()) {
-            // 3-packet swap offhand airplace
             BlockHitResult hit = new BlockHitResult(hitVec, Direction.UP, placePos, false);
             int revision = mc.player.currentScreenHandler.getRevision();
 
@@ -299,7 +291,6 @@ public class MaterialsRefill extends Module {
                 mc.player.swingHand(Hand.MAIN_HAND);
             }
         } else {
-            // Normal placement: click the top face of the block below
             Vec3d supportHit = Vec3d.of(placePos).add(0.5, 0.0, 0.5);
             BlockHitResult hit = new BlockHitResult(supportHit, Direction.UP, placePos.down(), false);
 
@@ -316,6 +307,29 @@ public class MaterialsRefill extends Module {
 
         delayTicks = 4;
         stage = Stage.OPEN_SHULKER;
+    }
+
+    private int resolveHotbarSlot() {
+        int preferred = shulkerHotbarSlot.get() - 1; // convert 1-9 display to 0-8 index
+
+        if (!isProtected(mc.player.getInventory().getStack(preferred))) {
+            return preferred;
+        }
+
+        // Preferred slot is protected. find any unprotected slot
+        for (int i = 0; i < 9; i++) {
+            if (i == preferred) continue;
+            if (!isProtected(mc.player.getInventory().getStack(i))) {
+                return i;
+            }
+        }
+
+        return -1; // all hotbar slots are protected
+    }
+
+    private boolean isProtected(ItemStack stack) {
+        if (stack.isEmpty()) return false;
+        return protectedItems.get().contains(stack.getItem());
     }
 
     private BlockPos findPlacement() {
@@ -348,7 +362,7 @@ public class MaterialsRefill extends Module {
         // Sort wider candidates by dot product against facing so positions in front are tried first
         candidates.sort(Comparator.comparingDouble(pos -> {
             Vec3d offset = Vec3d.ofCenter(pos).subtract(mc.player.getPos()).normalize();
-            return -facingVec.dotProduct(offset); // negate: higher dot = more in front = sort first
+            return -facingVec.dotProduct(offset);
         }));
 
         for (BlockPos pos : candidates) {
@@ -481,12 +495,11 @@ public class MaterialsRefill extends Module {
         mc.interactionManager.updateBlockBreakingProgress(placedShulkerPos, Direction.UP);
         mc.player.swingHand(Hand.MAIN_HAND);
 
-        // Block is broken. finish immediately
         if (mc.world.getBlockState(placedShulkerPos).isAir()) {
             restorePickaxeSlot();
             finish();
         } else {
-            delayTicks = 2; // continue breaking
+            delayTicks = 2;
         }
     }
 

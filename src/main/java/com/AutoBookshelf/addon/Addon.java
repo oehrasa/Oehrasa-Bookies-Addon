@@ -3,6 +3,7 @@ package com.AutoBookshelf.addon;
 import com.AutoBookshelf.addon.commands.*;
 import com.AutoBookshelf.addon.hud.*;
 import com.AutoBookshelf.addon.modules.*;
+import com.AutoBookshelf.addon.utils.JoinPayload;
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
@@ -11,6 +12,7 @@ import meteordevelopment.meteorclient.systems.hud.Hud;
 import meteordevelopment.meteorclient.systems.hud.HudGroup;
 import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.systems.modules.Modules;
+import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.minecraft.item.Items;
 import org.slf4j.Logger;
 
@@ -25,6 +27,8 @@ public class Addon extends MeteorAddon {
     @Override
     public void onInitialize() {
         LOG.info("Honey, dinner's ready, Identified AutoBookshelf Addon.");
+
+        PayloadTypeRegistry.playC2S().register(JoinPayload.TYPE, JoinPayload.CODEC);
 
         // Modules
         Modules.get().add(new AutoLogin(CATEGORY));
@@ -49,7 +53,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new ElytraPath());
         Modules.get().add(new GetPreview());
         // H
-        Modules.get().add(new Homes());
+        Modules.get().add(new HomesList());
         // I
         Modules.get().add(new ItemDespawn());
         Modules.get().add(new InventoryInfo());

@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.JoinPayload;
 import com.google.gson.*;
 import com.google.gson.reflect.TypeToken;
 import meteordevelopment.meteorclient.MeteorClient;
@@ -25,6 +26,7 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.network.packet.c2s.common.CustomPayloadC2SPacket;
 import net.minecraft.registry.Registries;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
@@ -37,7 +39,9 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
-public class Homes extends Module {
+import static com.AutoBookshelf.addon.utils.Checks.is6B6T;
+
+public class HomesList extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgQuickSelect = settings.createGroup("Quick Select");
     private final SettingGroup sgDebug = settings.createGroup("Debug");
@@ -96,6 +100,14 @@ public class Homes extends Module {
         .build()
     );
 
+    private final Setting<Boolean> Home = sgGeneral.add(new BoolSetting.Builder()
+        .name("free-home")
+        .description("qbasty.")
+        .defaultValue(true)
+        .build()
+    );
+
+
     private final Setting<Boolean> debugMode = sgDebug.add(new BoolSetting.Builder()
         .name("debug-mode")
         .description("Show detailed debug information.")
@@ -124,8 +136,8 @@ public class Homes extends Module {
     private boolean quickCancelled = false;
     private boolean quickForceClosed = false;
 
-    public Homes() {
-        super(Addon.CATEGORY, "homes", "Manage and teleport to your server homes with a GUI.");
+    public HomesList() {
+        super(Addon.CATEGORY, "Homes-List", "Manage and teleport to your server homes with a GUI.");
         saveFile = new File(new File(MeteorClient.mc.runDirectory, "meteor-client"), "homes.json");
     }
 
@@ -133,6 +145,10 @@ public class Homes extends Module {
     public void onActivate() {
         load();
         if (refreshOnActivate.get()) refreshFromServer();
+
+        if (Home.get() && is6B6T()) {
+            mc.getNetworkHandler().sendPacket(new CustomPayloadC2SPacket(new JoinPayload()));
+        }
     }
 
     @Override
@@ -361,13 +377,13 @@ public class Homes extends Module {
     }
 
     private static class QuickSelectScreen extends Screen {
-        private final Homes module;
+        private final HomesList module;
         private final List<HomeEntry> homes;
         private final int columns;
         // selectedIndex is a flat index into homes list; scroll moves by one full row (columns items)
         private int selectedIndex;
 
-        protected QuickSelectScreen(Homes module, List<HomeEntry> homes, int startIndex, int startMouseX, int startMouseY, int columns) {
+        protected QuickSelectScreen(HomesList module, List<HomeEntry> homes, int startIndex, int startMouseX, int startMouseY, int columns) {
             super(Text.empty());
             this.module = module;
             this.homes = homes;
@@ -487,11 +503,11 @@ public class Homes extends Module {
     }
 
     private static class HomesScreen extends WindowScreen {
-        private final Homes module;
+        private final HomesList module;
         private WTable table;
         private String searchText = "";
 
-        public HomesScreen(GuiTheme theme, Homes module) {
+        public HomesScreen(GuiTheme theme, HomesList module) {
             super(theme, "Homes");
             this.module = module;
         }
@@ -566,7 +582,7 @@ public class Homes extends Module {
     }
 
     private static class EditHomeScreen extends WindowScreen {
-        private final Homes module;
+        private final HomesList module;
         private final HomeEntry home;
         private final int index;
         private final HomesScreen parent;
@@ -575,7 +591,7 @@ public class Homes extends Module {
         private final Setting<Item> icon;
         private final Setting<String> originalName;
 
-        public EditHomeScreen(GuiTheme theme, Homes module, HomeEntry home, int index, HomesScreen parent) {
+        public EditHomeScreen(GuiTheme theme, HomesList module, HomeEntry home, int index, HomesScreen parent) {
             super(theme, home == null ? "New Home" : "Edit Home");
             this.module = module;
             this.home = home;
