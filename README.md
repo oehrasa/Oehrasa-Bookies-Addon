@@ -4,11 +4,10 @@
   <h1>AutoBookshelf</h1>
   <p>Meteor Addon for Timid bookkeeper and Yuri Enjoyers</p>
 <img src="https://img.shields.io/badge/Meteor Addon-6f1ab1?logo=meteor&logoColor=white" alt="Meteor Addon"/>
-<img src="https://img.shields.io/github/repo-size/oehrasa/Oehrasa-Bookies-Addon?color=magenta" alt="Repo Size">
-<img src="https://img.shields.io/github/release/oehrasa/Oehrasa-Bookies-Addon?color=blue" alt="Release">
-<a href="https://github.com/oehrasa/Oehrasa-Bookies-Addon/commits/main"><img src="https://img.shields.io/github/last-commit/oehrasa/Oehrasa-Bookies-Addon?logo=github&color=light_green" alt="Last commit"></a>
-<img src="https://img.shields.io/github/stars/oehrasa/Oehrasa-Bookies-Addon?style=flat&color=yellow" alt="Stars">
-<img src="https://img.shields.io/github/downloads/oehrasa/Oehrasa-Bookies-Addon/total?color=red" alt="Downloads">
+<img src="https://img.shields.io/github/repo-size/oehrasa/Oehrasa-Bookies-Addon?style=flat&color=blue" alt="Repo Size">
+<img src="https://img.shields.io/github/release/oehrasa/Oehrasa-Bookies-Addon?style=flat&color=light_green" alt="Release">
+<a href="https://github.com/oehrasa/Oehrasa-Bookies-Addon/commits/main"><img src="https://img.shields.io/github/last-commit/oehrasa/Oehrasa-Bookies-Addon?logo=github&color=yellow&style=flat" alt="Last commit"></a>
+<img src="https://img.shields.io/github/downloads/oehrasa/Oehrasa-Bookies-Addon/total?style=flat&color=red" alt="Downloads">
 </div>
 
 ## Installation
@@ -20,7 +19,8 @@
 
 ## Dependencies
 
-Tested successfully with these mods, but other might work as well
+Tested successfully with these mods, but other might work as well.
+<font color="turquoise">Switch the branch repo if You want to see the other version config</font>
 - baritone-meteor-1.21.11.jar
 - BepHax-Final.jar
 - meteor-client-1.21.11-65.jar
@@ -29,9 +29,9 @@ Tested successfully with these mods, but other might work as well
 
 ## Features
 
-**36 modules**, **5 commands**, **6 HUD elements**, and **6 mixin**
+**37 modules**, **5 commands**, **6 HUD elements**, and **6 mixin**
 
-## Modules (36 total)
+## Modules (37 total)
 <details>
 <summary><b>Modules</b> (Bookies modules)</summary>
 
@@ -55,6 +55,7 @@ Tested successfully with these mods, but other might work as well
 - **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block
 - **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
 - **Get-Preview** - Shows an item preview overlay on bundles, shulkers, and books
+- **Homes-List** - Manage and teleport to your server homes with a GUI
 - **Item-Despawn** - Highlights items that are about to despawn
 - **KMDB** - Builds a Wither, Iron Golem, or Snow Golem in front of you
 - **Map-Grid** - Highlights map grid boundaries around the player
@@ -116,15 +117,6 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 </details>
 
 <details>
-<summary><b>Mapart-Namer</b> - Auto‑names maps based on inventory slot layout</summary>
-
-1. Position mapart in inventory grid
-2. Enable the module
-3. Open up anvil
-4. Note : If the mapart has a longer column (Y) take out the current map (that had been named) and position (stitch) new map to same grid then redo
-</details>
-
-<details>
 <summary><b>Book-Import</b> - Automatically imports text files into signed books</summary>
 
 1. Enable the module
@@ -135,9 +127,16 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 </details>
 
 <details>
+<summary><b>B-36 Peacemaker</b> - Yt Video</summary>
+
+https://youtu.be/Qu6NwPw19ms
+
+</details>
+
+<details>
 <summary><b>Cart-Placer</b> - Do NOT the USS Ohio</summary>
 - Think of your decision before arming the launchers with tomahawk missiles
-    
+
 https://github.com/user-attachments/assets/023f2df1-003e-4c12-bd4f-9119999ad11e
 </details>
 
@@ -145,7 +144,24 @@ https://github.com/user-attachments/assets/023f2df1-003e-4c12-bd4f-9119999ad11e
 <summary><b>Dried-Ghast-Placer</b> - Yt Video</summary>
 
 https://youtu.be/tDzfNo_uWMA
- 
+
+</details>
+
+<details>
+<summary><b>Mapart-Namer</b> - Auto‑names maps based on inventory slot layout</summary>
+
+1. Position mapart in inventory grid
+2. Enable the module
+3. Open up anvil
+4. Note : If the mapart has a longer column (Y) take out the current map (that had been named) and position (stitch) new map to same grid then redo
+
+</details>
+
+<details>
+<summary><b>Platform</b> - Yt Video</summary>
+
+https://youtu.be/uZQGECqCU_A
+
 </details>
 
 ## Credits
