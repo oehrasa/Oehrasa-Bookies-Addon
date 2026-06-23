@@ -12,6 +12,8 @@ import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
+import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.world.InteractionHand;
@@ -25,6 +27,8 @@ import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 public class MaterialsRefill extends Module {
@@ -33,13 +37,24 @@ public class MaterialsRefill extends Module {
         CLOSE_AND_BREAK, WAIT_MANUAL_CLOSE
     }
 
+    private Stage stage = Stage.IDLE;
+    private Item currentTargetItem;
+    private int shulkerSlot = -1;
+    private BlockPos placedShulkerPos;
+    private int delayTicks;
+    private int keepFree = 0;
+    private boolean pickaxeEquipped = false;
+    private int preBreakSlot = -1;
+    private String lastFailItem = "";
+    private String lastFailReason = "";
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgControls = settings.createGroup("Controls");
 
     private final Setting<List<Item>> targetItems = sgGeneral.add(new ItemListSetting.Builder()
         .name("target-items")
         .description("Items to keep stocked.")
-        .defaultValue(List.of())
+        .defaultValue(new ArrayList<>())
         .build()
     );
 
@@ -54,10 +69,17 @@ public class MaterialsRefill extends Module {
 
     private final Setting<Integer> placeRange = sgGeneral.add(new IntSetting.Builder()
         .name("place-range")
-        .description("how far is the placement range.")
+        .description("How far the placement range is.")
         .defaultValue(2)
         .min(1)
         .sliderMax(5)
+        .build()
+    );
+
+    private final Setting<Boolean> airPlace = sgGeneral.add(new BoolSetting.Builder()
+        .name("air-place")
+        .description("Place the shulker in mid-air (no solid block needed below).")
+        .defaultValue(false)
         .build()
     );
 
@@ -89,6 +111,24 @@ public class MaterialsRefill extends Module {
         .build()
     );
 
+    private final Setting<Integer> shulkerHotbarSlot = sgGeneral.add(new IntSetting.Builder()
+        .name("shulker-hotbar-slot")
+        .description("Hotbar slot (1‑9) used when moving the shulker from inventory.")
+        .defaultValue(1)
+        .min(1)
+        .max(9)
+        .sliderRange(1, 9)
+        .build()
+    );
+
+    private final Setting<List<Item>> protectedItems = sgGeneral.add(new ItemListSetting.Builder()
+        .name("protected-items")
+        .description("Items in the hotbar that must never be swapped out.")
+        .defaultValue(new ArrayList<>())
+        .build()
+    );
+
+    @SuppressWarnings("unused")
     private final Setting<Keybind> setTargetFromHeld = sgControls.add(new KeybindSetting.Builder()
         .name("set-target-from-held")
         .description("Set the held item as the target item for restocking.")
@@ -97,26 +137,18 @@ public class MaterialsRefill extends Module {
             if (!isActive()) return;
             ItemStack held = mc.player.getMainHandItem();
             if (!held.isEmpty()) {
-                targetItems.set(List.of(held.getItem()));
-                info("Target item set to: " + held.getHoverName().getString());
+                List<Item> current = new ArrayList<>(targetItems.get());
+                if (!current.contains(held.getItem())) {
+                    current.add(held.getItem());
+                    targetItems.set(current);
+                    info("Added target item: " + held.getItem().getName(held).getString());
+                } else {
+                    info("Item already in target list.");
+                }
             }
         })
         .build()
     );
-
-    private Stage stage = Stage.IDLE;
-    private Item currentTargetItem;
-    private int shulkerSlot = -1;
-    private BlockPos placedShulkerPos;
-    private int delayTicks;
-    private int keepFree = 0;
-    private boolean pickaxeEquipped = false;
-    private int preBreakSlot = -1;
-    private String lastFailItem = "";
-    private String lastFailReason = "";
-    private Direction placedFace;
-    private Vec3 placedHitVec;
-    private BlockPos placedSupportBlock;
 
     public MaterialsRefill() {
         super(Addon.CATEGORY, "Mats-Refill",
@@ -128,7 +160,10 @@ public class MaterialsRefill extends Module {
         resetState();
     }
 
-    @Override public void onDeactivate() { resetState(); }
+    @Override
+    public void onDeactivate() {
+        resetState();
+    }
 
     private void resetState() {
         currentTargetItem = null;
@@ -161,7 +196,10 @@ public class MaterialsRefill extends Module {
     }
 
     private void checkStock() {
-        for (Item item : targetItems.get()) {
+        List<Item> items = targetItems.get();
+        if (items.isEmpty()) return;
+
+        for (Item item : items) {
             if (InvUtils.find(item).count() < restockThreshold.get()) {
                 currentTargetItem = item;
                 stage = Stage.FIND_SHULKER;
@@ -175,11 +213,10 @@ public class MaterialsRefill extends Module {
         for (int i = 0; i < mc.player.getInventory().getContainerSize(); i++) {
             ItemStack stack = mc.player.getInventory().getItem(i);
             if (!isShulkerBox(stack)) continue;
-            ItemContainerContents container = stack.get(DataComponents.CONTAINER);
-            if (container == null) continue;
+            ItemContainerContents contents = stack.get(DataComponents.CONTAINER);
+            if (contents == null) continue;
 
-            // 26.1.2: nonEmptyItems() returns List<ItemStackTemplate>
-            for (ItemStackTemplate template : container.nonEmptyItems()) {
+            for (ItemStackTemplate template : contents.nonEmptyItems()) {
                 if (template.item().value() == currentTargetItem) {
                     shulkerSlot = i;
                     break;
@@ -187,8 +224,10 @@ public class MaterialsRefill extends Module {
             }
             if (shulkerSlot != -1) break;
         }
-
         if (shulkerSlot == -1) {
+            if (PrintInfo(currentTargetItem.getName(new ItemStack(currentTargetItem)).getString(), "no shulker")) {
+                info("No shulker with " + currentTargetItem.getName(new ItemStack(currentTargetItem)).getString());
+            }
             stage = Stage.IDLE;
             resetState();
             delayTicks = 20;
@@ -205,15 +244,22 @@ public class MaterialsRefill extends Module {
             return;
         }
 
-        // Move to hotbar if not already there
         if (shulkerSlot >= 9) {
-            InvUtils.move().from(shulkerSlot).toHotbar(0);
-            shulkerSlot = 0;
+            int targetSlot = resolveHotbarSlot();
+            if (targetSlot == -1) {
+                info("No available hotbar slot to place shulker (all slots are protected).");
+                stage = Stage.IDLE;
+                resetState();
+                return;
+            }
+            InvUtils.move().from(shulkerSlot).toHotbar(targetSlot);
+            shulkerSlot = targetSlot;
             delayTicks = 2;
             return;
         }
 
         mc.player.getInventory().setSelectedSlot(shulkerSlot);
+        mc.player.connection.send(new ServerboundSetCarriedItemPacket(shulkerSlot));
 
         BlockPos placePos = findPlacement();
         if (placePos == null) {
@@ -224,69 +270,112 @@ public class MaterialsRefill extends Module {
         }
 
         placedShulkerPos = placePos;
-        placedFace = Direction.UP;
-        placedHitVec = Vec3.atCenterOf(placePos);
-        placedSupportBlock = placePos.below();
+        Vec3 hitVec = Vec3.atCenterOf(placePos);
 
-        if (rotate.get()) {
-            Rotations.rotate(
-                Rotations.getYaw(placedHitVec),
-                Rotations.getPitch(placedHitVec),
-                -100,
-                () -> {
-                    BlockHitResult hit = new BlockHitResult(placedHitVec, Direction.UP, placedShulkerPos, false);
+        if (airPlace.get()) {
+            BlockHitResult hit = new BlockHitResult(hitVec, Direction.UP, placePos, false);
+            int revision = mc.player.containerMenu.getStateId();
+
+            if (rotate.get()) {
+                Rotations.rotate(Rotations.getYaw(hitVec), Rotations.getPitch(hitVec), -100, () -> {
+                    mc.player.connection.send(new ServerboundPlayerActionPacket(
+                        ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
+                    mc.player.connection.send(new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND, hit, revision));
+                    mc.player.connection.send(new ServerboundPlayerActionPacket(
+                        ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
+                    mc.player.swing(InteractionHand.MAIN_HAND);
+                });
+            } else {
+                mc.player.connection.send(new ServerboundPlayerActionPacket(
+                    ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
+                mc.player.connection.send(new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND, hit, revision));
+                mc.player.connection.send(new ServerboundPlayerActionPacket(
+                    ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
+                mc.player.swing(InteractionHand.MAIN_HAND);
+            }
+        } else {
+            Vec3 supportHit = Vec3.atLowerCornerOf(placePos).add(0.5, 0.0, 0.5);
+            BlockHitResult hit = new BlockHitResult(supportHit, Direction.UP, placePos.below(), false);
+
+            if (rotate.get()) {
+                Rotations.rotate(Rotations.getYaw(supportHit), Rotations.getPitch(supportHit), -100, () -> {
                     mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
                     mc.player.swing(InteractionHand.MAIN_HAND);
-                }
-            );
-        } else {
-            BlockHitResult hit = new BlockHitResult(placedHitVec, Direction.UP, placedShulkerPos, false);
-            mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-            mc.player.swing(InteractionHand.MAIN_HAND);
+                });
+            } else {
+                mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
+                mc.player.swing(InteractionHand.MAIN_HAND);
+            }
         }
 
         delayTicks = 4;
         stage = Stage.OPEN_SHULKER;
     }
 
-    private BlockPos findPlacement() {
-        // Crosshair placement
-        if (mc.hitResult instanceof BlockHitResult blockHit) {
-            BlockPos candidate = blockHit.getBlockPos().relative(blockHit.getDirection());
-            if (isValidPlacePosition(candidate) && inRange(candidate)) {
-                return candidate;
+    private int resolveHotbarSlot() {
+        int preferred = shulkerHotbarSlot.get() - 1; // convert 1-9 display to 0-8 index
+
+        if (!isProtected(mc.player.getInventory().getItem(preferred))) {
+            return preferred;
+        }
+
+        // Preferred slot is protected. find any unprotected mmmhm
+        for (int i = 0; i < 9; i++) {
+            if (i == preferred) continue;
+            if (!isProtected(mc.player.getInventory().getItem(i))) {
+                return i;
             }
         }
 
-        // Fallback radius search
+        return -1; // all hotbar slots are protected
+    }
+
+    private boolean isProtected(ItemStack stack) {
+        if (stack.isEmpty()) return false;
+        return protectedItems.get().contains(stack.getItem());
+    }
+
+    private BlockPos findPlacement() {
         BlockPos playerPos = mc.player.blockPosition();
         Direction facing = mc.player.getDirection();
 
-        BlockPos testPos = playerPos.relative(facing);
-        if (isValidPlacePosition(testPos) && inRange(testPos)) return testPos;
+        Vec3 facingVec = new Vec3(facing.getStepX(), facing.getStepY(), facing.getStepZ());
 
-        Direction[] adjacents = {facing.getClockWise(), facing.getCounterClockWise(), facing.getOpposite()};
-        for (Direction dir : adjacents) {
-            testPos = playerPos.relative(dir);
-            if (isValidPlacePosition(testPos) && inRange(testPos)) return testPos;
-        }
+        double rangeSq = (double) placeRange.get() * placeRange.get();
 
-        for (int y = 1; y >= -1; y -= 2) {
-            testPos = playerPos.offset(0, y, 0);
-            if (isValidPlacePosition(testPos) && inRange(testPos)) return testPos;
-        }
+        List<BlockPos> candidates = new ArrayList<>();
+
+        // Direct cardinal directions, then vertical, then wider ring
+        candidates.add(playerPos.relative(facing));
+        candidates.add(playerPos.relative(facing.getClockWise()));
+        candidates.add(playerPos.relative(facing.getCounterClockWise()));
+        candidates.add(playerPos.relative(facing.getOpposite()));
+        for (int y = 1; y >= -1; y -= 2) candidates.add(playerPos.offset(0, y, 0));
 
         for (int d = 1; d <= placeRange.get(); d++) {
             for (int x = -d; x <= d; x++) {
                 for (int z = -d; z <= d; z++) {
-                    if ((Math.abs(x) == 1 && z == 0) || (x == 0 && Math.abs(z) == 1) || (x == 0 && z == 0)) continue;
                     if (Math.abs(x) == d || Math.abs(z) == d) {
                         for (int y = -1; y <= 1; y++) {
-                            testPos = playerPos.offset(x, y, z);
-                            if (isValidPlacePosition(testPos) && inRange(testPos)) return testPos;
+                            candidates.add(playerPos.offset(x, y, z));
                         }
                     }
                 }
+            }
+        }
+
+        // Sort wider candidates by dot product against facing so positions in front are tried first
+        candidates.sort(Comparator.comparingDouble(pos -> {
+            Vec3 offset = Vec3.atCenterOf(pos).subtract(mc.player.position()).normalize();
+            return -facingVec.dot(offset);
+        }));
+
+        for (BlockPos pos : candidates) {
+            if (mc.player.position().distanceToSqr(Vec3.atCenterOf(pos)) > rangeSq) continue;
+            if (airPlace.get()) {
+                if (mc.level.getBlockState(pos).isAir()) return pos;
+            } else {
+                if (isValidPlacePosition(pos)) return pos;
             }
         }
 
@@ -295,12 +384,7 @@ public class MaterialsRefill extends Module {
 
     private boolean isValidPlacePosition(BlockPos pos) {
         return mc.level.getBlockState(pos).isAir()
-            && mc.level.getBlockState(pos.below()).isRedstoneConductor(mc.level, pos.below())
-            && inRange(pos);
-    }
-
-    private boolean inRange(BlockPos pos) {
-        return mc.player.position().distanceToSqr(Vec3.atCenterOf(pos)) <= placeRange.get() * placeRange.get();
+            && mc.level.getBlockState(pos.below()).isSolidRender();
     }
 
     private void openShulker() {
@@ -326,7 +410,7 @@ public class MaterialsRefill extends Module {
             return;
         }
 
-        double reach = mc.player.entityInteractionRange();
+        double reach = mc.player.blockInteractionRange();
         if (mc.player.distanceToSqr(Vec3.atCenterOf(placedShulkerPos)) > reach * reach) {
             info("Shulker is too far to open. Resetting.");
             stage = Stage.IDLE;
@@ -362,7 +446,6 @@ public class MaterialsRefill extends Module {
         for (int i = 0; i < 27; i++) {
             ItemStack stack = handler.getSlot(i).getItem();
             if (stack.getItem() == currentTargetItem) {
-                // 26.1.2 quick move uses handleContainerInput
                 mc.gameMode.handleContainerInput(handler.containerId, i, 0, ContainerInput.QUICK_MOVE, mc.player);
                 emptySlots--;
                 if (emptySlots <= keepFree) break;
@@ -372,6 +455,14 @@ public class MaterialsRefill extends Module {
         mc.player.closeContainer();
         delayTicks = 2;
         stage = Stage.CLOSE_AND_BREAK;
+    }
+
+    private void restorePickaxeSlot() {
+        if (pickaxeEquipped && preBreakSlot >= 0 && preBreakSlot <= 8) {
+            mc.player.getInventory().setSelectedSlot(preBreakSlot);
+            pickaxeEquipped = false;
+            preBreakSlot = -1;
+        }
     }
 
     private void closeAndBreak() {
@@ -414,14 +505,6 @@ public class MaterialsRefill extends Module {
             finish();
         } else {
             delayTicks = 2;
-        }
-    }
-
-    private void restorePickaxeSlot() {
-        if (pickaxeEquipped && preBreakSlot >= 0 && preBreakSlot <= 8) {
-            mc.player.getInventory().setSelectedSlot(preBreakSlot);
-            pickaxeEquipped = false;
-            preBreakSlot = -1;
         }
     }
 

@@ -33,6 +33,10 @@ dependencies {
     implementation(libs.meteor.client)
 
     compileOnly(libs.baritone)
+
+    // Gson
+    implementation("com.google.code.gson:gson:2.10.1")
+    
 }
 
 java {
