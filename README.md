@@ -29,9 +29,9 @@ Tested successfully with these mods, but other might work as well.
 
 ## Features
 
-**36 modules**, **5 commands**, **7 HUD elements**, and **5 mixin**
+**37 modules**, **5 commands**, **7 HUD elements**, and **5 mixin**
 
-## Modules (36 total)
+## Modules (37 total)
 <details>
 <summary><b>Modules</b> (Bookies modules)</summary>
 
@@ -54,6 +54,7 @@ Tested successfully with these mods, but other might work as well.
 - **Chest-Tracker** - Track items in containers
 - **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block
 - **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
+- **Homes-List** - Manage and teleport to your server homes with a GUI
 - **Item-Despawn** - Highlights items that are about to despawn
 - **Inventory-Info** - SHoiGu!! GEraShimov!!!
 - **Map-Grid** - Highlights map grid boundaries around the player
@@ -117,15 +118,6 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 </details>
 
 <details>
-<summary><b>Mapart-Namer</b> - Auto‑names maps based on inventory slot layout</summary>
-
-1. Position mapart in inventory grid
-2. Enable the module
-3. Open up anvil
-4. Note : If the mapart has a longer column (Y) take out the current map (that had been named) and position (stitch) new map to same grid then redo
-</details>
-
-<details>
 <summary><b>Book-Import</b> - Automatically imports text files into signed books</summary>
 
 1. Enable the module
@@ -133,7 +125,14 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 3. _Recommend to use alongside Bookshelf-Filler module_
 4. Press set key in the module settings to continue to next file
 
-> I will post the Python code soon if qbasty finally decided to fix written book
+> I will post the Python code soon
+</details>
+
+<details>
+<summary><b>B-36 Peacemaker</b> - Yt Video</summary>
+
+https://youtu.be/Qu6NwPw19ms
+
 </details>
 
 <details>
@@ -141,6 +140,23 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 - Think of your decision before arming the launchers with tomahawk missiles
 
 https://github.com/user-attachments/assets/023f2df1-003e-4c12-bd4f-9119999ad11e
+</details>
+
+<details>
+<summary><b>Mapart-Namer</b> - Auto‑names maps based on inventory slot layout</summary>
+
+1. Position mapart in inventory grid
+2. Enable the module
+3. Open up anvil
+4. Note : If the mapart has a longer column (Y) take out the current map (that had been named) and position (stitch) new map to same grid then redo
+
+</details>
+
+<details>
+<summary><b>Platform</b> - Yt Video</summary>
+
+https://youtu.be/uZQGECqCU_A
+
 </details>
 
 ## Credits
