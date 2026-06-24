@@ -19,13 +19,19 @@
 
 ## Dependencies
 
-Tested successfully with these mods, but other might work as well.
-<font color="turquoise">Switch the branch repo if You want to see the other version config</font>
-- baritone-api-fabric-1.13.1.jar
-- BepHax-0.4.4.0.jar
-- meteor-client-1.21.4-42.jar
-- client_maps-1.3.2+1.21.4.jar (Not compatible with ev-mod vice versa)
+**You might need to install these mod**.
+Tested successfully with these versions, but other mods might work as well.
+<font colour="turquoise">Switch the branch repo if You want to see the other version config</font>
+
+- meteor-client-1.21.4-42.jar (Required!)
+- baritone-api-fabric-1.13.1.jar (Required!)
+- BepHax-0.4.4.0.jar (Optional)
 - map-in-slot-3.3.0.jar (Recommended for Mapart-Namer module)
+- client_maps-1.3.2+1.21.4.jar (Recommended for Mapart-Namer module)
+
+> client_maps is compatible with ev-mod vice versa.
+>
+>AnarchyMod is not compatible with the addon.
 
 ## Features
 
@@ -49,7 +55,7 @@ Tested successfully with these mods, but other might work as well.
 - **Bundle-Preview** - Shows an item preview overlay on bundles
 - **Bookshelf-Filler** - oeh Yuri romcom bookshelves restocker
 - **Book-Import** - Automatically imports text files into signed books
-- **Cart-Placer** - Places any minecarts on any rails in range
+- **Minecart-Placer** - Places any minecarts on any rails in range
 - **Chest-Aura** - High-speed automatic container opener
 - **Chest-Tracker** - Track items in containers
 - **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block
@@ -136,7 +142,7 @@ https://youtu.be/Qu6NwPw19ms
 </details>
 
 <details>
-<summary><b>Cart-Placer</b> - Do NOT the USS Ohio</summary>
+<summary><b>Minecart-Placer</b> - Do NOT the USS Ohio</summary>
 - Think of your decision before arming the launchers with tomahawk missiles
 
 https://github.com/user-attachments/assets/023f2df1-003e-4c12-bd4f-9119999ad11e
