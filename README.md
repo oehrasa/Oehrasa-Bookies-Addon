@@ -29,7 +29,7 @@ Tested successfully with these versions, but other mods might work as well.
 - map-in-slot-3.3.0.jar (Recommended for Mapart-Namer module)
 - client_maps-1.3.2+1.21.4.jar (Recommended for Mapart-Namer module)
 
-> client_maps is compatible with ev-mod vice versa.
+> client_maps is not compatible with ev-mod vice versa.
 >
 >AnarchyMod is not compatible with the addon.
 
