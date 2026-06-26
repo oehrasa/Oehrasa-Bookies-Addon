@@ -10,6 +10,7 @@
   "contact": {
     "homepage": "https://github.com/oehrasa/Oehrasa-Bookies-Addon",
     "repo": "https://github.com/oehrasa",
+    "sources": "https://github.com/oehrasa/Oehrasa-Bookies-Addon",
     "issues": "https://github.com/oehrasa/Oehrasa-Bookies-Addon/issues"
   },
   "license": "GPL-3.0",

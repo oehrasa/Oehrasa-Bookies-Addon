@@ -19,14 +19,19 @@
 
 ## Dependencies
 
+**You might need to install these mod**.
 Tested successfully with these mods, but other might work as well.
 <font color="turquoise">Switch the branch repo if You want to see the other version config</font>
 
-- baritone-meteor-1.21.11.jar
-- BepHax-Final.jar
-- meteor-client-1.21.11-65.jar
+- baritone-meteor-1.21.11.jar (Required!)
+- meteor-client-1.21.11-65.jar (Required!)
+- BepHax-Final.jar (Optional)
 - client_maps-1.3.2.jar (Recommended for Mapart-Namer module)
 - map-in-slot-3.4.1.jar (Recommended for Mapart-Namer module)
+
+> client_maps is not compatible with ev-mod vice versa.
+>
+>AnarchyMod is not compatible with the addon.
 
 ## Features
 
@@ -50,7 +55,6 @@ Tested successfully with these mods, but other might work as well.
 - **Bookshelf-Filler** - oeh Yuri romcom bookshelves restocker
 - **Book-Import** - Automatically imports text files into signed books
 - **Cart-Placer** - Places any minecarts on any rails in range
-- **Chest-Aura** - High-speed automatic container opener
 - **Chest-Tracker** - Track items in containers
 - **Dried-Ghast** - Give these cute and tiny little creatures a second chances
 - **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block
@@ -59,6 +63,7 @@ Tested successfully with these mods, but other might work as well.
 - **Homes-List** - Manage and teleport to your server homes with a GUI
 - **Item-Despawn** - Highlights items that are about to despawn
 - **KMDB** - Builds a Wither, Iron Golem, or Snow Golem in front of you
+- **Minechest-Aura** - High-speed automatic container opener
 - **Map-Grid** - Highlights map grid boundaries around the player
 - **Mapart-Namer** - Auto‑names maps based on inventory slot layout
 - **Mob-Owner** - Shows entity owner by saving into cache
