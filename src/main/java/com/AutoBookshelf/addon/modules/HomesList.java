@@ -204,18 +204,22 @@ public class HomesList extends Module {
 
         String[] parts = list.split(",");
 
+        // Track which homes were found in the server response
+        List<String> serverHomes = new ArrayList<>();
         for (String part : parts) {
             String homeName = part.trim();
             if (homeName.isEmpty()) continue;
+            serverHomes.add(homeName);
             if (homes.stream().noneMatch(h -> h.originalName.equals(homeName))) {
-                HomeEntry entry = new HomeEntry();
-                entry.originalName = homeName;
-                entry.displayName = homeName;
-                entry.setIcon(RANDOM_ICONS[ThreadLocalRandom.current().nextInt(RANDOM_ICONS.length)]);
-                entry.favorite = false;
+                HomeEntry entry = new HomeEntry(homeName, homeName,
+                    RANDOM_ICONS[ThreadLocalRandom.current().nextInt(RANDOM_ICONS.length)]);
+                entry.autoAdded = true;
                 homes.add(entry);
             }
         }
+
+        // Remove homes that are no longer on the server
+        homes.removeIf(home -> !home.favorite && !serverHomes.contains(home.originalName));
 
         sortHomes();
         waitingForServerHomes = false;
@@ -248,11 +252,6 @@ public class HomesList extends Module {
     public void updateHome(int index, HomeEntry entry) {
         homes.set(index, entry);
         sortHomes();
-        save();
-    }
-
-    public void removeHome(int index) {
-        homes.remove(index);
         save();
     }
 
@@ -324,6 +323,15 @@ public class HomesList extends Module {
         public boolean autoAdded = false;
         public boolean favorite = false;
         private String iconId = null;
+
+        public HomeEntry() {
+        }
+
+        public HomeEntry(String originalName, String displayName, Item icon) {
+            this.originalName = originalName;
+            this.displayName = displayName;
+            setIcon(icon);
+        }
 
         public Item getIcon() {
             if (iconId == null) return Items.GRASS_BLOCK;
@@ -402,6 +410,7 @@ public class HomesList extends Module {
             int padding = 4;
             int rowHeight = iconSize + padding;
 
+            // Compute per-column width based on the widest label in each column
             int[] colWidths = new int[columns];
             for (int i = 0; i < homes.size(); i++) {
                 int col = i % columns;
@@ -413,7 +422,9 @@ public class HomesList extends Module {
             int rows = (int) Math.ceil((double) homes.size() / columns);
             int totalWidth = 0;
             for (int w : colWidths) totalWidth += w;
+            // add a divider gap between columns
             totalWidth += (columns - 1) * 2;
+
             int totalHeight = rowHeight * rows + padding;
 
             int x = mouseX + 10;
@@ -425,7 +436,7 @@ public class HomesList extends Module {
             // Background
             context.fill(x, y, x + totalWidth, y + totalHeight, 0xCC000000);
 
-            // Column dividers
+            // Draw thin dividers between columns
             int divX = x;
             for (int c = 0; c < columns - 1; c++) {
                 divX += colWidths[c] + 1;
@@ -437,6 +448,7 @@ public class HomesList extends Module {
                 int row = i / columns;
                 int col = i % columns;
 
+                // X offset: sum of all previous column widths plus divider gaps
                 int cellX = x;
                 for (int c = 0; c < col; c++) cellX += colWidths[c] + 2;
 
@@ -448,12 +460,10 @@ public class HomesList extends Module {
                 }
 
                 context.drawItem(homes.get(i).getIconStack(), cellX + padding, rowY);
-
-                int textX = cellX + padding + iconSize + padding;
-                int textY = rowY + (rowHeight - MeteorClient.mc.textRenderer.fontHeight) / 2;
-                int color = selected ? 0xFFFFFF55 : 0xFFFFFFFF; // alpha byte
-
-                context.drawTextWithShadow(MeteorClient.mc.textRenderer, homes.get(i).displayName, textX, textY, color);
+                context.drawTextWithShadow(MeteorClient.mc.textRenderer, homes.get(i).displayName,
+                    cellX + padding + iconSize + padding,
+                    rowY + (rowHeight - MeteorClient.mc.textRenderer.fontHeight) / 2,
+                    selected ? 0xFFFF55 : 0xFFFFFF);
             }
 
             super.render(context, mouseX, mouseY, delta);
@@ -614,10 +624,7 @@ public class HomesList extends Module {
 
             WButton save = actions.add(theme.button(home == null ? "Create" : "Update")).expandX().widget();
             save.action = () -> {
-                HomeEntry newEntry = new HomeEntry();
-                newEntry.originalName = originalName.get();
-                newEntry.displayName = displayName.get();
-                newEntry.setIcon(icon.get());
+                HomeEntry newEntry = new HomeEntry(originalName.get(), displayName.get(), icon.get());
                 newEntry.autoAdded = home != null && home.autoAdded;
                 newEntry.favorite = home != null && home.favorite;
                 if (home == null) module.addHome(newEntry);

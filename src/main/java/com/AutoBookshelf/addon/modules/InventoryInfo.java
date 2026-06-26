@@ -1,3 +1,4 @@
+// 1.21.11 yarn map
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -16,12 +17,12 @@ import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.math.MathHelper;
 import org.joml.Vector2f;
 
-import java.awt.*;
 import java.util.*;
-import java.util.List;
 
 public class InventoryInfo extends Module {
-    private static final Color BACKGROUND = new Color(0, 0, 0, 75);
+    private static final int COLOR_BACKGROUND = 0x4B000000;
+    private static final int COLOR_SEPARATOR = 0x64FFFFFF;
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgCustom = settings.createGroup("Customization");
 
@@ -89,13 +90,17 @@ public class InventoryInfo extends Module {
     private int height, offset;
     private Vector2f clicked;
 
-    // For combined click support
     private record DisplayEntry(ItemStack stack, int slot) {
     }
 
     public InventoryInfo() {
-        super(Addon.CATEGORY, "inventory-info", "prigozhinplugg");
+        super(Addon.CATEGORY, "Inventory-Info", "prigozhinplugg");
     }
+    //TODO
+    // Make proper component display.
+    // Add profile target, litematica Material list feature.
+    // Searchbar.
+    // Whisper/info panel.
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
@@ -105,10 +110,7 @@ public class InventoryInfo extends Module {
 
     @EventHandler
     private void onRenderScreen(ScreenRenderEvent event) {
-        if (mc.currentScreen instanceof HandledScreen<?> screen) {
-            refresh(screen);
-        }
-        // Enable scissors that covers the entire screen, preventing clipping
+        // refresh() is already handled by onTick; no duplicate call here
         int screenWidth = mc.getWindow().getScaledWidth();
         int screenHeight = mc.getWindow().getScaledHeight();
         event.drawContext.enableScissor(0, 0, screenWidth, screenHeight);
@@ -139,52 +141,49 @@ public class InventoryInfo extends Module {
 
         for (ShulkerInfo shulkerInfo : info) {
             int count = 0, x = baseX, startY = y;
-            int maxX = baseX;   // track the rightmost edge of this shulker's items
+            int maxX = baseX;
 
-            // count rows needed for this shulker (excluding trailing empties in full mode)
+            // Count non-empty stacks to compute grid dimensions up front
             int nonEmpty = 0;
             for (ItemStack s : shulkerInfo.stacks()) {
                 if (!s.isEmpty()) nonEmpty++;
                 else if (shulkerInfo.type() == Type.COMPACT) break;
             }
-            if (nonEmpty == 0) continue;   // skip empty shulkers entirely
+            if (nonEmpty == 0) continue;
 
             int rows = (nonEmpty + columns - 1) / columns;
             int bottomY = y + rows * slotSize;
 
-            // Update maxX based on the last row (could be partial)
             int lastRowCount = nonEmpty % columns;
             if (lastRowCount == 0) lastRowCount = columns;
             maxX = baseX + lastRowCount * slotSize;
-            if (rows > 1) {
-                // previous rows are full
-                maxX = Math.max(maxX, baseX + columns * slotSize);
-            }
+            if (rows > 1) maxX = Math.max(maxX, baseX + columns * slotSize);
 
-            // draw background before the items
-            event.drawContext.fill(baseX, startY, maxX, bottomY, BACKGROUND.hashCode());
+            // Draw background before items so icons render on top
+            event.drawContext.fill(baseX, startY, maxX, bottomY, COLOR_BACKGROUND);
             event.drawContext.fill(baseX, startY - 1, maxX, startY, shulkerInfo.color());
 
-            // Draw items
             for (ItemStack stack : shulkerInfo.stacks()) {
                 if (shulkerInfo.type() == Type.COMPACT && stack.isEmpty()) break;
                 if (count > 0 && count % columns == 0) {
                     x = baseX;
                     y += slotSize;
                 }
-                int drawX = x, drawY = y;
-                drawScaledItem(event, stack, drawX, drawY, slotSize, scale);
+                drawScaledItem(event, stack, x, y, slotSize, scale);
                 x += slotSize;
                 count++;
             }
 
-            // Click detection uses the same maxX
-            if (clicked != null && clicked.x >= baseX && clicked.x <= maxX && clicked.y >= startY && clicked.y <= bottomY) {
-                mc.interactionManager.clickSlot(mc.player.currentScreenHandler.syncId, shulkerInfo.slot(), 0, SlotActionType.PICKUP, mc.player);
+            if (clicked != null
+                && clicked.x >= baseX && clicked.x <= maxX
+                && clicked.y >= startY && clicked.y <= bottomY) {
+                mc.interactionManager.clickSlot(
+                    mc.player.currentScreenHandler.syncId,
+                    shulkerInfo.slot(), 0, SlotActionType.PICKUP, mc.player);
                 setClicked(null);
             }
 
-            y = bottomY + 2;   // move to next shulker group, with 2px gap
+            y = bottomY + 2;
         }
 
         height = y - offset;
@@ -195,6 +194,7 @@ public class InventoryInfo extends Module {
         Map<Item, Integer> combined = new HashMap<>();
         Map<Item, Integer> itemToSlot = new HashMap<>();
         Map<Item, ItemStack> itemToStack = new HashMap<>();
+
         for (ShulkerInfo shulkerInfo : info) {
             for (ItemStack stack : shulkerInfo.stacks()) {
                 if (stack.isEmpty()) continue;
@@ -210,26 +210,27 @@ public class InventoryInfo extends Module {
             Item item = e.getKey();
             int total = e.getValue();
             int slot = itemToSlot.get(item);
-            ItemStack template = itemToStack.get(item);
-            ItemStack displayStack = template.copy();
+            ItemStack displayStack = itemToStack.get(item).copy();
             displayStack.setCount(total);
             entries.add(new DisplayEntry(displayStack, slot));
         }
-        entries.sort(Comparator.comparingInt((DisplayEntry e) -> -e.stack().getCount()).thenComparing(e -> e.stack().getName().getString()));
+        entries.sort(Comparator
+            .comparingInt((DisplayEntry e) -> -e.stack().getCount())
+            .thenComparing(e -> e.stack().getName().getString()));
 
         boolean isCompact = compact.get();
         int slotSize = isCompact ? compactSlotSize.get() : 20;
         int columns = isCompact ? compactColumns.get() : 9;
         float scale = (isCompact ? slotSize / 16.0f : 1.0f) * iconScale.get().floatValue();
 
-        int y = baseY;
-        int startY = y;
+        int startY = baseY;
         int totalRows = (entries.size() + columns - 1) / columns;
         int totalHeight = totalRows * slotSize;
         int maxX = baseX + columns * slotSize;
 
-        event.drawContext.fill(baseX, startY, maxX, startY + totalHeight, BACKGROUND.hashCode());
-        event.drawContext.fill(baseX, startY - 1, maxX, startY, new Color(255, 255, 255, 100).hashCode());
+        // Draw background before items so icons render on top
+        event.drawContext.fill(baseX, startY, maxX, startY + totalHeight, COLOR_BACKGROUND);
+        event.drawContext.fill(baseX, startY - 1, maxX, startY, COLOR_SEPARATOR);
 
         for (int i = 0; i < entries.size(); i++) {
             int col = i % columns;
@@ -243,7 +244,9 @@ public class InventoryInfo extends Module {
             if (clicked != null
                 && clicked.x >= drawX && clicked.x <= drawX + slotSize
                 && clicked.y >= drawY && clicked.y <= drawY + slotSize) {
-                mc.interactionManager.clickSlot(mc.player.currentScreenHandler.syncId, entry.slot(), 0, SlotActionType.PICKUP, mc.player);
+                mc.interactionManager.clickSlot(
+                    mc.player.currentScreenHandler.syncId,
+                    entry.slot(), 0, SlotActionType.PICKUP, mc.player);
                 setClicked(null);
             }
         }
@@ -252,19 +255,31 @@ public class InventoryInfo extends Module {
         setClicked(null);
     }
 
-    private void drawScaledItem(ScreenRenderEvent event, ItemStack stack, int cellX, int cellY, int cellSize, float scale) {
-        // Calculate the actual rendered size of the item (after scaling)
-        float itemPixelSize = 16.0f * scale;
+    private void drawScaledItem(ScreenRenderEvent event, ItemStack stack,
+                                int cellX, int cellY, int cellSize, float scale) {
         // Centre the icon inside the cell
+        float itemPixelSize = 16.0f * scale;
         int drawX = cellX + (int) ((cellSize - itemPixelSize) / 2);
         int drawY = cellY + (int) ((cellSize - itemPixelSize) / 2);
 
-        var matrices = event.drawContext.getMatrices();
+        // Format count text for stacks > 999 (replaces the default counter)
+        String countText = stack.getCount() > 999 ? formatCount(stack.getCount()) : null;
+
+        var context = event.drawContext;
+        var matrices = context.getMatrices();
+
+        // 1. Draw the item icon at the requested scale
         matrices.pushMatrix();
         matrices.translate(drawX, drawY);
         matrices.scale(scale, scale);
-        event.drawContext.drawItem(stack, 0, 0);
-        event.drawContext.drawStackOverlay(mc.textRenderer, stack, 0, 0, null);
+        context.drawItem(stack, 0, 0);
+        matrices.popMatrix();
+
+        // 2. Draw the overlay (durability bar, count text) without the scale
+        //    matrix active so its hardcoded pixel geometry stays correct
+        matrices.pushMatrix();
+        matrices.translate(drawX, drawY);
+        context.drawStackOverlay(mc.textRenderer, stack, 0, 0, countText);
         matrices.popMatrix();
     }
 
