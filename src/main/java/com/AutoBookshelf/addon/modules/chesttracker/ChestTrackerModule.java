@@ -313,6 +313,33 @@ public class ChestTrackerModule extends Module {
         materialList.clear();
     }
 
+    private BlockPos getCanonicalChestPos(BlockPos pos) {
+        if (mc.world == null) return pos;
+        BlockState state = mc.world.getBlockState(pos);
+        Block block = state.getBlock();
+
+        // Only double chests need normalisation
+        if (!(block instanceof ChestBlock || block instanceof TrappedChestBlock)) return pos;
+        if (!state.contains(ChestBlock.CHEST_TYPE)) return pos;
+        ChestType chestType = state.get(ChestBlock.CHEST_TYPE);
+        if (chestType == ChestType.SINGLE) return pos;
+        if (!state.contains(ChestBlock.FACING)) return pos;
+
+        // Compute the other half's position
+        Direction facing = state.get(ChestBlock.FACING);
+        BlockPos other = pos.offset(
+            chestType == ChestType.LEFT ? facing.rotateYClockwise() : facing.rotateYCounterclockwise()
+        );
+
+        // Return the smaller of the two positions as the canonical one
+        int cmp = Integer.compare(pos.getX(), other.getX());
+        if (cmp == 0) cmp = Integer.compare(pos.getY(), other.getY());
+        if (cmp == 0) cmp = Integer.compare(pos.getZ(), other.getZ());
+        return cmp <= 0 ? pos : other;
+    }
+
+    // -------------------------------------------------------------------------
+
     public void setMaterialList(Map<Identifier, Integer> list) {
         materialList.clear();
         materialList.putAll(list);
@@ -332,7 +359,6 @@ public class ChestTrackerModule extends Module {
         for (int i = 0; i < paletteList.size(); i++) {
             NbtCompound entry = paletteList.getCompound(i);
             String rawName = entry.getString("Name");
-            // Strip block state properties (e.g., remove "[facing=north]")
             String cleanName = rawName.contains("[") ? rawName.substring(0, rawName.indexOf('[')) : rawName;
             Identifier blockId = Identifier.tryParse(cleanName);
             if (blockId == null) continue;
@@ -348,9 +374,7 @@ public class ChestTrackerModule extends Module {
             int state = blockEntry.getInt("state");
             if (state < 0 || state >= palette.length) continue;
             Block block = palette[state];
-            if (block != null) {
-                blockCounts.merge(block, 1, Integer::sum);
-            }
+            if (block != null) blockCounts.merge(block, 1, Integer::sum);
         }
 
         // 3. Convert to item identifiers (block -> item)
@@ -358,9 +382,7 @@ public class ChestTrackerModule extends Module {
         for (Map.Entry<Block, Integer> entry : blockCounts.entrySet()) {
             Item item = entry.getKey().asItem();
             Identifier id = Registries.ITEM.getId(item);
-            if (id != null) {
-                materialList.merge(id, entry.getValue(), Integer::sum);
-            }
+            if (id != null) materialList.merge(id, entry.getValue(), Integer::sum);
         }
 
         if (debugMode.get()) {
@@ -381,7 +403,9 @@ public class ChestTrackerModule extends Module {
         BlockPos pos = ((BlockHitResult) mc.crosshairTarget).getBlockPos();
         Block block = mc.world.getBlockState(pos).getBlock();
         if (isTrackableContainer(block)) {
-            lastInteractedBlock = pos.toImmutable();
+            // Normalise double chests so whichever half is clicked we always record
+            // the same canonical position.
+            lastInteractedBlock = getCanonicalChestPos(pos.toImmutable());
         }
     }
 
@@ -393,11 +417,8 @@ public class ChestTrackerModule extends Module {
             while (it.hasNext()) {
                 Map.Entry<BlockPos, Integer> entry = it.next();
                 int ticksRemaining = entry.getValue() - 1;
-                if (ticksRemaining <= 0) {
-                    it.remove();
-                } else {
-                    entry.setValue(ticksRemaining);
-                }
+                if (ticksRemaining <= 0) it.remove();
+                else entry.setValue(ticksRemaining);
             }
         }
 
@@ -426,7 +447,8 @@ public class ChestTrackerModule extends Module {
                     // Manual processing if inventory event didn't fire
                     ScreenHandler handler = mc.player.currentScreenHandler;
                     if (handler != null && currentOpenPositions[0] != null) {
-                        BlockPos trackPos = currentOpenPositions[0];
+                        // Normalise before saving — even for auto-opened containers
+                        BlockPos trackPos = getCanonicalChestPos(currentOpenPositions[0]);
                         awaiting = false;
                         awaitingTicks = 0;
                         blockedContainers.remove(trackPos);
@@ -438,9 +460,7 @@ public class ChestTrackerModule extends Module {
                         for (int i = 0; i < containerSlots && i < handler.slots.size(); i++) {
                             Slot slot = handler.slots.get(i);
                             ItemStack stack = slot.getStack();
-                            if (!stack.isEmpty()) {
-                                items.add(stack.copy());
-                            }
+                            if (!stack.isEmpty()) items.add(stack.copy());
                         }
                         String currentDim = getCurrentDimension();
                         String containerType = getContainerType(trackPos);
@@ -449,9 +469,7 @@ public class ChestTrackerModule extends Module {
                         // Auto-take
                         if (materialAutoTake.get() && !materialList.isEmpty()) {
                             takeNeededItems(handler, containerSlots);
-                            // After taking, block this container so auto-open moves on
                             blockedContainers.put(trackPos.toImmutable(), BLOCKED_COOLDOWN_TICKS);
-                            // takeNeededItems already sets shouldAutoClose – no extra logic needed
                         } else {
                             int closeDelay = autoOpenCloseDelay.get();
                             if (closeDelay == 0) mc.player.closeHandledScreen();
@@ -512,8 +530,10 @@ public class ChestTrackerModule extends Module {
                     if (!isTrackableContainer(block)) continue;
                     if (blockedContainers.containsKey(blockPos)) continue;
 
-                    // Determine whether the container should be opened
-                    boolean isAlreadyTracked = data.getContainer(blockPos, currentDim) != null;
+                    // Use the canonical position for the "already tracked" check so
+                    // we don't re-open a double chest that was tracked via its other half
+                    BlockPos canonicalPos = getCanonicalChestPos(blockPos);
+                    boolean isAlreadyTracked = data.getContainer(canonicalPos, currentDim) != null;
                     if (!isAlreadyTracked && block instanceof ChestBlock) {
                         ChestType chestType = blockState.get(ChestBlock.CHEST_TYPE);
                         if (chestType == ChestType.LEFT || chestType == ChestType.RIGHT) {
@@ -524,14 +544,10 @@ public class ChestTrackerModule extends Module {
                     }
 
                     boolean shouldOpen = false;
-
-                    // Untracked containers are only opened when auto-open is enabled
                     if (autoOpenEnabled.get() && !isAlreadyTracked) {
                         shouldOpen = true;
-                    }
-                    // Already-tracked containers are opened only if they contain a needed item
-                    else if (materialAutoTake.get() && !materialList.isEmpty() && isAlreadyTracked) {
-                        TrackedContainer tc = data.getContainer(blockPos, currentDim);
+                    } else if (materialAutoTake.get() && !materialList.isEmpty() && isAlreadyTracked) {
+                        TrackedContainer tc = data.getContainer(canonicalPos, currentDim);
                         if (tc != null) {
                             for (Identifier neededId : materialList.keySet()) {
                                 if (tc.getItems().containsKey(neededId.toString())) {
@@ -551,18 +567,19 @@ public class ChestTrackerModule extends Module {
                         blockedContainers.remove(blockPos);
                         awaiting = true;
                         awaitingTicks = 0;
-                        currentOpenPositions[0] = blockPos.toImmutable();
+                        currentOpenPositions[0] = canonicalPos; // store canonical from the start
                         currentOpenPositions[1] = null;
                         if (block instanceof ChestBlock) {
                             ChestType chestType = blockState.get(ChestBlock.CHEST_TYPE);
                             if (chestType == ChestType.LEFT || chestType == ChestType.RIGHT) {
                                 Direction facing = blockState.get(ChestBlock.FACING);
                                 BlockPos otherPos = blockPos.offset(chestType == ChestType.LEFT ? facing.rotateYClockwise() : facing.rotateYCounterclockwise());
-                                currentOpenPositions[1] = otherPos;
+                                // Only store the other pos if it is NOT the canonical one
+                                if (!otherPos.equals(canonicalPos)) currentOpenPositions[1] = otherPos;
                             }
                         }
                         mc.player.swingHand(Hand.MAIN_HAND);
-                        if (debugMode.get()) info("Auto-opening container at " + blockPos.toShortString());
+                        if (debugMode.get()) info("Auto-opening container at " + canonicalPos.toShortString());
                         return;
                     } else if (result == ActionResult.FAIL) {
                         blockedContainers.put(blockPos.toImmutable(), BLOCKED_COOLDOWN_TICKS);
@@ -577,13 +594,18 @@ public class ChestTrackerModule extends Module {
         if (!isActive()) return;
         ScreenHandler handler = mc.player.currentScreenHandler;
         if (handler == null) return;
-        BlockPos trackPos = currentOpenPositions[0];
-        if (trackPos == null) trackPos = lastInteractedBlock;
-        if (trackPos == null) {
+
+        BlockPos rawPos = currentOpenPositions[0];
+        if (rawPos == null) rawPos = lastInteractedBlock;
+        if (rawPos == null) {
             awaiting = false;
             awaitingTicks = 0;
             return;
         }
+
+        // Always resolve to the canonical half before writing any data.
+        BlockPos trackPos = getCanonicalChestPos(rawPos);
+
         boolean wasAutoOpened = awaiting;
         awaiting = false;
         awaitingTicks = 0;
@@ -598,7 +620,7 @@ public class ChestTrackerModule extends Module {
             if (!slot.getStack().isEmpty()) items.add(slot.getStack().copy());
         }
         data.trackContainer(trackPos, getCurrentDimension(), getContainerType(trackPos), items);
-        if (debugMode.get()) info("Tracked " + getContainerType(trackPos) + " (" + items.size() + " items)");
+        if (debugMode.get()) info("Tracked " + getContainerType(trackPos) + " at " + trackPos.toShortString() + " (" + items.size() + " items)");
 
         // Auto-take
         if (wasAutoOpened && materialAutoTake.get() && !materialList.isEmpty()) {
@@ -686,7 +708,7 @@ public class ChestTrackerModule extends Module {
                     }
                 }
                 emptySlots--;
-                break; // only one action per container
+                break;
             }
 
             // 2. No suitable shulker – take loose stacks
@@ -701,14 +723,14 @@ public class ChestTrackerModule extends Module {
                     int removed = Math.min(stillMissing, stack.getCount());
                     stillMissing -= removed;
                     takenStacks++;
-                    break; // only one stack per container
+                    break;
                 }
             }
 
             if (stillMissing <= 0) toRemove.add(entry.getKey());
             else materialList.put(entry.getKey(), stillMissing);
 
-            if (tookSomething) break; // one action per container
+            if (tookSomething) break;
         }
 
         for (Identifier id : toRemove) materialList.remove(id);
@@ -766,7 +788,11 @@ public class ChestTrackerModule extends Module {
 
             if (!shouldRender) continue;
 
+            // Render the canonical position
             event.renderer.box(pos, sideCol, lineCol, shapeMode.get(), 0);
+
+            // Render the other half is only called once per double chest because only
+            // the canonical position exists
             BlockPos otherHalf = findDoubleChestOtherHalf(pos);
             if (otherHalf != null) {
                 event.renderer.box(otherHalf, sideCol, lineCol, shapeMode.get(), 0);
@@ -820,13 +846,17 @@ public class ChestTrackerModule extends Module {
         if (!isActive()) return;
         BlockPos pos = event.pos;
         String dim = getCurrentDimension();
-        TrackedContainer container = data.getContainer(pos, dim);
+        // Check canonical position as well as the event position
+        BlockPos canonical = getCanonicalChestPos(pos);
+        TrackedContainer container = data.getContainer(canonical, dim);
+        if (container == null) container = data.getContainer(pos, dim);
         if (container == null) return;
         BlockState newState = event.newState;
         Block block = newState.getBlock();
         if (!isTrackableContainer(block)) {
-            data.removeContainer(pos, dim);
-            if (debugMode.get()) info("Removed container at " + pos.toShortString() + " (block broken)");
+            data.removeContainer(canonical, dim);
+            data.removeContainer(pos, dim); // also clean up any stale non-canonical entry
+            if (debugMode.get()) info("Removed container at " + canonical.toShortString() + " (block broken)");
         }
     }
 
@@ -834,10 +864,13 @@ public class ChestTrackerModule extends Module {
     private void onOpenScreen(OpenScreenEvent event) {
         if (!isActive()) return;
         if (!(event.screen instanceof HandledScreen<?> handledScreen)) return;
-        BlockPos trackPos = currentOpenPositions[0];
-        if (trackPos == null) trackPos = lastInteractedBlock;
-        if (trackPos == null) return;
 
+        BlockPos rawPos = currentOpenPositions[0];
+        if (rawPos == null) rawPos = lastInteractedBlock;
+        if (rawPos == null) return;
+
+        // Normalize before custom-name lookup so the name goes to the canonical entry
+        BlockPos trackPos = getCanonicalChestPos(rawPos);
         String currentDim = getCurrentDimension();
         Block block = mc.world.getBlockState(trackPos).getBlock();
         String defaultName = Text.translatable(block.getTranslationKey()).getString().trim();
@@ -908,7 +941,6 @@ public class ChestTrackerModule extends Module {
         return mc.world.getRegistryKey().getValue().toString();
     }
 
-    // Public accessors (used by screen)
     public Item getCurrentSearchItem() {
         return currentSearchItem;
     }

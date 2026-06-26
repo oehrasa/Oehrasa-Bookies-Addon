@@ -55,7 +55,6 @@ Tested successfully with these versions, but other mods might work as well.
 - **Bundle-Preview** - Shows an item preview overlay on bundles
 - **Bookshelf-Filler** - oeh Yuri romcom bookshelves restocker
 - **Book-Import** - Automatically imports text files into signed books
-- **Minecart-Placer** - Places any minecarts on any rails in range
 - **Chest-Aura** - High-speed automatic container opener
 - **Chest-Tracker** - Track items in containers
 - **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block
@@ -63,6 +62,7 @@ Tested successfully with these versions, but other mods might work as well.
 - **Homes-List** - Manage and teleport to your server homes with a GUI
 - **Item-Despawn** - Highlights items that are about to despawn
 - **Inventory-Info** - SHoiGu!! GEraShimov!!!
+- **Minecart-Placer** - Places any minecarts on any rails in range
 - **Map-Grid** - Highlights map grid boundaries around the player
 - **Mapart-Namer** - Auto‑names maps based on inventory slot layout
 - **Mats-Refill** - Automatically restocks materials from shulker boxes

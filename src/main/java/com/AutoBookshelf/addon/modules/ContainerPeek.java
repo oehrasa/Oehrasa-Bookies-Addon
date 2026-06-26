@@ -14,6 +14,7 @@ import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.*;
+import net.minecraft.block.enums.ChestType;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.ContainerComponent;
@@ -29,6 +30,7 @@ import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
 import net.minecraft.world.World;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector3d;
@@ -54,7 +56,7 @@ public class ContainerPeek extends Module {
     private final Setting<Integer> iconSize = sgGeneral.add(new IntSetting.Builder()
         .name("icon-size")
         .description("Size of each item icon in the preview grid.")
-        .defaultValue(14)
+        .defaultValue(12)
         .min(8)
         .max(20)
         .sliderRange(8, 20)
@@ -88,21 +90,21 @@ public class ContainerPeek extends Module {
     private final Setting<SettingColor> backgroundColor = sgGeneral.add(new ColorSetting.Builder()
         .name("background-color")
         .description("Background color of the preview panel.")
-        .defaultValue(new SettingColor(0, 0, 0, 180))
+        .defaultValue(new SettingColor(0, 0, 0, 70))
         .build()
     );
 
     private final Setting<SettingColor> borderColor = sgGeneral.add(new ColorSetting.Builder()
         .name("border-color")
         .description("Border color of the preview panel.")
-        .defaultValue(new SettingColor(255, 255, 255, 0))
+        .defaultValue(new SettingColor(255, 255, 255, 70))
         .build()
     );
 
     private final Setting<Boolean> shulkerIconPreview = sgGeneral.add(new BoolSetting.Builder()
         .name("shulker-preview")
         .description("Display a compact icon for shulker boxes instead of the full grid.")
-        .defaultValue(false)
+        .defaultValue(true)
         .build()
     );
 
@@ -114,6 +116,8 @@ public class ContainerPeek extends Module {
     private Entity lastEntity;
     private List<ItemStack> lastEntityItems;
     private String lastEntityType;
+
+    private boolean lastShulkerIconSetting = shulkerIconPreview.get();
 
     private PreviewData currentPreview = null;
 
@@ -169,13 +173,18 @@ public class ContainerPeek extends Module {
             lastEntity = null; lastEntityItems = null; lastEntityType = null; currentPreview = null;
         }
 
+        // Setting changes
+        boolean shulkerSettingChanged = shulkerIconPreview.get() != lastShulkerIconSetting;
+        if (shulkerSettingChanged) lastShulkerIconSetting = shulkerIconPreview.get();
+
         // Block containers
         if (mc.crosshairTarget != null && mc.crosshairTarget.getType() == HitResult.Type.BLOCK) {
             lastEntity = null; lastEntityItems = null; lastEntityType = null;
 
             BlockHitResult hit = (BlockHitResult) mc.crosshairTarget;
             BlockPos pos = hit.getBlockPos();
-            if (pos.equals(lastTargetedPos)) return;
+            BlockPos canonicalPos = getCanonicalChestPos(pos);
+            if (pos.equals(lastTargetedPos) && !shulkerSettingChanged) return;
             lastTargetedPos = pos;
 
             double dist = Math.sqrt(mc.player.squaredDistanceTo(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5));
@@ -187,7 +196,8 @@ public class ContainerPeek extends Module {
 
             Block block = mc.world.getBlockState(pos).getBlock();
             if (!(block instanceof ChestBlock || block instanceof BarrelBlock
-                || block instanceof ShulkerBoxBlock || block instanceof EnderChestBlock)) {
+                || block instanceof ShulkerBoxBlock || block instanceof EnderChestBlock
+                || block instanceof DispenserBlock || block instanceof DropperBlock)) {
                 lastContainer = null;
                 currentPreview = null;
                 return;
@@ -196,8 +206,8 @@ public class ContainerPeek extends Module {
             String dimension = mc.world.getRegistryKey().getValue().toString();
             ChestTrackerModule tracker = Modules.get().get(ChestTrackerModule.class);
             lastContainer = (tracker != null && tracker.isActive())
-                ? tracker.getData().getContainer(pos, dimension)
-                : data.getContainer(pos, dimension);
+                ? tracker.getData().getContainer(canonicalPos, dimension)
+                : data.getContainer(canonicalPos, dimension);
 
             if (lastContainer != null) {
                 buildContainerPreview(pos, lastContainer);
@@ -210,7 +220,7 @@ public class ContainerPeek extends Module {
         // Entity item frame
         if (mc.crosshairTarget != null && mc.crosshairTarget instanceof EntityHitResult entityHit) {
             Entity entity = entityHit.getEntity();
-            if (entity == lastEntity) return;
+            if (entity == lastEntity && !shulkerSettingChanged) return;
 
             lastEntity = entity;
             lastEntityItems = null;
@@ -248,6 +258,29 @@ public class ContainerPeek extends Module {
         lastEntityItems = null;
         lastEntityType = null;
         currentPreview = null;
+    }
+
+    private BlockPos getCanonicalChestPos(BlockPos pos) {
+        if (mc.world == null) return pos;
+        BlockState state = mc.world.getBlockState(pos);
+        Block block = state.getBlock();
+
+        if (!(block instanceof ChestBlock || block instanceof TrappedChestBlock)) return pos;
+        if (!state.contains(ChestBlock.CHEST_TYPE)) return pos;
+        ChestType chestType = state.get(ChestBlock.CHEST_TYPE);
+        if (chestType == ChestType.SINGLE) return pos;
+        if (!state.contains(ChestBlock.FACING)) return pos;
+
+        Direction facing = state.get(ChestBlock.FACING);
+        BlockPos other = pos.offset(
+            chestType == ChestType.LEFT ? facing.rotateYClockwise() : facing.rotateYCounterclockwise()
+        );
+
+        // Return the smaller position as canonical
+        int cmp = Integer.compare(pos.getX(), other.getX());
+        if (cmp == 0) cmp = Integer.compare(pos.getY(), other.getY());
+        if (cmp == 0) cmp = Integer.compare(pos.getZ(), other.getZ());
+        return cmp <= 0 ? pos : other;
     }
 
     private void buildContainerPreview(BlockPos pos, TrackedContainer container) {

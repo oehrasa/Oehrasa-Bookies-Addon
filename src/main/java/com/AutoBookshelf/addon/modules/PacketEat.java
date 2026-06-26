@@ -13,19 +13,15 @@ import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractItemC2SPacket;
 import net.minecraft.util.Hand;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
 
 import java.util.List;
 import java.util.function.BiPredicate;
 
 public class PacketEat extends Module {
-    // Vanilla's real food use_action duration (in ticks). Used to throttle auto-eat
-    // so it can never consume items faster than a real eat would, regardless of holdTicks.
-    private static final int NATURAL_EAT_DURATION = 32;
+    // Normal eating duration in ticks (1.6 s). The server consumes the food after this time.
+    private static final int EAT_DURATION_TICKS = 32;
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
-    private final SettingGroup sgAutoEat = settings.createGroup("Auto Eat");
 
     private final Setting<Boolean> deSync = sgGeneral.add(new BoolSetting.Builder()
         .name("de-sync")
@@ -41,14 +37,14 @@ public class PacketEat extends Module {
         .build()
     );
 
-    private final Setting<Boolean> autoEat = sgAutoEat.add(new BoolSetting.Builder()
+    private final Setting<Boolean> autoEat = sgGeneral.add(new BoolSetting.Builder()
         .name("auto-eat")
         .description("Automatically eats from your offhand using packets when below thresholds.")
         .defaultValue(false)
         .build()
     );
 
-    private final Setting<ThresholdMode> thresholdMode = sgAutoEat.add(new EnumSetting.Builder<ThresholdMode>()
+    private final Setting<ThresholdMode> thresholdMode = sgGeneral.add(new EnumSetting.Builder<ThresholdMode>()
         .name("threshold-mode")
         .description("The threshold mode to trigger auto eat.")
         .defaultValue(ThresholdMode.Any)
@@ -56,7 +52,7 @@ public class PacketEat extends Module {
         .build()
     );
 
-    private final Setting<Double> healthThreshold = sgAutoEat.add(new DoubleSetting.Builder()
+    private final Setting<Double> healthThreshold = sgGeneral.add(new DoubleSetting.Builder()
         .name("health-threshold")
         .description("The level of health you eat at.")
         .defaultValue(10)
@@ -66,7 +62,7 @@ public class PacketEat extends Module {
         .build()
     );
 
-    private final Setting<Integer> hungerThreshold = sgAutoEat.add(new IntSetting.Builder()
+    private final Setting<Integer> hungerThreshold = sgGeneral.add(new IntSetting.Builder()
         .name("hunger-threshold")
         .description("The level of hunger you eat at.")
         .defaultValue(16)
@@ -76,19 +72,9 @@ public class PacketEat extends Module {
         .build()
     );
 
-    private final Setting<Integer> holdTicks = sgAutoEat.add(new IntSetting.Builder()
-        .name("hold-ticks")
-        .description("How many ticks to hold the fake eat packet before releasing.")
-        .defaultValue(3)
-        .range(1, NATURAL_EAT_DURATION)
-        .sliderRange(1, NATURAL_EAT_DURATION)
-        .visible(autoEat::get)
-        .build()
-    );
-
-    private final Setting<Integer> cooldownTicks = sgAutoEat.add(new IntSetting.Builder()
+    private final Setting<Integer> cooldownTicks = sgGeneral.add(new IntSetting.Builder()
         .name("cooldown")
-        .description("Minimum ticks to wait after finishing an eat cycle before checking again. Never goes below what's needed to match a real eat's pace.")
+        .description("Extra ticks to wait after an eat finishes before checking again.")
         .defaultValue(0)
         .range(0, 200)
         .sliderRange(0, 200)
@@ -96,7 +82,7 @@ public class PacketEat extends Module {
         .build()
     );
 
-    private final Setting<List<Item>> blacklist = sgAutoEat.add(new ItemListSetting.Builder()
+    private final Setting<List<Item>> blacklist = sgGeneral.add(new ItemListSetting.Builder()
         .name("blacklist")
         .description("Which offhand items to not auto eat.")
         .defaultValue(
@@ -109,8 +95,8 @@ public class PacketEat extends Module {
     );
 
     private boolean autoEating = false;
-    private int autoEatTicks = 0;
-    private int cooldownRemaining = 0;
+    private int eatTicks = 0;
+    private int postEatCooldown = 0;
 
     public PacketEat() {
         super(Addon.CATEGORY, "PacketEat", "Allows you to eat without interrupting other actions.");
@@ -119,8 +105,8 @@ public class PacketEat extends Module {
     @Override
     public void onDeactivate() {
         autoEating = false;
-        autoEatTicks = 0;
-        cooldownRemaining = 0;
+        eatTicks = 0;
+        postEatCooldown = 0;
     }
 
     @EventHandler
@@ -139,66 +125,9 @@ public class PacketEat extends Module {
             }
         }
 
-        // Auto eat (offhand packet only)
-        if (autoEat.get()) handleAutoEat(player);
-    }
-
-    private void handleAutoEat(ClientPlayerEntity player) {
-        if (autoEating) {
-            autoEatTicks++;
-
-            // Resend periodically to keep the server convinced we're still "using" the item
-            if (deSync.get()) {
-                player.networkHandler.sendPacket(
-                    new PlayerInteractItemC2SPacket(Hand.OFF_HAND, 0, player.getYaw(), player.getPitch())
-                );
-            }
-
-            if (autoEatTicks >= holdTicks.get()) finishAutoEat(player);
-            return;
+        if (autoEat.get()) {
+            handleAutoEat(player);
         }
-
-        if (cooldownRemaining > 0) {
-            cooldownRemaining--;
-            return;
-        }
-
-        if (!shouldEat(player)) return;
-
-        var offhandStack = player.getOffHandStack();
-        if (offhandStack.get(DataComponentTypes.FOOD) == null) return;
-        if (blacklist.get().contains(offhandStack.getItem())) return;
-
-        startAutoEat(player);
-    }
-
-    private void startAutoEat(ClientPlayerEntity player) {
-        player.networkHandler.sendPacket(
-            new PlayerInteractItemC2SPacket(Hand.OFF_HAND, 0, player.getYaw(), player.getPitch())
-        );
-
-        autoEating = true;
-        autoEatTicks = 0;
-    }
-
-    private void finishAutoEat(ClientPlayerEntity player) {
-        player.networkHandler.sendPacket(
-            new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.RELEASE_USE_ITEM, BlockPos.ORIGIN, Direction.DOWN)
-        );
-
-        autoEating = false;
-
-        int elapsed = autoEatTicks;
-        int remaining = NATURAL_EAT_DURATION - elapsed;
-        cooldownRemaining = Math.max(cooldownTicks.get(), remaining);
-
-        autoEatTicks = 0;
-    }
-
-    private boolean shouldEat(ClientPlayerEntity player) {
-        boolean health = player.getHealth() <= healthThreshold.get();
-        boolean hunger = player.getHungerManager().getFoodLevel() <= hungerThreshold.get();
-        return thresholdMode.get().test(health, hunger);
     }
 
     @EventHandler
@@ -214,6 +143,50 @@ public class PacketEat extends Module {
                 }
             }
         }
+    }
+
+    private void handleAutoEat(ClientPlayerEntity player) {
+        // 1. While an eat is already in progress
+        if (autoEating) {
+            eatTicks++;
+            if (eatTicks >= EAT_DURATION_TICKS) {
+                // The server will have consumed the food by now.
+                // Finish this cycle and start the extra cooldown.
+                autoEating = false;
+                eatTicks = 0;
+                postEatCooldown = cooldownTicks.get();
+            }
+            return;
+        }
+
+        // 2. Wait for extra cooldown after a completed eat
+        if (postEatCooldown > 0) {
+            postEatCooldown--;
+            return;
+        }
+
+        // 3. Check if we need to eat
+        if (!shouldEat(player)) return;
+
+        // 4. Validate offhand
+        var offhandStack = player.getOffHandStack();
+        if (offhandStack.get(DataComponentTypes.FOOD) == null) return;
+        if (blacklist.get().contains(offhandStack.getItem())) return;
+
+        // 5. Send the single "start use" packet
+        player.networkHandler.sendPacket(
+            new PlayerInteractItemC2SPacket(Hand.OFF_HAND, 0, player.getYaw(), player.getPitch())
+        );
+
+        // 6. Mark as eating and wait the full natural duration
+        autoEating = true;
+        eatTicks = 0;
+    }
+
+    private boolean shouldEat(ClientPlayerEntity player) {
+        boolean health = player.getHealth() <= healthThreshold.get();
+        boolean hunger = player.getHungerManager().getFoodLevel() <= hungerThreshold.get();
+        return thresholdMode.get().test(health, hunger);
     }
 
     public enum ThresholdMode {

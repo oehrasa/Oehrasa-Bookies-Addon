@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
+import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.game.ItemStackTooltipEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
@@ -95,18 +96,22 @@ public class GetPreview extends Module {
         .build()
     );
 
-    // Caching for some reason idk
-    private final Map<ItemStack, CachedContainerData> bundleCache = new HashMap<>();
-    private final Map<ItemStack, CachedContainerData> shulkerCache = new HashMap<>();
-    private final Map<ItemStack, ContainerComponent> shulkerComponentCache = new HashMap<>();
-    private final Map<String, ContainerComponent> nbtShulkerCache = new HashMap<>();
+    private final Map<String, CachedContainerData> bundleCache = new HashMap<>();
+    private final Map<String, CachedContainerData> shulkerCache = new HashMap<>();
+
+    // Secondary lookup: identity -> nbt-key, to avoid serializing every frame.
+    private final Map<ItemStack, String> identityToKey = new HashMap<>();
 
     private static class CachedContainerData {
+        // store with count=1 already applied so we never copy() at render time.
         final ItemStack previewStack;
         final boolean hasMultiple;
 
         CachedContainerData(ItemStack previewStack, boolean hasMultiple) {
-            this.previewStack = previewStack;
+            // Ensure count is already 1 at construction time.
+            ItemStack capped = previewStack.copy();
+            capped.setCount(1);
+            this.previewStack = capped;
             this.hasMultiple = hasMultiple;
         }
     }
@@ -129,24 +134,29 @@ public class GetPreview extends Module {
         clearCaches();
     }
 
+    private net.minecraft.client.world.ClientWorld lastWorld = null;
+
     @EventHandler
-    private void onWorldChange(TickEvent.Post event) {
-        if (mc.world != null && mc.world.getRegistryKey() != lastWorldKey) {
-            clearCaches();
-            lastWorldKey = mc.world.getRegistryKey();
-        }
+    private void onGameLeft(GameLeftEvent event) {
+        lastWorld = null;
+        clearCaches();
     }
 
-    private Object lastWorldKey;
+    @EventHandler
+    private void onTick(TickEvent.Post event) {
+        // One reference comparison per tick so no allocation, no NBT, no registry lookup.
+        if (mc.world != lastWorld) {
+            lastWorld = mc.world;
+            clearCaches();
+        }
+    }
 
     private void clearCaches() {
         bundleCache.clear();
         shulkerCache.clear();
-        shulkerComponentCache.clear();
-        nbtShulkerCache.clear();
+        identityToKey.clear();
     }
 
-    // Public entry point (called by DrawContext mixin)
     public void renderBundleOverlay(DrawContext context, int x, int y, ItemStack stack) {
         if (stack.isEmpty()) return;
 
@@ -157,7 +167,7 @@ public class GetPreview extends Module {
             }
         }
 
-        // 1. Written book to author initials
+        // 1. Written book to author initials overlay
         if (previewBooks.get() && stack.contains(DataComponentTypes.WRITTEN_BOOK_CONTENT)) {
             if (debug.get()) info("Book overlay called for: " + stack.getName().getString());
             renderBookOverlay(context, x, y, stack);
@@ -180,48 +190,42 @@ public class GetPreview extends Module {
             && ContainerPeek.IS_RENDERING.get();
     }
 
+
+    private String getCacheKey(ItemStack stack) {
+        // we've already computed a key for this object reference.
+        String cached = identityToKey.get(stack);
+        if (cached != null) return cached;
+
+        String key = computeCacheKey(stack);
+        if (key != null) identityToKey.put(stack, key);
+        return key;
+    }
+
+    private String computeCacheKey(ItemStack stack) {
+        try {
+            NbtElement element = stack.toNbt(mc.world.getRegistryManager());
+            if (!(element instanceof NbtCompound full)) return null;
+            // Use the full component map as key for maximum correctness.
+            NbtCompound components = full.getCompound("components");
+            return components.isEmpty() ? null : components.asString();
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
     private boolean hasShulkerContents(ItemStack stack) {
-        // 1. Live component
         ContainerComponent component = stack.get(DataComponentTypes.CONTAINER);
-        if (component != null) {
-            shulkerComponentCache.put(stack, component);
-            String key = getShulkerNbtKey(stack);
-            if (key != null) nbtShulkerCache.put(key, component);
-            return true;
-        }
+        if (component != null) return true;
 
-        // 2. Reference cache
-        component = shulkerComponentCache.get(stack);
-        if (component != null) {
-            if (debug.get()) info("Cache hit (reference)");
+        // Check if we already have a cache entry for this stack (component data may be absent client-side for stacks that have been seen before).
+        String key = getCacheKey(stack);
+        if (key != null && shulkerCache.containsKey(key)) {
+            if (debug.get()) info("Cache hit (key)");
             return true;
-        }
-
-        // 3. NBT cache
-        String key = getShulkerNbtKey(stack);
-        if (key != null) {
-            component = nbtShulkerCache.get(key);
-            if (component != null) {
-                shulkerComponentCache.put(stack, component);
-                if (debug.get()) info("Cache hit (NBT)");
-                return true;
-            }
         }
 
         if (debug.get()) info("No container data for: " + stack.getItem().getName().getString());
         return false;
-    }
-
-    private String getShulkerNbtKey(ItemStack stack) {
-        try {
-            NbtElement element = stack.toNbt(mc.world.getRegistryManager());
-            if (!(element instanceof NbtCompound full)) return null;
-            NbtCompound components = full.getCompound("components");
-            NbtCompound container = components.getCompound("minecraft:container");
-            if (!container.isEmpty()) return container.asString();
-        } catch (Exception ignored) {
-        }
-        return null;
     }
 
     private void renderBookOverlay(DrawContext context, int x, int y, ItemStack stack) {
@@ -230,29 +234,11 @@ public class GetPreview extends Module {
 
         int border = 1;
         int effectiveSize = iconSize.get() - 2 * border;
-        int iconX, iconY;
-        switch (iconPosition.get()) {
-            case BottomLeft -> {
-                iconX = x + border;
-                iconY = y + 16 - effectiveSize - border;
-            }
-            case TopRight -> {
-                iconX = x + 16 - effectiveSize - border;
-                iconY = y + border;
-            }
-            case TopLeft -> {
-                iconX = x + border;
-                iconY = y + border;
-            }
-            default -> {
-                iconX = x + (16 - effectiveSize) / 2;
-                iconY = y + (16 - effectiveSize) / 2;
-            }
-        }
+        int[] pos = computeIconPosition(x, y, effectiveSize, border);
 
         var matrices = context.getMatrices();
         matrices.push();
-        matrices.translate(iconX, iconY, 300); // test
+        matrices.translate(pos[0], pos[1], 300);
         drawBookInitials(context, book);
         matrices.pop();
     }
@@ -260,11 +246,13 @@ public class GetPreview extends Module {
     private void drawBookInitials(DrawContext context, WrittenBookContentComponent book) {
         String author = book.author();
         if (author == null || author.isEmpty()) author = "???";
-        String initials = author.length() > 3 ? author.substring(0, 3).toUpperCase() : author.toUpperCase();
+        String initials = author.length() > 3
+            ? author.substring(0, 3).toUpperCase()
+            : author.toUpperCase();
 
         float textScale = 0.6f;
         int fullSize = iconSize.get() - 4;
-        int textColor = 0xFFFFFFFF;     // opaque white
+        int textColor = 0xFFFFFFFF;
 
         var matrices = context.getMatrices();
         matrices.push();
@@ -275,19 +263,20 @@ public class GetPreview extends Module {
         int textX = (int) ((fullSize / textScale - textWidth) / 2);
         int textY = (int) ((fullSize / textScale - textHeight) / 2);
 
-        // No background
         context.drawText(mc.textRenderer, initials, textX, textY, textColor, true);
         matrices.pop();
     }
 
     private void renderContainerOverlay(DrawContext context, int x, int y, ItemStack stack,
-                                        Map<ItemStack, CachedContainerData> cache, boolean isShulker) {
-        CachedContainerData data = cache.get(stack);
+                                        Map<String, CachedContainerData> cache, boolean isShulker) {
+        String cacheKey = getCacheKey(stack);
+        CachedContainerData data = (cacheKey != null) ? cache.get(cacheKey) : null;
+
         if (data == null) {
             List<ItemStack> items;
+
             if (isShulker) {
                 ContainerComponent container = stack.get(DataComponentTypes.CONTAINER);
-                if (container == null) container = shulkerComponentCache.get(stack);
                 if (container == null) return;
 
                 items = new ArrayList<>();
@@ -297,59 +286,67 @@ public class GetPreview extends Module {
                 if (contents == null || contents.isEmpty()) return;
                 items = contents.stream().toList();
             }
+
             if (items.isEmpty()) return;
 
-            boolean hasMultiple = items.stream().map(ItemStack::getItem).distinct().count() > 1;
+            // Use plain loops instead of stream ops to avoid iterator/collector
+            // allocations in the render path on a cache miss.
+            boolean hasMultiple = false;
+            {
+                Item first = items.get(0).getItem();
+                for (int i = 1; i < items.size(); i++) {
+                    if (items.get(i).getItem() != first) {
+                        hasMultiple = true;
+                        break;
+                    }
+                }
+            }
+
             ItemStack previewStack = null;
             switch (previewMode.get()) {
-                case FirstItem -> previewStack = items.get(0).copy();
+                case FirstItem -> previewStack = items.get(0);
+
                 case MostCommon -> {
+                    // Plain loop no stream, no collectors, no boxing beyond Integer.
                     Map<Item, Integer> counts = new HashMap<>();
-                    for (ItemStack s : items) counts.merge(s.getItem(), s.getCount(), Integer::sum);
-                    Item dominant = counts.entrySet().stream()
-                        .max(Map.Entry.comparingByValue())
-                        .map(Map.Entry::getKey)
-                        .orElse(null);
+                    for (ItemStack s : items)
+                        counts.merge(s.getItem(), s.getCount(), Integer::sum);
+
+                    Item dominant = null;
+                    int max = -1;
+                    for (Map.Entry<Item, Integer> entry : counts.entrySet()) {
+                        if (entry.getValue() > max) {
+                            max = entry.getValue();
+                            dominant = entry.getKey();
+                        }
+                    }
+
                     if (dominant != null) {
-                        previewStack = items.stream()
-                            .filter(s -> s.getItem() == dominant)
-                            .findFirst()
-                            .map(ItemStack::copy)
-                            .orElse(null);
+                        for (ItemStack s : items) {
+                            if (s.getItem() == dominant) {
+                                previewStack = s;
+                                break;
+                            }
+                        }
                     }
                 }
             }
 
             if (previewStack == null) return;
+
+            // CachedContainerData constructor copies and sets count=1 internally.
             data = new CachedContainerData(previewStack, hasMultiple);
-            cache.put(stack, data);
+            if (cacheKey != null) cache.put(cacheKey, data);
         }
 
-        ItemStack displayStack = data.previewStack.copy();
-        displayStack.setCount(1);
+        ItemStack displayStack = data.previewStack;
 
         int border = 1;
         int effectiveSize = iconSize.get() - 2 * border;
         float scale = effectiveSize / 16.0f;
-        int iconX, iconY;
-        switch (iconPosition.get()) {
-            case BottomLeft -> {
-                iconX = x + border;
-                iconY = y + 16 - effectiveSize - border;
-            }
-            case TopRight -> {
-                iconX = x + 16 - effectiveSize - border;
-                iconY = y + border;
-            }
-            case TopLeft -> {
-                iconX = x + border;
-                iconY = y + border;
-            }
-            default -> {
-                iconX = x + (16 - effectiveSize) / 2;
-                iconY = y + (16 - effectiveSize) / 2;
-            }
-        }
+        int[] pos = computeIconPosition(x, y, effectiveSize, border);
+        int iconX = pos[0];
+        int iconY = pos[1];
 
         var matrices = context.getMatrices();
         matrices.push();
@@ -357,7 +354,7 @@ public class GetPreview extends Module {
         matrices.scale(scale, scale, 1);
 
         if (displayStack.isOf(Items.FILLED_MAP)) {
-            if (!drawMapIfPossible(context, displayStack, 0, 0, 1.0f)) {
+            if (!drawMapIfPossible(context, displayStack)) {
                 context.drawItem(displayStack, 0, 0);
             }
         } else if (previewBooks.get() && displayStack.isOf(Items.WRITTEN_BOOK)) {
@@ -367,9 +364,18 @@ public class GetPreview extends Module {
             context.drawItem(displayStack, 0, 0);
         }
 
+        matrices.pop();
+
+        // Compute screen-space pixel position for the overlay (unscaled)
+        int overlayX = iconX;
+        int overlayY = iconY;
+
+        matrices.push();
+        matrices.translate(overlayX, overlayY, 200);
         context.drawStackOverlay(mc.textRenderer, displayStack, 0, 0, null);
         matrices.pop();
 
+        // Multiple-type indicator text (drawn in screen space, no scaling needed).
         if (data.hasMultiple && !multipleText.get().isEmpty()) {
             String text = multipleText.get();
             int textWidth = mc.textRenderer.getWidth(text);
@@ -379,7 +385,7 @@ public class GetPreview extends Module {
         }
     }
 
-    private boolean drawMapIfPossible(DrawContext context, ItemStack mapStack, int x, int y, float scale) {
+    private boolean drawMapIfPossible(DrawContext context, ItemStack mapStack) {
         if (!mapStack.isOf(Items.FILLED_MAP)) return false;
         MapIdComponent mapId = mapStack.get(DataComponentTypes.MAP_ID);
         if (mapId == null) return false;
@@ -388,17 +394,44 @@ public class GetPreview extends Module {
 
         var matrices = context.getMatrices();
         matrices.push();
-        matrices.translate(x, y, 0);
-        matrices.scale(scale, scale, 1);
+        // Apply only the map renderer's own scale; the caller already positioned us.
         matrices.scale(0.125F, 0.125F, 1.0F);
 
         var renderState = new MapRenderState();
-        mc.getMapRenderer().update(mapId, mapState, renderState);
         var vertexConsumers = mc.getBufferBuilders().getEntityVertexConsumers();
+        mc.getMapRenderer().update(mapId, mapState, renderState);
         mc.getMapRenderer().draw(renderState, matrices, vertexConsumers, false, 0xF000F0);
+
+        // Flush the buffer while still inside our push/pop
         vertexConsumers.draw();
+
         matrices.pop();
         return true;
+    }
+
+    private int[] computeIconPosition(int x, int y, int effectiveSize, int border) {
+        return switch (iconPosition.get()) {
+            case BottomRight -> new int[]{
+                x + 16 - effectiveSize - border,
+                y + 16 - effectiveSize - border
+            };
+            case BottomLeft -> new int[]{
+                x + border,
+                y + 16 - effectiveSize - border
+            };
+            case TopRight -> new int[]{
+                x + 16 - effectiveSize - border,
+                y + border
+            };
+            case TopLeft -> new int[]{
+                x + border,
+                y + border
+            };
+            case Center -> new int[]{
+                x + (16 - effectiveSize) / 2,
+                y + (16 - effectiveSize) / 2
+            };
+        };
     }
 
     @EventHandler

@@ -203,18 +203,22 @@ public class HomesList extends Module {
 
         String[] parts = list.split(",");
 
+        // Track which homes were found in the server response
+        List<String> serverHomes = new ArrayList<>();
         for (String part : parts) {
             String homeName = part.trim();
             if (homeName.isEmpty()) continue;
+            serverHomes.add(homeName);
             if (homes.stream().noneMatch(h -> h.originalName.equals(homeName))) {
-                HomeEntry entry = new HomeEntry();
-                entry.originalName = homeName;
-                entry.displayName = homeName;
-                entry.setIcon(RANDOM_ICONS[ThreadLocalRandom.current().nextInt(RANDOM_ICONS.length)]);
-                entry.favorite = false;
+                HomeEntry entry = new HomeEntry(homeName, homeName,
+                    RANDOM_ICONS[ThreadLocalRandom.current().nextInt(RANDOM_ICONS.length)]);
+                entry.autoAdded = true;
                 homes.add(entry);
             }
         }
+
+        // Remove homes that are no longer on the server
+        homes.removeIf(home -> !home.favorite && !serverHomes.contains(home.originalName));
 
         sortHomes();
         waitingForServerHomes = false;
@@ -247,11 +251,6 @@ public class HomesList extends Module {
     public void updateHome(int index, HomeEntry entry) {
         homes.set(index, entry);
         sortHomes();
-        save();
-    }
-
-    public void removeHome(int index) {
-        homes.remove(index);
         save();
     }
 
@@ -323,6 +322,15 @@ public class HomesList extends Module {
         public boolean autoAdded = false;
         public boolean favorite = false;
         private String iconId = null;
+
+        public HomeEntry() {
+        }
+
+        public HomeEntry(String originalName, String displayName, Item icon) {
+            this.originalName = originalName;
+            this.displayName = displayName;
+            setIcon(icon);
+        }
 
         public Item getIcon() {
             if (iconId == null) return Items.GRASS_BLOCK;
@@ -613,10 +621,7 @@ public class HomesList extends Module {
 
             WButton save = actions.add(theme.button(home == null ? "Create" : "Update")).expandX().widget();
             save.action = () -> {
-                HomeEntry newEntry = new HomeEntry();
-                newEntry.originalName = originalName.get();
-                newEntry.displayName = displayName.get();
-                newEntry.setIcon(icon.get());
+                HomeEntry newEntry = new HomeEntry(originalName.get(), displayName.get(), icon.get());
                 newEntry.autoAdded = home != null && home.autoAdded;
                 newEntry.favorite = home != null && home.favorite;
                 if (home == null) module.addHome(newEntry);

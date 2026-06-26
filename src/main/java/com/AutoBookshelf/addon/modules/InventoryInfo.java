@@ -16,12 +16,12 @@ import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec2f;
 
-import java.awt.*;
 import java.util.*;
-import java.util.List;
 
 public class InventoryInfo extends Module {
-    private static final Color BACKGROUND = new Color(0, 0, 0, 75);
+    private static final int COLOR_BACKGROUND = 0x4B000000;
+    private static final int COLOR_SEPARATOR = 0x64FFFFFF;
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgCustom = settings.createGroup("Customization");
 
@@ -88,7 +88,6 @@ public class InventoryInfo extends Module {
     private int height, offset;
     private Vec2f clicked;
 
-    // For combined click support
     private record DisplayEntry(ItemStack stack, int slot) {
     }
 
@@ -96,9 +95,10 @@ public class InventoryInfo extends Module {
         super(Addon.CATEGORY, "Inventory-Info", "prigozhinplugg");
     }
     //TODO
-    // Make Proper display.
-    // Add profile/hold to add, litematica Material list feature.
-    // Whisper/info panel
+    // Make proper component display.
+    // Add profile target, litematica Material list feature.
+    // Searchbar.
+    // Whisper/info panel.
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
@@ -108,7 +108,6 @@ public class InventoryInfo extends Module {
 
     @EventHandler
     private void onRenderScreen(ScreenRenderEvent event) {
-        // Enable a scissor that covers the entire screen, preventing clipping
         int screenWidth = mc.getWindow().getScaledWidth();
         int screenHeight = mc.getWindow().getScaledHeight();
         event.drawContext.enableScissor(0, 0, screenWidth, screenHeight);
@@ -145,18 +144,22 @@ public class InventoryInfo extends Module {
                     x = baseX;
                     y += slotSize;
                 }
-                int drawX = x, drawY = y;
-                drawScaledItem(event, stack, drawX + 2, drawY, scale);
+                drawScaledItem(event, stack, x + 2, y, scale);
                 x += slotSize;
                 count++;
                 if (x > maxX) maxX = x;
             }
             y += slotSize;
-            if (clicked != null && clicked.x >= baseX && clicked.x <= maxX && clicked.y >= startY && clicked.y <= y) {
-                mc.interactionManager.clickSlot(mc.player.currentScreenHandler.syncId, shulkerInfo.slot(), 0, SlotActionType.PICKUP, mc.player);
+            if (clicked != null
+                && clicked.x >= baseX && clicked.x <= maxX
+                && clicked.y >= startY && clicked.y <= y) {
+                mc.interactionManager.clickSlot(
+                    mc.player.currentScreenHandler.syncId,
+                    shulkerInfo.slot(), 0, SlotActionType.PICKUP, mc.player);
                 setClicked(null);
             }
-            event.drawContext.fill(baseX, startY, maxX, y, BACKGROUND.hashCode());
+            // use int ARGB constants instead of Color.hashCode()
+            event.drawContext.fill(baseX, startY, maxX, y, COLOR_BACKGROUND);
             event.drawContext.fill(baseX, startY - 1, maxX, startY, shulkerInfo.color());
             y += 2;
         }
@@ -165,83 +168,94 @@ public class InventoryInfo extends Module {
     }
 
     private void renderCombinedGrid(ScreenRenderEvent event, int baseX, int baseY) {
-        // Count items, remember first shulker slot, and keep the original stack
         Map<Item, Integer> combined = new HashMap<>();
         Map<Item, Integer> itemToSlot = new HashMap<>();
         Map<Item, ItemStack> itemToStack = new HashMap<>();
+
         for (ShulkerInfo shulkerInfo : info) {
             for (ItemStack stack : shulkerInfo.stacks()) {
                 if (stack.isEmpty()) continue;
                 Item item = stack.getItem();
                 combined.merge(item, stack.getCount(), Integer::sum);
                 itemToSlot.putIfAbsent(item, shulkerInfo.slot());
-                itemToStack.putIfAbsent(item, stack.copy());   // preserve original components
+                itemToStack.putIfAbsent(item, stack.copy());
             }
         }
 
-        // Build display list
         List<DisplayEntry> entries = new ArrayList<>();
         for (Map.Entry<Item, Integer> e : combined.entrySet()) {
             Item item = e.getKey();
             int total = e.getValue();
             int slot = itemToSlot.get(item);
             ItemStack template = itemToStack.get(item);
-            ItemStack displayStack = template.copy();
-            displayStack.setCount(total);               // full total – formatCount() will abbreviate if >999
-            entries.add(new DisplayEntry(displayStack, slot));
+            ItemStack display = template.copy();
+            display.setCount(total);
+            entries.add(new DisplayEntry(display, slot));
         }
-        entries.sort(Comparator.comparingInt((DisplayEntry e) -> -e.stack().getCount()).thenComparing(e -> e.stack().getName().getString()));
+        entries.sort(Comparator
+            .comparingInt((DisplayEntry e) -> -e.stack().getCount())
+            .thenComparing(e -> e.stack().getName().getString()));
 
         boolean isCompact = compact.get();
         int slotSize = isCompact ? compactSlotSize.get() : 20;
         int columns = isCompact ? compactColumns.get() : 9;
         float scale = (isCompact ? slotSize / 16.0f : 1.0f) * iconScale.get().floatValue();
 
-        int y = baseY;
+        int startY = baseY;
         int maxX = baseX + slotSize;
-        int startY = y;
 
         for (int i = 0; i < entries.size(); i++) {
-            if (i > 0 && i % columns == 0) {
-                y += slotSize;
-            }
             int col = i % columns;
             int row = i / columns;
             int drawX = baseX + col * slotSize;
             int drawY = baseY + row * slotSize;
-            DisplayEntry entry = entries.get(i);
 
+            DisplayEntry entry = entries.get(i);
             drawScaledItem(event, entry.stack(), drawX + 2, drawY, scale);
 
             if (clicked != null
                 && clicked.x >= drawX && clicked.x <= drawX + slotSize
                 && clicked.y >= drawY && clicked.y <= drawY + slotSize) {
-                mc.interactionManager.clickSlot(mc.player.currentScreenHandler.syncId, entry.slot(), 0, SlotActionType.PICKUP, mc.player);
+                mc.interactionManager.clickSlot(
+                    mc.player.currentScreenHandler.syncId,
+                    entry.slot(), 0, SlotActionType.PICKUP, mc.player);
                 setClicked(null);
             }
 
             if (drawX + slotSize > maxX) maxX = drawX + slotSize;
         }
-        y = baseY + ((entries.size() + columns - 1) / columns) * slotSize;
 
-        event.drawContext.fill(baseX, startY, maxX, y, BACKGROUND.hashCode());
-        event.drawContext.fill(baseX, startY - 1, maxX, startY, new Color(255, 255, 255, 100).hashCode());
+        int y = baseY + ((entries.size() + columns - 1) / columns) * slotSize;
+
+        // use int ARGB constants instead of Color.hashCode()
+        event.drawContext.fill(baseX, startY, maxX, y, COLOR_BACKGROUND);
+        event.drawContext.fill(baseX, startY - 1, maxX, startY, COLOR_SEPARATOR);
         height = y - offset;
         setClicked(null);
     }
 
+    /**
+     * Draws a scaled item icon and its overlay (durability bar, count text).
+     */
     private void drawScaledItem(ScreenRenderEvent event, ItemStack stack, int px, int py, float scale) {
         String countText = stack.getCount() > 999 ? formatCount(stack.getCount()) : null;
 
         var context = event.drawContext;
         var matrices = context.getMatrices();
+
+        // 1. Draw the item icon at the requested scale.
         matrices.push();
         matrices.translate(px, py, 0);
         matrices.scale(scale, scale, 1);
-
         context.drawItem(stack, 0, 0);
-        context.drawStackOverlay(mc.textRenderer, stack, 0, 0, countText);
+        matrices.pop();
 
+        // 2. Draw the overlay (durability bar, count text) without the scale
+        //    matrix active. drawStackOverlay() uses hardcoded pixel geometry
+        //    that must render at 1:1 screen pixels relative to (px, py).
+        matrices.push();
+        matrices.translate(px, py, 0);
+        context.drawStackOverlay(mc.textRenderer, stack, 0, 0, countText);
         matrices.pop();
     }
 
