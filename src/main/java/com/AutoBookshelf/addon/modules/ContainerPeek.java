@@ -15,6 +15,7 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -24,17 +25,21 @@ import net.minecraft.world.entity.decoration.ItemFrame;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.component.BundleContents;
 import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.*;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector3d;
 
-import java.util.*;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 public class ContainerPeek extends Module {
@@ -53,7 +58,7 @@ public class ContainerPeek extends Module {
     private final Setting<Integer> iconSize = sgGeneral.add(new IntSetting.Builder()
         .name("icon-size")
         .description("Size of each item icon in the preview grid.")
-        .defaultValue(14)
+        .defaultValue(12)
         .min(8)
         .max(20)
         .sliderRange(8, 20)
@@ -87,14 +92,14 @@ public class ContainerPeek extends Module {
     private final Setting<SettingColor> backgroundColor = sgGeneral.add(new ColorSetting.Builder()
         .name("background-color")
         .description("Background color of the preview panel.")
-        .defaultValue(new SettingColor(0, 0, 0, 0))
+        .defaultValue(new SettingColor(0, 0, 0, 70))
         .build()
     );
 
     private final Setting<SettingColor> borderColor = sgGeneral.add(new ColorSetting.Builder()
         .name("border-color")
         .description("Border color of the preview panel.")
-        .defaultValue(new SettingColor(255, 255, 255, 0))
+        .defaultValue(new SettingColor(255, 255, 255, 70))
         .build()
     );
 
@@ -113,6 +118,8 @@ public class ContainerPeek extends Module {
     private Entity lastEntity;
     private List<ItemStack> lastEntityItems;
     private String lastEntityType;
+
+    private boolean lastShulkerIconSetting = shulkerIconPreview.get();
 
     private PreviewData currentPreview = null;
 
@@ -177,6 +184,9 @@ public class ContainerPeek extends Module {
             currentPreview = null;
         }
 
+        boolean shulkerSettingChanged = shulkerIconPreview.get() != lastShulkerIconSetting;
+        if (shulkerSettingChanged) lastShulkerIconSetting = shulkerIconPreview.get();
+
         // Block containers
         if (mc.hitResult != null && mc.hitResult.getType() == HitResult.Type.BLOCK) {
             lastEntity = null;
@@ -185,7 +195,8 @@ public class ContainerPeek extends Module {
 
             BlockHitResult hit = (BlockHitResult) mc.hitResult;
             BlockPos pos = hit.getBlockPos();
-            if (pos.equals(lastTargetedPos)) return;
+            BlockPos canonicalPos = getCanonicalChestPos(pos);
+            if (pos.equals(lastTargetedPos) && !shulkerSettingChanged) return;
             lastTargetedPos = pos;
 
             double dist = Math.sqrt(mc.player.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5));
@@ -197,7 +208,8 @@ public class ContainerPeek extends Module {
 
             Block block = mc.level.getBlockState(pos).getBlock();
             if (!(block instanceof ChestBlock || block instanceof BarrelBlock
-                || block instanceof ShulkerBoxBlock || block instanceof EnderChestBlock)) {
+                || block instanceof ShulkerBoxBlock || block instanceof EnderChestBlock
+                || block instanceof DispenserBlock || block instanceof DropperBlock)) {
                 lastContainer = null;
                 currentPreview = null;
                 return;
@@ -206,8 +218,8 @@ public class ContainerPeek extends Module {
             String dimension = mc.level.dimension().identifier().toString();
             ChestTrackerModule tracker = Modules.get().get(ChestTrackerModule.class);
             lastContainer = (tracker != null && tracker.isActive())
-                ? tracker.getData().getContainer(pos, dimension)
-                : data.getContainer(pos, dimension);
+                ? tracker.getData().getContainer(canonicalPos, dimension)
+                : data.getContainer(canonicalPos, dimension);
 
             if (lastContainer != null) {
                 buildContainerPreview(pos, lastContainer);
@@ -220,7 +232,7 @@ public class ContainerPeek extends Module {
         // Entity item frame
         if (mc.hitResult != null && mc.hitResult instanceof EntityHitResult entityHit) {
             Entity entity = entityHit.getEntity();
-            if (entity == lastEntity) return;
+            if (entity == lastEntity && !shulkerSettingChanged) return;
 
             lastEntity = entity;
             lastEntityItems = null;
@@ -246,17 +258,6 @@ public class ContainerPeek extends Module {
                         return;
                     }
                 }
-
-                // 2) Bundle contents
-                BundleContents bundle = stack.get(DataComponents.BUNDLE_CONTENTS);
-                if (bundle != null && !bundle.isEmpty()) {
-                    List<ItemStack> bundleStacks = new ArrayList<>();
-                    bundle.itemCopyStream().forEach(s -> bundleStacks.add(s.copy()));
-                    lastEntityItems = bundleStacks;
-                    lastEntityType = "bundle";
-                    buildEntityPreview(entity, bundleStacks, "bundle");
-                    return;
-                }
             }
 
             lastEntity = null;
@@ -275,33 +276,55 @@ public class ContainerPeek extends Module {
         currentPreview = null;
     }
 
+    private BlockPos getCanonicalChestPos(BlockPos pos) {
+        if (mc.level == null) return pos;
+        BlockState state = mc.level.getBlockState(pos);
+        Block block = state.getBlock();
+
+        if (!(block instanceof ChestBlock || block instanceof TrappedChestBlock)) return pos;
+        if (!state.hasProperty(ChestBlock.TYPE)) return pos;
+        ChestType chestType = state.getValue(ChestBlock.TYPE);
+        if (chestType == ChestType.SINGLE) return pos;
+        if (!state.hasProperty(ChestBlock.FACING)) return pos;
+
+        Direction facing = state.getValue(ChestBlock.FACING);
+        BlockPos other = pos.relative(
+            chestType == ChestType.LEFT ? facing.getClockWise() : facing.getCounterClockWise()
+        );
+
+        int cmp = Integer.compare(pos.getX(), other.getX());
+        if (cmp == 0) cmp = Integer.compare(pos.getY(), other.getY());
+        if (cmp == 0) cmp = Integer.compare(pos.getZ(), other.getZ());
+        return cmp <= 0 ? pos : other;
+    }
+
     private void buildContainerPreview(BlockPos pos, TrackedContainer container) {
         List<ItemStack> stacks = container.getItemStacks();
         String title = container.getCustomName() != null ? container.getCustomName() : container.getContainerType();
 
         Map<Integer, Item> dominantMap = new HashMap<>();
 
-        // From stored dominant item data
-        for (Map.Entry<Integer, String> entry : container.getDominantItems().entrySet()) {
-            Identifier id = Identifier.tryParse(entry.getValue());
-            if (id == null) continue;
-            Item item = BuiltInRegistries.ITEM.getValue(id);
-            if (item != null) {
-                dominantMap.put(entry.getKey(), item);
+        if (shulkerIconPreview.get()) {
+            for (Map.Entry<Integer, String> entry : container.getDominantItems().entrySet()) {
+                Identifier id = Identifier.tryParse(entry.getValue());
+                if (id == null) continue;
+                Item item = BuiltInRegistries.ITEM.getValue(id);
+                if (item != null) {
+                    dominantMap.put(entry.getKey(), item);
+                }
             }
         }
 
-        // Recompute from stacks if needed
         dominantMap.putAll(computeDominantMap(stacks));
 
-        buildPreview(pos, title, stacks, dominantMap);
+        buildPreview(pos, title, stacks, false, dominantMap);
     }
 
     private void buildEntityPreview(Entity entity, List<ItemStack> stacks, String type) {
         String title = type != null ? type : "container";
         BlockPos pos = entity.blockPosition();
         Map<Integer, Item> dominantMap = computeDominantMap(stacks);
-        buildPreview(pos, title, stacks, dominantMap);
+        buildPreview(pos, title, stacks, false, dominantMap);
     }
 
     private Map<Integer, Item> computeDominantMap(List<ItemStack> stacks) {
@@ -330,26 +353,42 @@ public class ContainerPeek extends Module {
             .orElse(null);
     }
 
-    private void buildPreview(BlockPos pos, String title, List<ItemStack> stacks, Map<Integer, Item> dominantMap) {
+    private void buildPreview(BlockPos pos, String title, List<ItemStack> stacks, boolean isShulker,
+                              Map<Integer, Item> dominantMap) {
         int itemsPerRow = maxItemsPerRow.get();
         int total = stacks.size();
-        int rows = (int) Math.ceil((double) total / itemsPerRow);
         int iconSizeVal = iconSize.get();
         int pad = 2;
-        int w = itemsPerRow * iconSizeVal + (itemsPerRow + 1) * pad;
-        int h = rows * iconSizeVal + (rows + 1) * pad;
 
-        int textLines = 0;
-        if (showType.get()) textLines++;
-        if (showPosition.get()) textLines++;
-        if (textLines > 0) h += 10 * textLines + pad;
+        // Wrap to the grid this specific container actually draws,
+        int rows = Math.max(1, (int) Math.ceil((double) total / itemsPerRow));
+        int cols = Math.min(Math.max(total, 1), itemsPerRow);
 
-        float scale = iconSizeVal / 16.0f;
+        int gridWidth = cols * iconSizeVal + (cols + 1) * pad;
+        int gridHeight = rows * iconSizeVal + (rows + 1) * pad;
 
         Component titleText = Component.literal(title);
         Component posText = Component.literal(String.format("%d, %d, %d", pos.getX(), pos.getY(), pos.getZ()));
 
-        currentPreview = new PreviewData(pos, titleText, posText, w, h, stacks, itemsPerRow, scale, dominantMap);
+        // Also make sure the panel is wide enough for the title/position text.
+        int textLines = 0;
+        int textWidth = 0;
+        if (showType.get()) {
+            textLines++;
+            textWidth = Math.max(textWidth, mc.font.width(titleText));
+        }
+        if (showPosition.get()) {
+            textLines++;
+            textWidth = Math.max(textWidth, mc.font.width(posText));
+        }
+
+        int w = Math.max(gridWidth, textWidth + pad * 2);
+        int h = gridHeight + (10 * textLines); // exact: no leftover slack vs the draw loop below
+
+        float itemScale = iconSizeVal / 16.0f;
+
+        currentPreview = new PreviewData(pos, titleText, posText, w, h, stacks,
+            itemsPerRow, itemScale, dominantMap);
     }
 
     @EventHandler
@@ -357,14 +396,20 @@ public class ContainerPeek extends Module {
         PreviewData preview = this.currentPreview;
         if (preview == null) return;
 
+        // They use graphics in extractor instead of drawContext
         GuiGraphicsExtractor context = event.graphics;
         if (context == null) return;
 
         Vector3d vec = new Vector3d(preview.pos.getX() + 0.5, preview.pos.getY() + 0.5, preview.pos.getZ() + 0.5);
         if (!NametagUtils.to2D(vec, 1.0)) return;
 
-        int screenX = (int) vec.x;
-        int screenY = (int) vec.y;
+        // Convert window coordinates to GUI scale coordinates
+        // uses getWidth() / getGuiScaledWidth() (not getScreenWidth)
+        double guiScaleX = (double) mc.getWindow().getGuiScaledWidth() / mc.getWindow().getWidth();
+        double guiScaleY = (double) mc.getWindow().getGuiScaledHeight() / mc.getWindow().getHeight();
+
+        int screenX = (int) (vec.x * guiScaleX);
+        int screenY = (int) (vec.y * guiScaleY);
 
         int panelX = screenX - preview.panelWidth / 2;
         int panelY = screenY - preview.panelHeight - 20;
@@ -387,31 +432,30 @@ public class ContainerPeek extends Module {
 
         int textY = panelY + pad;
 
-        // Title
+        // Text
         if (showType.get()) {
-            context.text(mc.font, preview.titleText, panelX + pad, textY, 0xFFFFFF);
+            context.text(mc.font, preview.titleText, panelX + pad, textY, 0xFFFFFFFF);
             textY += 10;
         }
-        // Position
         if (showPosition.get()) {
-            context.text(mc.font, preview.posText, panelX + pad, textY, 0xCCCCCC);
+            context.text(mc.font, preview.posText, panelX + pad, textY, 0xFFCCCCCC);
             textY += 10;
         }
 
-        // Item grid
+        ContainerPeek.IS_RENDERING.set(true);
+
         int itemStartX = panelX + pad;
         int itemStartY = textY + pad;
         float itemScale = preview.itemScale;
+
         for (int i = 0; i < preview.stacks.size(); i++) {
             int col = i % preview.itemsPerRow;
             int row = i / preview.itemsPerRow;
             int x = itemStartX + col * (iconSize.get() + pad);
             int y = itemStartY + row * (iconSize.get() + pad);
 
-            // Draw original item
-            RenderUtils.drawItem(event.graphics, preview.stacks.get(i), x, y, itemScale, true);
+            RenderUtils.drawItem(event.graphics, preview.stacks.get(i), x, y, itemScale, true, null, false);
 
-            // Overlay dominant shulker item
             Item dominant = preview.dominantItems.get(i);
             if (dominant != null) {
                 int border = 1;
@@ -419,8 +463,11 @@ public class ContainerPeek extends Module {
                 float overlayScale = overlaySize / 16.0f;
                 int overlayX = x + border;
                 int overlayY = y + border;
-                RenderUtils.drawItem(event.graphics, new ItemStack(dominant), overlayX, overlayY, overlayScale, false);
+
+                RenderUtils.drawItem(event.graphics, new ItemStack(dominant), overlayX, overlayY, overlayScale, false, null, false);
             }
         }
+
+        ContainerPeek.IS_RENDERING.set(false);
     }
 }

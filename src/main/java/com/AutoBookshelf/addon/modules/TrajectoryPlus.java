@@ -1,5 +1,6 @@
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
@@ -17,34 +18,15 @@ import net.minecraft.world.entity.projectile.hurtingprojectile.LargeFireball;
 import net.minecraft.world.entity.projectile.hurtingprojectile.SmallFireball;
 import net.minecraft.world.entity.projectile.hurtingprojectile.WitherSkull;
 import net.minecraft.world.entity.projectile.hurtingprojectile.windcharge.WindCharge;
-import net.minecraft.world.entity.projectile.throwableitemprojectile.AbstractThrownPotion;
-import net.minecraft.world.entity.projectile.throwableitemprojectile.Snowball;
-import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEgg;
-import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl;
-import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownExperienceBottle;
-import net.minecraft.world.item.BowItem;
-import net.minecraft.world.item.CrossbowItem;
-import net.minecraft.world.item.EggItem;
-import net.minecraft.world.item.EnderpearlItem;
-import net.minecraft.world.item.ExperienceBottleItem;
-import net.minecraft.world.item.Item;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.PotionItem;
-import net.minecraft.world.item.SnowballItem;
-import net.minecraft.world.item.TridentItem;
-import net.minecraft.world.item.WindChargeItem;
+import net.minecraft.world.entity.projectile.throwableitemprojectile.*;
+import net.minecraft.world.item.*;
 import net.minecraft.world.level.ClipContext;
-import net.minecraft.world.phys.AABB;
-import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.EntityHitResult;
-import net.minecraft.world.phys.HitResult;
-import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.*;
+
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.UUID;
-
-import com.AutoBookshelf.addon.Addon;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class TrajectoryPlus extends Module {
     public enum Mode {
@@ -64,7 +46,6 @@ public class TrajectoryPlus extends Module {
         .build()
     );
 
-    // Trail settings
     private final Setting<SettingColor> trailColor = sgTrail.add(new ColorSetting.Builder()
         .name("trail-color")
         .description("Color of the projectile trail lines.")
@@ -147,6 +128,10 @@ public class TrajectoryPlus extends Module {
     // Store projectile trails
     private final ConcurrentHashMap<UUID, List<Vec3>> projectileTrails = new ConcurrentHashMap<>();
 
+    // Shared simulation result record
+    private record SimResult(List<Vec3> path, Entity hitEntity) {
+    }
+
     public TrajectoryPlus() {
         super(Addon.CATEGORY2, "Trajectory-Plus", "Smooth projectile prediction and tracking.");
     }
@@ -160,10 +145,8 @@ public class TrajectoryPlus extends Module {
     private void onRender(Render3DEvent event) {
         if (mc.player == null || mc.level == null) return;
 
-        // Always predict player's own projectile
         predictPlayerProjectile(event);
 
-        // Always track existing projectiles
         if (renderExistingProjectiles.get()) {
             trackExistingProjectiles(event);
         }
@@ -177,174 +160,133 @@ public class TrajectoryPlus extends Module {
         }
 
         float delta = (updateMode.get() == Mode.Frame) ? event.tickDelta : 1.0f;
-
         Vec3 pos = getInterpolatedPos(mc.player, delta);
         Vec3 vel = getInitialVelocity(stack.getItem(), delta);
 
-        List<Vec3> path = new ArrayList<>();
-        path.add(pos);
+        SimResult result = simulatePath(pos, vel, null, getDrag(stack.getItem()), getGravity(stack.getItem()), 100, event, boxColor.get());
 
-        boolean hitEntity = false;
-        Entity hitEntityObj = null;
-        Vec3 currentPos = pos;
-        Vec3 currentVel = vel;
-
-        for (int i = 0; i < 100; i++) {
-            Vec3 nextPos = currentPos.add(currentVel);
-
-            BlockHitResult blockHit = mc.level.clip(new ClipContext(
-                currentPos, nextPos, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, mc.player
-            ));
-
-            EntityHitResult entityHit = findEntityHit(currentPos, nextPos);
-
-            if (entityHit != null) {
-                path.add(entityHit.getLocation());
-                hitEntityObj = entityHit.getEntity();
-                hitEntity = true;
-                break;
-            } else if (blockHit.getType() != HitResult.Type.MISS) {
-                path.add(blockHit.getLocation());
-                if (renderBox.get()) {
-                    event.renderer.box(blockHit.getBlockPos(), boxColor.get(), boxColor.get(), boxShapeMode.get(), 0);
-                }
-                break;
-            }
-
-            currentPos = nextPos;
-            path.add(currentPos);
-
-            double drag = getDrag(stack.getItem());
-            double gravity = getGravity(stack.getItem());
-            currentVel = currentVel.scale(drag).subtract(0, gravity, 0);
-        }
-
-        // Render trail
         if (renderTrail.get()) {
-            SettingColor finalColor = hitEntity ? entityHighlightColor.get() : trailColor.get();
-            for (int i = 0; i < path.size() - 1; i++) {
-                event.renderer.line(path.get(i).x, path.get(i).y, path.get(i).z,
-                                   path.get(i+1).x, path.get(i+1).y, path.get(i+1).z,
-                                   finalColor);
-            }
+            SettingColor color = result.hitEntity() != null ? entityHighlightColor.get() : trailColor.get();
+            renderPath(event, result.path(), color);
         }
 
-        // Render entity highlight
-        if (hitEntity && renderEntityHighlight.get() && hitEntityObj != null) {
-            event.renderer.box(hitEntityObj.getBoundingBox(), entityHighlightColor.get(), entityHighlightColor.get(), entityShapeMode.get(), 0);
+        if (result.hitEntity() != null && renderEntityHighlight.get()) {
+            event.renderer.box(result.hitEntity().getBoundingBox(), entityHighlightColor.get(), entityHighlightColor.get(), entityShapeMode.get(), 0);
         }
     }
 
     private void trackExistingProjectiles(Render3DEvent event) {
+        int maxTrail = trailLength.get();
+
         for (Entity entity : mc.level.entitiesForRendering()) {
-            if (isProjectile(entity)) {
-                UUID id = entity.getUUID();
-                Vec3 currentPos = entity.position();
+            if (!isProjectile(entity)) continue;
 
-                List<Vec3> trail = projectileTrails.computeIfAbsent(id, k -> new ArrayList<>());
-                trail.add(currentPos);
+            UUID id = entity.getUUID();
+            Vec3 currentPos = entity.position();
 
-                while (trail.size() > trailLength.get()) {
-                    trail.remove(0);
-                }
+            List<Vec3> trail = projectileTrails.computeIfAbsent(id, k -> new ArrayList<>());
+            trail.add(currentPos);
 
-                predictProjectilePath(event, entity);
+            // More efficient bulk removal vs repeated remove(0)
+            if (trail.size() > maxTrail) {
+                trail.subList(0, trail.size() - maxTrail).clear();
+            }
 
-                // Render trail for existing projectiles
-                if (renderTrail.get()) {
-                    for (int i = 0; i < trail.size() - 1; i++) {
-                        event.renderer.line(trail.get(i).x, trail.get(i).y, trail.get(i).z,
-                                           trail.get(i+1).x, trail.get(i+1).y, trail.get(i+1).z,
-                                           existingProjectileColor.get());
-                    }
-                }
+            predictProjectilePath(event, entity);
 
-                // Render box for existing projectiles
-                if (renderBox.get()) {
-                    event.renderer.box(entity.getBoundingBox(), existingProjectileColor.get(), existingProjectileColor.get(), boxShapeMode.get(), 0);
-                }
+            if (renderTrail.get()) {
+                renderPath(event, trail, existingProjectileColor.get());
+            }
+
+            if (renderBox.get()) {
+                event.renderer.box(entity.getBoundingBox(), existingProjectileColor.get(), existingProjectileColor.get(), boxShapeMode.get(), 0);
             }
         }
 
+        // iterate entities to check UUID instead of broken hashCode lookup
         projectileTrails.keySet().removeIf(id -> {
-            Entity e = mc.level.getEntity(id.hashCode());
-            return e == null;
+            for (Entity e : mc.level.entitiesForRendering()) {
+                if (e.getUUID().equals(id)) return false;
+            }
+            return true;
         });
     }
 
     private void predictProjectilePath(Render3DEvent event, Entity projectile) {
-        Vec3 pos = projectile.getPosition(event.tickDelta);
-        Vec3 vel = projectile.getDeltaMovement();
+        SimResult result = simulatePath(
+            projectile.position(), projectile.getDeltaMovement(), projectile,
+            0.99, getProjectileGravity(projectile), 60,
+            event, existingProjectileColor.get()
+        );
 
+        if (renderTrail.get()) {
+            SettingColor color = result.hitEntity() != null ? entityHighlightColor.get() : existingProjectileColor.get();
+            renderPath(event, result.path(), color);
+        }
+
+        if (result.hitEntity() != null && renderEntityHighlight.get()) {
+            event.renderer.box(result.hitEntity().getBoundingBox(), entityHighlightColor.get(), entityHighlightColor.get(), entityShapeMode.get(), 0);
+        }
+    }
+
+    // Shared simulation logic to avoid duplicating the tick loop in both predict methods
+    private SimResult simulatePath(Vec3 startPos, Vec3 startVel, Entity ignoreEntity, double drag, double gravity, int maxTicks, Render3DEvent event, SettingColor boxCol) {
         List<Vec3> path = new ArrayList<>();
-        path.add(pos);
+        Vec3 currentPos = startPos;
+        Vec3 currentVel = startVel;
+        path.add(currentPos);
 
-        boolean hitEntity = false;
-        Entity hitEntityObj = null;
-        Vec3 currentPos = pos;
-        Vec3 currentVel = vel;
-
-        for (int i = 0; i < 60; i++) {
+        for (int i = 0; i < maxTicks; i++) {
             Vec3 nextPos = currentPos.add(currentVel);
 
             BlockHitResult blockHit = mc.level.clip(new ClipContext(
                 currentPos, nextPos, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, mc.player
             ));
 
-            EntityHitResult entityHit = findEntityHit(currentPos, nextPos, projectile);
+            EntityHitResult entityHit = findEntityHit(currentPos, nextPos, ignoreEntity);
 
             if (entityHit != null) {
                 path.add(entityHit.getLocation());
-                hitEntityObj = entityHit.getEntity();
-                hitEntity = true;
-                break;
+                return new SimResult(path, entityHit.getEntity());
             } else if (blockHit.getType() != HitResult.Type.MISS) {
                 path.add(blockHit.getLocation());
-                if (renderBox.get()) {
-                    event.renderer.box(blockHit.getBlockPos(), existingProjectileColor.get(), existingProjectileColor.get(), boxShapeMode.get(), 0);
+                if (renderBox.get() && event != null) {
+                    event.renderer.box(blockHit.getBlockPos(), boxCol, boxCol, boxShapeMode.get(), 0);
                 }
                 break;
             }
 
             currentPos = nextPos;
             path.add(currentPos);
-
-            double drag = 0.99;
-            double gravity = getProjectileGravity(projectile);
             currentVel = currentVel.scale(drag).subtract(0, gravity, 0);
         }
 
-        // Render prediction trail for existing projectile
-        if (renderTrail.get()) {
-            SettingColor finalColor = hitEntity ? entityHighlightColor.get() : existingProjectileColor.get();
-            for (int i = 0; i < path.size() - 1; i++) {
-                event.renderer.line(path.get(i).x, path.get(i).y, path.get(i).z,
-                                   path.get(i+1).x, path.get(i+1).y, path.get(i+1).z,
-                                   finalColor);
-            }
-        }
+        return new SimResult(path, null);
+    }
 
-        // Render entity highlight for existing projectile prediction
-        if (hitEntity && renderEntityHighlight.get() && hitEntityObj != null) {
-            event.renderer.box(hitEntityObj.getBoundingBox(), entityHighlightColor.get(), entityHighlightColor.get(), entityShapeMode.get(), 0);
+    // avoids duplicating the line loop
+    private void renderPath(Render3DEvent event, List<Vec3> path, SettingColor color) {
+        for (int i = 0; i < path.size() - 1; i++) {
+            Vec3 a = path.get(i), b = path.get(i + 1);
+            event.renderer.line(a.x, a.y, a.z, b.x, b.y, b.z, color);
         }
     }
 
     private boolean isProjectile(Entity entity) {
         return entity instanceof Arrow ||
-               entity instanceof SpectralArrow ||
-               entity instanceof ThrownTrident ||
-               entity instanceof LargeFireball ||
-               entity instanceof SmallFireball ||
-               entity instanceof DragonFireball ||
-               entity instanceof WitherSkull ||
-               entity instanceof ShulkerBullet ||
-               entity instanceof Snowball ||
-               entity instanceof ThrownEgg ||
-               entity instanceof ThrownEnderpearl ||
-               entity instanceof ThrownExperienceBottle ||
-               entity instanceof AbstractThrownPotion ||
-               entity instanceof WindCharge;
+            entity instanceof SpectralArrow ||
+            entity instanceof ThrownTrident ||
+            entity instanceof LargeFireball ||
+            entity instanceof SmallFireball ||
+            entity instanceof DragonFireball ||
+            entity instanceof WitherSkull ||
+            entity instanceof ShulkerBullet ||
+            entity instanceof Snowball ||
+            entity instanceof ThrownEgg ||
+            entity instanceof ThrownEnderpearl ||
+            entity instanceof ThrownExperienceBottle ||
+            entity instanceof AbstractThrownPotion ||
+            entity instanceof WindCharge;
     }
 
     private double getProjectileGravity(Entity projectile) {
@@ -365,18 +307,16 @@ public class TrajectoryPlus extends Module {
         return 0.03;
     }
 
-    private EntityHitResult findEntityHit(Vec3 start, Vec3 end) {
-        return findEntityHit(start, end, null);
-    }
-
+    // Single method with ignoreEntity param replaces the two-overload pattern
     private EntityHitResult findEntityHit(Vec3 start, Vec3 end, Entity ignoreEntity) {
         for (Entity entity : mc.level.entitiesForRendering()) {
             if (entity == mc.player || entity == ignoreEntity) continue;
             if (!(entity instanceof LivingEntity)) continue;
 
             AABB box = entity.getBoundingBox().inflate(0.3);
-            if (box.clip(start, end).isPresent()) {
-                return new EntityHitResult(entity, box.clip(start, end).get());
+            var hit = box.clip(start, end);
+            if (hit.isPresent()) {
+                return new EntityHitResult(entity, hit.get());
             }
         }
         return null;
@@ -384,14 +324,14 @@ public class TrajectoryPlus extends Module {
 
     private boolean isValidItem(Item item) {
         return item instanceof BowItem ||
-               item instanceof CrossbowItem ||
-               item instanceof TridentItem ||
-               item instanceof EnderpearlItem ||
-               item instanceof EggItem ||
-               item instanceof SnowballItem ||
-               item instanceof ExperienceBottleItem ||
-               item instanceof WindChargeItem ||
-               item instanceof PotionItem;
+            item instanceof CrossbowItem ||
+            item instanceof TridentItem ||
+            item instanceof EnderpearlItem ||
+            item instanceof EggItem ||
+            item instanceof SnowballItem ||
+            item instanceof ExperienceBottleItem ||
+            item instanceof WindChargeItem ||
+            item instanceof PotionItem;
     }
 
     private Vec3 getInitialVelocity(Item item, float delta) {
@@ -426,7 +366,7 @@ public class TrajectoryPlus extends Module {
     }
 
     private Vec3 getInterpolatedPos(Entity entity, float delta) {
-        Vec3 pos = entity.getPosition(delta);           // interpolated foot position
+        Vec3 pos = entity.getPosition(delta);   // interpolated foot position
         return new Vec3(pos.x, pos.y + entity.getEyeHeight(entity.getPose()), pos.z);  // eye position
     }
 }

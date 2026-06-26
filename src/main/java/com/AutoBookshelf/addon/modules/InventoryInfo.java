@@ -16,12 +16,12 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import org.joml.Vector2f;
 
-import java.awt.*;
 import java.util.*;
-import java.util.List;
 
 public class InventoryInfo extends Module {
-    private static final Color BACKGROUND = new Color(0, 0, 0, 75);
+    private static final int COLOR_BACKGROUND = 0x4B000000;
+    private static final int COLOR_SEPARATOR = 0x64FFFFFF;
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgCustom = settings.createGroup("Customization");
 
@@ -98,15 +98,14 @@ public class InventoryInfo extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (!(mc.screen instanceof AbstractContainerScreen<?> screen) || mc.player.tickCount % 4 != 0) return;
+        if (!(mc.screen instanceof AbstractContainerScreen<?> screen)
+            || mc.player.tickCount % 4 != 0) return;
         refresh(screen);
     }
 
     @EventHandler
     private void onRenderScreen(ScreenRenderEvent event) {
-        if (mc.screen instanceof AbstractContainerScreen<?> screen) {
-            refresh(screen);
-        }
+        // refresh() is already handled by onTick; no duplicate call here
 
         int screenWidth = mc.getWindow().getGuiScaledWidth();
         int screenHeight = mc.getWindow().getGuiScaledHeight();
@@ -138,8 +137,9 @@ public class InventoryInfo extends Module {
 
         for (ShulkerInfo shulkerInfo : info) {
             int count = 0, x = baseX, startY = y;
-            int maxX = baseX;
+            int maxX;
 
+            // Count non-empty stacks to know grid dimensions before drawing
             int nonEmpty = 0;
             for (ItemStack s : shulkerInfo.stacks()) {
                 if (!s.isEmpty()) nonEmpty++;
@@ -153,11 +153,10 @@ public class InventoryInfo extends Module {
             int lastRowCount = nonEmpty % columns;
             if (lastRowCount == 0) lastRowCount = columns;
             maxX = baseX + lastRowCount * slotSize;
-            if (rows > 1) {
-                maxX = Math.max(maxX, baseX + columns * slotSize);
-            }
+            if (rows > 1) maxX = Math.max(maxX, baseX + columns * slotSize);
 
-            event.graphics.fill(baseX, startY, maxX, bottomY, BACKGROUND.hashCode());
+            // Background drawn before items so icons render on top
+            event.graphics.fill(baseX, startY, maxX, bottomY, COLOR_BACKGROUND);
             event.graphics.fill(baseX, startY - 1, maxX, startY, shulkerInfo.color());
 
             for (ItemStack stack : shulkerInfo.stacks()) {
@@ -166,13 +165,14 @@ public class InventoryInfo extends Module {
                     x = baseX;
                     y += slotSize;
                 }
-                int drawX = x, drawY = y;
-                drawScaledItem(event, stack, drawX, drawY, slotSize, scale);
+                drawScaledItem(event, stack, x, y, slotSize, scale);
                 x += slotSize;
                 count++;
             }
 
-            if (clicked != null && clicked.x >= baseX && clicked.x <= maxX && clicked.y >= startY && clicked.y <= bottomY) {
+            if (clicked != null
+                && clicked.x >= baseX && clicked.x <= maxX
+                && clicked.y >= startY && clicked.y <= bottomY) {
                 mc.gameMode.handleContainerInput(
                     mc.player.containerMenu.containerId,
                     shulkerInfo.slot(),
@@ -194,6 +194,7 @@ public class InventoryInfo extends Module {
         Map<Item, Integer> combined = new HashMap<>();
         Map<Item, Integer> itemToSlot = new HashMap<>();
         Map<Item, ItemStack> itemToStack = new HashMap<>();
+
         for (ShulkerInfo shulkerInfo : info) {
             for (ItemStack stack : shulkerInfo.stacks()) {
                 if (stack.isEmpty()) continue;
@@ -209,12 +210,12 @@ public class InventoryInfo extends Module {
             Item item = e.getKey();
             int total = e.getValue();
             int slot = itemToSlot.get(item);
-            ItemStack template = itemToStack.get(item);
-            ItemStack displayStack = template.copy();
+            ItemStack displayStack = itemToStack.get(item).copy();
             displayStack.setCount(total);
             entries.add(new DisplayEntry(displayStack, slot));
         }
-        entries.sort(Comparator.comparingInt((DisplayEntry e) -> -e.stack().getCount())
+        entries.sort(Comparator
+            .comparingInt((DisplayEntry e) -> -e.stack().getCount())
             .thenComparing(e -> e.stack().getHoverName().getString()));
 
         boolean isCompact = compact.get();
@@ -222,14 +223,14 @@ public class InventoryInfo extends Module {
         int columns = isCompact ? compactColumns.get() : 9;
         float scale = (isCompact ? slotSize / 16.0f : 1.0f) * iconScale.get().floatValue();
 
-        int y = baseY;
-        int startY = y;
+        int startY = baseY;
         int totalRows = (entries.size() + columns - 1) / columns;
         int totalHeight = totalRows * slotSize;
         int maxX = baseX + columns * slotSize;
 
-        event.graphics.fill(baseX, startY, maxX, startY + totalHeight, BACKGROUND.hashCode());
-        event.graphics.fill(baseX, startY - 1, maxX, startY, new Color(255, 255, 255, 100).hashCode());
+        // Background drawn before items so icons render on top
+        event.graphics.fill(baseX, startY, maxX, startY + totalHeight, COLOR_BACKGROUND);
+        event.graphics.fill(baseX, startY - 1, maxX, startY, COLOR_SEPARATOR);
 
         for (int i = 0; i < entries.size(); i++) {
             int col = i % columns;
@@ -258,17 +259,29 @@ public class InventoryInfo extends Module {
         setClicked(null);
     }
 
-    private void drawScaledItem(ScreenRenderEvent event, ItemStack stack, int cellX, int cellY, int cellSize, float scale) {
+    private void drawScaledItem(ScreenRenderEvent event, ItemStack stack,
+                                int cellX, int cellY, int cellSize, float scale) {
         float itemPixelSize = 16.0f * scale;
         int drawX = cellX + (int) ((cellSize - itemPixelSize) / 2);
         int drawY = cellY + (int) ((cellSize - itemPixelSize) / 2);
 
-        var pose = event.graphics.pose();   // returns Matrix3x2fStack
+        // Format count text for stacks > 999 (replaces the vanilla counter)
+        String countText = stack.getCount() > 999 ? formatCount(stack.getCount()) : null;
+
+        var pose = event.graphics.pose();
+
+        // 1. Draw the item icon at requested scale
         pose.pushMatrix();
-        pose.translate(drawX, drawY);   // only x, y
-        pose.scale(scale, scale);   // only x, y
-        event.graphics.item(stack, 0, 0);   // renderItem to item
-        event.graphics.itemDecorations(mc.font, stack, 0, 0, null); // renderItemDecorations to itemDecorations
+        pose.translate(drawX, drawY);
+        pose.scale(scale, scale);
+        event.graphics.item(stack, 0, 0);
+        pose.popMatrix();
+
+        // 2. Draw decorations (durability bar, count label) without scale so
+        // the text geometry stays at normal pixel size
+        pose.pushMatrix();
+        pose.translate(drawX, drawY);
+        event.graphics.itemDecorations(mc.font, stack, 0, 0, countText);
         pose.popMatrix();
     }
 
@@ -284,7 +297,10 @@ public class InventoryInfo extends Module {
     private void refresh(AbstractContainerScreen<?> screen) {
         info.clear();
         for (Slot slot : screen.getMenu().slots) {
-            ShulkerInfo shulkerInfo = ShulkerInfo.create(slot.getItem(), slot.index);
+            ShulkerInfo shulkerInfo = ShulkerInfo.create(
+                slot.getItem(),
+                slot.index
+            );
             if (shulkerInfo == null) continue;
             info.add(shulkerInfo);
         }
@@ -295,7 +311,11 @@ public class InventoryInfo extends Module {
     }
 
     public void setOffset(int offset) {
-        this.offset = Mth.clamp(offset, -Math.max(height - mc.getWindow().getGuiScaledHeight(), 0), 0);
+        this.offset = Mth.clamp(
+            offset,
+            -Math.max(height - mc.getWindow().getGuiScaledHeight(), 0),
+            0
+        );
     }
 
     public void setClicked(Vector2f clicked) {

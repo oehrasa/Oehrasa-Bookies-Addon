@@ -1,16 +1,19 @@
 package com.AutoBookshelf.addon.modules;
 
-import com.AutoBookshelf.addon.Addon;
 import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
-import baritone.api.pathing.goals.GoalBlock;
+import baritone.api.pathing.goals.GoalXZ;
+import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.misc.Keybind;
-import meteordevelopment.meteorclient.utils.player.*;
+import meteordevelopment.meteorclient.utils.player.FindItemResult;
+import meteordevelopment.meteorclient.utils.player.InvUtils;
+import meteordevelopment.meteorclient.utils.player.PlayerUtils;
+import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import meteordevelopment.orbit.EventHandler;
@@ -26,6 +29,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -67,9 +71,7 @@ public class AutoBeacon extends Module {
     private final Setting<Integer> verticalOffset = sgGeneral.add(new IntSetting.Builder()
         .name("vertical-offset")
         .description("How many blocks above the origin the bottom layer will start.")
-        .defaultValue(1)
-        .min(0)
-        .max(10)
+        .defaultValue(1).min(0).max(10)
         .build());
 
     private final Setting<Boolean> replaceGrass = sgPlacement.add(new BoolSetting.Builder()
@@ -80,7 +82,7 @@ public class AutoBeacon extends Module {
 
     private final Setting<Boolean> useBaritone = sgBaritone.add(new BoolSetting.Builder()
         .name("use-baritone")
-        .description("Use Baritone to move to out‑of‑reach block positions.")
+        .description("Use Baritone to move to out-of-reach block positions.")
         .defaultValue(false)
         .build());
 
@@ -88,12 +90,13 @@ public class AutoBeacon extends Module {
         .name("jump-when-stuck")
         .description("Jump if no block has been placed for 5 seconds while building.")
         .defaultValue(true)
-        .build());// Doesnt work for now
+        .build());
 
     private final Setting<List<Block>> allowedBlocks = sgGeneral.add(new BlockListSetting.Builder()
         .name("allowed-blocks")
         .description("Which mineral blocks to use (iron, gold, emerald, diamond, netherite).")
-        .defaultValue(Blocks.IRON_BLOCK, Blocks.GOLD_BLOCK, Blocks.EMERALD_BLOCK, Blocks.DIAMOND_BLOCK, Blocks.NETHERITE_BLOCK)
+        .defaultValue(Blocks.IRON_BLOCK, Blocks.GOLD_BLOCK, Blocks.EMERALD_BLOCK,
+            Blocks.DIAMOND_BLOCK, Blocks.NETHERITE_BLOCK)
         .build());
 
     private final Setting<Integer> delayTicks = sgGeneral.add(new IntSetting.Builder()
@@ -105,9 +108,7 @@ public class AutoBeacon extends Module {
     private final Setting<Integer> blocksPerTick = sgGeneral.add(new IntSetting.Builder()
         .name("blocks-per-tick")
         .description("How many blocks to place per tick.")
-        .defaultValue(1)
-        .min(1)
-        .max(5)
+        .defaultValue(1).min(1).max(5)
         .build());
 
     private final Setting<Boolean> placeBeacons = sgGeneral.add(new BoolSetting.Builder()
@@ -117,28 +118,18 @@ public class AutoBeacon extends Module {
         .build());
 
     private final Setting<Boolean> render = sgRender.add(new BoolSetting.Builder()
-        .name("render")
-        .description("Render the remaining blocks.")
-        .defaultValue(true)
-        .build());
+        .name("render").description("Render the remaining blocks.")
+        .defaultValue(true).build());
     private final Setting<ShapeMode> shapeMode = sgRender.add(new EnumSetting.Builder<ShapeMode>()
-        .name("shape-mode")
-        .description("How the box is rendered.")
-        .defaultValue(ShapeMode.Both)
-        .build());
+        .name("shape-mode").defaultValue(ShapeMode.Both).build());
     private final Setting<SettingColor> sideColor = sgRender.add(new ColorSetting.Builder()
-        .name("side-color")
-        .defaultValue(new SettingColor(255, 255, 255, 20))
-        .build());
+        .name("side-color").defaultValue(new SettingColor(255, 255, 255, 20)).build());
     private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
-        .name("line-color")
-        .defaultValue(new SettingColor(255, 255, 255, 200))
-        .build());
+        .name("line-color").defaultValue(new SettingColor(255, 255, 255, 200)).build());
     private final Setting<SettingColor> previewColor = sgRender.add(new ColorSetting.Builder()
         .name("preview-color")
         .description("Color of the preview boxes before building starts.")
-        .defaultValue(new SettingColor(0, 255, 0, 70)).visible(preview::get)
-        .build());
+        .defaultValue(new SettingColor(0, 255, 0, 70)).visible(preview::get).build());
 
     private BlockPos origin = null;
     private List<BlockPos> blocksToPlace = new ArrayList<>();
@@ -149,7 +140,7 @@ public class AutoBeacon extends Module {
     private boolean originSet = false;
     private int placeTimer = 0;
     private boolean waitingForBaritone = false;
-    private BlockPos currentTargetPos = null;
+    private BlockPos currentTargetPos = null; // the perimeter approach position, not the block to place
     private IBaritone baritone = null;
 
     private BlockPos pendingVerification = null;
@@ -157,12 +148,10 @@ public class AutoBeacon extends Module {
 
     private int currentLayer = 0;
     private int baseY = 0;
-
-    // Simple stuck timer, ticks since last successful placement
     private int stuckTicks = 0;
 
     public AutoBeacon() {
-        super(Addon.CATEGORY, "Auto-Beacon", "Builds a 4‑beacon pyramid at a selected location.");
+        super(Addon.CATEGORY, "Auto-Beacon", "Builds a 4-beacon pyramid at a selected location.");
     }
 
     @Override
@@ -222,12 +211,59 @@ public class AutoBeacon extends Module {
         int endX = origin.getX() + 6 - offset;
         int startZ = origin.getZ() - 3 + offset;
         int endZ = origin.getZ() + 6 - offset;
-        for (int x = startX; x <= endX; x++) {
-            for (int z = startZ; z <= endZ; z++) {
+        for (int x = startX; x <= endX; x++)
+            for (int z = startZ; z <= endZ; z++)
                 layerBlocks.add(new BlockPos(x, y, z));
+        return layerBlocks;
+    }
+
+    private BlockPos findApproachPositionForBlock(BlockPos target) {
+        int off = currentLayer; // layer 0 = widest, layer 3 = narrowest
+        int x0 = origin.getX() - 3 + off;
+        int x1 = origin.getX() + 6 - off;
+        int z0 = origin.getZ() - 3 + off;
+        int z1 = origin.getZ() + 6 - off;
+        int midX = (x0 + x1) / 2;
+        int midZ = (z0 + z1) / 2;
+        int y = target.getY();
+
+        // 8 positions 2 blocks outside the layer perimeter
+        BlockPos[] candidates = {
+            new BlockPos(x0 - 2, y, z0 - 2),  // SW corner
+            new BlockPos(x1 + 2, y, z0 - 2),  // SE corner
+            new BlockPos(x0 - 2, y, z1 + 2),  // NW corner
+            new BlockPos(x1 + 2, y, z1 + 2),  // NE corner
+            new BlockPos(midX, y, z0 - 2),     // S edge mid
+            new BlockPos(midX, y, z1 + 2),     // N edge mid
+            new BlockPos(x0 - 2, y, midZ),     // W edge mid
+            new BlockPos(x1 + 2, y, midZ),     // E edge mid
+        };
+
+        // Pick the candidate with the smallest XZ distance to the target block.
+        // XZ-only comparison because GoalXZ ignores Y.
+        BlockPos best = null;
+        double bestDist = Double.MAX_VALUE;
+        for (BlockPos c : candidates) {
+            double dx = c.getX() - target.getX();
+            double dz = c.getZ() - target.getZ();
+            double d = dx * dx + dz * dz;
+            if (d < bestDist) {
+                bestDist = d;
+                best = c;
             }
         }
-        return layerBlocks;
+        return best != null ? best : target;
+    }
+
+    private boolean baritoneArrived() {
+        // Primary: can we now reach something to place? If yes, we're done navigating.
+        if (findNextPlaceable() != null) return true;
+
+        // Secondary: did Baritone stop and are we within 2 blocks XZ of the approach?
+        if (currentTargetPos == null) return true;
+        int dx = Math.abs(mc.player.getBlockX() - currentTargetPos.getX());
+        int dz = Math.abs(mc.player.getBlockZ() - currentTargetPos.getZ());
+        return dx <= 2 && dz <= 2;
     }
 
     @EventHandler
@@ -250,7 +286,6 @@ public class AutoBeacon extends Module {
                 }
                 return;
             }
-
             if (originSet && !building && buildKey.get().isPressed()) {
                 initBuild();
                 return;
@@ -259,25 +294,21 @@ public class AutoBeacon extends Module {
 
         if (!building) return;
 
-        // Periodic cleanup of already placed blocks
-        if (mc.level.getGameTime() % 100 == 0) {
+        // Periodic cleanup of already-placed blocks
+        if (mc.level.getGameTime() % 100 == 0)
             remainingBlocks.removeIf(pos -> isBlockCorrectAtPosition(mc.level.getBlockState(pos)));
-        }
 
-        // Verification of previous placement
+        // Verify previous placement
         if (pendingVerification != null) {
-            BlockState state = mc.level.getBlockState(pendingVerification);
-            if (isBlockCorrectAtPosition(state)) {
+            if (isBlockCorrectAtPosition(mc.level.getBlockState(pendingVerification)))
                 remainingBlocks.remove(pendingVerification);
-            }
             pendingVerification = null;
             placeTimer = delayTicks.get();
             return;
         }
 
-        // Baritone arrival check
         if (waitingForBaritone && baritone != null && useBaritone.get()) {
-            if (!baritone.getPathingBehavior().isPathing() && PlayerUtils.isWithinReach(currentTargetPos)) {
+            if (!baritone.getPathingBehavior().isPathing() && baritoneArrived()) {
                 waitingForBaritone = false;
                 baritone.getPathingBehavior().cancelEverything();
                 currentTargetPos = null;
@@ -287,15 +318,12 @@ public class AutoBeacon extends Module {
         }
 
         if (jumpWhenStuck.get()) {
-            if (stuckTicks >= 100) {          // 5 seconds
+            if (stuckTicks >= 100) {
                 mc.player.jumpFromGround();
                 stuckTicks = 0;
-            } else if (placeTimer == 0) {     // only count when not already delaying
-                stuckTicks++;
-            }
+            } else if (placeTimer == 0) stuckTicks++;
         }
 
-        // Delay between placements
         if (placeTimer > 0) {
             placeTimer--;
             return;
@@ -309,10 +337,13 @@ public class AutoBeacon extends Module {
                     if (useBaritone.get() && baritone != null && !waitingForBaritone) {
                         BlockPos closest = findClosestBlock();
                         if (closest != null) {
+                            BlockPos approach = findApproachPositionForBlock(closest);
                             waitingForBaritone = true;
-                            currentTargetPos = closest;
-                            baritone.getCustomGoalProcess().setGoalAndPath(new GoalBlock(closest));
-                            info("Moving to " + closest.toShortString());
+                            currentTargetPos = approach; // track standing position
+                            baritone.getCustomGoalProcess().setGoalAndPath(
+                                new GoalXZ(approach.getX(), approach.getZ()));
+                            info("Moving to approach position " + approach.toShortString()
+                                + " for block at " + closest.toShortString());
                             return;
                         }
                     }
@@ -322,7 +353,7 @@ public class AutoBeacon extends Module {
                     pendingVerification = target;
                     placeTimer = delayTicks.get() + 5;
                     placedSomething = true;
-                    stuckTicks = 0;      // reset stuck timer on successful placement
+                    stuckTicks = 0;
                     return;
                 } else {
                     return;
@@ -332,24 +363,23 @@ public class AutoBeacon extends Module {
 
             // Layer verification
             if (remainingBlocks.isEmpty()) {
-                List<BlockPos> layerBlocks = getBlocksForLayer(currentLayer);
                 List<BlockPos> stillMissing = new ArrayList<>();
-                for (BlockPos pos : layerBlocks) {
-                    if (!isBlockCorrectAtPosition(mc.level.getBlockState(pos))) {
+                for (BlockPos pos : getBlocksForLayer(currentLayer))
+                    if (!isBlockCorrectAtPosition(mc.level.getBlockState(pos)))
                         stillMissing.add(pos);
-                    }
-                }
+
                 if (stillMissing.isEmpty()) {
                     currentLayer++;
                     if (currentLayer > 3) {
                         placingBeacons = true;
                         remainingBlocks.clear();
                         remainingBlocks.addAll(beaconsToPlace);
-                        info("Pyramid is done, placing beacons...");
+                        info("Pyramid done — placing beacons...");
                     } else {
                         remainingBlocks.clear();
                         remainingBlocks.addAll(getBlocksForLayer(currentLayer));
-                        info("Layer complete, starting layer " + (currentLayer + 1) + " (Y=" + (baseY + currentLayer) + ").");
+                        info("Layer complete, starting layer " + (currentLayer + 1)
+                            + " (Y=" + (baseY + currentLayer) + ").");
                     }
                 } else {
                     remainingBlocks.clear();
@@ -359,17 +389,19 @@ public class AutoBeacon extends Module {
             }
         } else {
             // Beacon placement
-            boolean placedBeacon = false;
             for (int i = 0; i < blocksPerTick.get() && !remainingBlocks.isEmpty(); i++) {
                 BlockPos target = findNextPlaceable();
                 if (target == null) {
                     if (useBaritone.get() && baritone != null && !waitingForBaritone) {
                         BlockPos closest = findClosestBlock();
                         if (closest != null) {
+                            BlockPos approach = findApproachPositionForBlock(closest);
                             waitingForBaritone = true;
-                            currentTargetPos = closest;
-                            baritone.getCustomGoalProcess().setGoalAndPath(new GoalBlock(closest));
-                            info("Moving to " + closest.toShortString());
+                            currentTargetPos = approach;
+                            baritone.getCustomGoalProcess().setGoalAndPath(
+                                new GoalXZ(approach.getX(), approach.getZ()));
+                            info("Moving to approach position " + approach.toShortString()
+                                + " for beacon at " + closest.toShortString());
                             return;
                         }
                     }
@@ -378,24 +410,19 @@ public class AutoBeacon extends Module {
                 if (placeBeacon(target)) {
                     pendingVerification = target;
                     placeTimer = delayTicks.get() + 5;
-                    placedBeacon = true;
                     stuckTicks = 0;
                     return;
                 } else {
                     return;
                 }
             }
-            if (placedBeacon) return;
             if (remainingBlocks.isEmpty()) finish();
         }
     }
 
     private BlockPos findNextPlaceable() {
-        for (BlockPos pos : remainingBlocks) {
-            if (canPlaceAtPosition(pos) && isPosPlaceableThroughWall(pos)) {
-                return pos;
-            }
-        }
+        for (BlockPos pos : remainingBlocks)
+            if (canPlaceAtPosition(pos) && isPosPlaceableThroughWall(pos)) return pos;
         return null;
     }
 
@@ -418,19 +445,15 @@ public class AutoBeacon extends Module {
         if (state.isAir()) return true;
         if (!replaceGrass.get()) return false;
         Block block = state.getBlock();
-        return block == Blocks.SHORT_GRASS ||
-            block == Blocks.TALL_GRASS || block == Blocks.FERN ||
-            block == Blocks.SEAGRASS || block == Blocks.TALL_SEAGRASS;
+        return block == Blocks.SHORT_GRASS || block == Blocks.TALL_GRASS ||
+            block == Blocks.FERN || block == Blocks.SEAGRASS || block == Blocks.TALL_SEAGRASS;
     }
 
     private boolean isPosPlaceableThroughWall(BlockPos pos) {
         for (Direction dir : Direction.values()) {
             BlockPos neighbor = pos.relative(dir);
-            if (mc.level == null) continue;
             BlockState neighborState = mc.level.getBlockState(neighbor);
-            if (!neighborState.canBeReplaced() && PlayerUtils.isWithinReach(neighbor)) {
-                return true;
-            }
+            if (!neighborState.canBeReplaced() && PlayerUtils.isWithinReach(neighbor)) return true;
         }
         return false;
     }
@@ -438,8 +461,9 @@ public class AutoBeacon extends Module {
     private boolean isBlockCorrectAtPosition(BlockState state) {
         if (state.isAir()) return false;
         Block block = state.getBlock();
-        if (block == Blocks.GRASS_BLOCK || block == Blocks.TALL_GRASS || block == Blocks.FERN
-            || block == Blocks.SEAGRASS || block == Blocks.TALL_SEAGRASS) return false;
+        if (block == Blocks.GRASS_BLOCK || block == Blocks.TALL_GRASS ||
+            block == Blocks.FERN || block == Blocks.SEAGRASS || block == Blocks.TALL_SEAGRASS)
+            return false;
         if (placingBeacons && block == Blocks.BEACON) return true;
         return allowedBlocks.get().contains(block);
     }
@@ -476,26 +500,21 @@ public class AutoBeacon extends Module {
                 dir.getStepY() * 0.5,
                 dir.getStepZ() * 0.5
             );
-            Direction face = dir.getOpposite();
-            BlockHitResult hit = new BlockHitResult(hitPos, face, neighbor, false);
+            BlockHitResult hit = new BlockHitResult(hitPos, dir.getOpposite(), neighbor, false);
 
-            int prevSlot = mc.player.getInventory().getSelectedSlot();
             Rotations.rotate(Rotations.getYaw(hitPos), Rotations.getPitch(hitPos), () -> {
-                InvUtils.swap(item.slot(), true);
+                InvUtils.swap(item.slot(), false);
                 mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
                 mc.player.swing(InteractionHand.MAIN_HAND);
             });
-            InvUtils.swapBack();
             return true;
         }
-        InvUtils.swap(item.slot(), true);
+        InvUtils.swap(item.slot(), false);
         boolean result = BlockUtils.place(pos, item, true, 50, true, true);
-        InvUtils.swapBack();
         return result;
     }
 
     private FindItemResult findBlockInHotbar() {
-        // 1. Main hand already holds an allowed block then keep it, remember as preferred
         ItemStack mainHand = mc.player.getMainHandItem();
         if (!mainHand.isEmpty() && mainHand.getItem() instanceof BlockItem handBlock) {
             if (allowedBlocks.get().contains(handBlock.getBlock())) {
@@ -503,22 +522,21 @@ public class AutoBeacon extends Module {
                 return new FindItemResult(mc.player.getInventory().getSelectedSlot(), mainHand.getCount());
             }
         }
-
-        // 2. Prefer the same block type we used last time
         if (preferredBlock != null) {
             for (int i = 0; i < 9; i++) {
                 ItemStack stack = mc.player.getInventory().getItem(i);
-                if (!stack.isEmpty() && stack.getItem() instanceof BlockItem bi && bi.getBlock() == preferredBlock) {
+                if (!stack.isEmpty() && stack.getItem() instanceof BlockItem bi
+                    && bi.getBlock() == preferredBlock)
                     return new FindItemResult(i, stack.getCount());
-                }
             }
-            // None in hotbar? try to pull from inventory
-            FindItemResult result = InvUtils.find(stack -> stack.getItem() instanceof BlockItem bi && bi.getBlock() == preferredBlock);
+            FindItemResult result = InvUtils.find(stack ->
+                stack.getItem() instanceof BlockItem bi && bi.getBlock() == preferredBlock);
             if (result.found() && !result.isHotbar()) {
                 FindItemResult empty = InvUtils.find(ItemStack::isEmpty, 0, 8);
                 if (empty.found()) {
                     InvUtils.move().from(result.slot()).toHotbar(empty.slot());
-                    return InvUtils.findInHotbar(stack -> stack.getItem() instanceof BlockItem bi && bi.getBlock() == preferredBlock);
+                    return InvUtils.findInHotbar(stack ->
+                        stack.getItem() instanceof BlockItem bi && bi.getBlock() == preferredBlock);
                 } else {
                     error("Hotbar full, can't pull preferred block.");
                     return new FindItemResult(-1, 0);
@@ -526,25 +544,24 @@ public class AutoBeacon extends Module {
             }
             preferredBlock = null;
         }
-
-        // 3. Any allowed block in hotbar
         for (int i = 0; i < 9; i++) {
             ItemStack stack = mc.player.getInventory().getItem(i);
-            if (!stack.isEmpty() && stack.getItem() instanceof BlockItem bi && allowedBlocks.get().contains(bi.getBlock())) {
-                preferredBlock = bi.getBlock(); // start using this type
+            if (!stack.isEmpty() && stack.getItem() instanceof BlockItem bi
+                && allowedBlocks.get().contains(bi.getBlock())) {
+                preferredBlock = bi.getBlock();
                 return new FindItemResult(i, stack.getCount());
             }
         }
-
-        // 4. Pull first allowed block from inventory
         for (Block allowed : allowedBlocks.get()) {
-            FindItemResult result = InvUtils.find(stack -> stack.getItem() instanceof BlockItem bi && bi.getBlock() == allowed);
+            FindItemResult result = InvUtils.find(stack ->
+                stack.getItem() instanceof BlockItem bi && bi.getBlock() == allowed);
             if (result.found() && !result.isHotbar()) {
                 FindItemResult empty = InvUtils.find(ItemStack::isEmpty, 0, 8);
                 if (empty.found()) {
                     InvUtils.move().from(result.slot()).toHotbar(empty.slot());
                     preferredBlock = allowed;
-                    return InvUtils.findInHotbar(stack -> stack.getItem() instanceof BlockItem bi && bi.getBlock() == allowed);
+                    return InvUtils.findInHotbar(stack ->
+                        stack.getItem() instanceof BlockItem bi && bi.getBlock() == allowed);
                 } else {
                     error("Block in inventory but hotbar full.");
                     return new FindItemResult(-1, 0);
@@ -557,9 +574,8 @@ public class AutoBeacon extends Module {
     private FindItemResult findBeaconInInventory() {
         for (int i = 0; i < 9; i++) {
             ItemStack stack = mc.player.getInventory().getItem(i);
-            if (!stack.isEmpty() && stack.getItem() == Items.BEACON) {
+            if (!stack.isEmpty() && stack.getItem() == Items.BEACON)
                 return new FindItemResult(i, stack.getCount());
-            }
         }
         FindItemResult result = InvUtils.find(stack -> stack.getItem() == Items.BEACON);
         if (result.found() && !result.isHotbar()) {
@@ -568,9 +584,8 @@ public class AutoBeacon extends Module {
                 InvUtils.move().from(result.slot()).toHotbar(empty.slot());
                 for (int i = 0; i < 9; i++) {
                     ItemStack stack = mc.player.getInventory().getItem(i);
-                    if (!stack.isEmpty() && stack.getItem() == Items.BEACON) {
+                    if (!stack.isEmpty() && stack.getItem() == Items.BEACON)
                         return new FindItemResult(i, stack.getCount());
-                    }
                 }
             } else {
                 error("Beacon in inventory but hotbar full.");
@@ -583,9 +598,8 @@ public class AutoBeacon extends Module {
         blocksToPlace.clear();
         beaconsToPlace.clear();
         if (origin == null) return;
-        for (int layer = 0; layer <= 3; layer++) {
+        for (int layer = 0; layer <= 3; layer++)
             blocksToPlace.addAll(getBlocksForLayer(layer));
-        }
         if (placeBeacons.get()) {
             int beaconY = baseY + 4;
             beaconsToPlace.add(new BlockPos(origin.getX() + 1, beaconY, origin.getZ() + 1));
@@ -603,20 +617,15 @@ public class AutoBeacon extends Module {
 
     @EventHandler
     private void onRender(Render3DEvent event) {
-        if (!render.get()) return;
-        if (!originSet) return;
-
+        if (!render.get() || !originSet) return;
         if (building) {
-            for (BlockPos pos : remainingBlocks) {
+            for (BlockPos pos : remainingBlocks)
                 event.renderer.box(pos, sideColor.get(), lineColor.get(), shapeMode.get(), 0);
-            }
         } else if (preview.get()) {
-            for (BlockPos pos : blocksToPlace) {
+            for (BlockPos pos : blocksToPlace)
                 event.renderer.box(pos, previewColor.get(), previewColor.get(), shapeMode.get(), 0);
-            }
-            for (BlockPos pos : beaconsToPlace) {
+            for (BlockPos pos : beaconsToPlace)
                 event.renderer.box(pos, previewColor.get(), previewColor.get(), shapeMode.get(), 0);
-            }
         }
     }
 }

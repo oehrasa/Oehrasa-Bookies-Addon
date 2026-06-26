@@ -78,8 +78,16 @@ public class MaterialsRefill extends Module {
 
     private final Setting<Boolean> airPlace = sgGeneral.add(new BoolSetting.Builder()
         .name("air-place")
-        .description("Place the shulker in mid-air (no solid block needed below).")
+        .description("Place the shulker in mid-air.")
         .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Boolean> preferSolidBlock = sgGeneral.add(new BoolSetting.Builder()
+        .name("prefer-solid-block")
+        .description("When air place is on, try solid block positions first.")
+        .defaultValue(true)
+        .visible(airPlace::get)
         .build()
     );
 
@@ -319,7 +327,7 @@ public class MaterialsRefill extends Module {
             return preferred;
         }
 
-        // Preferred slot is protected. find any unprotected mmmhm
+        // Preferred slot is protected. find any unprotected mhmm
         for (int i = 0; i < 9; i++) {
             if (i == preferred) continue;
             if (!isProtected(mc.player.getInventory().getItem(i))) {
@@ -364,14 +372,28 @@ public class MaterialsRefill extends Module {
             }
         }
 
-        // Sort wider candidates by dot product against facing so positions in front are tried first
+        // Sort by dot product against facing so positions in front are tried first
         candidates.sort(Comparator.comparingDouble(pos -> {
             Vec3 offset = Vec3.atCenterOf(pos).subtract(mc.player.position()).normalize();
             return -facingVec.dot(offset);
         }));
 
+        // First pass (only when air-place + prefer-solid-block): prefer positions
+        // that have a solid block below, before falling back to true air placement.
+        if (airPlace.get() && preferSolidBlock.get()) {
+            for (BlockPos pos : candidates) {
+                if (mc.player.position().distanceToSqr(Vec3.atCenterOf(pos)) > rangeSq) continue;
+                if (!hasSpaceAbove(pos)) continue;
+                if (isValidPlacePosition(pos)) return pos;
+            }
+            // No solid-block position found — fall through to the air-place pass below.
+        }
+
+        // Second pass (or only pass when prefer-solid-block is off / air-place is off):
+        // apply the active mode rule and return the first matching candidate.
         for (BlockPos pos : candidates) {
             if (mc.player.position().distanceToSqr(Vec3.atCenterOf(pos)) > rangeSq) continue;
+            if (!hasSpaceAbove(pos)) continue;
             if (airPlace.get()) {
                 if (mc.level.getBlockState(pos).isAir()) return pos;
             } else {
@@ -380,6 +402,11 @@ public class MaterialsRefill extends Module {
         }
 
         return null;
+    }
+
+    // position is clear so the shulker can open
+    private boolean hasSpaceAbove(BlockPos pos) {
+        return mc.level.getBlockState(pos.above()).isAir();
     }
 
     private boolean isValidPlacePosition(BlockPos pos) {
@@ -410,7 +437,8 @@ public class MaterialsRefill extends Module {
             return;
         }
 
-        double reach = mc.player.blockInteractionRange();
+        // Use placeRange instead of blockInteractionRange()
+        double reach = (double) placeRange.get();
         if (mc.player.distanceToSqr(Vec3.atCenterOf(placedShulkerPos)) > reach * reach) {
             info("Shulker is too far to open. Resetting.");
             stage = Stage.IDLE;

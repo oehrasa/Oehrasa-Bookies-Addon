@@ -174,7 +174,7 @@ public class PlatformBuilder extends Module {
         return positions.toArray(new BlockPos[0]);
     }
 
-    // Fixed: accepts BlockPos, uses correct position for isFullCube
+    // accepts BlockPos, uses correct position for isFullCube
     private boolean canPlaceAtPosition(BlockPos pos) {
         BlockState state = mc.level.getBlockState(pos);
 
