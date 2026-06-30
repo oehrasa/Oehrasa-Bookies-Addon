@@ -42,4 +42,18 @@ public abstract class MixinHandledScreen extends Screen {
             m.setOffset((int) (m.getOffset() + Math.ceil(verticalAmount) * 18));
         }
     }
+
+    @Override
+    public boolean charTyped(char chr, int modifiers) {
+        InventoryInfo m = Modules.get().get(InventoryInfo.class);
+        if (m != null && m.isActive()) m.onSearchCharTyped(chr);
+        return super.charTyped(chr, modifiers);
+    }
+
+    @Inject(method = "keyPressed", at = @At("HEAD"))
+    private void onKeyPressed(int keyCode, int scanCode, int modifiers, CallbackInfoReturnable<Boolean> cir) {
+        InventoryInfo m = Modules.get().get(InventoryInfo.class);
+        if (m == null || !m.isActive()) return;
+        m.onSearchKeyPressed(keyCode);
+    }
 }

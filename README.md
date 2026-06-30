@@ -20,11 +20,11 @@
 ## Dependencies
 
 **You might need to install these mod**.
-Tested successfully with these versions, but other mods might work as well.
+Tested successfully with these versions, but other might work as well.
 <font colour="turquoise">Switch the branch repo if You want to see the other version config</font>
 
-- meteor-client-1.21.4-42.jar (Required!)
-- baritone-api-fabric-1.13.1.jar (Required!)
+- meteor-client-1.21.4-42.jar **(Required!)**
+- baritone-api-fabric-1.13.1.jar **(Required!)**
 - BepHax-0.4.4.0.jar (Optional)
 - map-in-slot-3.3.0.jar (Recommended for Mapart-Namer module)
 - client_maps-1.3.2+1.21.4.jar (Recommended for Mapart-Namer module)
@@ -43,13 +43,14 @@ Tested successfully with these versions, but other mods might work as well.
 
 - **AudiobookReader** - Reads books aloud using narrator feature
 - **Auto-Beacon** - Builds a 4‑beacon pyramid at a selected location
+- **Auto-Loader** - Right-click shulker boxes, ender chests, or bundles in your inventory to instantly use
 - **Auto-Login** - Automatically logs in your account via file Data
 - **Auto-Moss** - Automatically uses bone meal on specific blocks
 - **Auto-Pot** - Then, Shalltear. Sorry but I'll have you wait a bit before we engage
 - **Auto-Take-Off** - Automatically starts elytra flight when on ground, in lava, or falling
 - **Auto-Sex** - Tries to have sex with the player or mob in freaky ways
-- **B36 Peacemaker** - Created this to make peace. Named after Convair B-36 Peacemaker
-- **Beacon-Range** - Renders the range of powered beacons
+- **B36-Peacemaker** - Created this to make peace. Named after Convair B-36 Peacemaker
+- **Block-Radius** - Renders the range of powered beacons, lightning rods, and active conduits
 - **BLU-27/B-Napalm** - I love the smell of Napalm in the morning, Commit some trolling against the Vietnamese
 - **Better-BoatFly** - Transforms your boat into a plane
 - **Bundle-Preview** - Shows an item preview overlay on bundles
@@ -169,7 +170,7 @@ https://youtu.be/uZQGECqCU_A
 List of addons I used as reference(skid? mwhehe), You should check them out it's pretty awesome!
 - **[FileAutoLogin](https://github.com/DortyTheGreat/FileAutoLogin)** - Base of this addon
 - **[Clarity](https://github.com/ck-clarity/addon)** - Boat module and image HUD
-- **[meerhax](https://github.com/dekrom/meeerhax)** - ELytra time HUD
+- **[meerhax](https://github.com/dekrom/meeerhax)** - Elytra time HUD
 - **[BepHax](https://github.com/dekrom/BepHaxAddon)** - Basically a bunch including this README
 - **[lambda meteor utilities](https://github.com/lambda505/lambda-meteor-utilities)** - Online Friends HUD
 - **[Numby Hack](https://github.com/cqb13/Numby-hack)** - TntFuseEsp module

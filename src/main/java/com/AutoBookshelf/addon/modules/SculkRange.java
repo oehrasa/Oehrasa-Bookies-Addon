@@ -30,214 +30,151 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 public class SculkRange extends Module {
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRender = settings.createGroup("Render");
 
     private static final double SENSOR_RANGE = 16.0;
+    private static final Direction[] DIRECTIONS = Direction.values();
 
     private final Setting<Integer> renderDistance = sgGeneral.add(new IntSetting.Builder()
         .name("render-distance")
-        .description("How far away to render spheres.")
+        .description("Maximum distance from the player at which sensor spheres are drawn.")
         .defaultValue(64)
         .min(16)
         .max(128)
         .sliderRange(16, 128)
-        .build()
-    );
-
-    private final Setting<Boolean> smartRendering = sgGeneral.add(new BoolSetting.Builder()
-        .name("smart-rendering")
-        .description("Render as circle when far, sphere when close.")
-        .defaultValue(true)
-        .build()
-    );
-
-    private final Setting<Integer> smartRenderDistance = sgGeneral.add(new IntSetting.Builder()
-        .name("smart-render-distance")
-        .description("Distance to switch from circle to sphere.")
-        .defaultValue(20)
-        .min(5)
-        .max(50)
-        .visible(smartRendering::get)
-        .build()
-    );
+        .build());
 
     private final Setting<Boolean> manualMode = sgGeneral.add(new BoolSetting.Builder()
         .name("manual-mode")
-        .description("Only show ranges for manually selected sensors.")
+        .description("Only render ranges for manually selected sensors.")
         .defaultValue(false)
-        .build()
-    );
+        .build());
 
     private final Setting<Keybind> selectKey = sgGeneral.add(new KeybindSetting.Builder()
         .name("select-key")
-        .description("Press while looking at a calibrated sculk sensor to add/remove it.")
+        .description("Press while looking at a calibrated sculk sensor to add or remove it.")
         .visible(manualMode::get)
         .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_V))
-        .build()
-    );
-
-    private final Set<BlockPos> manualSensors = new HashSet<>();
+        .build());
 
     private final Setting<Boolean> advancedView = sgGeneral.add(new BoolSetting.Builder()
         .name("advanced-view")
-        .description("Detect redstone connections and shriekers in range.")
+        .description("Colour sensors based on whether they have redstone output or a shrieker in range.")
         .defaultValue(false)
-        .build()
-    );
+        .build());
 
     private final Setting<Boolean> onlyRenderImpactful = sgGeneral.add(new BoolSetting.Builder()
         .name("only-render-impactful")
-        .description("Only render sensors that have redstone output or shriekers in range.")
+        .description("Skip sensors that have neither redstone output nor a shrieker in range.")
         .defaultValue(false)
         .visible(advancedView::get)
-        .build()
-    );
+        .build());
 
-    private final Setting<OcclusionMode> occlusionMode = sgRender.add(new EnumSetting.Builder<OcclusionMode>()
-        .name("occlusion-mode")
-        .description("How to handle occlusion (hiding blocks behind other blocks).")
-        .defaultValue(OcclusionMode.None)
-        .build()
-    );
-
-    private final Setting<ShapeType> shapeType = sgRender.add(new EnumSetting.Builder<ShapeType>()
-        .name("shape-type")
-        .description("What shape to render (overridden by smart-rendering if enabled).")
-        .defaultValue(ShapeType.Sphere)
-        .build()
-    );
-
-    private final Setting<Double> circleThickness = sgRender.add(new DoubleSetting.Builder()
-        .name("circle-thickness")
-        .description("Thickness of circle outline.")
-        .defaultValue(0.08)
-        .min(0.02)
-        .max(0.5)
-        .visible(() -> shapeType.get() == ShapeType.Circle || shapeType.get() == ShapeType.Both || smartRendering.get())
-        .build()
-    );
+    private final Setting<Boolean> union = sgGeneral.add(new BoolSetting.Builder()
+        .name("union")
+        .description("Merge overlapping sensor spheres into one continuous outer surface.")
+        .defaultValue(false)
+        .onChanged(v -> rebuildAllExposedBlocks())
+        .build());
 
     private final Setting<Integer> gradation = sgRender.add(new IntSetting.Builder()
         .name("gradation")
-        .description("Sphere thickness (1-5). Higher = thicker sphere shell.")
+        .description("Sphere shell thickness in voxels (1 = single-voxel outer skin).")
         .defaultValue(1)
         .min(1)
         .max(5)
         .sliderRange(1, 5)
-        .visible(() -> shapeType.get() == ShapeType.Sphere || shapeType.get() == ShapeType.Both)
-        .build()
-    );
+        .onChanged(v -> rebuildAllSpheres())
+        .build());
 
-    private final Setting<Boolean> renderAtPlayerHeight = sgRender.add(new BoolSetting.Builder()
-        .name("render-circle-at-player-height")
-        .description("Render circular range indicator at player height instead of sensor height.")
+    private final Setting<OcclusionMode> occlusionMode = sgRender.add(new EnumSetting.Builder<OcclusionMode>()
+        .name("occlusion")
+        .description("Whether to hide sphere voxels that are inside solid world blocks.")
+        .defaultValue(OcclusionMode.None)
+        .build());
+
+    private final Setting<Boolean> highlightSolidVoxels = sgRender.add(new BoolSetting.Builder()
+        .name("highlight-solid-voxels")
+        .description("Render sphere voxels that overlap a solid world block in a different colour, instead of hiding or showing them normally.")
         .defaultValue(false)
-        .visible(() -> shapeType.get() == ShapeType.Circle || shapeType.get() == ShapeType.Both)
-        .build()
-    );
+        .build());
 
-    private final Setting<SettingColor> sphereColor = sgRender.add(new ColorSetting.Builder()
-        .name("sphere-color")
-        .description("Color of the sphere outline.")
-        .defaultValue(new SettingColor(0, 255, 255, 200))
-        .build()
-    );
-
-    private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
-        .name("line-color")
-        .description("Color of the sphere lines.")
-        .defaultValue(new SettingColor(0, 255, 255, 255))
-        .build()
-    );
-
-    private final Setting<SettingColor> redstoneColor = sgRender.add(new ColorSetting.Builder()
-        .name("redstone-color")
-        .description("Color for sensors with redstone output.")
-        .defaultValue(new SettingColor(255, 0, 0, 200))
-        .visible(advancedView::get)
-        .build()
-    );
-
-    private final Setting<SettingColor> shriekerColor = sgRender.add(new ColorSetting.Builder()
-        .name("shrieker-color")
-        .description("Color for sensors with shriekers in range.")
-        .defaultValue(new SettingColor(255, 165, 0, 200))
-        .visible(advancedView::get)
-        .build()
-    );
+    private final Setting<SettingColor> solidVoxelColor = sgRender.add(new ColorSetting.Builder()
+        .name("solid-voxel-color")
+        .description("Colour used for sphere voxels that overlap a solid world block.")
+        .defaultValue(new SettingColor(255, 0, 255, 75))
+        .visible(highlightSolidVoxels::get)
+        .build());
 
     private final Setting<ShapeMode> shapeMode = sgRender.add(new EnumSetting.Builder<ShapeMode>()
         .name("shape-mode")
-        .description("How the sphere is rendered.")
+        .description("How each voxel box is drawn.")
         .defaultValue(ShapeMode.Lines)
-        .build()
-    );
+        .build());
+
+    private final Setting<SettingColor> sphereColor = sgRender.add(new ColorSetting.Builder()
+        .name("sphere-color")
+        .description("Default sphere colour.")
+        .defaultValue(new SettingColor(0, 255, 255, 200))
+        .build());
+
+    private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
+        .name("line-color")
+        .description("Outline colour of sphere voxels.")
+        .defaultValue(new SettingColor(0, 255, 255, 255))
+        .build());
+
+    private final Setting<SettingColor> redstoneColor = sgRender.add(new ColorSetting.Builder()
+        .name("redstone-color")
+        .description("Colour for sensors with redstone output (advanced-view).")
+        .defaultValue(new SettingColor(255, 0, 0, 200))
+        .visible(advancedView::get)
+        .build());
+
+    private final Setting<SettingColor> shriekerColor = sgRender.add(new ColorSetting.Builder()
+        .name("shrieker-color")
+        .description("Colour for sensors with a shrieker in range (advanced-view).")
+        .defaultValue(new SettingColor(255, 165, 0, 200))
+        .visible(advancedView::get)
+        .build());
 
     private final Setting<Boolean> showCenterBox = sgRender.add(new BoolSetting.Builder()
         .name("show-center-box")
-        .description("Show a box at the sensor location.")
+        .description("Draw a small box at each sensor's block position.")
         .defaultValue(true)
-        .build()
-    );
+        .build());
 
     private final Setting<SettingColor> centerColor = sgRender.add(new ColorSetting.Builder()
         .name("center-color")
-        .description("Color of the center box.")
+        .description("Colour of the center box.")
         .defaultValue(new SettingColor(255, 255, 255, 150))
-        .build()
-    );
+        .build());
 
-    public enum SmartShape {
-        Sphere("Sphere only"),
-        Circle("Circle only"),
-        Both("Both sphere and circle");
-
-        private final String title;
-
-        SmartShape(String title) {
-            this.title = title;
-        }
-
-        @Override
-        public String toString() {
-            return title;
-        }
-    }
-
-    private final Setting<SmartShape> smartShape = sgRender.add(new EnumSetting.Builder<SmartShape>()
-        .name("smart-shape")
-        .description("Which shape(s) to use when smart‑rendering is active.")
-        .visible(smartRendering::get)
-        .defaultValue(SmartShape.Both)
-        .build()
-    );
-
-    // Store sensors and their data, each sensor now carries its own sphere block set
     private final Set<SensorData> sensors = new HashSet<>();
-    private boolean needsUpdate = true;
-    private volatile ExecutorService workerThread = null;
-    private boolean selectKeyWasDown = false;
+    private final Set<BlockPos> manualSensors = new HashSet<>();
+    private volatile ExecutorService workerThread;
+    private boolean selectKeyWasDown;
 
-    private static class SensorData {
-        BlockPos pos;
+    private static final class SensorData {
+        final BlockPos pos;
         boolean hasRedstoneOutput;
         boolean hasShriekerInRange;
-        Set<BlockPos> sphereBlocks;   // per-sensor sphere shell blocks
+        // Raw shell voxels (gradation-filtered hollow sphere).
+        Set<BlockPos> sphereBlocks = new HashSet<>();
+        // Shell voxels after culling interior blocks; this is what the renderer iterates.
+        Set<BlockPos> exposedBlocks = new HashSet<>();
 
         SensorData(BlockPos pos, boolean hasRedstoneOutput, boolean hasShriekerInRange) {
             this.pos = pos;
             this.hasRedstoneOutput = hasRedstoneOutput;
             this.hasShriekerInRange = hasShriekerInRange;
-            this.sphereBlocks = new HashSet<>();
         }
 
         @Override
-        public boolean equals(Object obj) {
-            if (this == obj) return true;
-            if (obj == null || getClass() != obj.getClass()) return false;
-            SensorData that = (SensorData) obj;
-            return pos.equals(that.pos);
+        public boolean equals(Object o) {
+            return o instanceof SensorData s && pos.equals(s.pos);
         }
 
         @Override
@@ -246,427 +183,340 @@ public class SculkRange extends Module {
         }
     }
 
+    private enum OcclusionMode {
+        None("None: renders whole sphere"),
+        Simple("Simple: skip voxels inside a block"),
+        Accurate("Accurate: also skip faces not pointing toward the player");
+
+        private final String label;
+
+        OcclusionMode(String l) {
+            this.label = l;
+        }
+
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
+
     public SculkRange() {
         super(Addon.CATEGORY2, "Sculk-Range", "Shows the detection range of calibrated sculk sensors.");
-    }
-
-    private synchronized ExecutorService getWorkerThread() {
-        if (workerThread == null || workerThread.isShutdown() || workerThread.isTerminated()) {
-            workerThread = Executors.newSingleThreadExecutor();
-        }
-        return workerThread;
-    }
-
-    private synchronized void shutdownWorkerThread() {
-        if (workerThread != null && !workerThread.isShutdown()) {
-            workerThread.shutdownNow();
-            try {
-                workerThread.awaitTermination(1, TimeUnit.SECONDS);
-            } catch (InterruptedException ignored) {}
-            workerThread = null;
-        }
     }
 
     @Override
     public void onActivate() {
         sensors.clear();
-        needsUpdate = true;
         scanAllChunks();
     }
 
     @Override
     public void onDeactivate() {
         sensors.clear();
-        needsUpdate = true;
-        shutdownWorkerThread();
+        shutdownWorker();
+    }
+
+    private synchronized ExecutorService getWorker() {
+        if (workerThread == null || workerThread.isShutdown() || workerThread.isTerminated())
+            workerThread = Executors.newSingleThreadExecutor();
+        return workerThread;
+    }
+
+    private synchronized void shutdownWorker() {
+        if (workerThread == null || workerThread.isShutdown()) return;
+        workerThread.shutdownNow();
+        try {
+            workerThread.awaitTermination(1, TimeUnit.SECONDS);
+        } catch (InterruptedException ignored) {
+        }
+        workerThread = null;
     }
 
     @EventHandler
     private void onGameJoined(GameJoinedEvent event) {
         if (!isActive()) return;
         sensors.clear();
-        needsUpdate = true;
         scanAllChunks();
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (!isActive()) return;
-
-        // Manual sensor selection
-        if (manualMode.get()) {
-            boolean down = selectKey.get().isPressed();
-            if (down && !selectKeyWasDown) {
-                if (mc.crosshairTarget instanceof BlockHitResult hit) {
-                    BlockPos pos = hit.getBlockPos();
-                    if (mc.world.getBlockState(pos).getBlock() == Blocks.CALIBRATED_SCULK_SENSOR) {
-                        if (manualSensors.contains(pos)) {
-                            manualSensors.remove(pos);
-                            info("Removed sensor at " + pos.toShortString());
-                        } else {
-                            manualSensors.add(pos.toImmutable());
-                            info("Added sensor at " + pos.toShortString());
-                        }
-                        needsUpdate = true;
-                    }
-                }
-            }
-            selectKeyWasDown = down;
-        }
-    }
-
-    private void scanAllChunks() {
-        ExecutorService thread = getWorkerThread();
-        if (thread.isShutdown()) return;
-
-        thread.submit(() -> {
-            if (!isActive()) return;
-
-            Set<SensorData> newSensors = new HashSet<>();
-            AtomicReferenceArray<WorldChunk> chunks = mc.world.getChunkManager().chunks.chunks;
-            for (int i = 0; i < chunks.length(); i++) {
-                WorldChunk chunk = chunks.get(i);
-                if (chunk != null && !chunk.isEmpty()) {
-                    if (!isActive()) return;
-                    scanChunkForSensors(chunk, newSensors);
-                }
-            }
-
-            mc.execute(() -> {
-                if (!isActive()) return;
-                sensors.clear();
-                sensors.addAll(newSensors);
-                // Build sphere for every newly found sensor
-                for (SensorData s : sensors) {
-                    updateSensorSphere(s);
-                }
-                needsUpdate = true;
-            });
-        });
-    }
-
-    private void scanChunkForSensors(Chunk chunk, Set<SensorData> outSensors) {
-        int minX = chunk.getPos().getStartX();
-        int minZ = chunk.getPos().getStartZ();
-        int maxX = minX + 15;
-        int maxZ = minZ + 15;
-        int minY = chunk.getBottomY();
-        int maxY = minY + chunk.getHeight();
-
-        for (int x = minX; x <= maxX; x++) {
-            for (int z = minZ; z <= maxZ; z++) {
-                for (int y = minY; y <= maxY; y++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    if (mc.world.getBlockState(pos).getBlock() == Blocks.CALIBRATED_SCULK_SENSOR) {
-                        boolean hasOutput = advancedView.get() ? hasRedstoneOutput(mc.world, pos) : false;
-                        boolean hasShrieker = advancedView.get() ? hasShriekerInRange(mc.world, pos) : false;
-                        outSensors.add(new SensorData(pos.toImmutable(), hasOutput, hasShrieker));
-                    }
+        if (!isActive() || !manualMode.get()) return;
+        boolean down = selectKey.get().isPressed();
+        if (down && !selectKeyWasDown && mc.crosshairTarget instanceof BlockHitResult hit) {
+            BlockPos pos = hit.getBlockPos();
+            if (mc.world.getBlockState(pos).getBlock() == Blocks.CALIBRATED_SCULK_SENSOR) {
+                if (manualSensors.remove(pos)) info("Removed sensor at " + pos.toShortString());
+                else {
+                    manualSensors.add(pos.toImmutable());
+                    info("Added sensor at " + pos.toShortString());
                 }
             }
         }
+        selectKeyWasDown = down;
     }
 
     @EventHandler
     private void onChunkData(ChunkDataEvent event) {
         if (!isActive()) return;
-
-        ExecutorService thread = getWorkerThread();
-        if (thread.isShutdown()) return;
-
-        thread.submit(() -> {
-            Set<SensorData> newSensors = new HashSet<>();
-            scanChunkForSensors(event.chunk(), newSensors);
-
-            if (!newSensors.isEmpty()) {
-                mc.execute(() -> {
-                    if (!isActive()) return;
-                    for (SensorData s : newSensors) {
-                        sensors.add(s);
-                        updateSensorSphere(s);
+        ExecutorService w = getWorker();
+        if (w.isShutdown()) return;
+        w.submit(() -> {
+            Set<SensorData> found = new HashSet<>();
+            scanChunkForSensors(event.chunk(), found);
+            if (found.isEmpty()) return;
+            mc.execute(() -> {
+                if (!isActive()) return;
+                boolean changed = false;
+                for (SensorData s : found) {
+                    if (sensors.add(s)) { // skips position duplicates
+                        s.sphereBlocks = generateSphere(s.pos);
+                        changed = true;
                     }
-                    needsUpdate = true;
-                });
-            }
+                }
+                if (changed) rebuildAllExposedBlocks();
+            });
         });
     }
 
     @EventHandler
     private void onBlockUpdate(BlockUpdateEvent event) {
         if (!isActive()) return;
-
         BlockPos pos = event.pos;
-        BlockState newState = event.newState;
-        BlockState oldState = event.oldState;
-
-        boolean wasSensor = oldState.getBlock() == Blocks.CALIBRATED_SCULK_SENSOR;
-        boolean isSensor = newState.getBlock() == Blocks.CALIBRATED_SCULK_SENSOR;
+        boolean wasSensor = event.oldState.getBlock() == Blocks.CALIBRATED_SCULK_SENSOR;
+        boolean isSensor = event.newState.getBlock() == Blocks.CALIBRATED_SCULK_SENSOR;
 
         if (wasSensor && !isSensor) {
             sensors.removeIf(s -> s.pos.equals(pos));
-            needsUpdate = true;
+            rebuildAllExposedBlocks();
         } else if (!wasSensor && isSensor) {
-            boolean hasOutput = advancedView.get() ? hasRedstoneOutput(mc.world, pos) : false;
-            boolean hasShrieker = advancedView.get() ? hasShriekerInRange(mc.world, pos) : false;
-            SensorData newSensor = new SensorData(pos.toImmutable(), hasOutput, hasShrieker);
-            sensors.add(newSensor);
-            updateSensorSphere(newSensor);
-            needsUpdate = true;
+            SensorData s = makeSensor(pos);
+            if (sensors.add(s)) {
+                s.sphereBlocks = generateSphere(s.pos);
+                rebuildAllExposedBlocks();
+            }
         } else if (isSensor && advancedView.get()) {
-            boolean hasOutput = hasRedstoneOutput(mc.world, pos);
-            boolean hasShrieker = hasShriekerInRange(mc.world, pos);
-            sensors.removeIf(s -> s.pos.equals(pos));
-            SensorData updatedSensor = new SensorData(pos.toImmutable(), hasOutput, hasShrieker);
-            sensors.add(updatedSensor);
-            updateSensorSphere(updatedSensor);
-            needsUpdate = true;
+            // Block-state is changed, but it is still a sensor. refresh advanced properties only.
+            sensors.stream().filter(s -> s.pos.equals(pos)).findFirst().ifPresent(s -> {
+                s.hasRedstoneOutput = hasRedstoneOutput(mc.world, pos);
+                s.hasShriekerInRange = hasShriekerInRange(mc.world, pos);
+            });
         }
 
-        boolean wasShrieker = oldState.getBlock() instanceof SculkShriekerBlock;
-        boolean isShrieker = newState.getBlock() instanceof SculkShriekerBlock;
-
-        if ((wasShrieker || isShrieker) && advancedView.get()) {
-            updateSensorsNearPosition(pos);
-        }
-
-        if (advancedView.get() && (isRedstoneComponent(oldState) || isRedstoneComponent(newState))) {
-            updateSensorsNearPosition(pos);
-        }
-
-        if (needsUpdate) {
-            needsUpdate = false;
+        // Refresh nearby sensors when a shrieker or redstone component changes.
+        if (advancedView.get()) {
+            boolean relevant = event.oldState.getBlock() instanceof SculkShriekerBlock
+                || event.newState.getBlock() instanceof SculkShriekerBlock
+                || isRedstoneComponent(event.oldState)
+                || isRedstoneComponent(event.newState);
+            if (relevant) updateAdvancedNear(pos);
         }
     }
 
-    private void updateSensorsNearPosition(BlockPos pos) {
-        for (SensorData sensor : sensors) {
-            double distance = Math.sqrt(sensor.pos.getSquaredDistance(pos));
-            if (distance <= SENSOR_RANGE) {
-                boolean hasOutput = hasRedstoneOutput(mc.world, sensor.pos);
-                boolean hasShrieker = hasShriekerInRange(mc.world, sensor.pos);
-                sensor.hasRedstoneOutput = hasOutput;
-                sensor.hasShriekerInRange = hasShrieker;
-                updateSensorSphere(sensor);   // rebuild its sphere
+    private void scanAllChunks() {
+        ExecutorService w = getWorker();
+        if (w.isShutdown()) return;
+        w.submit(() -> {
+            if (!isActive()) return;
+            Set<SensorData> found = new HashSet<>();
+            AtomicReferenceArray<WorldChunk> chunks = mc.world.getChunkManager().chunks.chunks;
+            for (int i = 0; i < chunks.length(); i++) {
+                WorldChunk c = chunks.get(i);
+                if (c != null && !c.isEmpty()) {
+                    if (!isActive()) return;
+                    scanChunkForSensors(c, found);
+                }
+            }
+            mc.execute(() -> {
+                if (!isActive()) return;
+                sensors.clear();
+                sensors.addAll(found);
+                for (SensorData s : sensors) s.sphereBlocks = generateSphere(s.pos);
+                rebuildAllExposedBlocks();
+            });
+        });
+    }
+
+    private void scanChunkForSensors(Chunk chunk, Set<SensorData> out) {
+        int x0 = chunk.getPos().getStartX(), z0 = chunk.getPos().getStartZ();
+        int y0 = chunk.getBottomY(), y1 = y0 + chunk.getHeight();
+        for (int x = x0; x <= x0 + 15; x++)
+            for (int z = z0; z <= z0 + 15; z++)
+                for (int y = y0; y <= y1; y++) {
+                    BlockPos p = new BlockPos(x, y, z);
+                    if (mc.world.getBlockState(p).getBlock() == Blocks.CALIBRATED_SCULK_SENSOR)
+                        out.add(makeSensor(p));
+                }
+    }
+
+    private SensorData makeSensor(BlockPos pos) {
+        pos = pos.toImmutable();
+        boolean hasOut = advancedView.get() && hasRedstoneOutput(mc.world, pos);
+        boolean hasShrieker = advancedView.get() && hasShriekerInRange(mc.world, pos);
+        return new SensorData(pos, hasOut, hasShrieker);
+    }
+
+    /**
+     * Rebuilds every sensor's raw shell then recomputes all exposed-block sets.
+     */
+    private void rebuildAllSpheres() {
+        if (sensors.isEmpty()) return;
+        for (SensorData s : sensors) s.sphereBlocks = generateSphere(s.pos);
+        rebuildAllExposedBlocks();
+    }
+
+    private void rebuildAllExposedBlocks() {
+        if (sensors.isEmpty()) return;
+        if (union.get() && sensors.size() > 1) {
+            Set<BlockPos> global = new HashSet<>();
+            for (SensorData s : sensors) global.addAll(s.sphereBlocks);
+            for (SensorData s : sensors) s.exposedBlocks = exposedIn(s.sphereBlocks, global);
+        } else {
+            for (SensorData s : sensors) s.exposedBlocks = exposedIn(s.sphereBlocks, s.sphereBlocks);
+        }
+    }
+
+    private static Set<BlockPos> exposedIn(Set<BlockPos> own, Set<BlockPos> ref) {
+        Set<BlockPos> out = new HashSet<>();
+        for (BlockPos pos : own)
+            for (Direction dir : DIRECTIONS)
+                if (!ref.contains(pos.offset(dir))) {
+                    out.add(pos);
+                    break;
+                }
+        return out;
+    }
+
+    /**
+     * Hollow Euclidean sphere shell centred at the center with the configured thickness.
+     */
+    private Set<BlockPos> generateSphere(BlockPos center) {
+        int t = gradation.get();
+        int ceil = (int) Math.ceil(SENSOR_RANGE);
+        double outerSq = SENSOR_RANGE * SENSOR_RANGE;
+        double innerSq = Math.max(0.0, (SENSOR_RANGE - t) * (SENSOR_RANGE - t));
+        Set<BlockPos> out = new HashSet<>();
+        for (int x = -ceil; x <= ceil; x++)
+            for (int y = -ceil; y <= ceil; y++)
+                for (int z = -ceil; z <= ceil; z++) {
+                    double d = (double) x * x + (double) y * y + (double) z * z;
+                    if (d <= outerSq && d >= innerSq) out.add(center.add(x, y, z));
+                }
+        return out;
+    }
+
+    private void updateAdvancedNear(BlockPos changed) {
+        double rangeSq = SENSOR_RANGE * SENSOR_RANGE;
+        for (SensorData s : sensors) {
+            if (s.pos.getSquaredDistance(changed) <= rangeSq) {
+                s.hasRedstoneOutput = hasRedstoneOutput(mc.world, s.pos);
+                s.hasShriekerInRange = hasShriekerInRange(mc.world, s.pos);
             }
         }
     }
 
     private boolean isRedstoneComponent(BlockState state) {
-        Block block = state.getBlock();
-        return block == Blocks.REDSTONE_WIRE ||
-            block instanceof ComparatorBlock ||
-            block instanceof ObserverBlock;
+        Block b = state.getBlock();
+        return b == Blocks.REDSTONE_WIRE || b instanceof ComparatorBlock || b instanceof ObserverBlock;
     }
 
-    // Build or rebuild the sphere blocks for a single sensor
-    private void updateSensorSphere(SensorData sensor) {
-        sensor.sphereBlocks = generateHollowEuclideanSphere(sensor.pos, SENSOR_RANGE, gradation.get());
-    }
-
-    private boolean hasRedstoneOutput(World world, BlockPos sensorPos) {
-        for (Direction dir : Direction.values()) {
-            BlockPos adjacentPos = sensorPos.offset(dir);
-            BlockState state = world.getBlockState(adjacentPos);
+    private boolean hasRedstoneOutput(World world, BlockPos pos) {
+        for (Direction dir : DIRECTIONS) {
+            BlockPos adj = pos.offset(dir);
+            BlockState state = world.getBlockState(adj);
             Block block = state.getBlock();
-
             if (block == Blocks.REDSTONE_WIRE) return true;
-
-            if (block instanceof ComparatorBlock) {
-                Direction facing = state.get(ComparatorBlock.FACING);
-                if (adjacentPos.offset(facing.getOpposite()).equals(sensorPos)) return true;
-            }
-
-            if (block instanceof ObserverBlock) {
-                Direction facing = state.get(ObserverBlock.FACING);
-                if (adjacentPos.offset(facing).equals(sensorPos)) return true;
-            }
+            if (block instanceof ComparatorBlock
+                && adj.offset(state.get(ComparatorBlock.FACING).getOpposite()).equals(pos)) return true;
+            if (block instanceof ObserverBlock
+                && adj.offset(state.get(ObserverBlock.FACING)).equals(pos)) return true;
         }
         return false;
     }
 
-    private boolean hasShriekerInRange(World world, BlockPos sensorPos) {
-        int range = 16;
-        for (BlockPos checkPos : BlockPos.iterateOutwards(sensorPos, range, range, range)) {
-            BlockState state = world.getBlockState(checkPos);
-            if (state.getBlock() instanceof SculkShriekerBlock) return true;
-        }
+    private boolean hasShriekerInRange(World world, BlockPos pos) {
+        for (BlockPos p : BlockPos.iterateOutwards(pos, 16, 16, 16))
+            if (world.getBlockState(p).getBlock() instanceof SculkShriekerBlock) return true;
         return false;
     }
 
-    private Set<BlockPos> generateHollowEuclideanSphere(BlockPos center, double radius, int thickness) {
-        Set<BlockPos> positions = new HashSet<>();
-        int radiusCeil = (int) Math.ceil(radius);
-        double radiusSq = radius * radius;
-        double innerRadiusSq = Math.max(0, (radius - thickness) * (radius - thickness));
-
-        double centerX = center.getX() + 0.5;
-        double centerY = center.getY() + 0.5;
-        double centerZ = center.getZ() + 0.5;
-
-        for (int x = -radiusCeil; x <= radiusCeil; x++) {
-            for (int y = -radiusCeil; y <= radiusCeil; y++) {
-                for (int z = -radiusCeil; z <= radiusCeil; z++) {
-                    BlockPos checkPos = center.add(x, y, z);
-
-                    double dx = (checkPos.getX() + 0.5) - centerX;
-                    double dy = (checkPos.getY() + 0.5) - centerY;
-                    double dz = (checkPos.getZ() + 0.5) - centerZ;
-
-                    double distSq = dx * dx + dy * dy + dz * dz;
-
-                    if (distSq <= radiusSq && distSq >= innerRadiusSq) {
-                        positions.add(checkPos);
-                    }
-                }
-            }
-        }
-        return positions;
-    }
-
-    private boolean isVisible(BlockPos pos) {
-        OcclusionMode mode = occlusionMode.get();
-        if (mode == OcclusionMode.None) return true;
-
-        for (Direction dir : Direction.values()) {
-            BlockPos neighborPos = pos.offset(dir);
-            BlockState neighborState = mc.world.getBlockState(neighborPos);
-
-            if (neighborState.isAir() || !neighborState.isOpaque()) {
-                if (mode == OcclusionMode.Simple) return true;
-
-                if (mode == OcclusionMode.Accurate) {
-                    Vec3d playerPos = mc.player.getEyePos();
-                    Vec3d blockCenter = new Vec3d(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
-                    Vec3d faceCenter = blockCenter.add(dir.getOffsetX() * 0.5, dir.getOffsetY() * 0.5, dir.getOffsetZ() * 0.5);
-                    Vec3d toFace = faceCenter.subtract(playerPos).normalize();
-                    Vec3d faceNormal = new Vec3d(dir.getOffsetX(), dir.getOffsetY(), dir.getOffsetZ());
-
-                    if (faceNormal.dotProduct(toFace) > 0) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
+    private boolean isSolidVoxel(BlockPos pos) {
+        BlockState state = mc.world.getBlockState(pos);
+        return !state.isAir() && state.isOpaque();
     }
 
     @EventHandler
     private void onRender(Render3DEvent event) {
-        if (mc.world == null) return;
+        if (mc.world == null || mc.player == null) return;
+
+        // Cache perframe constants outside the loop.
+        Vec3d playerPos = mc.player.getPos();
+        OcclusionMode oMode = occlusionMode.get();
+        Vec3d eyePos = oMode == OcclusionMode.Accurate ? mc.player.getEyePos() : null;
+        boolean doUnion = union.get();
+        ShapeMode sMode = shapeMode.get();
+        SettingColor lColor = lineColor.get();
+        int maxDist = renderDistance.get();
+        boolean doHighlightSolid = highlightSolidVoxels.get();
+        SettingColor solidColor = doHighlightSolid ? solidVoxelColor.get() : null;
+
+        // Dedup set is only allocated in union mode; it prevents shared boundary
+        // voxels (present in two sensors' exposedBlocks) from being drawn twice.
+        Set<BlockPos> drawn = doUnion ? new HashSet<>() : null;
 
         for (SensorData sensor : sensors) {
             if (manualMode.get() && !manualSensors.contains(sensor.pos)) continue;
+            if (onlyRenderImpactful.get() && advancedView.get()
+                && !sensor.hasRedstoneOutput && !sensor.hasShriekerInRange) continue;
+            if (playerPos.distanceTo(Vec3d.ofCenter(sensor.pos)) > maxDist) continue;
 
-            if (onlyRenderImpactful.get() && advancedView.get() && !sensor.hasRedstoneOutput && !sensor.hasShriekerInRange) {
-                continue;
+            SettingColor color = resolveColor(sensor);
+            // Fall back to the raw shell only if exposedBlocks hasn't been computed yet.
+            Set<BlockPos> renderSet = sensor.exposedBlocks.isEmpty()
+                ? sensor.sphereBlocks : sensor.exposedBlocks;
+
+            for (BlockPos pos : renderSet) {
+                if (doUnion && !drawn.add(pos)) continue;   // skip duplicate voxels
+                if (!passesOcclusion(pos, oMode, eyePos)) continue;
+
+                // Recolour (but still draw) voxels that overlap a solid world block.
+                SettingColor voxelColor = (doHighlightSolid && isSolidVoxel(pos)) ? solidColor : color;
+                event.renderer.box(pos, voxelColor, lColor, sMode, 0);
             }
 
-            double distanceToSensor = mc.player.getPos().distanceTo(Vec3d.ofCenter(sensor.pos));
-
-            ShapeType effectiveShape = shapeType.get();
-            if (smartRendering.get()) {
-                switch (smartShape.get()) {
-                    case Sphere -> effectiveShape = ShapeType.Sphere;
-                    case Circle -> effectiveShape = ShapeType.Circle;
-                    case Both -> {
-                        double dist = mc.player.getPos().distanceTo(Vec3d.ofCenter(sensor.pos));
-                        effectiveShape = dist <= smartRenderDistance.get() ? ShapeType.Sphere : ShapeType.Circle;
-                    }
-                }
-            }
-
-            boolean useSphere = effectiveShape == ShapeType.Sphere || effectiveShape == ShapeType.Both;
-            boolean useCircle = effectiveShape == ShapeType.Circle || effectiveShape == ShapeType.Both;
-
-            SettingColor renderColor = sphereColor.get();
-            if (advancedView.get()) {
-                if (sensor.hasRedstoneOutput && sensor.hasShriekerInRange) {
-                    renderColor = (System.currentTimeMillis() / 500 % 2 == 0) ? redstoneColor.get() : shriekerColor.get();
-                } else if (sensor.hasRedstoneOutput) {
-                    renderColor = redstoneColor.get();
-                } else if (sensor.hasShriekerInRange) {
-                    renderColor = shriekerColor.get();
-                }
-            }
-
-            if (useSphere) {
-                // Use the sensor's own sphere block set. no distance checks needed!
-                for (BlockPos pos : sensor.sphereBlocks) {
-                    if (!isVisible(pos)) continue;
-                    if (occlusionMode.get() == OcclusionMode.Union && isInternal(pos, sensor.sphereBlocks)) continue;
-                    event.renderer.box(pos, renderColor, lineColor.get(), shapeMode.get(), 0);
-                }
-            }
-
-            if (useCircle) {
-                double renderY;
-                if (renderAtPlayerHeight.get()) {
-                    renderY = mc.player.getY();
-                } else {
-                    renderY = sensor.pos.getY() + 0.5;
-                }
-                renderCircle(event, SENSOR_RANGE, circleThickness.get(), sensor.pos.getX() + 0.5, renderY, sensor.pos.getZ() + 0.5, renderColor);
-            }
-        }
-
-        if (showCenterBox.get()) {
-            for (SensorData sensor : sensors) {
-                if (manualMode.get() && !manualSensors.contains(sensor.pos)) continue;
+            if (showCenterBox.get())
                 event.renderer.box(sensor.pos, centerColor.get(), centerColor.get(), ShapeMode.Lines, 0);
+        }
+    }
+
+    private SettingColor resolveColor(SensorData sensor) {
+        if (!advancedView.get()) return sphereColor.get();
+        if (sensor.hasRedstoneOutput && sensor.hasShriekerInRange)
+            return System.currentTimeMillis() / 500 % 2 == 0 ? redstoneColor.get() : shriekerColor.get();
+        if (sensor.hasRedstoneOutput) return redstoneColor.get();
+        if (sensor.hasShriekerInRange) return shriekerColor.get();
+        return sphereColor.get();
+    }
+
+    private boolean passesOcclusion(BlockPos pos, OcclusionMode mode, Vec3d eye) {
+        if (mode == OcclusionMode.None) return true;
+        for (Direction dir : DIRECTIONS) {
+            BlockState nb = mc.world.getBlockState(pos.offset(dir));
+            if (!nb.isAir() && nb.isOpaque()) continue;   // this face is blocked by a solid world block
+            if (mode == OcclusionMode.Simple) return true;
+            // Accurate: the eye-to-face vector must align with the face normal.
+            double fx = pos.getX() + 0.5 + dir.getOffsetX() * 0.5;
+            double fy = pos.getY() + 0.5 + dir.getOffsetY() * 0.5;
+            double fz = pos.getZ() + 0.5 + dir.getOffsetZ() * 0.5;
+            double tx = fx - eye.x, ty = fy - eye.y, tz = fz - eye.z;
+            double len = Math.sqrt(tx * tx + ty * ty + tz * tz);
+            if (len > 1e-9) {
+                tx /= len;
+                ty /= len;
+                tz /= len;
             }
+            if (tx * dir.getOffsetX() + ty * dir.getOffsetY() + tz * dir.getOffsetZ() > 0) return true;
         }
-    }
-
-    private void renderCircle(Render3DEvent event, double radius, double thickness, double cx, double cy, double cz, SettingColor color) {
-        final double maxSegmentLength = 0.2;
-        int segments = (int) Math.ceil(2 * Math.PI * radius / maxSegmentLength);
-        segments = Math.max(16, segments);
-
-        Vec3d[] outerPts = new Vec3d[segments];
-        Vec3d[] innerPts = new Vec3d[segments];
-
-        double outerRadius = radius + thickness / 2.0;
-        double innerRadius = Math.max(radius - thickness / 2.0, 0);
-
-        for (int s = 0; s < segments; s++) {
-            double angle = 2 * Math.PI * s / segments;
-            double sin = Math.sin(angle);
-            double cos = Math.cos(angle);
-
-            outerPts[s] = new Vec3d(cx + sin * outerRadius, cy, cz + cos * outerRadius);
-            innerPts[s] = new Vec3d(cx + sin * innerRadius, cy, cz + cos * innerRadius);
-        }
-
-        for (int s = 0; s < segments; s++) {
-            int next = (s + 1) % segments;
-
-            int outer1 = event.renderer.triangles.vec3(outerPts[s].x, outerPts[s].y, outerPts[s].z).color(color).next();
-            int outer2 = event.renderer.triangles.vec3(outerPts[next].x, outerPts[next].y, outerPts[next].z).color(color).next();
-            int inner1 = event.renderer.triangles.vec3(innerPts[s].x, innerPts[s].y, innerPts[s].z).color(color).next();
-            int inner2 = event.renderer.triangles.vec3(innerPts[next].x, innerPts[next].y, innerPts[next].z).color(color).next();
-
-            event.renderer.triangles.triangle(outer1, outer2, inner1);
-            event.renderer.triangles.triangle(inner1, outer2, inner2);
-        }
-    }
-
-    private boolean isInternal(BlockPos pos, Set<BlockPos> blocks) {
-        for (Direction dir : Direction.values()) {
-            if (!blocks.contains(pos.offset(dir))) return false;
-        }
-        return true;
-    }
-
-    private enum ShapeType { Circle, Sphere, Both }
-
-    private enum OcclusionMode {
-        None("None : Render all blocks."),
-        Simple("Simple : Hide blocks behind solid faces."),
-        Accurate("Accurate : Hide faces not facing the player."),
-        Union("Union : Hide blocks inside overlapping spheres.");
-
-        private final String title;
-        OcclusionMode(String title) { this.title = title; }
-        @Override public String toString() { return title; }
+        return false;
     }
 }

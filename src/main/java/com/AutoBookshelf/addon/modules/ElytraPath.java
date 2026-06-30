@@ -18,9 +18,6 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
 
-import java.util.ArrayList;
-import java.util.List;
-
 public class ElytraPath extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
@@ -46,7 +43,8 @@ public class ElytraPath extends Module {
         .name("speed-threshold")
         .description("Speed below which the idle camera path is used.")
         .defaultValue(0.05).min(0.01)
-        .sliderMax(0.2).build()
+        .sliderMax(0.2)
+        .build()
     );
 
     private final Setting<Boolean> startFromCrosshair = sgGeneral.add(new BoolSetting.Builder()
@@ -58,7 +56,7 @@ public class ElytraPath extends Module {
 
     private final Setting<Double> startOffset = sgGeneral.add(new DoubleSetting.Builder()
         .name("start-offset")
-        .description("Vertical offset below the eye when are not using crosshair.")
+        .description("Vertical offset below the eye when not using crosshair.")
         .defaultValue(-0.4)
         .min(-1.0)
         .max(1.0)
@@ -86,7 +84,7 @@ public class ElytraPath extends Module {
 
     private final Setting<Boolean> thirdPersonOnly = sgGeneral.add(new BoolSetting.Builder()
         .name("third-person-only")
-        .description("Only render the path in third‑person view.")
+        .description("Only render the path in third-person view.")
         .defaultValue(false)
         .build()
     );
@@ -106,6 +104,7 @@ public class ElytraPath extends Module {
         .defaultValue(new SettingColor(0, 255, 255, 200))
         .build()
     );
+
     private final Setting<Boolean> showVerticalIndicators = sgGeneral.add(new BoolSetting.Builder()
         .name("vertical-indicators")
         .description("Draw a vertical line when ascending or descending.")
@@ -132,7 +131,7 @@ public class ElytraPath extends Module {
         .name("descend-color")
         .description("Colour of the descending line.")
         .visible(showVerticalIndicators::get)
-        .defaultValue(new SettingColor(0, 87, 183, 200))// hours of joy
+        .defaultValue(new SettingColor(0, 87, 183, 200))
         .build()
     );
 
@@ -148,13 +147,15 @@ public class ElytraPath extends Module {
         .name("gradient-end")
         .description("Colour at the furthest point.")
         .visible(() -> colorMode.get() == ColorMode.Gradient)
-        .defaultValue(new SettingColor(255, 0, 0, 255)).build()
+        .defaultValue(new SettingColor(255, 0, 0, 255))
+        .build()
     );
 
     private final Setting<Boolean> renderImpactBox = sgGeneral.add(new BoolSetting.Builder()
         .name("render-impact-box")
         .description("Draw a box at the block the line would hit.")
-        .defaultValue(true).build()
+        .defaultValue(true)
+        .build()
     );
 
     private final Setting<SettingColor> impactBoxColor = sgGeneral.add(new ColorSetting.Builder()
@@ -173,12 +174,19 @@ public class ElytraPath extends Module {
         .build()
     );
 
-    // Smoothed velocity for non‑janky movement
+    /**
+     * Scratch colour mutated per-segment so Fade/Gradient never allocate.
+     */
+    private final SettingColor scratchColor = new SettingColor(0, 0, 0, 255);
+
+    /**
+     * Smoothed horizontal velocity for the local player.
+     */
     private Vec3d smoothedVelocity = Vec3d.ZERO;
 
     public ElytraPath() {
         super(Addon.CATEGORY, "Elytra-Path",
-            "Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots.");
+            "Shows your elytra flight path to destination with smooth movement. Better luck next time, Pilots.");
     }
 
     @Override
@@ -192,6 +200,7 @@ public class ElytraPath extends Module {
         if (thirdPersonOnly.get() && mc.options.getPerspective().isFirstPerson()) return;
 
         renderPlayerPath(event, mc.player);
+
         if (renderOtherPlayers.get()) {
             for (PlayerEntity player : mc.world.getPlayers()) {
                 if (player == mc.player) continue;
@@ -208,201 +217,150 @@ public class ElytraPath extends Module {
             return;
         }
 
-        Vec3d startPos;
-
-        if (player == mc.player && startFromCrosshair.get()) {
-            startPos = new Vec3d(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z);
-        } else {
-            Vec3d eyePos = player.getPos().add(0, player.getEyeHeight(player.getPose()), 0);
-            startPos = eyePos.add(0, startOffset.get(), 0);
-        }
-
+        Vec3d startPos = computeStartPos(player);
         Vec3d rawVel = player.getVelocity();
-        Vec3d rawHorizontal = new Vec3d(rawVel.x, 0.0, rawVel.z);
+        Vec3d hDir = computeHorizontalDirection(player, rawVel);
 
-        Vec3d direction;
+        // Main horizontal path (single pass: compute and render together)
+        drawPath(event, startPos, hDir, false);
 
-        if (player == mc.player) {
-            double smoothFactor = velocitySmoothing.get();
-
-            smoothedVelocity = smoothedVelocity.multiply(1.0 - smoothFactor)
-                .add(rawHorizontal.multiply(smoothFactor));
-
-            if (smoothedVelocity.lengthSquared() > speedThreshold.get() * speedThreshold.get()) {
-                direction = smoothedVelocity.normalize().multiply(smoothedVelocity.length());
-            } else {
-                Vec3d forward = player.getRotationVec(1.0F).normalize();
-
-                direction = new Vec3d(
-                    forward.x * idleSpeed.get(),
-                    0.0,
-                    forward.z * idleSpeed.get()
-                );
-            }
-        } else {
-            if (rawHorizontal.lengthSquared() > speedThreshold.get() * speedThreshold.get()) {
-                direction = rawHorizontal.normalize().multiply(rawHorizontal.length());
-            } else {
-                Vec3d forward = player.getRotationVec(1.0F).normalize();
-
-                direction = new Vec3d(
-                    forward.x * idleSpeed.get(),
-                    0.0,
-                    forward.z * idleSpeed.get()
-                );
-            }
+        // Vertical indicator
+        if (showVerticalIndicators.get() && Math.abs(rawVel.y) > 0.02) {
+            Vec3d vertDir = new Vec3d(0, rawVel.y, 0);
+            SettingColor c = rawVel.y > 0 ? ascendColor.get() : descendColor.get();
+            drawPath(event, startPos, vertDir, true, c);
         }
+    }
 
-        List<Vec3d> path = new ArrayList<>();
-        path.add(startPos);
+    /**
+     * Draws the horizontal path using the current colorMode.
+     */
+    private void drawPath(Render3DEvent event, Vec3d start, Vec3d step, boolean isVertical) {
+        drawPath(event, start, step, isVertical, null);
+    }
 
-        Vec3d currentPos = startPos;
-        BlockHitResult finalHit = null;
+    private void drawPath(Render3DEvent event, Vec3d start, Vec3d step,
+                          boolean isVertical, SettingColor overrideColor) {
+        final int maxTicks = predictionTicks.get();
+        final ColorMode mode = colorMode.get();
 
-        for (int i = 0; i < predictionTicks.get(); i++) {
-            Vec3d nextPos = currentPos.add(direction);
+        // Pre-read gradient values once to avoid repeated .get() inside the loop
+        final SettingColor gStart = (overrideColor == null && mode == ColorMode.Gradient) ? gradientStart.get() : null;
+        final SettingColor gEnd = (overrideColor == null && mode == ColorMode.Gradient) ? gradientEnd.get() : null;
+        final SettingColor solid = (overrideColor == null && mode == ColorMode.Solid) ? lineColor.get() : null;
+        final SettingColor fade = (overrideColor == null && mode == ColorMode.Fade) ? lineColor.get() : null;
+        final float maxT = maxTicks - 1f; // denominator for t, avoids recomputing
+
+        Vec3d prevPos = start;
+        BlockHitResult impactHit = null;
+
+        for (int i = 0; i < maxTicks; i++) {
+            Vec3d nextPos = prevPos.add(step);
 
             if (stopAtBlock.get()) {
-                BlockHitResult hit = raytraceBlock(currentPos, nextPos);
-
+                BlockHitResult hit = raytraceBlock(prevPos, nextPos);
                 if (hit != null) {
-                    path.add(hit.getPos());
-                    finalHit = hit;
+                    // Render the final partial segment up to the hit surface
+                    renderSegment(event, prevPos, hit.getPos(),
+                        segmentColor(overrideColor, mode, solid, fade, gStart, gEnd, i, maxT));
+                    impactHit = hit;
                     break;
                 }
             }
 
-            path.add(nextPos);
-            currentPos = nextPos;
+            renderSegment(event, prevPos, nextPos,
+                segmentColor(overrideColor, mode, solid, fade, gStart, gEnd, i, maxT));
+
+            prevPos = nextPos;
         }
 
-        int segments = path.size() - 1;
+        if (renderImpactBox.get() && impactHit != null) {
+            BlockPos bp = impactHit.getBlockPos();
+            event.renderer.box(bp, impactBoxColor.get(), impactBoxColor.get(), impactBoxShape.get(), 0);
+        }
+    }
 
-        for (int i = 0; i < segments; i++) {
-            Vec3d p1 = path.get(i);
-            Vec3d p2 = path.get(i + 1);
+    private SettingColor segmentColor(SettingColor override,
+                                      ColorMode mode,
+                                      SettingColor solid,
+                                      SettingColor fade,
+                                      SettingColor gStart,
+                                      SettingColor gEnd,
+                                      int i, float maxT) {
+        if (override != null) return override;
 
-            SettingColor color;
-
-            switch (colorMode.get()) {
-                case Solid -> color = lineColor.get();
-
-                case Fade -> {
-                    float progress = (float) i / (float) segments;
-
-                    int alpha = (int) (lineColor.get().a * (1.0 - progress));
-
-                    color = new SettingColor(
-                        lineColor.get().r,
-                        lineColor.get().g,
-                        lineColor.get().b,
-                        Math.max(alpha, 0)
-                    );
-                }
-
-                case Gradient -> {
-                    float t = (float) i / (float) segments;
-
-                    SettingColor start = gradientStart.get();
-                    SettingColor end = gradientEnd.get();
-
-                    color = new SettingColor(
-                        (int) (start.r + t * (end.r - start.r)),
-                        (int) (start.g + t * (end.g - start.g)),
-                        (int) (start.b + t * (end.b - start.b)),
-                        (int) (start.a + t * (end.a - start.a))
-                    );
-                }
-
-                default -> color = lineColor.get();
+        switch (mode) {
+            case Solid -> {
+                return solid;
             }
 
-            event.renderer.line(
-                p1.x, p1.y, p1.z,
-                p2.x, p2.y, p2.z,
-                color
-            );
-        }
+            case Fade -> {
+                float progress = i / maxT;
+                scratchColor.r = fade.r;
+                scratchColor.g = fade.g;
+                scratchColor.b = fade.b;
+                scratchColor.a = Math.max(0, (int) (fade.a * (1f - progress)));
+                return scratchColor;
+            }
 
-        if (renderImpactBox.get() && finalHit != null) {
-            BlockPos bp = finalHit.getBlockPos();
+            case Gradient -> {
+                float t = i / maxT;
+                scratchColor.r = (int) (gStart.r + t * (gEnd.r - gStart.r));
+                scratchColor.g = (int) (gStart.g + t * (gEnd.g - gStart.g));
+                scratchColor.b = (int) (gStart.b + t * (gEnd.b - gStart.b));
+                scratchColor.a = (int) (gStart.a + t * (gEnd.a - gStart.a));
+                return scratchColor;
+            }
 
-            event.renderer.box(
-                bp,
-                impactBoxColor.get(),
-                impactBoxColor.get(),
-                impactBoxShape.get(),
-                0
-            );
-        }
-        // Vertical ascent/descent indicator
-        if (showVerticalIndicators.get()) {
-            double vy = rawVel.y;
-
-            if (Math.abs(vy) > 0.02) {
-                Vec3d verticalDir = new Vec3d(0, vy, 0);
-
-                Vec3d vertCurrentPos = startPos;
-                BlockHitResult vertFinalHit = null;
-
-                List<Vec3d> vertPath = new ArrayList<>();
-                vertPath.add(startPos);
-
-                for (int i = 0; i < predictionTicks.get(); i++) {
-                    Vec3d nextPos = vertCurrentPos.add(verticalDir);
-
-                    if (stopAtBlock.get()) {
-                        BlockHitResult hit = raytraceBlock(vertCurrentPos, nextPos);
-
-                        if (hit != null) {
-                            vertPath.add(hit.getPos());
-                            vertFinalHit = hit;
-                            break;
-                        }
-                    }
-
-                    vertPath.add(nextPos);
-                    vertCurrentPos = nextPos;
-                }
-
-                SettingColor vertColor = vy > 0
-                    ? ascendColor.get()
-                    : descendColor.get();
-
-                for (int i = 0; i < vertPath.size() - 1; i++) {
-                    Vec3d p1 = vertPath.get(i);
-                    Vec3d p2 = vertPath.get(i + 1);
-
-                    event.renderer.line(
-                        p1.x, p1.y, p1.z,
-                        p2.x, p2.y, p2.z,
-                        vertColor
-                    );
-                }
-
-                if (renderImpactBox.get() && vertFinalHit != null) {
-                    BlockPos bp = vertFinalHit.getBlockPos();
-
-                    event.renderer.box(
-                        bp,
-                        impactBoxColor.get(),
-                        impactBoxColor.get(),
-                        impactBoxShape.get(),
-                        0
-                    );
-                }
+            default -> {
+                return solid;
             }
         }
     }
 
+    private void renderSegment(Render3DEvent event, Vec3d p1, Vec3d p2, SettingColor color) {
+        event.renderer.line(p1.x, p1.y, p1.z, p2.x, p2.y, p2.z, color);
+    }
+
+    private Vec3d computeStartPos(PlayerEntity player) {
+        if (player == mc.player && startFromCrosshair.get()) {
+            return new Vec3d(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z);
+        }
+        Vec3d eye = player.getPos().add(0, player.getEyeHeight(player.getPose()), 0);
+        return eye.add(0, startOffset.get(), 0);
+    }
+
+    private Vec3d computeHorizontalDirection(PlayerEntity player, Vec3d rawVel) {
+        Vec3d rawHoriz = new Vec3d(rawVel.x, 0.0, rawVel.z);
+        double threshSq = speedThreshold.get() * speedThreshold.get();
+
+        if (player == mc.player) {
+            double sf = velocitySmoothing.get();
+            smoothedVelocity = smoothedVelocity.multiply(1.0 - sf).add(rawHoriz.multiply(sf));
+
+            if (smoothedVelocity.lengthSquared() > threshSq) {
+                return smoothedVelocity; // already carries magnitude, no need to re-scale
+            }
+        } else {
+            if (rawHoriz.lengthSquared() > threshSq) {
+                return rawHoriz;
+            }
+        }
+
+        // Idle: project forward vector at configured speed
+        Vec3d forward = player.getRotationVec(1.0F);
+        return new Vec3d(forward.x * idleSpeed.get(), 0.0, forward.z * idleSpeed.get());
+    }
+
+
     private BlockHitResult raytraceBlock(Vec3d start, Vec3d end) {
-        RaycastContext context = new RaycastContext(
+        RaycastContext ctx = new RaycastContext(
             start, end,
             RaycastContext.ShapeType.COLLIDER,
             RaycastContext.FluidHandling.NONE,
             mc.player
         );
-        BlockHitResult result = mc.world.raycast(context);
+        BlockHitResult result = mc.world.raycast(ctx);
         return result.getType() == HitResult.Type.BLOCK ? result : null;
     }
 }

@@ -338,8 +338,6 @@ public class ChestTrackerModule extends Module {
         return cmp <= 0 ? pos : other;
     }
 
-    // -------------------------------------------------------------------------
-
     public void setMaterialList(Map<Identifier, Integer> list) {
         materialList.clear();
         materialList.putAll(list);
