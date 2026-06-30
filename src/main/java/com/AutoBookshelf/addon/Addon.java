@@ -35,18 +35,18 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new AutoPot());
         Modules.get().add(new AutoSex());
         Modules.get().add(new AutoMoss());
+        Modules.get().add(new AutoLoader());
         Modules.get().add(new AutoBeacon());
         Modules.get().add(new AutoTakeOff());
         Modules.get().add(new AudiobookReader());
         // B
         Modules.get().add(new B36());
-        Modules.get().add(new BeaconRange());
+        Modules.get().add(new BlockRadius());
         Modules.get().add(new BLU27BNapalm());
         Modules.get().add(new BookImporter());
         Modules.get().add(new BetterBoatFly());
         Modules.get().add(new BookshelfFiller());
         // C
-        Modules.get().add(new ChestAura());
         Modules.get().add(new ContainerPeek());
         Modules.get().add(new com.AutoBookshelf.addon.modules.chesttracker.ChestTrackerModule());
         // E G

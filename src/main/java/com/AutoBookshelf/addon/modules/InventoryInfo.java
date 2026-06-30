@@ -15,6 +15,7 @@ import net.minecraft.screen.slot.Slot;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec2f;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.*;
 
@@ -38,7 +39,20 @@ public class InventoryInfo extends Module {
         .build()
     );
 
-    // Customization
+    public final Setting<Boolean> searchBar = sgGeneral.add(new BoolSetting.Builder()
+        .name("search-bar")
+        .description("Show a search bar above the panel to filter displayed items by name.")
+        .defaultValue(false)
+        .build()
+    );
+
+    public final Setting<Boolean> inventoryOnly = sgGeneral.add(new BoolSetting.Builder()
+        .name("inventory-only")
+        .description("Only show the panel while your own inventory screen is open.")
+        .defaultValue(false)
+        .build()
+    );
+
     public final Setting<Integer> panelXOffset = sgCustom.add(new IntSetting.Builder()
         .name("x-offset")
         .defaultValue(0)
@@ -88,6 +102,10 @@ public class InventoryInfo extends Module {
     private int height, offset;
     private Vec2f clicked;
 
+    // search bar state
+    private final StringBuilder searchQuery = new StringBuilder();
+    private boolean searchFocused = false;
+
     private record DisplayEntry(ItemStack stack, int slot) {
     }
 
@@ -97,12 +115,15 @@ public class InventoryInfo extends Module {
     //TODO
     // Make proper component display.
     // Add profile target, litematica Material list feature.
-    // Searchbar.
     // Whisper/info panel.
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (!(mc.currentScreen instanceof HandledScreen<?>) || mc.player.age % 4 != 0) return;
+        if (inventoryOnly.get() && !(mc.currentScreen instanceof net.minecraft.client.gui.screen.ingame.InventoryScreen)) {
+            info.clear();
+            return;
+        }
         refresh((HandledScreen<?>) mc.currentScreen);
     }
 
@@ -119,6 +140,8 @@ public class InventoryInfo extends Module {
 
         int baseX = 2 + panelXOffset.get();
         int baseY = 3 + offset + panelYOffset.get();
+
+        if (searchBar.get()) baseY = renderSearchBar(event, baseX, baseY);
 
         if (combineShulkers.get()) {
             renderCombinedGrid(event, baseX, baseY);
@@ -140,6 +163,7 @@ public class InventoryInfo extends Module {
             int count = 0, x = baseX, startY = y, maxX = baseX + slotSize;
             for (ItemStack stack : shulkerInfo.stacks()) {
                 if (shulkerInfo.type() == Type.COMPACT && stack.isEmpty()) break;
+                if (!matchesSearch(stack)) continue;
                 if (count > 0 && count % columns == 0) {
                     x = baseX;
                     y += slotSize;
@@ -149,7 +173,15 @@ public class InventoryInfo extends Module {
                 count++;
                 if (x > maxX) maxX = x;
             }
-            y += slotSize;
+
+            if (count == 0) {
+                // No visible items skip this shulker entirely
+                setClicked(null);
+                continue;
+            }
+
+            y += slotSize;  // move past the rows we just drew
+
             if (clicked != null
                 && clicked.x >= baseX && clicked.x <= maxX
                 && clicked.y >= startY && clicked.y <= y) {
@@ -158,7 +190,6 @@ public class InventoryInfo extends Module {
                     shulkerInfo.slot(), 0, SlotActionType.PICKUP, mc.player);
                 setClicked(null);
             }
-            // use int ARGB constants instead of Color.hashCode()
             event.drawContext.fill(baseX, startY, maxX, y, COLOR_BACKGROUND);
             event.drawContext.fill(baseX, startY - 1, maxX, startY, shulkerInfo.color());
             y += 2;
@@ -190,6 +221,7 @@ public class InventoryInfo extends Module {
             ItemStack template = itemToStack.get(item);
             ItemStack display = template.copy();
             display.setCount(total);
+            if (!matchesSearch(display)) continue; // search filter
             entries.add(new DisplayEntry(display, slot));
         }
         entries.sort(Comparator
@@ -232,6 +264,36 @@ public class InventoryInfo extends Module {
         event.drawContext.fill(baseX, startY - 1, maxX, startY, COLOR_SEPARATOR);
         height = y - offset;
         setClicked(null);
+    }
+
+    private int renderSearchBar(ScreenRenderEvent event, int baseX, int baseY) {
+        boolean isCompact = compact.get();
+        int slotSize = isCompact ? compactSlotSize.get() : 20;
+        int columns = isCompact ? compactColumns.get() : 9;
+        int barWidth = columns * slotSize;
+        int barHeight = 12;
+
+        if (clicked != null && clicked.x >= baseX && clicked.x <= baseX + barWidth
+            && clicked.y >= baseY && clicked.y <= baseY + barHeight) {
+            searchFocused = true;
+            setClicked(null);
+        } else if (clicked != null) {
+            searchFocused = false; // clicked elsewhere on the panel, drop focus
+        }
+
+        event.drawContext.fill(baseX, baseY, baseX + barWidth, baseY + barHeight, COLOR_BACKGROUND);
+        event.drawContext.drawBorder(baseX, baseY, barWidth, barHeight, searchFocused ? 0xFFFFFFFF : COLOR_SEPARATOR);
+
+        String text = searchQuery.length() > 0 ? searchQuery.toString() : "Search...";
+        event.drawContext.drawText(mc.textRenderer, text, baseX + 3, baseY + 2,
+            searchQuery.length() > 0 ? 0xFFFFFFFF : 0x80FFFFFF, false);
+
+        return baseY + barHeight + 2;
+    }
+
+    private boolean matchesSearch(ItemStack stack) {
+        if (!searchBar.get() || searchQuery.length() == 0) return true;
+        return stack.getName().getString().toLowerCase().contains(searchQuery.toString().toLowerCase());
     }
 
     /**
@@ -287,5 +349,19 @@ public class InventoryInfo extends Module {
 
     public void setClicked(Vec2f clicked) {
         this.clicked = clicked;
+    }
+
+    public void onSearchCharTyped(char chr) {
+        if (!searchFocused) return;
+        if (chr >= 32 && searchQuery.length() < 32) searchQuery.append(chr);
+    }
+
+    public void onSearchKeyPressed(int keyCode) {
+        if (!searchFocused) return;
+        if (keyCode == GLFW.GLFW_KEY_BACKSPACE && searchQuery.length() > 0) {
+            searchQuery.deleteCharAt(searchQuery.length() - 1);
+        } else if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+            searchFocused = false;
+        }
     }
 }

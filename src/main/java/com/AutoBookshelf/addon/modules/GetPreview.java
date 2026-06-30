@@ -102,6 +102,8 @@ public class GetPreview extends Module {
     // Secondary lookup: identity -> nbt-key, to avoid serializing every frame.
     private final Map<ItemStack, String> identityToKey = new HashMap<>();
 
+    private boolean isRenderingPreview = false;
+
     private static class CachedContainerData {
         // store with count=1 already applied so we never copy() at render time.
         final ItemStack previewStack;
@@ -155,9 +157,12 @@ public class GetPreview extends Module {
         bundleCache.clear();
         shulkerCache.clear();
         identityToKey.clear();
+        isRenderingPreview = false;
     }
 
     public void renderBundleOverlay(DrawContext context, int x, int y, ItemStack stack) {
+        if (isRenderingPreview) return;
+
         if (stack.isEmpty()) return;
 
         if (previewShulkers.get() && isInsideContainerPeekRender()) {
@@ -189,7 +194,6 @@ public class GetPreview extends Module {
         return peek != null && peek.isActive() && peek.isShulkerIconPreviewEnabled()
             && ContainerPeek.IS_RENDERING.get();
     }
-
 
     private String getCacheKey(ItemStack stack) {
         // we've already computed a key for this object reference.
@@ -239,20 +243,16 @@ public class GetPreview extends Module {
         var matrices = context.getMatrices();
         matrices.push();
         matrices.translate(pos[0], pos[1], 300);
-        drawBookInitials(context, book);
+        // Canvas = effectiveSize around iconSize-2 pixels; inner textScale 0.6.
+        drawBookInitials(context, book, iconSize.get() - 4, 0.6f);
         matrices.pop();
     }
 
-    private void drawBookInitials(DrawContext context, WrittenBookContentComponent book) {
+    private void drawBookInitials(DrawContext context, WrittenBookContentComponent book,
+                                  int canvasUnits, float textScale) {
         String author = book.author();
         if (author == null || author.isEmpty()) author = "???";
-        String initials = author.length() > 3
-            ? author.substring(0, 3).toUpperCase()
-            : author.toUpperCase();
-
-        float textScale = 0.6f;
-        int fullSize = iconSize.get() - 4;
-        int textColor = 0xFFFFFFFF;
+        String initials = (author.length() > 3 ? author.substring(0, 3) : author).toUpperCase();
 
         var matrices = context.getMatrices();
         matrices.push();
@@ -260,10 +260,11 @@ public class GetPreview extends Module {
 
         int textWidth = mc.textRenderer.getWidth(initials);
         int textHeight = mc.textRenderer.fontHeight;
-        int textX = (int) ((fullSize / textScale - textWidth) / 2);
-        int textY = (int) ((fullSize / textScale - textHeight) / 2);
+        // In the textScale-subspace the canvas spans canvasUnits/textScale units.
+        int textX = (int) ((canvasUnits / textScale - textWidth) / 2f);
+        int textY = (int) ((canvasUnits / textScale - textHeight) / 2f);
 
-        context.drawText(mc.textRenderer, initials, textX, textY, textColor, true);
+        context.drawText(mc.textRenderer, initials, textX, textY, 0xFFFFFFFF, true);
         matrices.pop();
     }
 
@@ -334,7 +335,6 @@ public class GetPreview extends Module {
 
             if (previewStack == null) return;
 
-            // CachedContainerData constructor copies and sets count=1 internally.
             data = new CachedContainerData(previewStack, hasMultiple);
             if (cacheKey != null) cache.put(cacheKey, data);
         }
@@ -353,29 +353,35 @@ public class GetPreview extends Module {
         matrices.translate(iconX, iconY, 200);
         matrices.scale(scale, scale, 1);
 
-        if (displayStack.isOf(Items.FILLED_MAP)) {
-            if (!drawMapIfPossible(context, displayStack)) {
+        isRenderingPreview = true;
+        try {
+            if (displayStack.isOf(Items.FILLED_MAP)) {
+                if (!drawMapIfPossible(context, displayStack)) {
+                    context.drawItem(displayStack, 0, 0);
+                }
+            } else {
+                // Draw the item icon for all types, including written books.
+                // Book author initials are drawn on top after this block.
                 context.drawItem(displayStack, 0, 0);
             }
-        } else if (previewBooks.get() && displayStack.isOf(Items.WRITTEN_BOOK)) {
+        } finally {
+            isRenderingPreview = false;
+        }
+
+        if (previewBooks.get() && displayStack.isOf(Items.WRITTEN_BOOK)) {
             WrittenBookContentComponent book = displayStack.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
-            if (book != null) drawBookInitials(context, book);
-        } else {
-            context.drawItem(displayStack, 0, 0);
+            if (book != null) drawBookInitials(context, book, 16, 0.6f);
         }
 
         matrices.pop();
 
-        // Compute screen-space pixel position for the overlay (unscaled)
-        int overlayX = iconX;
-        int overlayY = iconY;
-
+        // Stack overlay (damage bar, count) is drawn in screen space, no inner scale.
         matrices.push();
-        matrices.translate(overlayX, overlayY, 200);
+        matrices.translate(iconX, iconY, 200);
         context.drawStackOverlay(mc.textRenderer, displayStack, 0, 0, null);
         matrices.pop();
 
-        // Multiple-type indicator text (drawn in screen space, no scaling needed).
+        // Multiple-type indicator text.
         if (data.hasMultiple && !multipleText.get().isEmpty()) {
             String text = multipleText.get();
             int textWidth = mc.textRenderer.getWidth(text);
@@ -394,7 +400,6 @@ public class GetPreview extends Module {
 
         var matrices = context.getMatrices();
         matrices.push();
-        // Apply only the map renderer's own scale; the caller already positioned us.
         matrices.scale(0.125F, 0.125F, 1.0F);
 
         var renderState = new MapRenderState();
@@ -402,7 +407,6 @@ public class GetPreview extends Module {
         mc.getMapRenderer().update(mapId, mapState, renderState);
         mc.getMapRenderer().draw(renderState, matrices, vertexConsumers, false, 0xF000F0);
 
-        // Flush the buffer while still inside our push/pop
         vertexConsumers.draw();
 
         matrices.pop();
