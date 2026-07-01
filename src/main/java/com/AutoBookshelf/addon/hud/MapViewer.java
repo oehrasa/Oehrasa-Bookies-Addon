@@ -254,22 +254,18 @@ public class MapViewer extends HudElement {
             renderer.quad(x, y, mapSize, mapSize, backgroundColor.get());
         }
 
-        MatrixStack matrices = renderer.drawContext.getMatrices();
         VertexConsumerProvider.Immediate vertexConsumers = mc.getBufferBuilders().getEntityVertexConsumers();
 
         // Populate render state with live map data
         mapRenderer.update(id, data, renderState);
 
-        matrices.push();
-        matrices.translate(x, y, 0.0);
-        matrices.scale((float) scale, (float) scale, 1.0F);
+        MatrixStack matrices = new MatrixStack();
+        matrices.translate((float) x, (float) y, 0.0f);
+        matrices.scale((float) scale, (float) scale, 1.0f);
 
         // Draw the map
         mapRenderer.draw(renderState, matrices, vertexConsumers, false, 0xF000F0);
 
-        matrices.pop();
-
-        // Flush geometry so it appears on screen
         vertexConsumers.draw();
     }
 

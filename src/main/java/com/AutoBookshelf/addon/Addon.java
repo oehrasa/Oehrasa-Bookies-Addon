@@ -49,6 +49,8 @@ public class Addon extends MeteorAddon {
         // C
         Modules.get().add(new ContainerPeek());
         Modules.get().add(new com.AutoBookshelf.addon.modules.chesttracker.ChestTrackerModule());
+        // D
+        Modules.get().add(new DriedGhastPlacer());
         // E G
         Modules.get().add(new ElytraPath());
         Modules.get().add(new GetPreview());

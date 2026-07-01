@@ -10,6 +10,7 @@ import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.render.MapRenderState;
+import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.BundleContentsComponent;
 import net.minecraft.component.type.ContainerComponent;
@@ -22,6 +23,7 @@ import net.minecraft.item.Items;
 import net.minecraft.item.map.MapState;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
+import net.minecraft.nbt.NbtOps;
 import net.minecraft.text.Text;
 
 import java.util.ArrayList;
@@ -98,19 +100,15 @@ public class GetPreview extends Module {
 
     private final Map<String, CachedContainerData> bundleCache = new HashMap<>();
     private final Map<String, CachedContainerData> shulkerCache = new HashMap<>();
-
-    // Secondary lookup: identity -> nbt-key, to avoid serializing every frame.
     private final Map<ItemStack, String> identityToKey = new HashMap<>();
 
     private boolean isRenderingPreview = false;
 
     private static class CachedContainerData {
-        // store with count=1 already applied so we never copy() at render time.
         final ItemStack previewStack;
         final boolean hasMultiple;
 
         CachedContainerData(ItemStack previewStack, boolean hasMultiple) {
-            // Ensure count is already 1 at construction time.
             ItemStack capped = previewStack.copy();
             capped.setCount(1);
             this.previewStack = capped;
@@ -146,7 +144,6 @@ public class GetPreview extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        // One reference comparison per tick so no allocation, no NBT, no registry lookup.
         if (mc.world != lastWorld) {
             lastWorld = mc.world;
             clearCaches();
@@ -162,7 +159,6 @@ public class GetPreview extends Module {
 
     public void renderBundleOverlay(DrawContext context, int x, int y, ItemStack stack) {
         if (isRenderingPreview) return;
-
         if (stack.isEmpty()) return;
 
         if (previewShulkers.get() && isInsideContainerPeekRender()) {
@@ -172,19 +168,15 @@ public class GetPreview extends Module {
             }
         }
 
-        // 1. Written book to author initials overlay
         if (previewBooks.get() && stack.contains(DataComponentTypes.WRITTEN_BOOK_CONTENT)) {
             if (debug.get()) info("Book overlay called for: " + stack.getName().getString());
             renderBookOverlay(context, x, y, stack);
             return;
         }
 
-        // 2. Bundles
         if (stack.contains(DataComponentTypes.BUNDLE_CONTENTS)) {
             renderContainerOverlay(context, x, y, stack, bundleCache, false);
-        }
-        // 3. Shulker boxes
-        else if (previewShulkers.get() && hasShulkerContents(stack)) {
+        } else if (previewShulkers.get() && hasShulkerContents(stack)) {
             renderContainerOverlay(context, x, y, stack, shulkerCache, true);
         }
     }
@@ -196,7 +188,6 @@ public class GetPreview extends Module {
     }
 
     private String getCacheKey(ItemStack stack) {
-        // we've already computed a key for this object reference.
         String cached = identityToKey.get(stack);
         if (cached != null) return cached;
 
@@ -207,11 +198,11 @@ public class GetPreview extends Module {
 
     private String computeCacheKey(ItemStack stack) {
         try {
-            NbtElement element = stack.toNbt(mc.world.getRegistryManager());
+            var ops = mc.world.getRegistryManager().getOps(NbtOps.INSTANCE);
+            NbtElement element = ItemStack.CODEC.encodeStart(ops, stack).getOrThrow();
             if (!(element instanceof NbtCompound full)) return null;
-            // Use the full component map as key for maximum correctness.
-            NbtCompound components = full.getCompound("components");
-            return components.isEmpty() ? null : components.asString();
+            if (full.isEmpty()) return null;
+            return full.asString().orElse(null);
         } catch (Exception ignored) {
             return null;
         }
@@ -221,7 +212,6 @@ public class GetPreview extends Module {
         ContainerComponent component = stack.get(DataComponentTypes.CONTAINER);
         if (component != null) return true;
 
-        // Check if we already have a cache entry for this stack (component data may be absent client-side for stacks that have been seen before).
         String key = getCacheKey(stack);
         if (key != null && shulkerCache.containsKey(key)) {
             if (debug.get()) info("Cache hit (key)");
@@ -241,11 +231,10 @@ public class GetPreview extends Module {
         int[] pos = computeIconPosition(x, y, effectiveSize, border);
 
         var matrices = context.getMatrices();
-        matrices.push();
-        matrices.translate(pos[0], pos[1], 300);
-        // Canvas = effectiveSize around iconSize-2 pixels; inner textScale 0.6.
+        matrices.pushMatrix();
+        matrices.translate(pos[0], pos[1]);
         drawBookInitials(context, book, iconSize.get() - 4, 0.6f);
-        matrices.pop();
+        matrices.popMatrix();
     }
 
     private void drawBookInitials(DrawContext context, WrittenBookContentComponent book,
@@ -255,17 +244,16 @@ public class GetPreview extends Module {
         String initials = (author.length() > 3 ? author.substring(0, 3) : author).toUpperCase();
 
         var matrices = context.getMatrices();
-        matrices.push();
-        matrices.scale(textScale, textScale, 1.0f);
+        matrices.pushMatrix();
+        matrices.scale(textScale, textScale);
 
         int textWidth = mc.textRenderer.getWidth(initials);
         int textHeight = mc.textRenderer.fontHeight;
-        // In the textScale-subspace the canvas spans canvasUnits/textScale units.
         int textX = (int) ((canvasUnits / textScale - textWidth) / 2f);
         int textY = (int) ((canvasUnits / textScale - textHeight) / 2f);
 
         context.drawText(mc.textRenderer, initials, textX, textY, 0xFFFFFFFF, true);
-        matrices.pop();
+        matrices.popMatrix();
     }
 
     private void renderContainerOverlay(DrawContext context, int x, int y, ItemStack stack,
@@ -279,7 +267,6 @@ public class GetPreview extends Module {
             if (isShulker) {
                 ContainerComponent container = stack.get(DataComponentTypes.CONTAINER);
                 if (container == null) return;
-
                 items = new ArrayList<>();
                 for (ItemStack s : container.iterateNonEmpty()) items.add(s.copy());
             } else {
@@ -290,8 +277,6 @@ public class GetPreview extends Module {
 
             if (items.isEmpty()) return;
 
-            // Use plain loops instead of stream ops to avoid iterator/collector
-            // allocations in the render path on a cache miss.
             boolean hasMultiple = false;
             {
                 Item first = items.get(0).getItem();
@@ -306,9 +291,7 @@ public class GetPreview extends Module {
             ItemStack previewStack = null;
             switch (previewMode.get()) {
                 case FirstItem -> previewStack = items.get(0);
-
                 case MostCommon -> {
-                    // Plain loop no stream, no collectors, no boxing beyond Integer.
                     Map<Item, Integer> counts = new HashMap<>();
                     for (ItemStack s : items)
                         counts.merge(s.getItem(), s.getCount(), Integer::sum);
@@ -349,19 +332,17 @@ public class GetPreview extends Module {
         int iconY = pos[1];
 
         var matrices = context.getMatrices();
-        matrices.push();
-        matrices.translate(iconX, iconY, 200);
-        matrices.scale(scale, scale, 1);
+        matrices.pushMatrix();
+        matrices.translate(iconX, iconY);
+        matrices.scale(scale, scale);
 
         isRenderingPreview = true;
         try {
             if (displayStack.isOf(Items.FILLED_MAP)) {
-                if (!drawMapIfPossible(context, displayStack)) {
+                if (!drawMapIfPossible(context, displayStack, iconX, iconY)) {
                     context.drawItem(displayStack, 0, 0);
                 }
             } else {
-                // Draw the item icon for all types, including written books.
-                // Book author initials are drawn on top after this block.
                 context.drawItem(displayStack, 0, 0);
             }
         } finally {
@@ -373,15 +354,14 @@ public class GetPreview extends Module {
             if (book != null) drawBookInitials(context, book, 16, 0.6f);
         }
 
-        matrices.pop();
+        matrices.popMatrix();
 
-        // Stack overlay (damage bar, count) is drawn in screen space, no inner scale.
-        matrices.push();
-        matrices.translate(iconX, iconY, 200);
+        // Stack overlay drawn in screen space — separate push with no scale
+        matrices.pushMatrix();
+        matrices.translate(iconX, iconY);
         context.drawStackOverlay(mc.textRenderer, displayStack, 0, 0, null);
-        matrices.pop();
+        matrices.popMatrix();
 
-        // Multiple-type indicator text.
         if (data.hasMultiple && !multipleText.get().isEmpty()) {
             String text = multipleText.get();
             int textWidth = mc.textRenderer.getWidth(text);
@@ -391,15 +371,22 @@ public class GetPreview extends Module {
         }
     }
 
-    private boolean drawMapIfPossible(DrawContext context, ItemStack mapStack) {
+    /**
+     * Renders a filled map's contents as the overlay icon.
+     * MapRenderer.draw() bypasses DrawContext's 2D matrix stack entirely and uses its
+     * own MatrixStack, so it must be translated to the icon's actual screen position
+     * (screenX, screenY) manually — otherwise it always renders at the coordinate
+     * origin (top-left corner) instead of following the panel/slot it belongs to.
+     */
+    private boolean drawMapIfPossible(DrawContext context, ItemStack mapStack, int screenX, int screenY) {
         if (!mapStack.isOf(Items.FILLED_MAP)) return false;
         MapIdComponent mapId = mapStack.get(DataComponentTypes.MAP_ID);
         if (mapId == null) return false;
         MapState mapState = FilledMapItem.getMapState(mapId, mc.world);
         if (mapState == null) return false;
 
-        var matrices = context.getMatrices();
-        matrices.push();
+        MatrixStack matrices = new MatrixStack();
+        matrices.translate(screenX, screenY, 0.0F);
         matrices.scale(0.125F, 0.125F, 1.0F);
 
         var renderState = new MapRenderState();
@@ -408,33 +395,16 @@ public class GetPreview extends Module {
         mc.getMapRenderer().draw(renderState, matrices, vertexConsumers, false, 0xF000F0);
 
         vertexConsumers.draw();
-
-        matrices.pop();
         return true;
     }
 
     private int[] computeIconPosition(int x, int y, int effectiveSize, int border) {
         return switch (iconPosition.get()) {
-            case BottomRight -> new int[]{
-                x + 16 - effectiveSize - border,
-                y + 16 - effectiveSize - border
-            };
-            case BottomLeft -> new int[]{
-                x + border,
-                y + 16 - effectiveSize - border
-            };
-            case TopRight -> new int[]{
-                x + 16 - effectiveSize - border,
-                y + border
-            };
-            case TopLeft -> new int[]{
-                x + border,
-                y + border
-            };
-            case Center -> new int[]{
-                x + (16 - effectiveSize) / 2,
-                y + (16 - effectiveSize) / 2
-            };
+            case BottomRight -> new int[]{x + 16 - effectiveSize - border, y + 16 - effectiveSize - border};
+            case BottomLeft -> new int[]{x + border, y + 16 - effectiveSize - border};
+            case TopRight -> new int[]{x + 16 - effectiveSize - border, y + border};
+            case TopLeft -> new int[]{x + border, y + border};
+            case Center -> new int[]{x + (16 - effectiveSize) / 2, y + (16 - effectiveSize) / 2};
         };
     }
 

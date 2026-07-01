@@ -74,7 +74,7 @@ public class ElytraTime extends HudElement {
         unbreakingLevel = 0;
 
         // Check main inventory
-        for (int n = 0; n < mc.player.getInventory().main.size(); n++) {
+        for (int n = 0; n < mc.player.getInventory().getMainStacks().size(); n++) {
             ItemStack stack = mc.player.getInventory().getStack(n);
             if (stack.getItem() == Items.ELYTRA) {
                 totalTime += getTimeRemaining(stack);

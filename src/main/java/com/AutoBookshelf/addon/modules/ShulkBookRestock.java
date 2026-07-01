@@ -185,7 +185,7 @@ public class ShulkBookRestock extends Module {
 
             if (!validSlots.isEmpty()) {
                 int nextSlot = validSlots.get(0);
-                mc.player.getInventory().selectedSlot = nextSlot;
+                mc.player.getInventory().setSelectedSlot(nextSlot);
                 autoSwitchInProgress = true;
                 switchCooldown = switchDelay.get();
             }

@@ -4,7 +4,6 @@ import com.AutoBookshelf.addon.events.ScreenRenderEvent;
 import com.AutoBookshelf.addon.modules.InventoryInfo;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.systems.modules.Modules;
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
@@ -24,7 +23,7 @@ public abstract class MixinHandledScreen extends Screen {
 
     @Inject(method = "render", at = @At("TAIL"))
     private void onRenderTail(DrawContext context, int mouseX, int mouseY, float delta, CallbackInfo ci) {
-        MeteorClient.EVENT_BUS.post(ScreenRenderEvent.get(context, MinecraftClient.getInstance().getRenderTickCounter().getTickDelta(true)));
+        MeteorClient.EVENT_BUS.post(ScreenRenderEvent.get(context, delta));
     }
 
     @Inject(method = "mouseClicked", at = @At("HEAD"))

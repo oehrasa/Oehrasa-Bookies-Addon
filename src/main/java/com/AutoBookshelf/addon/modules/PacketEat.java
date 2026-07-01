@@ -145,7 +145,7 @@ public class PacketEat extends Module {
     private boolean wasBaritone = false;
 
     public PacketEat() {
-        super(Addon.CATEGORY, "PacketEat", "Eat without interrupting movement or combat. Auto-eat mirrors Meteor's AutoEat with offhand-native support.");
+        super(Addon.CATEGORY2, "PacketEat", "Eat without interrupting movement or combat. Auto-eat mirrors Meteor's AutoEat with offhand-native support.");
     }
 
     @Override
@@ -253,7 +253,7 @@ public class PacketEat extends Module {
             // Hotbar: we're temporarily swapping the hotbar selection, so we must stay
             // on this slot for the entire vanilla eat duration before swapping back.
             eatDuration = HOTBAR_EAT_TICKS;
-            prevSlot = player.getInventory().selectedSlot;
+            prevSlot = player.getInventory().getSelectedSlot();
             InvUtils.swap(eatSlot, false);
         }
 

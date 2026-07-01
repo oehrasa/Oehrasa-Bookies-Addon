@@ -16,14 +16,15 @@ import net.minecraft.block.EnderChestBlock;
 import net.minecraft.block.ShulkerBoxBlock;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.item.*;
-import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
+import net.minecraft.registry.tag.ItemTags;
 import net.minecraft.screen.slot.Slot;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import org.lwjgl.glfw.GLFW;
@@ -89,6 +90,13 @@ public class AutoLoader extends Module {
 
     private int freeingHotbarSlot = -1;
     private int freeSlotWaitTicks = 0;
+
+    /**
+     * Positions where placement was attempted but never materialized
+     * (e.g. blocked by the player's own hitbox), so findPlacement() can
+     * skip them on retry instead of looping on the same spot forever.
+     */
+    private final List<BlockPos> failedPositions = new ArrayList<>();
 
     /**
      * Server-side rotation lock, reapplied every tick until released.
@@ -250,6 +258,7 @@ public class AutoLoader extends Module {
         preActionSlot = -1;
         freeingHotbarSlot = -1;
         freeSlotWaitTicks = 0;
+        failedPositions.clear();
     }
 
     @EventHandler
@@ -260,7 +269,7 @@ public class AutoLoader extends Module {
         if (event.button != GLFW.GLFW_MOUSE_BUTTON_RIGHT) return;
         if (!(mc.currentScreen instanceof HandledScreen<?> screen)) return;
 
-        Slot focusedSlot = ((HandledScreenAccessor) screen).getFocusedSlot();
+        Slot focusedSlot = ((HandledScreenAccessor) screen).meteor$getFocusedSlot();
         if (focusedSlot == null || focusedSlot.inventory != mc.player.getInventory()) return;
 
         ItemStack stack = focusedSlot.getStack();
@@ -388,7 +397,7 @@ public class AutoLoader extends Module {
     }
 
     private void doUseItem() {
-        preActionSlot = mc.player.getInventory().selectedSlot;
+        preActionSlot = mc.player.getInventory().getSelectedSlot();
         mc.player.getInventory().setSelectedSlot(containerHotbarSlot);
         mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(containerHotbarSlot));
         mc.interactionManager.interactItem(mc.player, Hand.MAIN_HAND);
@@ -539,9 +548,25 @@ public class AutoLoader extends Module {
         }
 
         if (++openAttempts > 20) {
-            info("Timed out waiting for the container GUI to open.");
-            stage = Stage.IDLE;
-            resetState();
+            failedPositions.add(placedPos);
+            BlockPos retry = findPlacement();
+            if (retry == null) {
+                info("Timed out waiting for the container GUI to open, and no other placement spot found.");
+                stage = Stage.IDLE;
+                resetState();
+                return;
+            }
+            info("Placement at previous spot failed (likely blocked by your own hitbox), retrying elsewhere.");
+            firstPos = retry;
+            placedPos = retry;
+            openAttempts = 0;
+            Vec3d hitVec = airPlace.get()
+                ? Vec3d.ofCenter(retry)
+                : new Vec3d(retry.getX() + 0.5, retry.getY(), retry.getZ() + 0.5);
+            firstYaw = (float) Rotations.getYaw(hitVec);
+            lockRotation(firstYaw, (float) Rotations.getPitch(hitVec));
+            placeBlock(retry);
+            delayTicks = 4;
             return;
         }
 
@@ -601,7 +626,7 @@ public class AutoLoader extends Module {
         if (!pickaxeEquipped) {
             int ps = findPickaxeSlot();
             if (ps != -1) {
-                preBreakSlot = mc.player.getInventory().selectedSlot;
+                preBreakSlot = mc.player.getInventory().getSelectedSlot();
                 mc.player.getInventory().setSelectedSlot(ps);
                 mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(ps));
                 pickaxeEquipped = true;
@@ -726,8 +751,6 @@ public class AutoLoader extends Module {
         sneaking = true;
         mc.player.setSneaking(true);
         mc.options.sneakKey.setPressed(true);
-        mc.player.networkHandler.sendPacket(
-            new ClientCommandC2SPacket(mc.player, ClientCommandC2SPacket.Mode.PRESS_SHIFT_KEY));
     }
 
     private void stopSneaking() {
@@ -735,8 +758,6 @@ public class AutoLoader extends Module {
         sneaking = false;
         mc.player.setSneaking(false);
         mc.options.sneakKey.setPressed(false);
-        mc.player.networkHandler.sendPacket(
-            new ClientCommandC2SPacket(mc.player, ClientCommandC2SPacket.Mode.RELEASE_SHIFT_KEY));
     }
 
     private void lockRotation(float yaw, float pitch) {
@@ -798,14 +819,16 @@ public class AutoLoader extends Module {
             if (airPlace.get() && preferSolidBlock.get()) {
                 for (BlockPos pos : cands) {
                     if (Vec3d.ofCenter(pos).squaredDistanceTo(playerPos) > rangeSq) continue;
-                    if (!spaceAbove(pos) || !validSolidPos(pos)) continue;
+                    if (!spaceAbove(pos) || !validSolidPos(pos) || intersectsPlayer(pos) || failedPositions.contains(pos)) continue;
                     if (hasRoomForSecond(pp, pos)) return pos;
                 }
             }
             for (BlockPos pos : cands) {
                 if (Vec3d.ofCenter(pos).squaredDistanceTo(playerPos) > rangeSq) continue;
                 if (!spaceAbove(pos)) continue;
-                boolean primaryValid = airPlace.get() ? isReplaceableOrAir(pos) : validSolidPos(pos);
+                boolean primaryValid = airPlace.get()
+                    ? canPlaceAt(pos)
+                    : (validSolidPos(pos) && !intersectsPlayer(pos) && !failedPositions.contains(pos));
                 if (!primaryValid) continue;
                 if (hasRoomForSecond(pp, pos)) return pos;
             }
@@ -816,7 +839,7 @@ public class AutoLoader extends Module {
         if (airPlace.get() && preferSolidBlock.get()) {
             for (BlockPos pos : cands) {
                 if (Vec3d.ofCenter(pos).squaredDistanceTo(playerPos) > rangeSq) continue;
-                if (!spaceAbove(pos)) continue;
+                if (!spaceAbove(pos) || intersectsPlayer(pos) || failedPositions.contains(pos)) continue;
                 if (validSolidPos(pos)) return pos;
             }
         }
@@ -824,9 +847,9 @@ public class AutoLoader extends Module {
             if (Vec3d.ofCenter(pos).squaredDistanceTo(playerPos) > rangeSq) continue;
             if (!spaceAbove(pos)) continue;
             if (airPlace.get()) {
-                if (isReplaceableOrAir(pos)) return pos;
+                if (canPlaceAt(pos)) return pos;
             } else {
-                if (validSolidPos(pos)) return pos;
+                if (validSolidPos(pos) && !intersectsPlayer(pos) && !failedPositions.contains(pos)) return pos;
             }
         }
         return null;
@@ -849,6 +872,16 @@ public class AutoLoader extends Module {
     private boolean isReplaceableOrAir(BlockPos pos) {
         BlockState state = mc.world.getBlockState(pos);
         return state.isAir() || state.isReplaceable() || !state.getFluidState().isEmpty();
+    }
+
+    private boolean intersectsPlayer(BlockPos pos) {
+        Box playerBox = mc.player.getBoundingBox();
+        Box blockBox = new Box(pos);
+        return playerBox.intersects(blockBox);
+    }
+
+    private boolean canPlaceAt(BlockPos pos) {
+        return isReplaceableOrAir(pos) && !intersectsPlayer(pos) && !failedPositions.contains(pos);
     }
 
     private boolean spaceAbove(BlockPos pos) {
@@ -911,7 +944,7 @@ public class AutoLoader extends Module {
 
     private int findPickaxeSlot() {
         for (int i = 0; i < 9; i++) {
-            if (mc.player.getInventory().getStack(i).getItem() instanceof PickaxeItem) return i;
+            if (mc.player.getInventory().getStack(i).isIn(ItemTags.PICKAXES)) return i;
         }
         return -1;
     }

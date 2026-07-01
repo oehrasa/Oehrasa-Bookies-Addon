@@ -1,35 +1,32 @@
 package com.AutoBookshelf.addon.modules;
 
-import meteordevelopment.meteorclient.systems.modules.Category;
-
-import java.io.File;
-import java.io.IOException;
-import java.io.FileReader;
-import java.io.BufferedReader;
-import net.minecraft.text.Text;
-
-import meteordevelopment.meteorclient.utils.Utils;
-import meteordevelopment.meteorclient.utils.player.ChatUtils;
-import meteordevelopment.meteorclient.utils.player.Rotations;
-
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.Utils;
+import meteordevelopment.meteorclient.utils.player.ChatUtils;
+import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
-
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.ChiseledBookshelfBlock;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.state.property.Properties;
+import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
-import net.minecraft.screen.slot.SlotActionType;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.IOException;
 
 public class AutoLogin extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -165,7 +162,7 @@ public class AutoLogin extends Module {
         targetYaw = Rotations.getYaw(targetHitVec);
         targetPitch = Rotations.getPitch(targetHitVec);
 
-        originalSelectedSlot = mc.player.getInventory().selectedSlot;
+        originalSelectedSlot = mc.player.getInventory().getSelectedSlot();
         bookSlot = -1;
         didSwap = false;
         bookStage = 0;
@@ -214,7 +211,7 @@ public class AutoLogin extends Module {
 
                 if (bookSlot != originalSelectedSlot) {
                     if (bookSlot < 9) {
-                        mc.player.getInventory().selectedSlot = bookSlot;
+                        mc.player.getInventory().setSelectedSlot(bookSlot);
                         didSwap = false;
                     } else {
                         mc.interactionManager.clickSlot(
@@ -251,8 +248,8 @@ public class AutoLogin extends Module {
                         mc.player
                     );
                 }
-                if (mc.player.getInventory().selectedSlot != originalSelectedSlot) {
-                    mc.player.getInventory().selectedSlot = originalSelectedSlot;
+                if (mc.player.getInventory().getSelectedSlot() != originalSelectedSlot) {
+                    mc.player.getInventory().setSelectedSlot(originalSelectedSlot);
                 }
                 if (onBookReturned != null) {
                     onBookReturned.run();

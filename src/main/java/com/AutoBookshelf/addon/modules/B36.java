@@ -2,15 +2,9 @@ package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.settings.BoolSetting;
-import meteordevelopment.meteorclient.settings.DoubleSetting;
-import meteordevelopment.meteorclient.settings.IntSetting;
-import meteordevelopment.meteorclient.settings.Setting;
-import meteordevelopment.meteorclient.settings.SettingGroup;
-import meteordevelopment.meteorclient.systems.modules.Categories;
+import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.Blocks;
 import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
@@ -104,7 +98,7 @@ public class B36 extends Module {
 
     @Override
     public void onActivate() {
-        originalSlot = mc.player.getInventory().selectedSlot;
+        originalSlot = mc.player.getInventory().getSelectedSlot();
         ticksWaited = 0;
         placementAttempts = 0;
         lastPos = null;
@@ -113,7 +107,7 @@ public class B36 extends Module {
     @Override
     public void onDeactivate() {
         if (originalSlot != -1) {
-            mc.player.getInventory().selectedSlot = originalSlot;
+            mc.player.getInventory().setSelectedSlot(originalSlot);
             originalSlot = -1;
         }
     }
@@ -129,7 +123,7 @@ public class B36 extends Module {
 
         // Save original slot if not saved yet
         if (originalSlot == -1) {
-            originalSlot = mc.player.getInventory().selectedSlot;
+            originalSlot = mc.player.getInventory().getSelectedSlot();
         }
 
         // Find required items and handle inventory management
@@ -199,10 +193,10 @@ public class B36 extends Module {
         if (tntSlot == -1 || flintAndSteelSlot == -1) return false;
 
         // Remember current slot to restore if no placement happens
-        int previousSlot = mc.player.getInventory().selectedSlot;
+        int previousSlot = mc.player.getInventory().getSelectedSlot();
 
         // Force switch to TNT slot and notify the server
-        mc.player.getInventory().selectedSlot = tntSlot;
+        mc.player.getInventory().setSelectedSlot(tntSlot);
         mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(tntSlot));
 
         // Get player position and calculate placement area
@@ -231,7 +225,7 @@ public class B36 extends Module {
                     // Double-check we're using TNT
                     if (mc.player.getMainHandStack().getItem() != Items.TNT) {
                         // Try forcing the slot again
-                        mc.player.getInventory().selectedSlot = tntSlot;
+                        mc.player.getInventory().setSelectedSlot(tntSlot);
                         mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(tntSlot));
 
                         // Skip if still not holding TNT
@@ -248,7 +242,7 @@ public class B36 extends Module {
                     }
 
                     // Switch to flint and steel and notify the server
-                    mc.player.getInventory().selectedSlot = flintAndSteelSlot;
+                    mc.player.getInventory().setSelectedSlot(flintAndSteelSlot);
                     mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(flintAndSteelSlot));
 
                     // Verify we have flint and steel in hand
@@ -265,7 +259,7 @@ public class B36 extends Module {
                     // Silently handle exceptions
                 } finally {
                     // Always return to original slot
-                    mc.player.getInventory().selectedSlot = originalSlot;
+                    mc.player.getInventory().setSelectedSlot(originalSlot);
                     mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(originalSlot));
                 }
 
@@ -275,8 +269,8 @@ public class B36 extends Module {
         }
 
         // If we didn't place anything but changed slots, restore previous slot
-        if (!placed && mc.player.getInventory().selectedSlot != previousSlot) {
-            mc.player.getInventory().selectedSlot = previousSlot;
+        if (!placed && mc.player.getInventory().getSelectedSlot() != previousSlot) {
+            mc.player.getInventory().setSelectedSlot(previousSlot);
             mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(previousSlot));
         }
 
@@ -316,7 +310,7 @@ public class B36 extends Module {
      */
     private boolean verifyHoldingItem(int slot, net.minecraft.item.Item expectedItem) {
         // Force the client to update the selected slot
-        mc.player.getInventory().selectedSlot = slot;
+        mc.player.getInventory().setSelectedSlot(slot);
 
         // Give the client a small moment to register the change
         mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(slot));

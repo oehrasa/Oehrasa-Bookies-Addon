@@ -16,10 +16,10 @@ import net.minecraft.component.type.ContainerComponent;
 import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
-import net.minecraft.item.PickaxeItem;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
+import net.minecraft.registry.tag.ItemTags;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
@@ -509,13 +509,13 @@ public class MaterialsRefill extends Module {
         if (!pickaxeEquipped) {
             int pickSlot = -1;
             for (int i = 0; i < 9; i++) {
-                if (mc.player.getInventory().getStack(i).getItem() instanceof PickaxeItem) {
+                if (mc.player.getInventory().getStack(i).isIn(ItemTags.PICKAXES)) {
                     pickSlot = i;
                     break;
                 }
             }
             if (pickSlot != -1) {
-                preBreakSlot = mc.player.getInventory().selectedSlot;
+                preBreakSlot = mc.player.getInventory().getSelectedSlot();
                 mc.player.getInventory().setSelectedSlot(pickSlot);
                 pickaxeEquipped = true;
             }

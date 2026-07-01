@@ -14,9 +14,9 @@ import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.WrittenBookContentComponent;
-import net.minecraft.network.packet.c2s.play.BookUpdateC2SPacket;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.network.packet.c2s.play.BookUpdateC2SPacket;
 import net.minecraft.text.RawFilteredPair;
 import net.minecraft.text.Text;
 import org.lwjgl.util.tinyfd.TinyFileDialogs;
@@ -600,7 +600,7 @@ public class BookImporter extends Module {
 
         mc.player.getMainHandStack().set(DataComponentTypes.WRITTEN_BOOK_CONTENT, content);
         mc.player.networkHandler.sendPacket(new BookUpdateC2SPacket(
-            mc.player.getInventory().selectedSlot,
+            mc.player.getInventory().getSelectedSlot(),
             partPages,
             Optional.of(titleStr)
         ));

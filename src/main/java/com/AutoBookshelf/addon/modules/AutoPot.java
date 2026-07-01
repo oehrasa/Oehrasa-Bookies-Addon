@@ -167,7 +167,7 @@ public class AutoPot extends Module {
     private void stopPotionUsage() {
         if (isStopping) {
             if (prevSlot >= 0 && prevSlot <= 8) {
-                mc.player.getInventory().selectedSlot = prevSlot;
+                mc.player.getInventory().setSelectedSlot(prevSlot);
             }
             mc.options.useKey.setPressed(false);
             drinking = false;
@@ -179,7 +179,7 @@ public class AutoPot extends Module {
 
         // Restore original hotbar slot (yk these were less smoother because we are holding a button..)
         if (prevSlot >= 0 && prevSlot <= 8) {
-            mc.player.getInventory().selectedSlot = prevSlot;
+            mc.player.getInventory().setSelectedSlot(prevSlot);
         }
         mc.options.useKey.setPressed(false);
         drinking = false;
@@ -239,10 +239,10 @@ public class AutoPot extends Module {
     }
 
     private void switchToPotionSlot() {
-        prevSlot = mc.player.getInventory().selectedSlot;
+        prevSlot = mc.player.getInventory().getSelectedSlot();
 
         if (slot < 9) {
-            mc.player.getInventory().selectedSlot = slot;
+            mc.player.getInventory().setSelectedSlot(slot);
         } else {
             int tempSlot = -1;
             for (int i = 0; i < 9; i++) {
@@ -260,12 +260,12 @@ public class AutoPot extends Module {
                 SlotActionType.SWAP,
                 mc.player
             );
-            mc.player.getInventory().selectedSlot = tempSlot;
+            mc.player.getInventory().setSelectedSlot(tempSlot);
         }
     }
 
     private void startPotionUse() {
-        prevSlot = mc.player.getInventory().selectedSlot;
+        prevSlot = mc.player.getInventory().getSelectedSlot();
 
         ItemStack stack = mc.player.getInventory().getStack(slot);
         boolean isSplashPotion = stack.getItem() == Items.SPLASH_POTION;

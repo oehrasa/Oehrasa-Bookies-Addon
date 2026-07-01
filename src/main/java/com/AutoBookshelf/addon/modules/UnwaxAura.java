@@ -22,7 +22,8 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 
-import java.util.*;
+import java.util.HashSet;
+import java.util.Set;
 
 public class UnwaxAura extends Module {
     public enum CopperFilter {
@@ -224,7 +225,7 @@ public class UnwaxAura extends Module {
 
     @Override
     public void onDeactivate() {
-        if (returnSlot.get() && originalSlot != -1 && originalSlot != mc.player.getInventory().selectedSlot) {
+        if (returnSlot.get() && originalSlot != -1 && originalSlot != mc.player.getInventory().getSelectedSlot()) {
             InvUtils.swap(originalSlot, false);
             originalSlot = -1;
         }
@@ -335,7 +336,7 @@ public class UnwaxAura extends Module {
             FindItemResult axe = InvUtils.findInHotbar(
                 Items.NETHERITE_AXE, Items.DIAMOND_AXE, Items.IRON_AXE, Items.STONE_AXE, Items.WOODEN_AXE);
             if (axe.found()) {
-                if (originalSlot == -1) originalSlot = mc.player.getInventory().selectedSlot;
+                if (originalSlot == -1) originalSlot = mc.player.getInventory().getSelectedSlot();
                 InvUtils.swap(axe.slot(), true);
             }
         }
@@ -381,7 +382,7 @@ public class UnwaxAura extends Module {
             FindItemResult pick = InvUtils.findInHotbar(
                 Items.NETHERITE_PICKAXE, Items.DIAMOND_PICKAXE, Items.IRON_PICKAXE, Items.STONE_PICKAXE, Items.WOODEN_PICKAXE);
             if (pick.found()) {
-                if (originalSlot == -1) originalSlot = mc.player.getInventory().selectedSlot;
+                if (originalSlot == -1) originalSlot = mc.player.getInventory().getSelectedSlot();
                 InvUtils.swap(pick.slot(), true);
             }
         }

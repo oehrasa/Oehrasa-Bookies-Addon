@@ -24,23 +24,13 @@ import net.minecraft.block.*;
 import net.minecraft.block.enums.ChestType;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.ContainerComponent;
-import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtIo;
-import net.minecraft.nbt.NbtList;
-import net.minecraft.nbt.NbtSizeTracker;
-import net.minecraft.registry.Registries;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.Slot;
-import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
-import net.minecraft.util.Identifier;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
@@ -48,16 +38,12 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import org.joml.Vector3d;
 import org.lwjgl.glfw.GLFW;
-import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
-import java.io.File;
-import java.io.IOException;
 import java.util.*;
 
 public class ChestTrackerModule extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgAutoOpen = settings.createGroup("Auto-Open");
-    private final SettingGroup sgMaterial = settings.createGroup("Material Auto-Take");
     private final SettingGroup sgRender = settings.createGroup("Render");
     private final SettingGroup sgLabels = settings.createGroup("Labels");
     private final SettingGroup sgFilter = settings.createGroup("Filter");
@@ -113,24 +99,6 @@ public class ChestTrackerModule extends Module {
         .max(40)
         .sliderRange(0, 40)
         .visible(autoOpenEnabled::get)
-        .build()
-    );
-
-    public final Setting<Boolean> materialAutoTake = sgMaterial.add(new BoolSetting.Builder()
-        .name("material-auto-take")
-        .description("When auto-opening a container, pull items needed for the material list.")
-        .defaultValue(false)
-        .build()
-    );
-
-    public final Setting<Integer> maxStacksPerItem = sgMaterial.add(new IntSetting.Builder()
-        .name("max-stacks-per-item")
-        .description("Maximum stacks to pull per needed item (does not apply to whole shulker boxes).")
-        .defaultValue(2)
-        .min(1)
-        .max(10)
-        .sliderRange(1, 10)
-        .visible(materialAutoTake::get)
         .build()
     );
 
@@ -262,7 +230,6 @@ public class ChestTrackerModule extends Module {
         .build()
     );
 
-    // Data and state
     private final ChestTrackerDataV2 data;
     private Item currentSearchItem;
     private BlockPos lastInteractedBlock = null;
@@ -277,7 +244,6 @@ public class ChestTrackerModule extends Module {
     private static final int AWAITING_TIMEOUT = 40;
     private final Map<BlockPos, Integer> blockedContainers = new HashMap<>();
     private static final int BLOCKED_COOLDOWN_TICKS = 100;
-    private final Map<Identifier, Integer> materialList = new LinkedHashMap<>();
 
     public ChestTrackerModule() {
         super(Addon.CATEGORY, "Chest-Tracker", "Track items in containers.");
@@ -310,7 +276,6 @@ public class ChestTrackerModule extends Module {
         shouldAutoClose = false;
         ticksUntilClose = 0;
         blockedContainers.clear();
-        materialList.clear();
     }
 
     private BlockPos getCanonicalChestPos(BlockPos pos) {
@@ -336,61 +301,6 @@ public class ChestTrackerModule extends Module {
         if (cmp == 0) cmp = Integer.compare(pos.getY(), other.getY());
         if (cmp == 0) cmp = Integer.compare(pos.getZ(), other.getZ());
         return cmp <= 0 ? pos : other;
-    }
-
-    public void setMaterialList(Map<Identifier, Integer> list) {
-        materialList.clear();
-        materialList.putAll(list);
-    }
-
-    public Map<Identifier, Integer> getMaterialList() {
-        return Collections.unmodifiableMap(materialList);
-    }
-
-    public Map<Identifier, Integer> parseNBTMaterialList(File nbtFile) throws IOException {
-        NbtSizeTracker sizeTracker = new NbtSizeTracker(0x20000000L, 100);
-        NbtCompound nbt = NbtIo.readCompressed(nbtFile.toPath(), sizeTracker);
-
-        // 1. Build palette: index -> Block
-        NbtList paletteList = nbt.getList("palette", 10);
-        Block[] palette = new Block[paletteList.size()];
-        for (int i = 0; i < paletteList.size(); i++) {
-            NbtCompound entry = paletteList.getCompound(i);
-            String rawName = entry.getString("Name");
-            String cleanName = rawName.contains("[") ? rawName.substring(0, rawName.indexOf('[')) : rawName;
-            Identifier blockId = Identifier.tryParse(cleanName);
-            if (blockId == null) continue;
-            Block block = Registries.BLOCK.get(blockId);
-            palette[i] = block;
-        }
-
-        // 2. Count blocks from the block list
-        Map<Block, Integer> blockCounts = new HashMap<>();
-        NbtList blockList = nbt.getList("blocks", 10);
-        for (int j = 0; j < blockList.size(); j++) {
-            NbtCompound blockEntry = blockList.getCompound(j);
-            int state = blockEntry.getInt("state");
-            if (state < 0 || state >= palette.length) continue;
-            Block block = palette[state];
-            if (block != null) blockCounts.merge(block, 1, Integer::sum);
-        }
-
-        // 3. Convert to item identifiers (block -> item)
-        Map<Identifier, Integer> materialList = new LinkedHashMap<>();
-        for (Map.Entry<Block, Integer> entry : blockCounts.entrySet()) {
-            Item item = entry.getKey().asItem();
-            Identifier id = Registries.ITEM.getId(item);
-            if (id != null) materialList.merge(id, entry.getValue(), Integer::sum);
-        }
-
-        if (debugMode.get()) {
-            info("Loaded materials:");
-            for (Map.Entry<Identifier, Integer> e : materialList.entrySet()) {
-                info("  " + e.getKey() + " : " + e.getValue());
-            }
-        }
-
-        return materialList;
     }
 
     @EventHandler
@@ -463,24 +373,20 @@ public class ChestTrackerModule extends Module {
                         String currentDim = getCurrentDimension();
                         String containerType = getContainerType(trackPos);
                         data.trackContainer(trackPos, currentDim, containerType, items);
+                        if (debugMode.get()) info("Manually tracked " + containerType + " (" + items.size() + " items)");
 
-                        // Auto-take
-                        if (materialAutoTake.get() && !materialList.isEmpty()) {
-                            takeNeededItems(handler, containerSlots);
-                            blockedContainers.put(trackPos.toImmutable(), BLOCKED_COOLDOWN_TICKS);
-                        } else {
-                            int closeDelay = autoOpenCloseDelay.get();
-                            if (closeDelay == 0) mc.player.closeHandledScreen();
-                            else {
-                                shouldAutoClose = true;
-                                ticksUntilClose = closeDelay;
-                            }
+                        int closeDelay = autoOpenCloseDelay.get();
+                        if (closeDelay == 0) mc.player.closeHandledScreen();
+                        else {
+                            shouldAutoClose = true;
+                            ticksUntilClose = closeDelay;
                         }
                         currentOpenPositions = new BlockPos[2];
                     } else {
                         awaiting = false;
                         awaitingTicks = 0;
                         currentOpenPositions = new BlockPos[2];
+                        if (debugMode.get()) info("Reset awaiting flag (can't process inventory)");
                     }
                 }
             } else {
@@ -488,23 +394,22 @@ public class ChestTrackerModule extends Module {
                 if (awaitingTicks > AWAITING_TIMEOUT) {
                     if (currentOpenPositions[0] != null) {
                         blockedContainers.put(currentOpenPositions[0], BLOCKED_COOLDOWN_TICKS);
+                        if (debugMode.get())
+                            info("Container at " + currentOpenPositions[0].toShortString() + " failed to open (timeout), adding to blocked list");
                     }
                     awaiting = false;
                     awaitingTicks = 0;
                     currentOpenPositions = new BlockPos[2];
+                    if (debugMode.get()) info("Reset awaiting flag (timeout)");
                 }
             }
         }
 
         // Container opening loop
-        // This loop runs when:
-        //  - auto-open is enabled (to discover untracked containers), OR
-        //  - material auto-take is enabled and we have a material list (to open tracked containers)
         if (isInContainerScreen()) return;
         if (awaiting) return;
 
-        boolean shouldSearch = autoOpenEnabled.get()
-            || (materialAutoTake.get() && !materialList.isEmpty());
+        boolean shouldSearch = autoOpenEnabled.get();
         if (!shouldSearch) return;
 
         if (tickCounter < autoOpenDelay.get()) {
@@ -544,16 +449,6 @@ public class ChestTrackerModule extends Module {
                     boolean shouldOpen = false;
                     if (autoOpenEnabled.get() && !isAlreadyTracked) {
                         shouldOpen = true;
-                    } else if (materialAutoTake.get() && !materialList.isEmpty() && isAlreadyTracked) {
-                        TrackedContainer tc = data.getContainer(canonicalPos, currentDim);
-                        if (tc != null) {
-                            for (Identifier neededId : materialList.keySet()) {
-                                if (tc.getItems().containsKey(neededId.toString())) {
-                                    shouldOpen = true;
-                                    break;
-                                }
-                            }
-                        }
                     }
 
                     if (!shouldOpen) continue;
@@ -620,128 +515,18 @@ public class ChestTrackerModule extends Module {
         data.trackContainer(trackPos, getCurrentDimension(), getContainerType(trackPos), items);
         if (debugMode.get()) info("Tracked " + getContainerType(trackPos) + " at " + trackPos.toShortString() + " (" + items.size() + " items)");
 
-        // Auto-take
-        if (wasAutoOpened && materialAutoTake.get() && !materialList.isEmpty()) {
-            takeNeededItems(handler, containerSlots);
-            // After taking, block this container so auto-open moves on
-            blockedContainers.put(trackPos.toImmutable(), BLOCKED_COOLDOWN_TICKS);
-            // takeNeededItems already sets shouldAutoClose
-        } else if (wasAutoOpened) {
-            // Only close if we didn’t take anything
+        if (wasAutoOpened) {
             int closeDelay = autoOpenCloseDelay.get();
             if (closeDelay == 0) mc.player.closeHandledScreen();
             else {
                 shouldAutoClose = true;
                 ticksUntilClose = closeDelay;
+                if (debugMode.get()) info("Set shouldAutoClose=true, ticksUntilClose=" + closeDelay);
             }
         }
 
         lastInteractedBlock = null;
         currentOpenPositions = new BlockPos[2];
-    }
-
-    private void takeNeededItems(ScreenHandler handler, int containerSlots) {
-        if (materialList.isEmpty()) return;
-
-        int emptySlots = 0;
-        for (int i = 0; i < 36; i++) {
-            if (mc.player.getInventory().getStack(i).isEmpty()) emptySlots++;
-        }
-        if (emptySlots <= 0) return;
-
-        int maxStacks = maxStacksPerItem.get();
-        Set<Identifier> toRemove = new HashSet<>();
-        boolean tookSomething = false;
-
-        Iterator<Map.Entry<Identifier, Integer>> it = materialList.entrySet().iterator();
-        while (it.hasNext()) {
-            Map.Entry<Identifier, Integer> entry = it.next();
-            Item neededItem = Registries.ITEM.get(entry.getKey());
-            if (neededItem == null) continue;
-
-            int stillMissing = entry.getValue();
-            if (stillMissing <= 0) {
-                toRemove.add(entry.getKey());
-                continue;
-            }
-
-            // 1. Try to find a shulker box containing the item
-            int bestShulkerSlot = -1;
-            int bestCoverage = 0;
-            ContainerComponent bestContents = null;
-            for (int slot = 0; slot < containerSlots; slot++) {
-                ItemStack stack = handler.getSlot(slot).getStack();
-                if (!isShulkerBox(stack)) continue;
-                ContainerComponent contents = stack.get(DataComponentTypes.CONTAINER);
-                if (contents == null) continue;
-
-                int coverage = 0;
-                boolean hasTarget = false;
-                for (ItemStack inner : contents.iterateNonEmpty()) {
-                    Identifier innerId = Registries.ITEM.getId(inner.getItem());
-                    if (materialList.containsKey(innerId) && materialList.get(innerId) > 0) {
-                        coverage++;
-                        if (innerId.equals(entry.getKey())) hasTarget = true;
-                    }
-                }
-                if (hasTarget && coverage > bestCoverage) {
-                    bestCoverage = coverage;
-                    bestShulkerSlot = slot;
-                    bestContents = contents;
-                }
-            }
-
-            if (bestShulkerSlot != -1 && bestContents != null) {
-                mc.interactionManager.clickSlot(handler.syncId, bestShulkerSlot, 0,
-                    SlotActionType.QUICK_MOVE, mc.player);
-                tookSomething = true;
-
-                // Update material list with everything inside the shulker
-                for (ItemStack inner : bestContents.iterateNonEmpty()) {
-                    Identifier innerId = Registries.ITEM.getId(inner.getItem());
-                    if (materialList.containsKey(innerId)) {
-                        int newMissing = materialList.get(innerId) - inner.getCount();
-                        if (newMissing <= 0) toRemove.add(innerId);
-                        else materialList.put(innerId, newMissing);
-                    }
-                }
-                emptySlots--;
-                break;
-            }
-
-            // 2. No suitable shulker – take loose stacks
-            int takenStacks = 0;
-            for (int slot = 0; slot < containerSlots; slot++) {
-                ItemStack stack = handler.getSlot(slot).getStack();
-                if (stack.getItem() == neededItem) {
-                    if (stillMissing <= 0 || takenStacks >= maxStacks) break;
-                    mc.interactionManager.clickSlot(handler.syncId, slot, 0,
-                        SlotActionType.QUICK_MOVE, mc.player);
-                    tookSomething = true;
-                    int removed = Math.min(stillMissing, stack.getCount());
-                    stillMissing -= removed;
-                    takenStacks++;
-                    break;
-                }
-            }
-
-            if (stillMissing <= 0) toRemove.add(entry.getKey());
-            else materialList.put(entry.getKey(), stillMissing);
-
-            if (tookSomething) break;
-        }
-
-        for (Identifier id : toRemove) materialList.remove(id);
-
-        // Force close after any action so auto-open continues
-        if (tookSomething) {
-            shouldAutoClose = true;
-            ticksUntilClose = Math.max(autoOpenCloseDelay.get(), 2);
-        }
-    }
-
-    private boolean isShulkerBox(ItemStack stack) {
-        return stack.getItem() instanceof BlockItem bi && bi.getBlock() instanceof ShulkerBoxBlock;
     }
 
     @EventHandler
@@ -825,17 +610,17 @@ public class ChestTrackerModule extends Module {
             int renderY = screenY - itemSize / 2;
 
             var matrices = context.getMatrices();
-            matrices.push();
+            matrices.pushMatrix();
             if (itemSize != 16) {
                 float scale = itemSize / 16.0f;
-                matrices.translate(renderX + itemSize / 2.0f, renderY + itemSize / 2.0f, 0);
-                matrices.scale(scale, scale, 1.0f);
-                matrices.translate(-8.0f, -8.0f, 0);
+                matrices.translate(renderX + itemSize / 2.0f, renderY + itemSize / 2.0f);
+                matrices.scale(scale, scale);
+                matrices.translate(-8.0f, -8.0f);
                 context.drawItem(new ItemStack(currentSearchItem), 0, 0);
             } else {
                 context.drawItem(new ItemStack(currentSearchItem), renderX, renderY);
             }
-            matrices.pop();
+            matrices.popMatrix();
         }
     }
 
@@ -975,29 +760,6 @@ public class ChestTrackerModule extends Module {
         clearSearch.action = () -> {
             currentSearchItem = null;
             if (debugMode.get()) info("Search cleared");
-        };
-        table.row();
-
-        WButton loadMatList = table.add(theme.button("Load Material List (NBT)")).expandX().widget();
-        loadMatList.action = () -> {
-            String path = TinyFileDialogs.tinyfd_openFileDialog(
-                "Select NBT Map File",
-                new File(mc.runDirectory, "schematics").getAbsolutePath(),
-                null, null, false
-            );
-            if (path != null) {
-                try {
-                    Map<Identifier, Integer> materials = parseNBTMaterialList(new File(path));
-                    if (materials.isEmpty()) {
-                        warning("No valid blocks found in NBT file.");
-                    } else {
-                        setMaterialList(materials);
-                        info("Loaded material list from NBT: " + materials.size() + " items.");
-                    }
-                } catch (IOException e) {
-                    error("Failed to read NBT file: " + e.getMessage());
-                }
-            }
         };
         table.row();
 

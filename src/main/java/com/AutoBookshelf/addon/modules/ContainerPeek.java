@@ -104,7 +104,7 @@ public class ContainerPeek extends Module {
     private final Setting<Boolean> shulkerIconPreview = sgGeneral.add(new BoolSetting.Builder()
         .name("shulker-preview")
         .description("Display a compact icon for shulker boxes instead of the full grid.")
-        .defaultValue(true)
+        .defaultValue(false)
         .build()
     );
 
@@ -144,12 +144,14 @@ public class ContainerPeek extends Module {
             "Displays the tracked contents from Chest-Tracker when you look at the block.");
     }
 
-    @Override public void onActivate() {
+    @Override
+    public void onActivate() {
         data.loadData();
         lastWorld = mc.world;
     }
 
-    @Override public void onDeactivate() {
+    @Override
+    public void onDeactivate() {
         lastTargetedPos = null;
         lastContainer = null;
         lastEntity = null;
@@ -163,14 +165,21 @@ public class ContainerPeek extends Module {
         if (mc.world != lastWorld) {
             lastWorld = mc.world;
             if (mc.world != null) data.loadData();
-            lastTargetedPos = null; lastContainer = null; lastEntity = null;
-            lastEntityItems = null; lastEntityType = null; currentPreview = null;
+            lastTargetedPos = null;
+            lastContainer = null;
+            lastEntity = null;
+            lastEntityItems = null;
+            lastEntityType = null;
+            currentPreview = null;
         }
 
         if (mc.player == null || mc.world == null) return;
 
         if (lastEntity != null && (lastEntity.isRemoved() || !lastEntity.isAlive())) {
-            lastEntity = null; lastEntityItems = null; lastEntityType = null; currentPreview = null;
+            lastEntity = null;
+            lastEntityItems = null;
+            lastEntityType = null;
+            currentPreview = null;
         }
 
         // Setting changes
@@ -179,7 +188,9 @@ public class ContainerPeek extends Module {
 
         // Block containers
         if (mc.crosshairTarget != null && mc.crosshairTarget.getType() == HitResult.Type.BLOCK) {
-            lastEntity = null; lastEntityItems = null; lastEntityType = null;
+            lastEntity = null;
+            lastEntityItems = null;
+            lastEntityType = null;
 
             BlockHitResult hit = (BlockHitResult) mc.crosshairTarget;
             BlockPos pos = hit.getBlockPos();
@@ -276,7 +287,6 @@ public class ContainerPeek extends Module {
             chestType == ChestType.LEFT ? facing.rotateYClockwise() : facing.rotateYCounterclockwise()
         );
 
-        // Return the smaller position as canonical
         int cmp = Integer.compare(pos.getX(), other.getX());
         if (cmp == 0) cmp = Integer.compare(pos.getY(), other.getY());
         if (cmp == 0) cmp = Integer.compare(pos.getZ(), other.getZ());
@@ -289,19 +299,19 @@ public class ContainerPeek extends Module {
 
         Map<Integer, Item> dominantMap = new HashMap<>();
 
-        for (Map.Entry<Integer, String> entry : container.getDominantItems().entrySet()) {
-            Identifier id = Identifier.tryParse(entry.getValue());
-
-            if (id == null) continue;
-
-            Item item = Registries.ITEM.get(id);
-
-            if (item != null) {
-                dominantMap.put(entry.getKey(), item);
+        if (shulkerIconPreview.get()) {
+            for (Map.Entry<Integer, String> entry : container.getDominantItems().entrySet()) {
+                Identifier id = Identifier.tryParse(entry.getValue());
+                if (id == null) continue;
+                Item item = Registries.ITEM.get(id);
+                if (item != null) {
+                    dominantMap.put(entry.getKey(), item);
+                }
             }
         }
 
         dominantMap.putAll(computeDominantMap(stacks));
+
         buildPreview(pos, title, stacks, false, dominantMap);
     }
 
@@ -342,22 +352,38 @@ public class ContainerPeek extends Module {
                               Map<Integer, Item> dominantMap) {
         int itemsPerRow = maxItemsPerRow.get();
         int total = stacks.size();
-        int rows = (int) Math.ceil((double) total / itemsPerRow);
         int iconSizeVal = iconSize.get();
         int pad = 2;
-        int w = itemsPerRow * iconSizeVal + (itemsPerRow + 1) * pad;
-        int h = rows * iconSizeVal + (rows + 1) * pad;
-        int textLines = 0;
-        if (showType.get()) textLines++;
-        if (showPosition.get()) textLines++;
-        if (textLines > 0) h += 10 * textLines + pad;
-        float scale = iconSizeVal / 16.0f;
+
+        // Wrap to the grid this specific container actually draws,
+        int rows = Math.max(1, (int) Math.ceil((double) total / itemsPerRow));
+        int cols = Math.min(Math.max(total, 1), itemsPerRow);
+
+        int gridWidth = cols * iconSizeVal + (cols + 1) * pad;
+        int gridHeight = rows * iconSizeVal + (rows + 1) * pad;
 
         Text titleText = Text.literal(title);
         Text posText = Text.literal(String.format("%d, %d, %d", pos.getX(), pos.getY(), pos.getZ()));
 
+        // Also make sure the panel is wide enough for the title/position text.
+        int textLines = 0;
+        int textWidth = 0;
+        if (showType.get()) {
+            textLines++;
+            textWidth = Math.max(textWidth, mc.textRenderer.getWidth(titleText));
+        }
+        if (showPosition.get()) {
+            textLines++;
+            textWidth = Math.max(textWidth, mc.textRenderer.getWidth(posText));
+        }
+
+        int w = Math.max(gridWidth, textWidth + pad * 2);
+        int h = gridHeight + (10 * textLines); // exact: no leftover slack vs the draw loop below
+
+        float itemScale = iconSizeVal / 16.0f;
+
         currentPreview = new PreviewData(pos, titleText, posText, w, h, stacks,
-            itemsPerRow, scale, dominantMap);
+            itemsPerRow, itemScale, dominantMap);
     }
 
     @EventHandler
@@ -371,8 +397,13 @@ public class ContainerPeek extends Module {
         Vector3d vec = new Vector3d(preview.pos.getX() + 0.5, preview.pos.getY() + 0.5, preview.pos.getZ() + 0.5);
         if (!NametagUtils.to2D(vec, 1.0)) return;
 
-        int screenX = (int) vec.x;
-        int screenY = (int) vec.y;
+        // Convert to2D's output into scaled-GUI space. Computed live every frame,
+        // so it self corrects regardless of your GUI scale setting (Auto/1/2/3/etc).
+        double guiScaleX = (double) mc.getWindow().getScaledWidth() / mc.getWindow().getWidth();
+        double guiScaleY = (double) mc.getWindow().getScaledHeight() / mc.getWindow().getHeight();
+
+        int screenX = (int) (vec.x * guiScaleX);
+        int screenY = (int) (vec.y * guiScaleY);
 
         int panelX = screenX - preview.panelWidth / 2;
         int panelY = screenY - preview.panelHeight - 20;
@@ -395,31 +426,28 @@ public class ContainerPeek extends Module {
 
         int textY = panelY + pad;
 
-        // Title
         if (showType.get()) {
-            context.drawTextWithShadow(mc.textRenderer, preview.titleText, panelX + pad, textY, 0xFFFFFF);
+            context.drawTextWithShadow(mc.textRenderer, preview.titleText, panelX + pad, textY, 0xFFFFFFFF);
             textY += 10;
         }
-        // Position
         if (showPosition.get()) {
-            context.drawTextWithShadow(mc.textRenderer, preview.posText, panelX + pad, textY, 0xCCCCCC);
+            context.drawTextWithShadow(mc.textRenderer, preview.posText, panelX + pad, textY, 0xFFCCCCCC);
             textY += 10;
         }
 
         ContainerPeek.IS_RENDERING.set(true);
 
-        // Full item grid
         int itemStartX = panelX + pad;
         int itemStartY = textY + pad;
         float itemScale = preview.itemScale;
+
         for (int i = 0; i < preview.stacks.size(); i++) {
             int col = i % preview.itemsPerRow;
             int row = i / preview.itemsPerRow;
             int x = itemStartX + col * (iconSize.get() + pad);
             int y = itemStartY + row * (iconSize.get() + pad);
 
-            // Draw the original shulker item
-            RenderUtils.drawItem(event.drawContext, preview.stacks.get(i), x, y, itemScale, true);
+            RenderUtils.drawItem(event.drawContext, preview.stacks.get(i), x, y, itemScale, true, null, false);
 
             Item dominant = preview.dominantItems.get(i);
             if (dominant != null) {
@@ -429,14 +457,10 @@ public class ContainerPeek extends Module {
                 int overlayX = x + border;
                 int overlayY = y + border;
 
-                var matrices = event.drawContext.getMatrices();
-                matrices.push();
-                matrices.translate(overlayX, overlayY, 500);
-                matrices.scale(overlayScale, overlayScale, 1);
-                event.drawContext.drawItem(new ItemStack(dominant), 0, 0);
-                matrices.pop();
+                RenderUtils.drawItem(event.drawContext, new ItemStack(dominant), overlayX, overlayY, overlayScale, false, null, false);
             }
         }
+
         ContainerPeek.IS_RENDERING.set(false);
     }
 }

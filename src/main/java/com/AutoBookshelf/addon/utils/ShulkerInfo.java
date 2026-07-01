@@ -3,93 +3,50 @@ package com.AutoBookshelf.addon.utils;
 import com.AutoBookshelf.addon.modules.InventoryInfo;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.block.ShulkerBoxBlock;
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.ContainerComponent;
 import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtList;
-import net.minecraft.registry.RegistryWrapper;
-import net.minecraft.util.collection.DefaultedList;
 
-import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 public record ShulkerInfo(String name, Type type, int color, int slot, List<ItemStack> stacks) {
 
     public static ShulkerInfo create(ItemStack stack, int slot) {
-        if (!(stack.getItem() instanceof BlockItem) || !(((BlockItem) stack.getItem()).getBlock() instanceof ShulkerBoxBlock block))
+        if (!(stack.getItem() instanceof BlockItem bi) || !(bi.getBlock() instanceof ShulkerBoxBlock block))
             return null;
-        List<ItemStack> items = DefaultedList.ofSize(27, ItemStack.EMPTY);
-        Type type = Type.COMPACT;
 
-        if (!Modules.get().get(InventoryInfo.class).compact.get()) type = Type.FULL;
-
-        // Try the new data component system first, fallback to NBT if needed
         ContainerComponent container = stack.get(DataComponentTypes.CONTAINER);
-        if (container != null) {
-            // Use the new data component system
-            items.clear();
-            int index = 0;
-            for (ItemStack item : container.iterateNonEmpty()) {
-                if (index < 27) {
-                    items.set(index, item);
-                    index++;
-                }
-            }
-        } else {
-            // Fallback to NBT system for backward compatibility
-            NbtCompound nbt = stack.getComponents().getOrDefault(DataComponentTypes.CUSTOM_DATA, net.minecraft.component.type.NbtComponent.DEFAULT).copyNbt();
+        if (container == null) return null;
 
-            if (nbt.contains("BlockEntityTag", 10)) {
-                nbt = nbt.getCompound("BlockEntityTag");
-            }
+        // Collect all items from the container
+        List<ItemStack> items = new ArrayList<>();
+        container.iterateNonEmpty().forEach(items::add);
 
-            if (nbt.contains("Items", 9)) {
-                Item unstackable = null;
-                NbtList nbt2 = nbt.getList("Items", 10);
-                RegistryWrapper.WrapperLookup wrapperLookup = MinecraftClient.getInstance().world.getRegistryManager();
-                for (int i = 0; i < nbt2.size(); i++) {
-                    int slot2 = nbt2.getCompound(i).contains("Slot", 99) ? nbt2.getCompound(i).getByte("Slot") : i;
-                    ItemStack item = ItemStack.fromNbt(wrapperLookup, nbt2.getCompound(i)).orElse(ItemStack.EMPTY);
-                    items.set(slot2, item);
-                    if (item.getMaxCount() == 1) {
-                        if (unstackable != null && !item.getItem().equals(unstackable)) type = Type.FULL;
-                        unstackable = item.getItem();
-                    }
-                }
-            }
-        }
+        // Determine compact/full type
+        Type type = Modules.get().get(InventoryInfo.class).compact.get() ? Type.COMPACT : Type.FULL;
 
         if (type == Type.COMPACT) {
-            Map<Item, Integer> map = new HashMap<>();
+            Map<Item, Integer> merged = new LinkedHashMap<>();
             for (ItemStack item : items) {
-                if (item.isEmpty()) continue;
-                map.compute(item.getItem(), (k, v) -> {
-                    if (v == null) return item.getCount();
-                    return v + item.getCount();
-                });
+                merged.merge(item.getItem(), item.getCount(), Integer::sum);
             }
             items.clear();
-            int k = 0;
-            for (Map.Entry<Item, Integer> entry : map.entrySet()) {
-                items.set(k, new ItemStack(entry.getKey(), entry.getValue()));
-                k++;
-            }
+            merged.forEach((item, count) -> items.add(new ItemStack(item, count)));
+        } else {
+            // Fill to 27 slots for full view
+            while (items.size() < 27) items.add(ItemStack.EMPTY);
         }
 
         int color = -1;
         if (block.getColor() != null) {
-            // Use the new color system in 1.21.1
-            net.minecraft.util.DyeColor dyeColor = block.getColor();
-            int colorValue = dyeColor.getMapColor().color;
-            color = colorValue;
+            color = block.getColor().getMapColor().color;
         }
 
         return new ShulkerInfo(stack.getName().getString(), type, color, slot, items);
     }
-
 }

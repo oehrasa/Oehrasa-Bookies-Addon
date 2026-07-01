@@ -23,11 +23,10 @@
 Tested successfully with these versions, but other might work as well.
 <font colour="turquoise">Switch the branch repo if You want to see the other version config</font>
 
-- meteor-client-1.21.4-42.jar **(Required!)**
-- baritone-api-fabric-1.13.1.jar **(Required!)**
-- BepHax-0.4.4.0.jar (Optional)
-- map-in-slot-3.3.0.jar (Recommended for Mapart-Namer module)
-- client_maps-1.3.2+1.21.4.jar (Recommended for Mapart-Namer module)
+- meteor-client-1.21.8-69.jar **(Required!)**
+- baritone-api-fabric-1.15.0.jar **(Required!)**
+- map-in-slot-3.4.1.jar (Recommended for Mapart-Namer module)
+- client_maps-1.2.1+1.21.7.jar (Recommended for Mapart-Namer module)
 
 > client_maps is not compatible with ev-mod vice versa.
 >
@@ -35,9 +34,9 @@ Tested successfully with these versions, but other might work as well.
 
 ## Features
 
-**37 modules**, **5 commands**, **7 HUD elements**, and **5 mixin**
+**38 modules**, **5 commands**, **7 HUD elements**, and **6 mixin**
 
-## Modules (37 total)
+## Modules (38 total)
 <details>
 <summary><b>Modules</b> (Bookies modules)</summary>
 
@@ -60,6 +59,7 @@ Tested successfully with these versions, but other might work as well.
 - **Chest-Tracker** - Track items in containers
 - **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block
 - **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
+- **Dried-Ghast** - Give these cute and tiny little creatures a second chances
 - **Homes-List** - Manage and teleport to your server homes with a GUI
 - **Item-Despawn** - Highlights items that are about to despawn
 - **Inventory-Info** - SHoiGu!! GEraShimov!!!
@@ -139,6 +139,13 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 <summary><b>B-36 Peacemaker</b> - Yt Video</summary>
 
 https://youtu.be/Qu6NwPw19ms
+
+</details>
+
+<details>
+<summary><b>Dried-Ghast-Placer</b> - Yt Video</summary>
+
+https://youtu.be/tDzfNo_uWMA
 
 </details>
 

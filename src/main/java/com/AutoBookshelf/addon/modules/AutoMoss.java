@@ -1,10 +1,10 @@
 package com.AutoBookshelf.addon.modules;
 
+import baritone.api.BaritoneAPI;
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.Block;
@@ -20,9 +20,6 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
 
-import baritone.api.BaritoneAPI;
-import java.util.HashSet;
-import java.util.Set;
 import java.util.*;
 
 public class AutoMoss extends Module {
@@ -316,12 +313,12 @@ public class AutoMoss extends Module {
                 Vec3d hitPos = new Vec3d(blockPos.getX() + 0.5, blockPos.getY() + 0.5, blockPos.getZ() + 0.5);
                 BlockHitResult hit = new BlockHitResult(hitPos, Direction.UP, blockPos, false);
 
-                int prevSelectedSlot = mc.player.getInventory().selectedSlot;
-                mc.player.getInventory().selectedSlot = boneMealSlot;
+                int prevSelectedSlot = mc.player.getInventory().getSelectedSlot();
+                mc.player.getInventory().setSelectedSlot(boneMealSlot);
 
                 mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hit);
 
-                mc.player.getInventory().selectedSlot = prevSelectedSlot;
+                mc.player.getInventory().setSelectedSlot(prevSelectedSlot);
 
                 // Add moss blocks to cooldown map
                 if (isMoss) {
@@ -658,8 +655,8 @@ public class AutoMoss extends Module {
         if (bestFloor == null) return;
 
         // Place the moss block using a reliable placement method
-        int prevSlot = mc.player.getInventory().selectedSlot;
-        mc.player.getInventory().selectedSlot = mossSlot;
+        int prevSlot = mc.player.getInventory().getSelectedSlot();
+        mc.player.getInventory().setSelectedSlot(mossSlot);
 
         // Rotate toward the hit vector and place
         Vec3d finalHit = bestHit;
@@ -670,7 +667,7 @@ public class AutoMoss extends Module {
             mc.player.swingHand(Hand.MAIN_HAND);
         });
 
-        mc.player.getInventory().selectedSlot = prevSlot;
+        mc.player.getInventory().setSelectedSlot(prevSlot);
         placeMossTimer = placeMossDelay.get();
     }
 

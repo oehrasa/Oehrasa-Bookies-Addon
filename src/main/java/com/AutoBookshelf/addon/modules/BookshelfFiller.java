@@ -3,10 +3,10 @@ package com.AutoBookshelf.addon.modules;
 import com.AutoBookshelf.addon.Addon;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
@@ -776,7 +776,7 @@ public class BookshelfFiller extends Module {
         singleBlockPos = pos;
         singleBlockSlotIndex = 0;
         extractingSingleBlock = true;
-        originalSlot = mc.player.getInventory().selectedSlot;
+        originalSlot = mc.player.getInventory().getSelectedSlot();
         extractionRetryCount = 0;
 
         setDisplayText(String.format("Extracting %d books...", singleBlockSlots.size()));
@@ -820,8 +820,8 @@ public class BookshelfFiller extends Module {
             singleBlockPos = null;
             singleBlockSlots.clear();
 
-            if (originalSlot != -1 && originalSlot != mc.player.getInventory().selectedSlot) {
-                mc.player.getInventory().selectedSlot = originalSlot;
+            if (originalSlot != -1 && originalSlot != mc.player.getInventory().getSelectedSlot()) {
+                mc.player.getInventory().setSelectedSlot(originalSlot);
             }
 
             sendMessage("§aExtraction complete!");
@@ -865,7 +865,7 @@ public class BookshelfFiller extends Module {
         Vec3d hitVec = getHitVec(pos, facing, slot);
 
         BlockHitResult hitResult = new BlockHitResult(hitVec, facing, pos, false);
-        int previousSlot = mc.player.getInventory().selectedSlot;
+        int previousSlot = mc.player.getInventory().getSelectedSlot();
 
         Rotations.rotate(Rotations.getYaw(hitVec), Rotations.getPitch(hitVec), () -> {
             if (targetSlot >= 9) {
@@ -896,16 +896,16 @@ public class BookshelfFiller extends Module {
                     );
                 }
 
-                mc.player.getInventory().selectedSlot = tempHotbarSlot;
+                mc.player.getInventory().setSelectedSlot(tempHotbarSlot);
             } else {
-                mc.player.getInventory().selectedSlot = targetSlot;
+                mc.player.getInventory().setSelectedSlot(targetSlot);
             }
 
             mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hitResult);
             mc.player.swingHand(Hand.MAIN_HAND);
 
-            if (previousSlot != mc.player.getInventory().selectedSlot) {
-                mc.player.getInventory().selectedSlot = previousSlot;
+            if (previousSlot != mc.player.getInventory().getSelectedSlot()) {
+                mc.player.getInventory().setSelectedSlot(previousSlot);
             }
         });
 
@@ -1259,7 +1259,7 @@ public class BookshelfFiller extends Module {
             lastSlot = slotToFill;
 
             int finalBookSlot = bookSlot;
-            int previousSlot = mc.player.getInventory().selectedSlot;
+            int previousSlot = mc.player.getInventory().getSelectedSlot();
 
             Rotations.rotate(
                 Rotations.getYaw(hitVec),
@@ -1275,16 +1275,16 @@ public class BookshelfFiller extends Module {
                             SlotActionType.SWAP,
                             mc.player
                         );
-                        mc.player.getInventory().selectedSlot = swapSlot;
+                        mc.player.getInventory().setSelectedSlot(swapSlot);
                     } else {
-                        mc.player.getInventory().selectedSlot = finalBookSlot;
+                        mc.player.getInventory().setSelectedSlot(finalBookSlot);
                     }
 
                     mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hitResult);
                     mc.player.swingHand(Hand.MAIN_HAND);
 
-                    if (previousSlot != mc.player.getInventory().selectedSlot) {
-                        mc.player.getInventory().selectedSlot = previousSlot;
+                    if (previousSlot != mc.player.getInventory().getSelectedSlot()) {
+                        mc.player.getInventory().setSelectedSlot(previousSlot);
                     }
                 }
             );
@@ -1334,13 +1334,13 @@ public class BookshelfFiller extends Module {
         int x = (int) (screenWidth / 2 - (mc.textRenderer.getWidth(displayText) * scale) / 2);
         int y = screenHeight - 50;
 
-        event.drawContext.getMatrices().push();
-        event.drawContext.getMatrices().translate(x, y, 0);
-        event.drawContext.getMatrices().scale((float) scale, (float) scale, 1);
+        event.drawContext.getMatrices().pushMatrix();
+        event.drawContext.getMatrices().translate(x, y);
+        event.drawContext.getMatrices().scale((float) scale, (float) scale);
 
         event.drawContext.drawText(mc.textRenderer, displayText, 0, 0, 0xFFFFD700, true);
 
-        event.drawContext.getMatrices().pop();
+        event.drawContext.getMatrices().popMatrix();
     }
 
     private void displayBookInfoInChat(String title, String author) {

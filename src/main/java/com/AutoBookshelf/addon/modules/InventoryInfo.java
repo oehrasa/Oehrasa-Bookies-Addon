@@ -160,27 +160,42 @@ public class InventoryInfo extends Module {
         float scale = (isCompact ? slotSize / 16.0f : 1.0f) * iconScale.get().floatValue();
 
         for (ShulkerInfo shulkerInfo : info) {
-            int count = 0, x = baseX, startY = y, maxX = baseX + slotSize;
+            // First pass: figure out which stacks are actually visible, without drawing.
+            List<ItemStack> visible = new ArrayList<>();
             for (ItemStack stack : shulkerInfo.stacks()) {
                 if (shulkerInfo.type() == Type.COMPACT && stack.isEmpty()) break;
                 if (!matchesSearch(stack)) continue;
-                if (count > 0 && count % columns == 0) {
-                    x = baseX;
-                    y += slotSize;
-                }
-                drawScaledItem(event, stack, x + 2, y, scale);
-                x += slotSize;
-                count++;
-                if (x > maxX) maxX = x;
+                visible.add(stack);
             }
 
-            if (count == 0) {
-                // No visible items skip this shulker entirely
+            if (visible.isEmpty()) {
                 setClicked(null);
                 continue;
             }
 
-            y += slotSize;  // move past the rows we just drew
+            int startY = y;
+            int rows = (visible.size() + columns - 1) / columns;
+            int cols = Math.min(visible.size(), columns);
+            int maxX = baseX + (rows > 1 ? columns : cols) * slotSize;
+            int endY = startY + rows * slotSize;
+
+            // Draw background/header first so items render on top of it, not under it.
+            event.drawContext.fill(baseX, startY, maxX, endY, COLOR_BACKGROUND);
+            event.drawContext.fill(baseX, startY - 1, maxX, startY, shulkerInfo.color());
+
+            // Second pass: draw the icons on top of the freshly-drawn background.
+            int count = 0, x = baseX;
+            int drawY = startY;
+            for (ItemStack stack : visible) {
+                if (count > 0 && count % columns == 0) {
+                    x = baseX;
+                    drawY += slotSize;
+                }
+                drawScaledItem(event, stack, x + 2, drawY, scale);
+                x += slotSize;
+                count++;
+            }
+            y = endY;
 
             if (clicked != null
                 && clicked.x >= baseX && clicked.x <= maxX
@@ -190,8 +205,6 @@ public class InventoryInfo extends Module {
                     shulkerInfo.slot(), 0, SlotActionType.PICKUP, mc.player);
                 setClicked(null);
             }
-            event.drawContext.fill(baseX, startY, maxX, y, COLOR_BACKGROUND);
-            event.drawContext.fill(baseX, startY - 1, maxX, startY, shulkerInfo.color());
             y += 2;
         }
         height = y - offset;
@@ -234,7 +247,16 @@ public class InventoryInfo extends Module {
         float scale = (isCompact ? slotSize / 16.0f : 1.0f) * iconScale.get().floatValue();
 
         int startY = baseY;
-        int maxX = baseX + slotSize;
+        int rows = entries.isEmpty() ? 0 : (entries.size() + columns - 1) / columns;
+        int cols = Math.min(entries.size(), columns);
+        int maxX = baseX + (rows > 1 ? columns : cols) * slotSize;
+        int y = baseY + rows * slotSize;
+
+        // Draw background first so icons render on top of it.
+        if (!entries.isEmpty()) {
+            event.drawContext.fill(baseX, startY, maxX, y, COLOR_BACKGROUND);
+            event.drawContext.fill(baseX, startY - 1, maxX, startY, COLOR_SEPARATOR);
+        }
 
         for (int i = 0; i < entries.size(); i++) {
             int col = i % columns;
@@ -253,15 +275,8 @@ public class InventoryInfo extends Module {
                     entry.slot(), 0, SlotActionType.PICKUP, mc.player);
                 setClicked(null);
             }
-
-            if (drawX + slotSize > maxX) maxX = drawX + slotSize;
         }
 
-        int y = baseY + ((entries.size() + columns - 1) / columns) * slotSize;
-
-        // use int ARGB constants instead of Color.hashCode()
-        event.drawContext.fill(baseX, startY, maxX, y, COLOR_BACKGROUND);
-        event.drawContext.fill(baseX, startY - 1, maxX, startY, COLOR_SEPARATOR);
         height = y - offset;
         setClicked(null);
     }
@@ -306,19 +321,19 @@ public class InventoryInfo extends Module {
         var matrices = context.getMatrices();
 
         // 1. Draw the item icon at the requested scale.
-        matrices.push();
-        matrices.translate(px, py, 0);
-        matrices.scale(scale, scale, 1);
+        matrices.pushMatrix();
+        matrices.translate(px, py);
+        matrices.scale(scale, scale);
         context.drawItem(stack, 0, 0);
-        matrices.pop();
+        matrices.popMatrix();
 
         // 2. Draw the overlay (durability bar, count text) without the scale
         //    matrix active. drawStackOverlay() uses hardcoded pixel geometry
         //    that must render at 1:1 screen pixels relative to (px, py).
-        matrices.push();
-        matrices.translate(px, py, 0);
+        matrices.pushMatrix();
+        matrices.translate(px, py);
         context.drawStackOverlay(mc.textRenderer, stack, 0, 0, countText);
-        matrices.pop();
+        matrices.popMatrix();
     }
 
     private String formatCount(int count) {

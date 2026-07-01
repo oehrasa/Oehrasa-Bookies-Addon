@@ -212,11 +212,11 @@ public class AutoTakeOff extends Module {
 
     private void useFirework() {
         if (fireworkSlot == -1) return;
-        originalHotbarSlot = mc.player.getInventory().selectedSlot;
+        originalHotbarSlot = mc.player.getInventory().getSelectedSlot();
         InvUtils.swap(fireworkSlot, false);
         mc.interactionManager.interactItem(mc.player, Hand.MAIN_HAND);
         mc.execute(() -> {
-            if (originalHotbarSlot != -1 && originalHotbarSlot != mc.player.getInventory().selectedSlot) {
+            if (originalHotbarSlot != -1 && originalHotbarSlot != mc.player.getInventory().getSelectedSlot()) {
                 InvUtils.swap(originalHotbarSlot, false);
             }
             originalHotbarSlot = -1;

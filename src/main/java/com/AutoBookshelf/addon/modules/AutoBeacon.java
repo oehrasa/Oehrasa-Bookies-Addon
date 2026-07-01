@@ -521,7 +521,7 @@ public class AutoBeacon extends Module {
         if (!mainHand.isEmpty() && mainHand.getItem() instanceof BlockItem handBlock) {
             if (allowedBlocks.get().contains(handBlock.getBlock())) {
                 preferredBlock = handBlock.getBlock();
-                return new FindItemResult(mc.player.getInventory().selectedSlot, mainHand.getCount());
+                return new FindItemResult(mc.player.getInventory().getSelectedSlot(), mainHand.getCount());
             }
         }
         if (preferredBlock != null) {

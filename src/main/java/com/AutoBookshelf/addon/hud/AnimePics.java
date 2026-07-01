@@ -10,7 +10,6 @@ import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.widgets.WWidget;
 import meteordevelopment.meteorclient.gui.widgets.containers.WHorizontalList;
 import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
-import meteordevelopment.meteorclient.renderer.GL;
 import meteordevelopment.meteorclient.renderer.Renderer2D;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.hud.HudElement;
@@ -18,6 +17,7 @@ import meteordevelopment.meteorclient.systems.hud.HudElementInfo;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.utils.network.Http;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.client.texture.AbstractTexture;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.texture.NativeImageBackedTexture;
 import net.minecraft.util.Identifier;
@@ -27,7 +27,10 @@ import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
 import javax.imageio.ImageIO;
-import java.io.*;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -52,10 +55,10 @@ public class AnimePics extends HudElement {
     private boolean locked = false;
     private boolean empty = true;
     private int ticks = 0;
-    private byte[] currentImageBytes = null;   // cached PNG bytes of the displayed image
-    private final PointerBuffer saveFilters;         // file filter for save dialogue
-    private volatile boolean manualRefresh = false; // true = next load must use fixed tag
-    private final Identifier textureId;   // unique per element
+    private byte[] currentImageBytes = null;
+    private final PointerBuffer saveFilters;
+    private volatile boolean manualRefresh = false;
+    private final Identifier textureId;
 
     // Settings
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -76,7 +79,7 @@ public class AnimePics extends HudElement {
     private static final List<String> NEKOS_CYCLE_LIST = List.of(
         "neko", "waifu", "fox_girl", "hug", "kiss", "meow", "lizard", "goose", "gecg",
         "avatar", "feed", "cuddle", "woof", "smug", "tickle", "slap", "pat", "wallpaper"
-    ); // oomfie rfs <3
+    );
 
     private static final List<String> WAIFU_CYCLE_LIST = List.of(
         "waifu", "ero", "ecchi", "oppai", "hentai", "milf", "uniform", "ass", "maid",
@@ -194,7 +197,6 @@ public class AnimePics extends HudElement {
         super(INFO);
         this.textureId = Identifier.of("autobookshelf", "animepics_" + UUID.randomUUID());
 
-        // PNG filter for the save dialogue
         ByteBuffer pngFilter = MemoryUtil.memASCII("*.png");
         saveFilters = BufferUtils.createPointerBuffer(1);
         saveFilters.put(pngFilter);
@@ -216,7 +218,6 @@ public class AnimePics extends HudElement {
         return new AnimePics();
     }
 
-    // Widgets
     private WHorizontalList folderRow;
     private WHorizontalList onlineRow;
 
@@ -230,13 +231,11 @@ public class AnimePics extends HudElement {
         WButton saveBtn = row.add(theme.button("Save Image")).widget();
         saveBtn.action = this::saveImage;
 
-        // Folder selector (visible when is not LocalFolder)
         folderRow = theme.horizontalList();
         row.add(folderRow);
         WButton selectFolderBtn = folderRow.add(theme.button("Select Folder")).widget();
         selectFolderBtn.action = this::selectLocalFolder;
 
-        // Switch to online (visible only when LocalFolder)
         onlineRow = theme.horizontalList();
         row.add(onlineRow);
         WButton onlineBtn = onlineRow.add(theme.button("Select Online")).widget();
@@ -254,7 +253,6 @@ public class AnimePics extends HudElement {
         if (onlineRow != null) onlineRow.visible = source.get() == Source.LocalFolder;
     }
 
-    // Forces next load to use the currently selected fixed category
     public void refreshNow() {
         manualRefresh = true;
         empty = true;
@@ -275,7 +273,7 @@ public class AnimePics extends HudElement {
             null
         );
 
-        if (path == null) return;   // user cancelled
+        if (path == null) return;
 
         try {
             Files.write(Path.of(path), currentImageBytes);
@@ -301,7 +299,6 @@ public class AnimePics extends HudElement {
         }
     }
 
-    /** reloads the list of image files from the current local folder. */
     private void loadLocalFileList() {
         localImageFiles.clear();
         localImageIndex = 0;
@@ -322,12 +319,10 @@ public class AnimePics extends HudElement {
 
         if (pauseRefresh.get()) return;
 
-        // If source is local but the file list was never loaded (after relog), load it now
         if (source.get() == Source.LocalFolder && localImageFiles.isEmpty()) {
             loadLocalFileList();
         }
 
-        // If the folder is still empty, log once and stop refreshing
         if (source.get() == Source.LocalFolder && localImageFiles.isEmpty()) {
             if (!loggedEmptyFolder) {
                 MeteorClient.LOG.error("[AnimePics] No images found in folder.");
@@ -348,22 +343,25 @@ public class AnimePics extends HudElement {
     @Override
     public void render(HudRenderer renderer) {
         if (empty) {
-            // If local folder is empty, don't keep trying
-            if (source.get() == Source.LocalFolder && localImageFiles.isEmpty()) {
-                return;
-            }
+            if (source.get() == Source.LocalFolder && localImageFiles.isEmpty()) return;
             loadImage();
             return;
         }
-        GL.bindTexture(textureId);
-        Renderer2D.TEXTURE.begin();
-        Renderer2D.TEXTURE.texQuad(x, y, imgWidth.get(), imgHeight.get(), WHITE);
-        Renderer2D.TEXTURE.render(null);
+
+        AbstractTexture tex = mc.getTextureManager().getTexture(textureId);
+        if (tex == null) return;
+
+        try {
+            Renderer2D.TEXTURE.begin();
+            Renderer2D.TEXTURE.texQuad(x, y, imgWidth.get(), imgHeight.get(), WHITE);
+            Renderer2D.TEXTURE.render(tex.getGlTextureView());
+        } catch (IllegalStateException ignored) {
+            // texture not yet initialized on GPU, skip this frame
+        }
     }
 
     private void updateSize() { setSize(imgWidth.get(), imgHeight.get()); }
 
-    // Fetch image URL based on selected source
     private String fetchImageUrl(boolean forceFixed) {
         return switch (source.get()) {
             case NekosLife -> fetchNekosLife(forceFixed);
@@ -447,7 +445,6 @@ public class AnimePics extends HudElement {
         }
     }
 
-    /** Returns the next local image file, cycling through the list. */
     private File getNextLocalImage() {
         if (localImageFiles.isEmpty()) return null;
         File file = localImageFiles.get(localImageIndex);
@@ -469,7 +466,6 @@ public class AnimePics extends HudElement {
                 byte[] imageBytes;
 
                 if (url.startsWith("local://")) {
-                    // Local file
                     File file = getNextLocalImage();
                     if (file == null) { locked = false; return; }
                     if (file.getName().toLowerCase().endsWith(".png")) {
@@ -486,15 +482,12 @@ public class AnimePics extends HudElement {
                         imageBytes = baos.toByteArray();
                     }
                 } else {
-                    // Network source
                     MeteorClient.LOG.info("[AnimePics] Image URL: " + url);
-                    InputStream stream = Http.get(url).sendInputStream();
+                    var stream = Http.get(url).sendInputStream();
                     imageBytes = stream.readAllBytes();
                     stream.close();
 
-                    // Check if it's already a PNG
                     if (!isPNG(imageBytes)) {
-                        // Convert to PNG via ImageIO
                         var bais = new ByteArrayInputStream(imageBytes);
                         java.awt.image.BufferedImage img = ImageIO.read(bais);
                         if (img == null) {
@@ -507,15 +500,15 @@ public class AnimePics extends HudElement {
                 }
 
                 this.currentImageBytes = imageBytes;
-
                 byte[] finalBytes = imageBytes;
+
                 mc.execute(() -> {
                     try {
                         if (mc.getTextureManager() == null) return;
                         mc.getTextureManager().destroyTexture(textureId);
                         NativeImage nativeImage = NativeImage.read(new ByteArrayInputStream(finalBytes));
                         mc.getTextureManager().registerTexture(
-                            textureId, new NativeImageBackedTexture(nativeImage)
+                            textureId, new NativeImageBackedTexture(() -> "animepics", nativeImage)
                         );
                         empty = false;
                         MeteorClient.LOG.info("[AnimePics] Image loaded!");
@@ -531,11 +524,9 @@ public class AnimePics extends HudElement {
         updateSize();
     }
 
-    /** Checks if the given bytes start with the PNG signature. */
     private static boolean isPNG(byte[] bytes) {
         if (bytes.length < 8) return false;
-        // PNG signature: 0x89 P N G \r \n 0x1A \n
-        return bytes[0] == (byte)0x89 &&
+        return bytes[0] == (byte) 0x89 &&
             bytes[1] == 0x50 &&
             bytes[2] == 0x4E &&
             bytes[3] == 0x47 &&
