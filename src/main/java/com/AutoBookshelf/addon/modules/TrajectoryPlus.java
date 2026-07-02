@@ -361,7 +361,9 @@ public class TrajectoryPlus extends Module {
     }
 
     private Vec3d getInterpolatedPos(Entity entity, float delta) {
-        Vec3d pos = entity.getLerpedPos(delta);           // interpolated foot position
-        return new Vec3d(pos.x, pos.y + entity.getEyeHeight(entity.getPose()), pos.z);  // eye position
+        double x = entity.lastRenderX + (entity.getX() - entity.lastRenderX) * delta;
+        double y = (entity.lastRenderY + (entity.getY() - entity.lastRenderY) * delta) + entity.getEyeHeight(entity.getPose());
+        double z = entity.lastRenderZ + (entity.getZ() - entity.lastRenderZ) * delta;
+        return new Vec3d(x, y, z);
     }
 }

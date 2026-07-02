@@ -14,10 +14,12 @@ import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.FluidBlock;
+import net.minecraft.item.BlockItem;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.math.BlockPos;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 
 public class PlatformBuilder extends Module {
@@ -37,14 +39,15 @@ public class PlatformBuilder extends Module {
 
     private final Setting<Keybind> setYKey = sgGeneral.add(new KeybindSetting.Builder()
         .name("set-y-key")
-        .description("Press to set y-level to start the platform to you Y position.")
+        .description("Press to set y-level to your current Y position.")
         .defaultValue(Keybind.fromKey(-1))
-        .build());
+        .build()
+    );
 
     private final Setting<Integer> maxPlacementsPerTick = sgGeneral.add(new IntSetting.Builder()
         .name("max-placements-per-tick")
         .description("Maximum number of blocks to place per tick.")
-        .defaultValue(8)
+        .defaultValue(4)
         .min(1)
         .max(8)
         .build()
@@ -53,16 +56,9 @@ public class PlatformBuilder extends Module {
     private final Setting<Integer> delayAfterPlacement = sgGeneral.add(new IntSetting.Builder()
         .name("delay-after-placement")
         .description("Delay in ticks after placing a block before placing another.")
-        .defaultValue(10)
+        .defaultValue(2)
         .min(0)
         .max(20)
-        .build()
-    );
-
-    private final Setting<Boolean> airPlace = sgPlacement.add(new BoolSetting.Builder()
-        .name("air-place")
-        .description("Allow placing blocks in mid-air.")
-        .defaultValue(true)
         .build()
     );
 
@@ -75,7 +71,7 @@ public class PlatformBuilder extends Module {
 
     private final Setting<Boolean> replaceBlocks = sgPlacement.add(new BoolSetting.Builder()
         .name("replace-grass")
-        .description("Replace grass")
+        .description("Replace grass and other replaceable blocks.")
         .defaultValue(true)
         .build()
     );
@@ -89,183 +85,177 @@ public class PlatformBuilder extends Module {
 
     private final Setting<Boolean> refillFromInventory = sgBlocks.add(new BoolSetting.Builder()
         .name("refill-from-inventory")
-        .description("Automatically refill hotbar from inventory when out of blocks.")
+        .description("Automatically move blocks from inventory to hotbar when the hotbar runs out.")
         .defaultValue(true)
         .build()
     );
 
+    /**
+     * Positions we have successfully sent a place packet for.
+     * Verified each tick — removed if the world still shows air/replaceable,
+     * so server rejections are automatically retried.
+     */
+    private final HashSet<BlockPos> pendingPlacements = new HashSet<>();
+
+    private int delay = 0;
+
     public PlatformBuilder() {
-        super(Addon.CATEGORY2, "Platform", "Build a platform at a given y-level once in range");
+        super(Addon.CATEGORY2, "Platform", "Build a platform at a given y-level once in range.");
     }
 
     @Override
-    public void onActivate() {}
-    @Override
-    public void onDeactivate() {}
+    public void onActivate() {
+        pendingPlacements.clear();
+        delay = 0;
+    }
 
-    int delay = 0;
+    @Override
+    public void onDeactivate() {
+        pendingPlacements.clear();
+    }
 
     @EventHandler
     public void onTick(TickEvent.Post event) {
-        if (delay > 0) {
-            delay--;
-            return;
-        }
         if (mc.player == null || mc.world == null) return;
 
         if (setYKey.get().isPressed()) {
             yLevel.set(mc.player.getBlockY());
-            info("Platform Y level is set to " + mc.player.getBlockY());
+            info("Platform Y level set to " + mc.player.getBlockY());
         }
 
-        BlockPos[] blocks = reachablePositions();
-        if (blocks.length == 0) {
+        // Re-verify pending placements: if the server rejected a packet the block
+        // won't be there, so remove it from the set so it can be retried next cycle.
+        pendingPlacements.removeIf(pos -> needsBlock(mc.world.getBlockState(pos)));
+
+        if (delay > 0) {
+            delay--;
             return;
         }
 
-        if (!switchToBuildMat()) {
-            return;
-        }
+        BlockPos[] targets = reachableTargets();
+        if (targets.length == 0) return;
 
-        BlockPos playerPos = mc.player.getBlockPos();
-        java.util.Arrays.sort(blocks, (a, b) -> {
-            double distA = a.getSquaredDistance(playerPos);
-            double distB = b.getSquaredDistance(playerPos);
-            return Double.compare(distA, distB);
-        });
+        if (!ensureBuildMatInHand()) return;
+
+        // Sort closest-first so we fill from the player outward
+        BlockPos origin = mc.player.getBlockPos();
+        java.util.Arrays.sort(targets,
+            (a, b) -> Double.compare(a.getSquaredDistance(origin), b.getSquaredDistance(origin)));
 
         int placed = 0;
-        for (BlockPos pos : blocks) {
-            if (placeBlock(pos)) {
-                placed++;
-                if (placed >= maxPlacementsPerTick.get()) {
-                    break;
-                }
-            }
+        for (BlockPos pos : targets) {
+            if (placed >= maxPlacementsPerTick.get()) break;
+            if (tryPlace(pos)) placed++;
         }
+
         if (placed > 0) {
             delay = delayAfterPlacement.get();
         }
     }
 
-    private BlockPos[] reachablePositions() {
-        ArrayList<BlockPos> positions = new ArrayList<>();
-        final int maxReach = 4;
+    private boolean tryPlace(BlockPos pos) {
+        if (!PlayerUtils.isWithinReach(pos)) return false;
+        if (pendingPlacements.contains(pos)) return false;
 
-        int targetY = yLevel.get();
-        int playerY = (int) mc.player.getY();
+        BlockState state = mc.world.getBlockState(pos);
+        if (!needsBlock(state)) return false;
 
-        if (Math.abs(playerY - targetY) > maxReach) {
-            return new BlockPos[0];
-        }
+        FindItemResult item = InvUtils.findInHotbar(stack -> isAllowedStack(stack));
+        if (!item.found()) return false;
 
-        for (int x = -maxReach; x <= maxReach; x++) {
-            for (int z = -maxReach; z <= maxReach; z++) {
-                var pos = new BlockPos(mc.player.getBlockPos().getX() + x, targetY, mc.player.getBlockPos().getZ() + z);
-                if (PlayerUtils.isWithinReach(pos)) {
-                    positions.add(pos);
-                }
-            }
-        }
-
-        // Filter out non-placeable positions (no recentPlacements, we retry every tick)
-        positions.removeIf(pos -> !canPlaceAtPosition(pos));
-
-        return positions.toArray(new BlockPos[0]);
+        boolean ok = BlockUtils.place(pos, item, true, 50, true, true);
+        if (ok) pendingPlacements.add(pos); // only track confirmed send
+        return ok;
     }
 
-    private boolean canPlaceAtPosition(BlockPos pos) {
-        BlockState state = mc.world.getBlockState(pos);
-
+    private boolean needsBlock(BlockState state) {
         if (state.isAir()) return true;
 
-        // Liquids
         if (state.getFluidState().isStill() || state.getBlock() instanceof FluidBlock) {
             return ignoreLiquids.get();
         }
 
-        // Replaceable blocks
-        if (state.isReplaceable() || state.getBlock() == Blocks.GRASS_BLOCK || state.getBlock() == Blocks.FERN) {
+        if (state.isReplaceable()
+            || state.getBlock() == Blocks.GRASS_BLOCK
+            || state.getBlock() == Blocks.FERN) {
             return replaceBlocks.get();
         }
 
-        // Air-place: allow any non‑solid block
-        if (airPlace.get()) {
-            return !state.isFullCube(mc.world, pos);
-        }
-
         return false;
     }
 
-    private boolean isAllowedBlock(Block block) {
-        for (Block allowedBlock : allowedBlocks.get()) {
-            if (allowedBlock == block) return true;
-        }
-        return false;
-    }
+    private BlockPos[] reachableTargets() {
+        final int maxReach = 4;
+        int targetY = yLevel.get();
 
-    private boolean switchToBuildMat() {
-        var current = mc.player.getMainHandStack().getItem();
-        if (current instanceof net.minecraft.item.BlockItem && isAllowedBlock(((net.minecraft.item.BlockItem) current).getBlock())) {
-            return true;
+        if (Math.abs((int) mc.player.getY() - targetY) > maxReach) {
+            return new BlockPos[0];
         }
 
-        int bestSlot = -1;
-        for (int i = 0; i < 9; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
-            if (!stack.isEmpty() && stack.getItem() instanceof net.minecraft.item.BlockItem) {
-                Block block = ((net.minecraft.item.BlockItem) stack.getItem()).getBlock();
-                if (isAllowedBlock(block)) {
-                    bestSlot = i;
-                    break;
-                }
+        List<BlockPos> positions = new ArrayList<>();
+        int cx = mc.player.getBlockPos().getX();
+        int cz = mc.player.getBlockPos().getZ();
+
+        for (int x = -maxReach; x <= maxReach; x++) {
+            for (int z = -maxReach; z <= maxReach; z++) {
+                BlockPos pos = new BlockPos(cx + x, targetY, cz + z);
+                if (!PlayerUtils.isWithinReach(pos)) continue;
+                if (pendingPlacements.contains(pos)) continue;
+                if (!needsBlock(mc.world.getBlockState(pos))) continue;
+                positions.add(pos);
             }
         }
 
-        if (bestSlot == -1) {
-            if (refillFromInventory.get()) {
+        return positions.toArray(new BlockPos[0]);
+    }
+
+    private boolean isAllowedStack(ItemStack stack) {
+        if (stack.isEmpty() || !(stack.getItem() instanceof BlockItem bi)) return false;
+        return isAllowedBlock(bi.getBlock());
+    }
+
+    private boolean isAllowedBlock(Block block) {
+        return allowedBlocks.get().contains(block);
+    }
+
+    /**
+     * Makes sure an allowed block is in the main hand.
+     * Tries hotbar first, then moves from inventory if refillFromInventory is on.
+     * Returns false if no material is available at all.
+     */
+    private boolean ensureBuildMatInHand() {
+        // Already holding an allowed block nothing to do its joever
+        ItemStack held = mc.player.getMainHandStack();
+        if (isAllowedStack(held)) return true;
+
+        // Scan hotbar
+        for (int i = 0; i < 9; i++) {
+            if (isAllowedStack(mc.player.getInventory().getStack(i))) {
+                InvUtils.swap(i, false);
+                return true;
+            }
+        }
+
+        // Try pulling from inventory into an empty (or least-valuable) hotbar slot
+        if (refillFromInventory.get()) {
+            int emptySlot = -1;
+            for (int j = 0; j < 9; j++) {
+                if (mc.player.getInventory().getStack(j).isEmpty()) {
+                    emptySlot = j;
+                    break;
+                }
+            }
+            if (emptySlot != -1) {
                 for (int i = 9; i < 36; i++) {
-                    ItemStack stack = mc.player.getInventory().getStack(i);
-                    if (!stack.isEmpty() && stack.getItem() instanceof net.minecraft.item.BlockItem) {
-                        Block block = ((net.minecraft.item.BlockItem) stack.getItem()).getBlock();
-                        if (isAllowedBlock(block)) {
-                            int emptySlot = -1;
-                            for (int j = 0; j < 9; j++) {
-                                if (mc.player.getInventory().getStack(j).isEmpty()) {
-                                    emptySlot = j;
-                                    break;
-                                }
-                            }
-                            if (emptySlot != -1) {
-                                InvUtils.move().from(i).toHotbar(emptySlot);
-                                bestSlot = emptySlot;
-                                break;
-                            }
-                        }
+                    if (isAllowedStack(mc.player.getInventory().getStack(i))) {
+                        InvUtils.move().from(i).toHotbar(emptySlot);
+                        InvUtils.swap(emptySlot, false);
+                        return true;
                     }
                 }
             }
         }
 
-        if (bestSlot == -1) return false;
-
-        InvUtils.swap(bestSlot, false);
-        return true;
-    }
-
-    private boolean placeBlock(BlockPos pos) {
-        if (!PlayerUtils.isWithinReach(pos)) return false;
-
-        // Block state already checked in reachablePositions, no need to check again.
-
-        FindItemResult item = InvUtils.findInHotbar(itemStack -> {
-            if (!(itemStack.getItem() instanceof net.minecraft.item.BlockItem)) return false;
-            Block block = ((net.minecraft.item.BlockItem) itemStack.getItem()).getBlock();
-            return isAllowedBlock(block);
-        });
-
-        if (!item.found()) return false;
-
-        return BlockUtils.place(pos, item, true, 50, true, true);
+        return false;
     }
 }
