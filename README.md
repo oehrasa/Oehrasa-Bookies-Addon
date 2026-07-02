@@ -23,9 +23,8 @@
 Tested successfully with these mods, but other might work as well.
 <font color="turquoise">Switch the branch repo if You want to see the other version config</font>
 
-- baritone-meteor-1.21.11.jar (API Required!)
--
-    - meteor-client-1.21.11-65.jar (Required!)
+- baritone-meteor-1.21.11.jar **(API Required!)**
+- meteor-client-1.21.11-65.jar **(Required!)**
 - BepHax-Final.jar (Optional)
 - client_maps-1.3.2.jar (Recommended for Mapart-Namer module)
 - map-in-slot-3.4.1.jar (Recommended for Mapart-Namer module)
@@ -36,37 +35,39 @@ Tested successfully with these mods, but other might work as well.
 
 ## Features
 
-**37 modules**, **5 commands**, **6 HUD elements**, and **6 mixin**
+**39 modules**, **5 commands**, **7 HUD elements**, and **6 mixin**
 
-## Modules (37 total)
+## Modules (39 total)
 <details>
 <summary><b>Modules</b> (Bookies modules)</summary>
 
 - **AudiobookReader** - Reads books aloud using narrator feature
 - **Auto-Beacon** - Builds a 4‑beacon pyramid at a selected location
+- **Auto-Loader** - Right-click shulker boxes, ender chests, or bundles in your inventory to instantly use
 - **Auto-Login** - Automatically logs in your account via file Data
 - **Auto-Moss** - Automatically uses bone meal on specific blocks
 - **Auto-Pot** - Amrita
 - **Auto-Take-Off** - Automatically starts elytra flight when on ground, in lava, or falling
 - **Auto-Sex** - Tries to have sex with the player or mob in freaky ways
 - **B36-Peacemaker** - Created this to make peace. Named after Convair B-36 Peacemaker
-- **Beacon-Range** - Renders the range of powered beacons
+- **Block-Radius** - Renders the range of powered beacons, lightning rods, and active conduits
 - **BLU-27/B-Napalm** - I love the smell of Napalm in the morning, Commit some trolling against the Vietnamese
 - **Better-BoatFly** - Transforms your boat into a plane
 - **Bookshelf-Filler** - oeh Yuri romcom bookshelves restocker
 - **Book-Import** - Automatically imports text files into signed books
-- **Chest-Aura** - High-speed automatic container opener
 - **Chest-Tracker** - Track items in containers
-- **Dried-Ghast** - Give these cute and tiny little creatures a second chances
 - **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block
+- **Dried-Ghast** - Give these cute and tiny little creatures a second chances
 - **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
 - **Get-Preview** - Shows an item preview overlay on bundles, shulkers, and books
 - **Homes-List** - Manage and teleport to your server homes with a GUI
 - **Item-Despawn** - Highlights items that are about to despawn
+- **Inventory-Info** - SHoiGu!! GEraShimov!!!
 - **KMDB** - Builds a Wither, Iron Golem, or Snow Golem in front of you
 - **Minecart-Placer** - Places any minecarts on any rails in range
 - **Map-Grid** - Highlights map grid boundaries around the player
 - **Mapart-Namer** - Auto‑names maps based on inventory slot layout
+- **Mats-Refill** - Automatically restocks materials from shulker boxes
 - **Mob-Owner** - Shows entity owner by saving into cache
 - **Mats-Refill** - Automatically restocks materials from shulker boxes
 - **PacketEat** - Allows you to eat without interrupting other actions
@@ -74,6 +75,7 @@ Tested successfully with these mods, but other might work as well.
 - **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
 - **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in 1.13+ chunks
 - **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
+- **Sculk-Range** - Shows the detection range of calibrated sculk sensors.
 - **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
 - **Tnt-Fuse-Esp** - Shows the fuse time of lit tnt
 - **Trajectory-Plus** - Smooth projectile prediction and tracking
@@ -82,11 +84,12 @@ Tested successfully with these mods, but other might work as well.
 
 </details>
 
-## HUD Elements (6)
+## HUD Elements (7)
 
 - **Anime-Pics** - Displays random Anime pictures ( Cheers >< )
 - **Elytra-Time** - Gives you a rough estimate of the elytra flight time you have left
-- **MayaChan** - Render oehrasa beloved OC's : Nishizumi Maya
+- **MayaChan** - Renders oehrasa beloved OC's : Nishizumi Maya
+- **Map-Viewer** - Displays the contents of held maps on your HUD
 - **NeboM** - The radar system claims to be able to detect 5th generation aircraft (Loud Incorrect Buzzer noise)
 - **Online-Friends** - Displays online friends from your friend list
 - **Teleport-Timer** - Shows a countdown bar on pending teleportation

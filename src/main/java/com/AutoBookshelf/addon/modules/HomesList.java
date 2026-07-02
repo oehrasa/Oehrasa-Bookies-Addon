@@ -11,6 +11,7 @@ import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.GuiThemes;
 import meteordevelopment.meteorclient.gui.WindowScreen;
 import meteordevelopment.meteorclient.gui.renderer.GuiRenderer;
+import meteordevelopment.meteorclient.gui.widgets.WLabel;
 import meteordevelopment.meteorclient.gui.widgets.containers.WHorizontalList;
 import meteordevelopment.meteorclient.gui.widgets.containers.WTable;
 import meteordevelopment.meteorclient.gui.widgets.input.WTextBox;
@@ -38,7 +39,9 @@ import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.stream.Collectors;
 
 import static com.AutoBookshelf.addon.utils.Checks.is6B6T;
 
@@ -71,15 +74,29 @@ public class HomesList extends Module {
 
     private final Setting<String> chatPrefix = sgGeneral.add(new StringSetting.Builder()
         .name("chat-prefix")
-        .description("The chat message prefix that contains the home list to fetch (its fine dont touch).")
+        .description("The chat message prefix that contains the home list to fetch (its fine don't touch).")
         .defaultValue("Your homes (")
+        .build()
+    );
+
+    private final Setting<Boolean> Home = sgGeneral.add(new BoolSetting.Builder()
+        .name("free-home")
+        .description("qbasty.")
+        .defaultValue(true)
         .build()
     );
 
     public final Setting<Keybind> quickSelectKey = sgQuickSelect.add(new KeybindSetting.Builder()
         .name("quick-select-key")
-        .description("Hold to open the screen. Scroll to select then release to TP to highlighted home.")
-        .defaultValue(Keybind.none())
+        .description("Hold to open the screen. Scroll to select, then release to TP to highlighted home.")
+        .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_LEFT_ALT))
+        .build()
+    );
+
+    public final Setting<Keybind> quickSelectCancelKey = sgQuickSelect.add(new KeybindSetting.Builder()
+        .name("cancel-key")
+        .description("Press this key inside the quick-select overlay to cancel without teleporting.")
+        .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_X))
         .build()
     );
 
@@ -101,14 +118,6 @@ public class HomesList extends Module {
         .build()
     );
 
-    private final Setting<Boolean> Home = sgGeneral.add(new BoolSetting.Builder()
-        .name("free-home")
-        .description("qbasty.")
-        .defaultValue(true)
-        .build()
-    );
-
-
     private final Setting<Boolean> debugMode = sgDebug.add(new BoolSetting.Builder()
         .name("debug-mode")
         .description("Show detailed debug information.")
@@ -119,17 +128,13 @@ public class HomesList extends Module {
     private static final Gson GSON = new GsonBuilder()
         .registerTypeAdapter(HomeEntry.class, new HomeEntryAdapter())
         .create();
+
     private File saveFile;
     private List<HomeEntry> homes = new ArrayList<>();
     private boolean waitingForServerHomes = false;
 
-    private static final Item[] RANDOM_ICONS = {
-        Items.GRASS_BLOCK, Items.OAK_LOG, Items.STONE, Items.END_STONE, Items.BRICKS, Items.RESIN_CLUMP,
-        Items.BOOKSHELF, Items.CRAFTING_TABLE, Items.FURNACE, Items.DIAMOND_BLOCK, Items.SNOWBALL,
-        Items.EMERALD, Items.GOLD_INGOT, Items.IRON_INGOT, Items.REDSTONE, Items.SNIFFER_EGG, Items.COBBLESTONE,
-        Items.LAPIS_LAZULI, Items.OBSIDIAN, Items.NETHERRACK, Items.ENDER_PEARL, Items.CHERRY_SAPLING,
-        Items.POPPY, Items.DANDELION, Items.TORCHFLOWER, Items.CHEST, Items.ANVIL, Items.MELON
-    };
+    // Signal to HomesScreen.tick() that the server response was processed and the table needs a redraw.
+    private volatile boolean needsTableRebuild = false;
 
     private QuickSelectScreen quickScreen = null;
     private List<HomeEntry> quickHomes = new ArrayList<>();
@@ -157,6 +162,7 @@ public class HomesList extends Module {
         save();
         homes.clear();
         waitingForServerHomes = false;
+        needsTableRebuild = false;
         quickForceClosed = false;
         closeQuickScreen(false);
     }
@@ -202,31 +208,28 @@ public class HomesList extends Module {
         String list = rest.substring(colonIdx + 1).trim();
         if (list.endsWith(")")) list = list.substring(0, list.length() - 1).trim();
 
-        String[] parts = list.split(",");
-
-        // Track which homes were found in the server response
         List<String> serverHomes = new ArrayList<>();
-        for (String part : parts) {
+        for (String part : list.split(",")) {
             String homeName = part.trim();
             if (homeName.isEmpty()) continue;
             serverHomes.add(homeName);
+
             if (homes.stream().noneMatch(h -> h.originalName.equals(homeName))) {
-                HomeEntry entry = new HomeEntry(homeName, homeName,
-                    RANDOM_ICONS[ThreadLocalRandom.current().nextInt(RANDOM_ICONS.length)]);
+                // pick a unique icon from the full item
+                // registry instead of a small fixed pool, so auto-added homes don't collide.
+                HomeEntry entry = new HomeEntry(homeName, homeName, getRandomUniqueIcon());
                 entry.autoAdded = true;
                 homes.add(entry);
             }
         }
 
-        // Remove homes that are no longer on the server
         homes.removeIf(home -> !home.favorite && !serverHomes.contains(home.originalName));
-
         sortHomes();
         waitingForServerHomes = false;
         save();
-        if (debugMode.get()) {
-            info("Loaded " + parts.length + " homes.");
-        }
+        needsTableRebuild = true;
+
+        if (debugMode.get()) info("Loaded " + serverHomes.size() + " homes from server.");
     }
 
     public List<HomeEntry> getHomes() {
@@ -241,9 +244,7 @@ public class HomesList extends Module {
     }
 
     public void addHome(HomeEntry entry) {
-        if (entry.getIcon() == Items.GRASS_BLOCK && entry.iconId == null) {
-            entry.setIcon(RANDOM_ICONS[ThreadLocalRandom.current().nextInt(RANDOM_ICONS.length)]);
-        }
+        if (entry.iconId == null) entry.setIcon(getRandomUniqueIcon());
         homes.add(entry);
         sortHomes();
         save();
@@ -258,9 +259,27 @@ public class HomesList extends Module {
     public void teleportTo(String homeName) {
         if (MeteorClient.mc.player == null) return;
         MeteorClient.mc.player.networkHandler.sendChatCommand("home " + homeName);
-        if (debugMode.get()) {
-            info("Teleport to " + homeName);
+        if (debugMode.get()) info("Teleport to " + homeName);
+    }
+
+    private Item getRandomUniqueIcon() {
+        Set<Item> usedIcons = homes.stream()
+            .map(HomeEntry::getIcon)
+            .collect(Collectors.toSet());
+
+        List<Item> allItems = new ArrayList<>();
+        Registries.ITEM.forEach(allItems::add);
+
+        List<Item> available = allItems.stream()
+            .filter(item -> !usedIcons.contains(item))
+            .collect(Collectors.toList());
+
+        if (available.isEmpty()) {
+            // Every item is already in use? just pick any random one.
+            return allItems.get(ThreadLocalRandom.current().nextInt(allItems.size()));
         }
+
+        return available.get(ThreadLocalRandom.current().nextInt(available.size()));
     }
 
     @EventHandler
@@ -276,27 +295,24 @@ public class HomesList extends Module {
                 quickHomes = new ArrayList<>(fullList.subList(0, limit));
                 quickSelectedIndex = -1;
                 quickCancelled = false;
-                quickScreen = new QuickSelectScreen(this, quickHomes, -1,
-                    (int) MeteorClient.mc.mouse.getX(), (int) MeteorClient.mc.mouse.getY(),
-                    quickSelectColumns.get());
+                quickScreen = new QuickSelectScreen(
+                    this, quickHomes, -1,
+                    (int) MeteorClient.mc.mouse.getX(),
+                    (int) MeteorClient.mc.mouse.getY(),
+                    quickSelectColumns.get()
+                );
                 MeteorClient.mc.setScreen(quickScreen);
             }
         } else if (!keyPressed && quickScreen != null) {
             closeQuickScreen(true);
         }
 
-        if (!keyPressed) {
-            quickForceClosed = false;
-        }
-
-        if (quickScreen != null) {
-            quickSelectedIndex = quickScreen.getSelectedIndex();
-        }
+        if (!keyPressed) quickForceClosed = false;
+        if (quickScreen != null) quickSelectedIndex = quickScreen.getSelectedIndex();
     }
 
     private void closeQuickScreen(boolean doTeleport) {
         if (quickScreen == null) return;
-
         quickSelectedIndex = quickScreen.getSelectedIndex();
         MeteorClient.mc.setScreen(null);
         quickScreen = null;
@@ -304,12 +320,11 @@ public class HomesList extends Module {
         if (doTeleport && !quickCancelled && quickSelectedIndex >= 0 && quickSelectedIndex < quickHomes.size()) {
             teleportTo(quickHomes.get(quickSelectedIndex).originalName);
         }
-
         quickHomes.clear();
     }
 
     /**
-     * Called by QuickSelectScreen when Escape is pressed.
+     * Called by QuickSelectScreen when the cancel key is pressed.
      */
     public void cancelQuickSelect() {
         quickCancelled = true;
@@ -322,7 +337,7 @@ public class HomesList extends Module {
         public String displayName;
         public boolean autoAdded = false;
         public boolean favorite = false;
-        private String iconId = null;
+        String iconId = null;   // package-visible so the adapter can set it
 
         public HomeEntry() {
         }
@@ -359,7 +374,7 @@ public class HomesList extends Module {
 
     private static class HomeEntryAdapter implements JsonSerializer<HomeEntry>, JsonDeserializer<HomeEntry> {
         @Override
-        public JsonElement serialize(HomeEntry src, Type typeOfSrc, JsonSerializationContext context) {
+        public JsonElement serialize(HomeEntry src, Type typeOfSrc, JsonSerializationContext ctx) {
             JsonObject obj = new JsonObject();
             obj.addProperty("originalName", src.originalName);
             obj.addProperty("displayName", src.displayName);
@@ -370,7 +385,7 @@ public class HomesList extends Module {
         }
 
         @Override
-        public HomeEntry deserialize(JsonElement json, Type typeOfT, JsonDeserializationContext context)
+        public HomeEntry deserialize(JsonElement json, Type typeOfT, JsonDeserializationContext ctx)
             throws JsonParseException {
             JsonObject obj = json.getAsJsonObject();
             HomeEntry entry = new HomeEntry();
@@ -389,10 +404,10 @@ public class HomesList extends Module {
         private final HomesList module;
         private final List<HomeEntry> homes;
         private final int columns;
-        // selectedIndex is a flat index into homes list; scroll moves by one full row (columns items)
         private int selectedIndex;
 
-        protected QuickSelectScreen(HomesList module, List<HomeEntry> homes, int startIndex, int startMouseX, int startMouseY, int columns) {
+        protected QuickSelectScreen(HomesList module, List<HomeEntry> homes,
+                                    int startIndex, int startMouseX, int startMouseY, int columns) {
             super(Text.empty());
             this.module = module;
             this.homes = homes;
@@ -410,7 +425,6 @@ public class HomesList extends Module {
             int padding = 4;
             int rowHeight = iconSize + padding;
 
-            // Compute per-column width based on the widest label in each column
             int[] colWidths = new int[columns];
             for (int i = 0; i < homes.size(); i++) {
                 int col = i % columns;
@@ -422,9 +436,7 @@ public class HomesList extends Module {
             int rows = (int) Math.ceil((double) homes.size() / columns);
             int totalWidth = 0;
             for (int w : colWidths) totalWidth += w;
-            // add a divider gap between columns
             totalWidth += (columns - 1) * 2;
-
             int totalHeight = rowHeight * rows + padding;
 
             int x = mouseX + 10;
@@ -433,37 +445,33 @@ public class HomesList extends Module {
             if (y < 0) y = 5;
             if (y + totalHeight > this.height) y = this.height - totalHeight - 5;
 
-            // Background
             context.fill(x, y, x + totalWidth, y + totalHeight, 0xCC000000);
 
-            // Draw thin dividers between columns
             int divX = x;
             for (int c = 0; c < columns - 1; c++) {
                 divX += colWidths[c] + 1;
                 context.fill(divX, y, divX + 1, y + totalHeight, 0x44FFFFFF);
-                divX += 1;
+                divX++;
             }
 
             for (int i = 0; i < homes.size(); i++) {
-                int row = i / columns;
                 int col = i % columns;
+                int row = i / columns;
 
-                // X offset: sum of all previous column widths plus divider gaps
                 int cellX = x;
                 for (int c = 0; c < col; c++) cellX += colWidths[c] + 2;
-
                 int rowY = y + padding + row * rowHeight;
-                boolean selected = (i == selectedIndex && selectedIndex >= 0);
+                boolean sel = (i == selectedIndex && selectedIndex >= 0);
 
-                if (selected) {
-                    context.fill(cellX + 1, rowY - 1, cellX + colWidths[col] - 1, rowY + rowHeight - 1, 0x44FFFFFF);
-                }
+                if (sel) context.fill(cellX + 1, rowY - 1, cellX + colWidths[col] - 1, rowY + rowHeight - 1, 0x44FFFFFF);
 
                 context.drawItem(homes.get(i).getIconStack(), cellX + padding, rowY);
-                context.drawTextWithShadow(MeteorClient.mc.textRenderer, homes.get(i).displayName,
+                context.drawTextWithShadow(
+                    MeteorClient.mc.textRenderer, homes.get(i).displayName,
                     cellX + padding + iconSize + padding,
                     rowY + (rowHeight - MeteorClient.mc.textRenderer.fontHeight) / 2,
-                    selected ? 0xFFFF55 : 0xFFFFFF);
+                    sel ? 0xFFFFFF55 : 0xFFFFFFFF
+                );
             }
 
             super.render(context, mouseX, mouseY, delta);
@@ -473,7 +481,6 @@ public class HomesList extends Module {
         public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
             if (verticalAmount != 0) {
                 if (selectedIndex < 0) selectedIndex = 0;
-                // scroll moves by a full row (columns items) so visually the highlight jumps row by row
                 int dir = verticalAmount > 0 ? -columns : columns;
                 selectedIndex = Math.floorMod(selectedIndex + dir, homes.size());
                 return true;
@@ -483,7 +490,15 @@ public class HomesList extends Module {
 
         @Override
         public boolean keyPressed(KeyInput input) {
+            // Cancel key (configurable, default = X key).
+            if (module.quickSelectCancelKey.get().isPressed()) {
+                module.cancelQuickSelect();
+                return true;
+            }
+
             int keyCode = input.key();
+
+            // Navigation
             if (keyCode == GLFW.GLFW_KEY_UP) {
                 if (selectedIndex < 0) selectedIndex = 0;
                 selectedIndex = Math.floorMod(selectedIndex - columns, homes.size());
@@ -501,9 +516,11 @@ public class HomesList extends Module {
                 selectedIndex = Math.floorMod(selectedIndex + 1, homes.size());
                 return true;
             } else if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+                // Fallback in addition to the configurable cancel key above.
                 module.cancelQuickSelect();
                 return true;
             }
+
             return super.keyPressed(input);
         }
 
@@ -516,6 +533,7 @@ public class HomesList extends Module {
     private static class HomesScreen extends WindowScreen {
         private final HomesList module;
         private WTable table;
+        private WLabel countLabel;   // shows "N homes" next to the search box
         private String searchText = "";
 
         public HomesScreen(GuiTheme theme, HomesList module) {
@@ -525,15 +543,21 @@ public class HomesList extends Module {
 
         @Override
         public void initWidgets() {
-            WTextBox searchBox = add(theme.textBox("", "Search homes...")).expandX().widget();
+            WHorizontalList searchRow = add(theme.horizontalList()).expandX().widget();
+
+            WTextBox searchBox = searchRow.add(theme.textBox("", "Search homes...")).expandX().widget();
             searchBox.action = () -> {
                 searchText = searchBox.get().toLowerCase().trim();
                 rebuildTable();
             };
 
+            countLabel = searchRow.add(theme.label(countText(module.getHomes().size()))).widget();
+
+            // Home table
             table = add(theme.table()).expandX().minWidth(400).widget();
             rebuildTable();
 
+            // Bottom action bar
             add(theme.horizontalSeparator()).expandX();
             WHorizontalList row = add(theme.horizontalList()).expandX().widget();
 
@@ -544,11 +568,24 @@ public class HomesList extends Module {
             addNew.action = () -> MeteorClient.mc.setScreen(new EditHomeScreen(theme, module, null, -1, this));
         }
 
-        private void rebuildTable() {
+        /**
+         * Rebuilds the home table and updates the count label.
+         */
+        void rebuildTable() {
             table.clear();
+
             List<HomeEntry> filtered = module.getHomes().stream()
                 .filter(h -> searchText.isEmpty() || h.displayName.toLowerCase().contains(searchText))
                 .toList();
+
+            // Update count label (total filtered vs total)
+            if (countLabel != null) {
+                int total = module.getHomes().size();
+                int showing = filtered.size();
+                countLabel.set(searchText.isEmpty()
+                    ? countText(total)
+                    : showing + " / " + total + " homes");
+            }
 
             if (filtered.isEmpty()) {
                 table.add(theme.label("No homes found.")).expandX().pad(10);
@@ -571,9 +608,7 @@ public class HomesList extends Module {
 
                 WButton edit = table.add(theme.button(GuiRenderer.EDIT)).widget();
                 edit.action = () -> MeteorClient.mc.setScreen(
-                    new EditHomeScreen(theme, module, home,
-                        module.homes.indexOf(home), this)
-                );
+                    new EditHomeScreen(theme, module, home, module.homes.indexOf(home), this));
 
                 WMinus delete = table.add(theme.minus()).widget();
                 delete.action = () -> {
@@ -587,8 +622,17 @@ public class HomesList extends Module {
             }
         }
 
+        private static String countText(int n) {
+            return n + (n == 1 ? " home" : " homes");
+        }
+
+        // auto-rebuild the table when a server response arrives while the screen is open.
         @Override
         public void tick() {
+            if (module.needsTableRebuild) {
+                module.needsTableRebuild = false;
+                rebuildTable();
+            }
         }
     }
 
@@ -611,9 +655,12 @@ public class HomesList extends Module {
 
             Settings settings = new Settings();
             SettingGroup sg = settings.getDefaultGroup();
-            originalName = sg.add(new StringSetting.Builder().name("original-name").defaultValue(home != null ? home.originalName : "").build());
-            displayName = sg.add(new StringSetting.Builder().name("display-name").defaultValue(home != null ? home.displayName : "").build());
-            icon = sg.add(new ItemSetting.Builder().name("icon").defaultValue(home != null ? home.getIcon() : Items.GRASS_BLOCK).build());
+            originalName = sg.add(new StringSetting.Builder().name("original-name")
+                .defaultValue(home != null ? home.originalName : "").build());
+            displayName = sg.add(new StringSetting.Builder().name("display-name")
+                .defaultValue(home != null ? home.displayName : "").build());
+            icon = sg.add(new ItemSetting.Builder().name("icon")
+                .defaultValue(home != null ? home.getIcon() : Items.GRASS_BLOCK).build());
             add(theme.settings(settings)).expandX();
         }
 

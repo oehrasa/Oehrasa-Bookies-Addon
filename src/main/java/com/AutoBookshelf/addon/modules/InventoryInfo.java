@@ -1,4 +1,3 @@
-// 1.21.11 yarn map
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -15,7 +14,8 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.screen.slot.Slot;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.math.MathHelper;
-import org.joml.Vector2f;
+import net.minecraft.util.math.Vec2f;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.*;
 
@@ -39,7 +39,20 @@ public class InventoryInfo extends Module {
         .build()
     );
 
-    // Customization
+    public final Setting<Boolean> searchBar = sgGeneral.add(new BoolSetting.Builder()
+        .name("search-bar")
+        .description("Show a search bar above the panel to filter displayed items by name.")
+        .defaultValue(false)
+        .build()
+    );
+
+    public final Setting<Boolean> inventoryOnly = sgGeneral.add(new BoolSetting.Builder()
+        .name("inventory-only")
+        .description("Only show the panel while your own inventory screen is open.")
+        .defaultValue(false)
+        .build()
+    );
+
     public final Setting<Integer> panelXOffset = sgCustom.add(new IntSetting.Builder()
         .name("x-offset")
         .defaultValue(0)
@@ -66,7 +79,6 @@ public class InventoryInfo extends Module {
         .build()
     );
 
-    // Compact grid settings (only used when compact is enabled)
     public final Setting<Integer> compactSlotSize = sgGeneral.add(new IntSetting.Builder()
         .name("compact-slot-size")
         .defaultValue(14)
@@ -88,7 +100,11 @@ public class InventoryInfo extends Module {
 
     private final List<ShulkerInfo> info = new ArrayList<>();
     private int height, offset;
-    private Vector2f clicked;
+    private Vec2f clicked;
+
+    // search bar state
+    private final StringBuilder searchQuery = new StringBuilder();
+    private boolean searchFocused = false;
 
     private record DisplayEntry(ItemStack stack, int slot) {
     }
@@ -99,18 +115,20 @@ public class InventoryInfo extends Module {
     //TODO
     // Make proper component display.
     // Add profile target, litematica Material list feature.
-    // Searchbar.
     // Whisper/info panel.
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (!(mc.currentScreen instanceof HandledScreen<?>) || mc.player.age % 4 != 0) return;
+        if (inventoryOnly.get() && !(mc.currentScreen instanceof net.minecraft.client.gui.screen.ingame.InventoryScreen)) {
+            info.clear();
+            return;
+        }
         refresh((HandledScreen<?>) mc.currentScreen);
     }
 
     @EventHandler
     private void onRenderScreen(ScreenRenderEvent event) {
-        // refresh() is already handled by onTick; no duplicate call here
         int screenWidth = mc.getWindow().getScaledWidth();
         int screenHeight = mc.getWindow().getScaledHeight();
         event.drawContext.enableScissor(0, 0, screenWidth, screenHeight);
@@ -122,6 +140,8 @@ public class InventoryInfo extends Module {
 
         int baseX = 2 + panelXOffset.get();
         int baseY = 3 + offset + panelYOffset.get();
+
+        if (searchBar.get()) baseY = renderSearchBar(event, baseX, baseY);
 
         if (combineShulkers.get()) {
             renderCombinedGrid(event, baseX, baseY);
@@ -140,54 +160,51 @@ public class InventoryInfo extends Module {
         float scale = (isCompact ? slotSize / 16.0f : 1.0f) * iconScale.get().floatValue();
 
         for (ShulkerInfo shulkerInfo : info) {
-            int count = 0, x = baseX, startY = y;
-            int maxX = baseX;
-
-            // Count non-empty stacks to compute grid dimensions up front
-            int nonEmpty = 0;
-            for (ItemStack s : shulkerInfo.stacks()) {
-                if (!s.isEmpty()) nonEmpty++;
-                else if (shulkerInfo.type() == Type.COMPACT) break;
-            }
-            if (nonEmpty == 0) continue;
-
-            int rows = (nonEmpty + columns - 1) / columns;
-            int bottomY = y + rows * slotSize;
-
-            int lastRowCount = nonEmpty % columns;
-            if (lastRowCount == 0) lastRowCount = columns;
-            maxX = baseX + lastRowCount * slotSize;
-            if (rows > 1) maxX = Math.max(maxX, baseX + columns * slotSize);
-
-            // Draw background before items so icons render on top
-            event.drawContext.fill(baseX, startY, maxX, bottomY, COLOR_BACKGROUND);
-            event.drawContext.fill(baseX, startY - 1, maxX, startY, shulkerInfo.color());
-
+            List<ItemStack> visible = new ArrayList<>();
             for (ItemStack stack : shulkerInfo.stacks()) {
                 if (shulkerInfo.type() == Type.COMPACT && stack.isEmpty()) break;
+                if (!matchesSearch(stack)) continue;
+                visible.add(stack);
+            }
+
+            if (visible.isEmpty()) {
+                continue; // just skip, don't touch clicked state
+            }
+
+            int startY = y;
+            int rows = (visible.size() + columns - 1) / columns;
+            int cols = Math.min(visible.size(), columns);
+            int maxX = baseX + (rows > 1 ? columns : cols) * slotSize;
+            int endY = startY + rows * slotSize;
+
+            event.drawContext.fill(baseX, startY, maxX, endY, COLOR_BACKGROUND);
+            event.drawContext.fill(baseX, startY - 1, maxX, startY, shulkerInfo.color());
+
+            int count = 0, x = baseX;
+            int drawY = startY;
+            for (ItemStack stack : visible) {
                 if (count > 0 && count % columns == 0) {
                     x = baseX;
-                    y += slotSize;
+                    drawY += slotSize;
                 }
-                drawScaledItem(event, stack, x, y, slotSize, scale);
+                drawScaledItem(event, stack, x + 2, drawY, scale);
                 x += slotSize;
                 count++;
             }
+            y = endY;
 
             if (clicked != null
                 && clicked.x >= baseX && clicked.x <= maxX
-                && clicked.y >= startY && clicked.y <= bottomY) {
+                && clicked.y >= startY && clicked.y <= y) {
                 mc.interactionManager.clickSlot(
                     mc.player.currentScreenHandler.syncId,
                     shulkerInfo.slot(), 0, SlotActionType.PICKUP, mc.player);
                 setClicked(null);
             }
-
-            y = bottomY + 2;
+            y += 2;
         }
-
         height = y - offset;
-        setClicked(null);
+        setClicked(null); // consume any unmatched click once, after checking every shulker
     }
 
     private void renderCombinedGrid(ScreenRenderEvent event, int baseX, int baseY) {
@@ -210,9 +227,11 @@ public class InventoryInfo extends Module {
             Item item = e.getKey();
             int total = e.getValue();
             int slot = itemToSlot.get(item);
-            ItemStack displayStack = itemToStack.get(item).copy();
-            displayStack.setCount(total);
-            entries.add(new DisplayEntry(displayStack, slot));
+            ItemStack template = itemToStack.get(item);
+            ItemStack display = template.copy();
+            display.setCount(total);
+            if (!matchesSearch(display)) continue; // search filter
+            entries.add(new DisplayEntry(display, slot));
         }
         entries.sort(Comparator
             .comparingInt((DisplayEntry e) -> -e.stack().getCount())
@@ -224,22 +243,25 @@ public class InventoryInfo extends Module {
         float scale = (isCompact ? slotSize / 16.0f : 1.0f) * iconScale.get().floatValue();
 
         int startY = baseY;
-        int totalRows = (entries.size() + columns - 1) / columns;
-        int totalHeight = totalRows * slotSize;
-        int maxX = baseX + columns * slotSize;
+        int rows = entries.isEmpty() ? 0 : (entries.size() + columns - 1) / columns;
+        int cols = Math.min(entries.size(), columns);
+        int maxX = baseX + (rows > 1 ? columns : cols) * slotSize;
+        int y = baseY + rows * slotSize;
 
-        // Draw background before items so icons render on top
-        event.drawContext.fill(baseX, startY, maxX, startY + totalHeight, COLOR_BACKGROUND);
-        event.drawContext.fill(baseX, startY - 1, maxX, startY, COLOR_SEPARATOR);
+        // Draw background first so icons render on top of it.
+        if (!entries.isEmpty()) {
+            event.drawContext.fill(baseX, startY, maxX, y, COLOR_BACKGROUND);
+            event.drawContext.fill(baseX, startY - 1, maxX, startY, COLOR_SEPARATOR);
+        }
 
         for (int i = 0; i < entries.size(); i++) {
             int col = i % columns;
             int row = i / columns;
             int drawX = baseX + col * slotSize;
             int drawY = baseY + row * slotSize;
-            DisplayEntry entry = entries.get(i);
 
-            drawScaledItem(event, entry.stack(), drawX, drawY, slotSize, scale);
+            DisplayEntry entry = entries.get(i);
+            drawScaledItem(event, entry.stack(), drawX + 2, drawY, scale);
 
             if (clicked != null
                 && clicked.x >= drawX && clicked.x <= drawX + slotSize
@@ -251,34 +273,70 @@ public class InventoryInfo extends Module {
             }
         }
 
-        height = (baseY + totalHeight) - offset;
+        height = y - offset;
         setClicked(null);
     }
 
-    private void drawScaledItem(ScreenRenderEvent event, ItemStack stack,
-                                int cellX, int cellY, int cellSize, float scale) {
-        // Centre the icon inside the cell
-        float itemPixelSize = 16.0f * scale;
-        int drawX = cellX + (int) ((cellSize - itemPixelSize) / 2);
-        int drawY = cellY + (int) ((cellSize - itemPixelSize) / 2);
+    private int renderSearchBar(ScreenRenderEvent event, int baseX, int baseY) {
+        boolean isCompact = compact.get();
+        int slotSize = isCompact ? compactSlotSize.get() : 20;
+        int columns = isCompact ? compactColumns.get() : 9;
+        int barWidth = columns * slotSize;
+        int barHeight = 12;
 
-        // Format count text for stacks > 999 (replaces the default counter)
+        if (clicked != null && clicked.x >= baseX && clicked.x <= baseX + barWidth
+            && clicked.y >= baseY && clicked.y <= baseY + barHeight) {
+            searchFocused = true;
+            setClicked(null);
+        } else if (clicked != null) {
+            searchFocused = false;
+        }
+
+        var context = event.drawContext;
+        int borderColor = searchFocused ? 0xFFFFFFFF : COLOR_SEPARATOR;
+
+        // Background
+        context.fill(baseX, baseY, baseX + barWidth, baseY + barHeight, COLOR_BACKGROUND);
+
+        // Border (manual)
+        context.fill(baseX, baseY, baseX + barWidth, baseY + 1, borderColor);                     // top
+        context.fill(baseX, baseY + barHeight - 1, baseX + barWidth, baseY + barHeight, borderColor); // bottom
+        context.fill(baseX, baseY, baseX + 1, baseY + barHeight, borderColor);                     // left
+        context.fill(baseX + barWidth - 1, baseY, baseX + barWidth, baseY + barHeight, borderColor); // right
+
+        String text = searchQuery.length() > 0 ? searchQuery.toString() : "Search...";
+        context.drawText(mc.textRenderer, text, baseX + 3, baseY + 2,
+            searchQuery.length() > 0 ? 0xFFFFFFFF : 0x80FFFFFF, false);
+
+        return baseY + barHeight + 2;
+    }
+
+    private boolean matchesSearch(ItemStack stack) {
+        if (!searchBar.get() || searchQuery.length() == 0) return true;
+        return stack.getName().getString().toLowerCase().contains(searchQuery.toString().toLowerCase());
+    }
+
+    /**
+     * Draws a scaled item icon and its overlay (durability bar, count text).
+     */
+    private void drawScaledItem(ScreenRenderEvent event, ItemStack stack, int px, int py, float scale) {
         String countText = stack.getCount() > 999 ? formatCount(stack.getCount()) : null;
 
         var context = event.drawContext;
         var matrices = context.getMatrices();
 
-        // 1. Draw the item icon at the requested scale
+        // 1. Draw the item icon at the requested scale.
         matrices.pushMatrix();
-        matrices.translate(drawX, drawY);
+        matrices.translate(px, py);
         matrices.scale(scale, scale);
         context.drawItem(stack, 0, 0);
         matrices.popMatrix();
 
         // 2. Draw the overlay (durability bar, count text) without the scale
-        //    matrix active so its hardcoded pixel geometry stays correct
+        //    matrix active. drawStackOverlay() uses hardcoded pixel geometry
+        //    that must render at 1:1 screen pixels relative to (px, py).
         matrices.pushMatrix();
-        matrices.translate(drawX, drawY);
+        matrices.translate(px, py);
         context.drawStackOverlay(mc.textRenderer, stack, 0, 0, countText);
         matrices.popMatrix();
     }
@@ -309,7 +367,21 @@ public class InventoryInfo extends Module {
         this.offset = MathHelper.clamp(offset, -Math.max(height - mc.getWindow().getScaledHeight(), 0), 0);
     }
 
-    public void setClicked(Vector2f clicked) {
+    public void setClicked(Vec2f clicked) {
         this.clicked = clicked;
+    }
+
+    public void onSearchCharTyped(char chr) {
+        if (!searchFocused) return;
+        if (chr >= 32 && searchQuery.length() < 32) searchQuery.append(chr);
+    }
+
+    public void onSearchKeyPressed(int keyCode) {
+        if (!searchFocused) return;
+        if (keyCode == GLFW.GLFW_KEY_BACKSPACE && !searchQuery.isEmpty()) {
+            searchQuery.deleteCharAt(searchQuery.length() - 1);
+        } else if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+            searchFocused = false;
+        }
     }
 }
