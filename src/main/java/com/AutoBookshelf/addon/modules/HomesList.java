@@ -1,5 +1,5 @@
 package com.AutoBookshelf.addon.modules;
-
+//26.1.2 mojmap
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.JoinPayload;
 import com.google.gson.*;
@@ -11,6 +11,7 @@ import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.GuiThemes;
 import meteordevelopment.meteorclient.gui.WindowScreen;
 import meteordevelopment.meteorclient.gui.renderer.GuiRenderer;
+import meteordevelopment.meteorclient.gui.widgets.WLabel;
 import meteordevelopment.meteorclient.gui.widgets.containers.WHorizontalList;
 import meteordevelopment.meteorclient.gui.widgets.containers.WTable;
 import meteordevelopment.meteorclient.gui.widgets.input.WTextBox;
@@ -39,7 +40,9 @@ import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.stream.Collectors;
 
 import static com.AutoBookshelf.addon.utils.Checks.is6B6T;
 
@@ -84,6 +87,13 @@ public class HomesList extends Module {
         .build()
     );
 
+    public final Setting<Keybind> quickSelectCancelKey = sgQuickSelect.add(new KeybindSetting.Builder()
+        .name("cancel-key")
+        .description("Press this key inside the quick-select overlay to cancel without teleporting.")
+        .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_X))
+        .build()
+    );
+
     private final Setting<Integer> maxQuickSelectItems = sgQuickSelect.add(new IntSetting.Builder()
         .name("max-quick-select-items")
         .description("Maximum number of homes shown in the quick select overlay.")
@@ -123,13 +133,8 @@ public class HomesList extends Module {
     private List<HomeEntry> homes = new ArrayList<>();
     private boolean waitingForServerHomes = false;
 
-    private static final Item[] RANDOM_ICONS = {
-        Items.GRASS_BLOCK, Items.OAK_LOG, Items.STONE, Items.END_STONE, Items.BRICKS, Items.RESIN_CLUMP,
-        Items.BOOKSHELF, Items.CRAFTING_TABLE, Items.FURNACE, Items.DIAMOND_BLOCK, Items.SNOWBALL,
-        Items.EMERALD, Items.GOLD_INGOT, Items.IRON_INGOT, Items.REDSTONE, Items.SNIFFER_EGG, Items.COBBLESTONE,
-        Items.LAPIS_LAZULI, Items.OBSIDIAN, Items.NETHERRACK, Items.ENDER_PEARL, Items.CHERRY_SAPLING,
-        Items.POPPY, Items.DANDELION, Items.TORCHFLOWER, Items.CHEST, Items.ANVIL, Items.MELON
-    };
+    // Signal to HomesScreen.tick() that the server response was processed and the table needs a redraw.
+    private volatile boolean needsTableRebuild = false;
 
     private QuickSelectScreen quickScreen = null;
     private List<HomeEntry> quickHomes = new ArrayList<>();
@@ -156,6 +161,7 @@ public class HomesList extends Module {
         save();
         homes.clear();
         waitingForServerHomes = false;
+        needsTableRebuild = false;
         quickForceClosed = false;
         closeQuickScreen(false);
     }
@@ -211,8 +217,9 @@ public class HomesList extends Module {
             serverHomes.add(homeName);
 
             if (homes.stream().noneMatch(h -> h.originalName.equalsIgnoreCase(homeName))) {
-                HomeEntry entry = new HomeEntry(homeName, homeName,
-                    RANDOM_ICONS[ThreadLocalRandom.current().nextInt(RANDOM_ICONS.length)]);
+                // pick a unique icon from the full item registry instead of a small fixed
+                // pool, so auto-added homes don't collide.
+                HomeEntry entry = new HomeEntry(homeName, homeName, getRandomUniqueIcon());
                 entry.autoAdded = true;
                 homes.add(entry);
             }
@@ -236,6 +243,7 @@ public class HomesList extends Module {
         sortHomes();
         waitingForServerHomes = false;
         save();
+        needsTableRebuild = true;
         if (debugMode.get()) info("Loaded " + serverHomes.size() + " homes from server.");
     }
 
@@ -252,7 +260,7 @@ public class HomesList extends Module {
 
     public void addHome(HomeEntry entry) {
         if (entry.getIcon() == Items.GRASS_BLOCK && entry.iconId == null) {
-            entry.setIcon(RANDOM_ICONS[ThreadLocalRandom.current().nextInt(RANDOM_ICONS.length)]);
+            entry.setIcon(getRandomUniqueIcon());
         }
         homes.add(entry);
         sortHomes();
@@ -269,6 +277,31 @@ public class HomesList extends Module {
         if (MeteorClient.mc.player == null) return;
         MeteorClient.mc.player.connection.sendCommand("home " + homeName);
         if (debugMode.get()) info("Teleport to " + homeName);
+    }
+
+    /**
+     * Picks a random item from the full item registry that isn't already
+     * used as an icon by another home, so auto-added/new homes don't
+     * visually collide with each other.
+     */
+    private Item getRandomUniqueIcon() {
+        Set<Item> usedIcons = homes.stream()
+            .map(HomeEntry::getIcon)
+            .collect(Collectors.toSet());
+
+        List<Item> allItems = new ArrayList<>();
+        BuiltInRegistries.ITEM.forEach(allItems::add);
+
+        List<Item> available = allItems.stream()
+            .filter(item -> !usedIcons.contains(item))
+            .collect(Collectors.toList());
+
+        if (available.isEmpty()) {
+            // Every item is already in use? just pick any random one.
+            return allItems.get(ThreadLocalRandom.current().nextInt(allItems.size()));
+        }
+
+        return available.get(ThreadLocalRandom.current().nextInt(available.size()));
     }
 
     @EventHandler
@@ -310,6 +343,9 @@ public class HomesList extends Module {
         quickHomes.clear();
     }
 
+    /**
+     * Called by QuickSelectScreen when the cancel key is pressed.
+     */
     public void cancelQuickSelect() {
         quickCancelled = true;
         quickForceClosed = true;
@@ -521,6 +557,13 @@ public class HomesList extends Module {
 
         @Override
         public boolean keyPressed(KeyEvent input) {
+            // Configurable cancel key (default = X), checked first so it always works
+            // regardless of arrow-key navigation below.
+            if (module.quickSelectCancelKey.get().isPressed()) {
+                module.cancelQuickSelect();
+                return true;
+            }
+
             int keyCode = input.key();
             if (keyCode == GLFW.GLFW_KEY_UP) {
                 if (selectedIndex < 0) selectedIndex = 0;
@@ -543,6 +586,7 @@ public class HomesList extends Module {
                 scrollIndex = linearToColumnMajor(selectedIndex);
                 return true;
             } else if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+                // Fallback in addition to the configurable cancel key above.
                 module.cancelQuickSelect();
                 return true;
             }
@@ -558,6 +602,7 @@ public class HomesList extends Module {
     private static class HomesScreen extends WindowScreen {
         private final HomesList module;
         private WTable table;
+        private WLabel countLabel;   // shows "N homes" next to the search box
         private String searchText = "";
 
         public HomesScreen(GuiTheme theme, HomesList module) {
@@ -567,11 +612,15 @@ public class HomesList extends Module {
 
         @Override
         public void initWidgets() {
-            WTextBox searchBox = add(theme.textBox("", "Search homes...")).expandX().widget();
+            WHorizontalList searchRow = add(theme.horizontalList()).expandX().widget();
+
+            WTextBox searchBox = searchRow.add(theme.textBox("", "Search homes...")).expandX().widget();
             searchBox.action = () -> {
                 searchText = searchBox.get().toLowerCase().trim();
                 rebuildTable();
             };
+
+            countLabel = searchRow.add(theme.label(countText(module.getHomes().size()))).widget();
 
             table = add(theme.table()).expandX().minWidth(400).widget();
             rebuildTable();
@@ -586,11 +635,20 @@ public class HomesList extends Module {
             addNew.action = () -> MeteorClient.mc.setScreen(new EditHomeScreen(theme, module, null, -1, this));
         }
 
-        private void rebuildTable() {
+        void rebuildTable() {
             table.clear();
             List<HomeEntry> filtered = module.getHomes().stream()
                 .filter(h -> searchText.isEmpty() || h.displayName.toLowerCase().contains(searchText))
                 .toList();
+
+            // Update count label (total filtered vs total)
+            if (countLabel != null) {
+                int total = module.getHomes().size();
+                int showing = filtered.size();
+                countLabel.set(searchText.isEmpty()
+                    ? countText(total)
+                    : showing + " / " + total + " homes");
+            }
 
             if (filtered.isEmpty()) {
                 table.add(theme.label("No homes found.")).expandX().pad(10);
@@ -627,8 +685,17 @@ public class HomesList extends Module {
             }
         }
 
+        private static String countText(int n) {
+            return n + (n == 1 ? " home" : " homes");
+        }
+
+        // Auto-rebuild the table (and count label) when a server response arrives while the screen is open.
         @Override
         public void tick() {
+            if (module.needsTableRebuild) {
+                module.needsTableRebuild = false;
+                rebuildTable();
+            }
         }
     }
 

@@ -145,8 +145,10 @@ public class TrajectoryPlus extends Module {
     private void onRender(Render3DEvent event) {
         if (mc.player == null || mc.level == null) return;
 
+        // Always predict player's own projectile
         predictPlayerProjectile(event);
 
+        // Always track existing projectiles
         if (renderExistingProjectiles.get()) {
             trackExistingProjectiles(event);
         }
@@ -187,7 +189,6 @@ public class TrajectoryPlus extends Module {
             List<Vec3> trail = projectileTrails.computeIfAbsent(id, k -> new ArrayList<>());
             trail.add(currentPos);
 
-            // More efficient bulk removal vs repeated remove(0)
             if (trail.size() > maxTrail) {
                 trail.subList(0, trail.size() - maxTrail).clear();
             }
@@ -203,7 +204,6 @@ public class TrajectoryPlus extends Module {
             }
         }
 
-        // iterate entities to check UUID instead of broken hashCode lookup
         projectileTrails.keySet().removeIf(id -> {
             for (Entity e : mc.level.entitiesForRendering()) {
                 if (e.getUUID().equals(id)) return false;
@@ -229,7 +229,7 @@ public class TrajectoryPlus extends Module {
         }
     }
 
-    // Shared simulation logic to avoid duplicating the tick loop in both predict methods
+    // Shared simulation logic extracted from both predict methods
     private SimResult simulatePath(Vec3 startPos, Vec3 startVel, Entity ignoreEntity, double drag, double gravity, int maxTicks, Render3DEvent event, SettingColor boxCol) {
         List<Vec3> path = new ArrayList<>();
         Vec3 currentPos = startPos;
@@ -264,7 +264,7 @@ public class TrajectoryPlus extends Module {
         return new SimResult(path, null);
     }
 
-    // avoids duplicating the line loop
+    // Shared render helper to avoid duplicating the line loop
     private void renderPath(Render3DEvent event, List<Vec3> path, SettingColor color) {
         for (int i = 0; i < path.size() - 1; i++) {
             Vec3 a = path.get(i), b = path.get(i + 1);
@@ -307,7 +307,6 @@ public class TrajectoryPlus extends Module {
         return 0.03;
     }
 
-    // Single method with ignoreEntity param replaces the two-overload pattern
     private EntityHitResult findEntityHit(Vec3 start, Vec3 end, Entity ignoreEntity) {
         for (Entity entity : mc.level.entitiesForRendering()) {
             if (entity == mc.player || entity == ignoreEntity) continue;
@@ -366,7 +365,9 @@ public class TrajectoryPlus extends Module {
     }
 
     private Vec3 getInterpolatedPos(Entity entity, float delta) {
-        Vec3 pos = entity.getPosition(delta);   // interpolated foot position
-        return new Vec3(pos.x, pos.y + entity.getEyeHeight(entity.getPose()), pos.z);  // eye position
+        double x = entity.xOld + (entity.getX() - entity.xOld) * delta;
+        double y = (entity.yOld + (entity.getY() - entity.yOld) * delta) + entity.getEyeHeight(entity.getPose());
+        double z = entity.zOld + (entity.getZ() - entity.zOld) * delta;
+        return new Vec3(x, y, z);
     }
 }

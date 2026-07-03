@@ -1,3 +1,4 @@
+//26.1.2 Mojmap
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -105,6 +106,10 @@ public class GetPreview extends Module {
     // Secondary lookup: object identity to nbt-key, to avoid serializing every frame
     private final Map<ItemStack, String> identityToKey = new HashMap<>();
 
+    // Guards against re-entrant calls when rendering the overlay item itself
+    // triggers another tooltip/overlay pass).
+    private boolean isRenderingPreview = false;
+
     private static class CachedContainerData {
         // count=1 already applied at construction so the render path never needs .copy()
         final ItemStack previewStack;
@@ -159,9 +164,11 @@ public class GetPreview extends Module {
         bundleCache.clear();
         shulkerCache.clear();
         identityToKey.clear();
+        isRenderingPreview = false;
     }
 
     public void renderBundleOverlay(GuiGraphicsExtractor context, int x, int y, ItemStack stack) {
+        if (isRenderingPreview) return;
         if (stack.isEmpty()) return;
 
         if (previewShulkers.get() && isInsideContainerPeekRender()) {
@@ -210,7 +217,7 @@ public class GetPreview extends Module {
             Tag element = ItemStack.CODEC.encodeStart(ops, stack).getOrThrow();
             if (!(element instanceof CompoundTag full)) return null;
             if (full.isEmpty()) return null;
-            return full.toString();
+            return full.asString().orElse(null);
         } catch (Exception ignored) {
             return null;
         }
@@ -242,19 +249,16 @@ public class GetPreview extends Module {
         var matrices = context.pose();
         matrices.pushMatrix();
         matrices.translate(pos[0], pos[1]);
-        drawBookInitials(context, book);
+        drawBookInitials(context, book, iconSize.get() - 4, 0.6f);
         matrices.popMatrix();
     }
 
-    private void drawBookInitials(GuiGraphicsExtractor context, WrittenBookContent book) {
+    private void drawBookInitials(GuiGraphicsExtractor context, WrittenBookContent book,
+                                  int canvasUnits, float textScale) {
         String author = book.author();
         if (author == null || author.isEmpty()) author = "???";
-        String initials = author.length() > 3
-            ? author.substring(0, 3).toUpperCase()
-            : author.toUpperCase();
+        String initials = (author.length() > 3 ? author.substring(0, 3) : author).toUpperCase();
 
-        float textScale = 0.6f;
-        int fullSize = iconSize.get() - 4;
         int textColor = 0xFFFFFFFF;
 
         var matrices = context.pose();
@@ -263,8 +267,8 @@ public class GetPreview extends Module {
 
         int textWidth = mc.font.width(initials);
         int textHeight = mc.font.lineHeight;
-        int textX = (int) ((fullSize / textScale - textWidth) / 2);
-        int textY = (int) ((fullSize / textScale - textHeight) / 2);
+        int textX = (int) ((canvasUnits / textScale - textWidth) / 2f);
+        int textY = (int) ((canvasUnits / textScale - textHeight) / 2f);
 
         context.text(mc.font, initials, textX, textY, textColor, true);
         matrices.popMatrix();
@@ -283,18 +287,16 @@ public class GetPreview extends Module {
                 ItemContainerContents container = stack.get(DataComponents.CONTAINER);
                 if (container == null) return;
                 items = new ArrayList<>();
-                // use stream API that returns ItemStack copies directly
                 container.nonEmptyItemCopyStream().forEach(items::add);
             } else {
                 BundleContents contents = stack.get(DataComponents.BUNDLE_CONTENTS);
                 if (contents == null || contents.isEmpty()) return;
-                items = new ArrayList<>();
-                contents.itemCopyStream().forEach(items::add);
+                items = contents.itemCopyStream().toList();
             }
 
             if (items.isEmpty()) return;
 
-            // plain loop instead of stream this avoids allocating a distinct-key set
+            // plain loop instead of stream, this avoids allocating a distinct-key set
             boolean hasMultiple = false;
             {
                 Item first = items.get(0).getItem();
@@ -360,16 +362,23 @@ public class GetPreview extends Module {
         matrices.translate(iconX, iconY);
         matrices.scale(scale, scale);
 
-        if (displayStack.is(Items.FILLED_MAP)) {
-            if (!drawMapIfPossible(context, displayStack)) {
+        isRenderingPreview = true;
+        try {
+            if (displayStack.is(Items.FILLED_MAP)) {
+                if (!drawMapIfPossible(context, displayStack)) {
+                    context.item(displayStack, 0, 0);
+                }
+            } else {
                 context.item(displayStack, 0, 0);
             }
-        } else if (previewBooks.get() && displayStack.is(Items.WRITTEN_BOOK)) {
-            // book initials draw inlined into the if-else chain
+        } finally {
+            isRenderingPreview = false;
+        }
+
+        // Book initials drawn after the item/map render, still inside the scaled block
+        if (previewBooks.get() && displayStack.is(Items.WRITTEN_BOOK)) {
             WrittenBookContent book = displayStack.get(DataComponents.WRITTEN_BOOK_CONTENT);
-            if (book != null) drawBookInitials(context, book);
-        } else {
-            context.item(displayStack, 0, 0);
+            if (book != null) drawBookInitials(context, book, 16, 0.6f);
         }
 
         matrices.popMatrix();

@@ -1,5 +1,5 @@
 package com.AutoBookshelf.addon.modules;
-
+//26.1.2 mojmap
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.events.ScreenRenderEvent;
 import com.AutoBookshelf.addon.utils.ShulkerInfo;
@@ -9,12 +9,14 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.util.Mth;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import org.joml.Vector2f;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.*;
 
@@ -34,6 +36,20 @@ public class InventoryInfo extends Module {
     public final Setting<Boolean> combineShulkers = sgGeneral.add(new BoolSetting.Builder()
         .name("combine-shulkers")
         .description("Merge all shulker contents into a single combined grid (more compact).")
+        .defaultValue(false)
+        .build()
+    );
+
+    public final Setting<Boolean> searchBar = sgGeneral.add(new BoolSetting.Builder()
+        .name("search-bar")
+        .description("Show a search bar above the panel to filter displayed items by name.")
+        .defaultValue(false)
+        .build()
+    );
+
+    public final Setting<Boolean> inventoryOnly = sgGeneral.add(new BoolSetting.Builder()
+        .name("inventory-only")
+        .description("Only show the panel while your own inventory screen is open.")
         .defaultValue(false)
         .build()
     );
@@ -89,18 +105,29 @@ public class InventoryInfo extends Module {
     private int height, offset;
     private Vector2f clicked;
 
+    // search bar
+    private final StringBuilder searchQuery = new StringBuilder();
+    private boolean searchFocused = false;
+
     private record DisplayEntry(ItemStack stack, int slot) {
     }
 
     public InventoryInfo() {
         super(Addon.CATEGORY, "inventory-info", "prigozhinplugg");
     }
+    //TODO
+    // Make proper component display.
+    // Add profile target, litematica Material list feature.
+    // Whisper/info panel.
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (!(mc.screen instanceof AbstractContainerScreen<?> screen)
-            || mc.player.tickCount % 4 != 0) return;
-        refresh(screen);
+        if (!(mc.screen instanceof AbstractContainerScreen<?>) || mc.player.tickCount % 4 != 0) return;
+        if (inventoryOnly.get() && !(mc.screen instanceof InventoryScreen)) {
+            info.clear();
+            return;
+        }
+        refresh((AbstractContainerScreen<?>) mc.screen);
     }
 
     @EventHandler
@@ -119,6 +146,8 @@ public class InventoryInfo extends Module {
         int baseX = 2 + panelXOffset.get();
         int baseY = 3 + offset + panelYOffset.get();
 
+        if (searchBar.get()) baseY = renderSearchBar(event, baseX, baseY);
+
         if (combineShulkers.get()) {
             renderCombinedGrid(event, baseX, baseY);
         } else {
@@ -136,43 +165,43 @@ public class InventoryInfo extends Module {
         float scale = (isCompact ? slotSize / 16.0f : 1.0f) * iconScale.get().floatValue();
 
         for (ShulkerInfo shulkerInfo : info) {
-            int count = 0, x = baseX, startY = y;
-            int maxX;
-
-            // Count non-empty stacks to know grid dimensions before drawing
-            int nonEmpty = 0;
-            for (ItemStack s : shulkerInfo.stacks()) {
-                if (!s.isEmpty()) nonEmpty++;
-                else if (shulkerInfo.type() == Type.COMPACT) break;
-            }
-            if (nonEmpty == 0) continue;
-
-            int rows = (nonEmpty + columns - 1) / columns;
-            int bottomY = y + rows * slotSize;
-
-            int lastRowCount = nonEmpty % columns;
-            if (lastRowCount == 0) lastRowCount = columns;
-            maxX = baseX + lastRowCount * slotSize;
-            if (rows > 1) maxX = Math.max(maxX, baseX + columns * slotSize);
-
-            // Background drawn before items so icons render on top
-            event.graphics.fill(baseX, startY, maxX, bottomY, COLOR_BACKGROUND);
-            event.graphics.fill(baseX, startY - 1, maxX, startY, shulkerInfo.color());
-
+            List<ItemStack> visible = new ArrayList<>();
             for (ItemStack stack : shulkerInfo.stacks()) {
                 if (shulkerInfo.type() == Type.COMPACT && stack.isEmpty()) break;
+                if (!matchesSearch(stack)) continue;
+                visible.add(stack);
+            }
+
+            if (visible.isEmpty()) {
+                continue; // just skip, don't touch clicked state
+            }
+
+            int startY = y;
+            int rows = (visible.size() + columns - 1) / columns;
+            int cols = Math.min(visible.size(), columns);
+            int maxX = baseX + (rows > 1 ? columns : cols) * slotSize;
+            int endY = startY + rows * slotSize;
+
+            // Background drawn before items so icons render on top
+            event.graphics.fill(baseX, startY, maxX, endY, COLOR_BACKGROUND);
+            event.graphics.fill(baseX, startY - 1, maxX, startY, shulkerInfo.color());
+
+            int count = 0, x = baseX;
+            int drawY = startY;
+            for (ItemStack stack : visible) {
                 if (count > 0 && count % columns == 0) {
                     x = baseX;
-                    y += slotSize;
+                    drawY += slotSize;
                 }
-                drawScaledItem(event, stack, x, y, slotSize, scale);
+                drawScaledItem(event, stack, x, drawY, slotSize, scale);
                 x += slotSize;
                 count++;
             }
+            y = endY;
 
             if (clicked != null
                 && clicked.x >= baseX && clicked.x <= maxX
-                && clicked.y >= startY && clicked.y <= bottomY) {
+                && clicked.y >= startY && clicked.y <= y) {
                 mc.gameMode.handleContainerInput(
                     mc.player.containerMenu.containerId,
                     shulkerInfo.slot(),
@@ -183,11 +212,11 @@ public class InventoryInfo extends Module {
                 setClicked(null);
             }
 
-            y = bottomY + 2;
+            y += 2;
         }
 
         height = y - offset;
-        setClicked(null);
+        setClicked(null); // consume any unmatched click once, after checking every shulker
     }
 
     private void renderCombinedGrid(ScreenRenderEvent event, int baseX, int baseY) {
@@ -210,9 +239,11 @@ public class InventoryInfo extends Module {
             Item item = e.getKey();
             int total = e.getValue();
             int slot = itemToSlot.get(item);
-            ItemStack displayStack = itemToStack.get(item).copy();
-            displayStack.setCount(total);
-            entries.add(new DisplayEntry(displayStack, slot));
+            ItemStack template = itemToStack.get(item);
+            ItemStack display = template.copy();
+            display.setCount(total);
+            if (!matchesSearch(display)) continue; // search filter
+            entries.add(new DisplayEntry(display, slot));
         }
         entries.sort(Comparator
             .comparingInt((DisplayEntry e) -> -e.stack().getCount())
@@ -224,13 +255,16 @@ public class InventoryInfo extends Module {
         float scale = (isCompact ? slotSize / 16.0f : 1.0f) * iconScale.get().floatValue();
 
         int startY = baseY;
-        int totalRows = (entries.size() + columns - 1) / columns;
-        int totalHeight = totalRows * slotSize;
-        int maxX = baseX + columns * slotSize;
+        int rows = entries.isEmpty() ? 0 : (entries.size() + columns - 1) / columns;
+        int cols = Math.min(entries.size(), columns);
+        int maxX = baseX + (rows > 1 ? columns : cols) * slotSize;
+        int y = baseY + rows * slotSize;
 
         // Background drawn before items so icons render on top
-        event.graphics.fill(baseX, startY, maxX, startY + totalHeight, COLOR_BACKGROUND);
-        event.graphics.fill(baseX, startY - 1, maxX, startY, COLOR_SEPARATOR);
+        if (!entries.isEmpty()) {
+            event.graphics.fill(baseX, startY, maxX, y, COLOR_BACKGROUND);
+            event.graphics.fill(baseX, startY - 1, maxX, startY, COLOR_SEPARATOR);
+        }
 
         for (int i = 0; i < entries.size(); i++) {
             int col = i % columns;
@@ -255,8 +289,47 @@ public class InventoryInfo extends Module {
             }
         }
 
-        height = (baseY + totalHeight) - offset;
+        height = y - offset;
         setClicked(null);
+    }
+
+    private int renderSearchBar(ScreenRenderEvent event, int baseX, int baseY) {
+        boolean isCompact = compact.get();
+        int slotSize = isCompact ? compactSlotSize.get() : 20;
+        int columns = isCompact ? compactColumns.get() : 9;
+        int barWidth = columns * slotSize;
+        int barHeight = 12;
+
+        if (clicked != null && clicked.x >= baseX && clicked.x <= baseX + barWidth
+            && clicked.y >= baseY && clicked.y <= baseY + barHeight) {
+            searchFocused = true;
+            setClicked(null);
+        } else if (clicked != null) {
+            searchFocused = false;
+        }
+
+        var graphics = event.graphics;
+        int borderColor = searchFocused ? 0xFFFFFFFF : COLOR_SEPARATOR;
+
+        // Background
+        graphics.fill(baseX, baseY, baseX + barWidth, baseY + barHeight, COLOR_BACKGROUND);
+
+        // Border (manual)
+        graphics.fill(baseX, baseY, baseX + barWidth, baseY + 1, borderColor);                     // top
+        graphics.fill(baseX, baseY + barHeight - 1, baseX + barWidth, baseY + barHeight, borderColor); // bottom
+        graphics.fill(baseX, baseY, baseX + 1, baseY + barHeight, borderColor);                     // left
+        graphics.fill(baseX + barWidth - 1, baseY, baseX + barWidth, baseY + barHeight, borderColor); // right
+
+        String text = !searchQuery.isEmpty() ? searchQuery.toString() : "Search...";
+        graphics.text(mc.font, text, baseX + 3, baseY + 2,
+            !searchQuery.isEmpty() ? 0xFFFFFFFF : 0x80FFFFFF, false);
+
+        return baseY + barHeight + 2;
+    }
+
+    private boolean matchesSearch(ItemStack stack) {
+        if (!searchBar.get() || searchQuery.isEmpty()) return true;
+        return stack.getHoverName().getString().toLowerCase().contains(searchQuery.toString().toLowerCase());
     }
 
     private void drawScaledItem(ScreenRenderEvent event, ItemStack stack,
@@ -320,5 +393,19 @@ public class InventoryInfo extends Module {
 
     public void setClicked(Vector2f clicked) {
         this.clicked = clicked;
+    }
+
+    public void onSearchCharTyped(char chr) {
+        if (!searchFocused) return;
+        if (chr >= 32 && searchQuery.length() < 32) searchQuery.append(chr);
+    }
+
+    public void onSearchKeyPressed(int keyCode) {
+        if (!searchFocused) return;
+        if (keyCode == GLFW.GLFW_KEY_BACKSPACE && !searchQuery.isEmpty()) {
+            searchQuery.deleteCharAt(searchQuery.length() - 1);
+        } else if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+            searchFocused = false;
+        }
     }
 }
