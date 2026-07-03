@@ -67,7 +67,6 @@ Tested successfully with these mods, but other might work as well.
 - **Minecart-Placer** - Places any minecarts on any rails in range
 - **Map-Grid** - Highlights map grid boundaries around the player
 - **Mapart-Namer** - Auto‑names maps based on inventory slot layout
-- **Mats-Refill** - Automatically restocks materials from shulker boxes
 - **Mob-Owner** - Shows entity owner by saving into cache
 - **Mats-Refill** - Automatically restocks materials from shulker boxes
 - **PacketEat** - Allows you to eat without interrupting other actions
