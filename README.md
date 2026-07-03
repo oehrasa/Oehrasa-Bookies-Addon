@@ -35,9 +35,9 @@ Tested successfully with these versions, but other might work as well.
 
 ## Features
 
-**37 modules**, **5 commands**, **7 HUD elements**, and **5 mixin**
+**38 modules**, **5 commands**, **7 HUD elements**, and **5 mixin**
 
-## Modules (37 total)
+## Modules (38 total)
 <details>
 <summary><b>Modules</b> (Bookies modules)</summary>
 
@@ -63,6 +63,7 @@ Tested successfully with these versions, but other might work as well.
 - **Homes-List** - Manage and teleport to your server homes with a GUI
 - **Item-Despawn** - Highlights items that are about to despawn
 - **Inventory-Info** - SHoiGu!! GEraShimov!!!
+- **KMDB** - Builds Wither, Iron Golem, Snow Golem, or Copper Golem automatically
 - **Minecart-Placer** - Places any minecarts on any rails in range
 - **Map-Grid** - Highlights map grid boundaries around the player
 - **Mapart-Namer** - Auto‑names maps based on inventory slot layout
