@@ -15,19 +15,22 @@ import net.minecraft.block.entity.BeaconBlockEntity;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.block.entity.ConduitBlockEntity;
 import net.minecraft.client.world.ClientWorld;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.mob.CreakingEntity;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.ChunkSection;
 
-import java.util.ArrayList;
-import java.util.HashSet;
+import java.awt.*;
+import java.util.*;
 import java.util.List;
-import java.util.Set;
 
 public class BlockRadius extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRender = settings.createGroup("Render");
+    private final SettingGroup sgCreaking = settings.createGroup("Creaking");
 
     private final Setting<Boolean> showBeacons = sgGeneral.add(new BoolSetting.Builder()
         .name("show-beacons")
@@ -170,7 +173,63 @@ public class BlockRadius extends Module {
         .build()
     );
 
+    private final Setting<Boolean> showCreakings = sgCreaking.add(new BoolSetting.Builder()
+        .name("show-creakings")
+        .description("Highlights linked creakings and their creaking heart in matching per-mob colors.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> showCreakingConnection = sgCreaking.add(new BoolSetting.Builder()
+        .name("show-creaking-connection")
+        .description("Draws a line from each creaking to its linked heart block.")
+        .defaultValue(true)
+        .visible(showCreakings::get)
+        .build()
+    );
+
+    private final Setting<Integer> creakingAlpha = sgCreaking.add(new IntSetting.Builder()
+        .name("creaking-alpha")
+        .description("Side fill alpha for creaking/heart ESP boxes.")
+        .defaultValue(60)
+        .range(0, 255)
+        .visible(showCreakings::get)
+        .build()
+    );
+
+    private final Setting<Double> creakingSaturation = sgCreaking.add(new DoubleSetting.Builder()
+        .name("creaking-color-saturation")
+        .description("Saturation of the auto-generated per-creaking colors.")
+        .defaultValue(0.85)
+        .range(0, 1)
+        .visible(showCreakings::get)
+        .build()
+    );
+
+    private final Setting<Double> creakingBrightness = sgCreaking.add(new DoubleSetting.Builder()
+        .name("creaking-color-brightness")
+        .description("Brightness of the auto-generated per-creaking colors.")
+        .defaultValue(1.0)
+        .range(0, 1)
+        .visible(showCreakings::get)
+        .build()
+    );
+
     private static final int[][] FRAME_OFFSETS = buildFrameOffsets();
+    private static final Set<Block> LIGHTNING_ROD_VARIANTS = Set.of(
+        Blocks.LIGHTNING_ROD,
+        Blocks.EXPOSED_LIGHTNING_ROD,
+        Blocks.WEATHERED_LIGHTNING_ROD,
+        Blocks.OXIDIZED_LIGHTNING_ROD,
+        Blocks.WAXED_LIGHTNING_ROD,
+        Blocks.WAXED_EXPOSED_LIGHTNING_ROD,
+        Blocks.WAXED_WEATHERED_LIGHTNING_ROD,
+        Blocks.WAXED_OXIDIZED_LIGHTNING_ROD
+    );
+
+    // Hue step between successive creaking colours; the golden angle maximizes hue
+    // separation for any number of mobs without needing a fixed palette.
+    private static final double GOLDEN_ANGLE = 137.50776;
 
     /**
      * An axis-aligned bounding box used for all flat footprints and beacon cubes.
@@ -219,9 +278,32 @@ public class BlockRadius extends Module {
         }
     }
 
+    private static class CreakingLink {
+        final CreakingEntity entity;
+        final RangeBox heartBox; // heart position never moves, so this is built exactly once
+        final Vec3d heartCenter; // cached from heartBox,
+        final SettingColor sideColor;
+        final SettingColor lineColor;
+
+        CreakingLink(CreakingEntity entity, BlockPos heartPos, SettingColor sideColor, SettingColor lineColor) {
+            this.entity = entity;
+            this.heartBox = new RangeBox(
+                heartPos.getX(), heartPos.getY(), heartPos.getZ(),
+                heartPos.getX() + 1.0, heartPos.getY() + 1.0, heartPos.getZ() + 1.0
+            );
+            this.heartCenter = new Vec3d(
+                heartPos.getX() + 0.5, heartPos.getY() + 0.5, heartPos.getZ() + 0.5
+            );
+            this.sideColor = sideColor;
+            this.lineColor = lineColor;
+        }
+    }
+
     private final List<RangeBox> beaconBoxes = new ArrayList<>();
     private final List<RangeBox> lightningRodBoxes = new ArrayList<>();
     private final List<ConduitData> conduitDatas = new ArrayList<>();
+    private final Map<Integer, CreakingLink> creakingLinks = new HashMap<>();
+    private int creakingColorCounter = 0;
 
     /**
      * Reused mutable pos to avoid allocating a new BlockPos for every block checked.
@@ -232,7 +314,7 @@ public class BlockRadius extends Module {
 
     public BlockRadius() {
         super(Addon.CATEGORY, "Block-Radius",
-            "Renders the range of powered beacons, lightning rods, and active conduits.");
+            "Renders the range of powered beacons, lightning rods, active conduits, and linked creakings.");
     }
 
     @Override
@@ -246,6 +328,8 @@ public class BlockRadius extends Module {
         beaconBoxes.clear();
         lightningRodBoxes.clear();
         conduitDatas.clear();
+        creakingLinks.clear();
+        creakingColorCounter = 0;
     }
 
     @EventHandler
@@ -257,6 +341,7 @@ public class BlockRadius extends Module {
         scanBeacons();
         scanLightningRods();
         scanConduits();
+        scanCreakings();
     }
 
     private void scanBeacons() {
@@ -354,7 +439,7 @@ public class BlockRadius extends Module {
                     for (int lx = 0; lx < 16; lx++) {
                         for (int lz = 0; lz < 16; lz++) {
                             for (int ly = 0; ly < 16; ly++) {
-                                if (section.getBlockState(lx, ly, lz).getBlock() != Blocks.LIGHTNING_ROD)
+                                if (!LIGHTNING_ROD_VARIANTS.contains(section.getBlockState(lx, ly, lz).getBlock()))
                                     continue;
 
                                 int worldX = (chunkX << 4) + lx;
@@ -475,6 +560,40 @@ public class BlockRadius extends Module {
             b == Blocks.SEA_LANTERN;
     }
 
+    private void scanCreakings() {
+        if (!showCreakings.get()) {
+            creakingLinks.clear();
+            return;
+        }
+
+        Set<Integer> seen = new HashSet<>();
+
+        for (Entity entity : mc.world.getEntities()) {
+            if (!(entity instanceof CreakingEntity creaking)) continue;
+
+            BlockPos heartPos = creaking.getHomePos();
+            if (heartPos == null) continue;
+
+            seen.add(entity.getId());
+
+            // computeIfAbsent: colour + heart box are built exactly once per creaking,
+            // never rebuilt while it's alive.
+            creakingLinks.computeIfAbsent(entity.getId(), id -> {
+                float hue = (float) ((creakingColorCounter++ * GOLDEN_ANGLE) % 360.0) / 360f;
+                int rgb = Color.HSBtoRGB(hue, creakingSaturation.get().floatValue(), creakingBrightness.get().floatValue());
+                Color c = new Color(rgb);
+                return new CreakingLink(
+                    creaking, heartPos,
+                    new SettingColor(c.getRed(), c.getGreen(), c.getBlue(), creakingAlpha.get()),
+                    new SettingColor(c.getRed(), c.getGreen(), c.getBlue(), 255)
+                );
+            });
+        }
+
+        // O(tracked creakings) clean-up, not a full rebuild.
+        creakingLinks.keySet().removeIf(id -> !seen.contains(id));
+    }
+
     @EventHandler
     private void onRender(Render3DEvent event) {
         if (mc.player == null || mc.world == null) return;
@@ -525,6 +644,38 @@ public class BlockRadius extends Module {
                             mb.maxX, mb.maxY, mb.maxZ,
                             conduitMobSideColor.get(), conduitMobLineColor.get());
                     }
+                }
+            }
+        }
+
+        if (showCreakings.get()) {
+            for (CreakingLink link : creakingLinks.values()) {
+                if (link.entity.isRemoved()) continue;
+
+                Box box = link.entity.getBoundingBox();
+                boolean entityVisible = cam.squaredDistanceTo(box.getCenter()) <= maxDistSq;
+                boolean heartVisible = link.heartBox.distanceSq(cam) <= maxDistSq;
+
+                if (entityVisible) {
+                    renderBox(event.renderer,
+                        box.minX, box.minY, box.minZ,
+                        box.maxX, box.maxY, box.maxZ,
+                        link.sideColor, link.lineColor);
+                }
+
+                if (heartVisible) {
+                    renderBox(event.renderer,
+                        link.heartBox.minX, link.heartBox.minY, link.heartBox.minZ,
+                        link.heartBox.maxX, link.heartBox.maxY, link.heartBox.maxZ,
+                        link.sideColor, link.lineColor);
+                }
+
+                if (showCreakingConnection.get() && (entityVisible || heartVisible)) {
+                    Vec3d entityCenter = box.getCenter();
+                    event.renderer.line(
+                        entityCenter.x, entityCenter.y, entityCenter.z,
+                        link.heartCenter.x, link.heartCenter.y, link.heartCenter.z,
+                        link.lineColor);
                 }
             }
         }

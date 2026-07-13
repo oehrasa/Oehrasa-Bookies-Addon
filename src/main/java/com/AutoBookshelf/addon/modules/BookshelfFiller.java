@@ -1,17 +1,17 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.AreaSelector;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.Rotations;
-import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
@@ -27,7 +27,6 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 
@@ -46,12 +45,7 @@ public class BookshelfFiller extends Module {
     private int lastSlot = -1;
     private boolean isFilling = false;
 
-    private BlockPos pos1 = null;
-    private BlockPos pos2 = null;
-    private boolean selecting = true;
     private boolean allFull = false;
-
-    private boolean wandModeActive = false;
     private boolean pendingReset = false;
 
     private int currentRow = 0;
@@ -148,19 +142,7 @@ public class BookshelfFiller extends Module {
         .build()
     );
 
-    private final Setting<Item> selectionToolSetting = sgSelection.add(new ItemSetting.Builder()
-        .name("selection-tool")
-        .description("Which item to use for making selections.")
-        .defaultValue(Items.NETHERITE_AXE)
-        .build()
-    );
-
-    private final Setting<Boolean> requireToolInHand = sgSelection.add(new BoolSetting.Builder()
-        .name("require-tool-in-hand")
-        .description("Require the selection tool to be held in hand to make selections.")
-        .defaultValue(true)
-        .build()
-    );
+    private final AreaSelector areaSelector = new AreaSelector(sgSelection, sgRender, Items.NETHERITE_AXE);
 
     private final Setting<Item> counterTool = sgCounter.add(new ItemSetting.Builder()
         .name("counter-tool")
@@ -373,41 +355,6 @@ public class BookshelfFiller extends Module {
         .build()
     );
 
-    private final Setting<Boolean> render = sgRender.add(new BoolSetting.Builder()
-        .name("render")
-        .description("Renders the selection area.")
-        .defaultValue(true)
-        .build()
-    );
-
-    private final Setting<SettingColor> sideColor = sgRender.add(new ColorSetting.Builder()
-        .name("side-color")
-        .description("The side color of the selection box.")
-        .defaultValue(new SettingColor(0, 255, 255, 30))
-        .build()
-    );
-
-    private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
-        .name("line-color")
-        .description("The line color of the selection box.")
-        .defaultValue(new SettingColor(0, 255, 255, 255))
-        .build()
-    );
-
-    private final Setting<SettingColor> pos1Color = sgRender.add(new ColorSetting.Builder()
-        .name("pos1-color")
-        .description("The color of the first position marker.")
-        .defaultValue(new SettingColor(0, 255, 0, 255))
-        .build()
-    );
-
-    private final Setting<SettingColor> pos2Color = sgRender.add(new ColorSetting.Builder()
-        .name("pos2-color")
-        .description("The color of the second position marker.")
-        .defaultValue(new SettingColor(255, 0, 0, 255))
-        .build()
-    );
-
     private enum ExtractMode {
         ALL("All Books"),
         LIMITED("Limited Amount.");
@@ -455,9 +402,7 @@ public class BookshelfFiller extends Module {
         originalSlot = -1;
         extractionRetryCount = 0;
 
-        pos1 = null;
-        pos2 = null;
-        selecting = true;
+        areaSelector.reset();
         targetPos = null;
 
         allFull = false;
@@ -720,27 +665,22 @@ public class BookshelfFiller extends Module {
             return;
         }
 
-        if (selectionToolSetting.get() != null && !hand.isEmpty() && hand.getItem() == selectionToolSetting.get()) {
-            if (selecting) {
-                if (pos1 == null) {
-                    pos1 = pos;
-                    info("§aPos1 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
-                } else if (pos2 == null) {
-                    pos2 = pos;
-                    selecting = false;
-                    wandModeActive = false;
+        // Selection tool handling with respect to require-tool-in-hand setting
+        if (!areaSelector.requiresToolInHand() || areaSelector.isToolStack(hand)) {
+            AreaSelector.Result result = areaSelector.handleClick(pos);
+            switch (result) {
+                case POS1_SET -> info("§aPos1 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
+                case COMPLETE -> {
                     info("§aPos2 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
                     info("§aSelection complete! now filling.");
                     initializeGrid();
                 }
-                event.cancel();
-                return;
-            } else {
-                fullReset();
-                info("§eSelection reset.");
-                event.cancel();
-                return;
+                case RESET -> {
+                    fullReset();
+                    info("§eSelection reset.");
+                }
             }
+            event.cancel();
         }
     }
 
@@ -1107,14 +1047,11 @@ public class BookshelfFiller extends Module {
             return;
         }
 
-        if (selecting && selectionToolSetting.get() != null && requireToolInHand.get()) {
-            ItemStack mainHand = mc.player.getMainHandStack();
-            Item expectedTool = selectionToolSetting.get();
-            boolean hasTool = !mainHand.isEmpty() && mainHand.getItem() == expectedTool;
-            wandModeActive = hasTool;
+        if (areaSelector.isSelecting()) {
+            areaSelector.updateWandState(mc.player.getMainHandStack());
         }
 
-        if (selecting || pos1 == null || pos2 == null) return;
+        if (areaSelector.isSelecting() || !areaSelector.hasCompleteSelection()) return;
         if (allFull) {
             if (isFilling) {
                 isFilling = false;
@@ -1420,16 +1357,9 @@ public class BookshelfFiller extends Module {
         List<BlockPos> all = getSelectedBlocks();
         if (all.isEmpty()) return Collections.emptyList();
 
-        int minX = Math.min(pos1.getX(), pos2.getX());
-        int maxX = Math.max(pos1.getX(), pos2.getX());
-        int minY = Math.min(pos1.getY(), pos2.getY());
-        int maxY = Math.max(pos1.getY(), pos2.getY());
-        int minZ = Math.min(pos1.getZ(), pos2.getZ());
-        int maxZ = Math.max(pos1.getZ(), pos2.getZ());
-
-        boolean increasingX = pos2.getX() >= pos1.getX();
-        boolean increasingZ = pos2.getZ() >= pos1.getZ();
-        boolean increasingY = pos2.getY() >= pos1.getY();
+        boolean increasingX = areaSelector.isXIncreasing();
+        boolean increasingZ = areaSelector.isZIncreasing();
+        boolean increasingY = areaSelector.isYIncreasing();
 
         all.sort((a, b) -> {
             if (increasingY) {
@@ -1448,8 +1378,8 @@ public class BookshelfFiller extends Module {
 
         for (List<BlockPos> row : yLevels.values()) {
             row.sort((a, b) -> {
-                int xRange = Math.abs(pos2.getX() - pos1.getX());
-                int zRange = Math.abs(pos2.getZ() - pos1.getZ());
+                int xRange = Math.abs(areaSelector.getPos2().getX() - areaSelector.getPos1().getX());
+                int zRange = Math.abs(areaSelector.getPos2().getZ() - areaSelector.getPos1().getZ());
 
                 if (xRange >= zRange) {
                     if (increasingX) {
@@ -1496,55 +1426,15 @@ public class BookshelfFiller extends Module {
     }
 
     private List<BlockPos> getSelectedBlocks() {
-        List<BlockPos> list = new ArrayList<>();
-
-        int minX = Math.min(pos1.getX(), pos2.getX());
-        int maxX = Math.max(pos1.getX(), pos2.getX());
-        int minY = Math.min(pos1.getY(), pos2.getY());
-        int maxY = Math.max(pos1.getY(), pos2.getY());
-        int minZ = Math.min(pos1.getZ(), pos2.getZ());
-        int maxZ = Math.max(pos1.getZ(), pos2.getZ());
-
-        for (int y = minY; y <= maxY; y++) {
-            for (int x = minX; x <= maxX; x++) {
-                for (int z = minZ; z <= maxZ; z++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    if (mc.world.getBlockState(pos).getBlock() == Blocks.CHISELED_BOOKSHELF) {
-                        list.add(pos);
-                    }
-                }
-            }
-        }
-
-        return list;
+        return areaSelector.getMatchingBlocks(pos -> mc.world.getBlockState(pos).getBlock() == Blocks.CHISELED_BOOKSHELF);
     }
 
     @EventHandler
     private void onRender(Render3DEvent event) {
-        if (!render.get()) return;
-
-        if (pos1 != null) {
-            event.renderer.box(pos1, pos1Color.get(), pos1Color.get(), ShapeMode.Both, 0);
-        }
-
-        if (pos2 != null) {
-            event.renderer.box(pos2, pos2Color.get(), pos2Color.get(), ShapeMode.Both, 0);
-        }
-
-        if (pos1 != null && pos2 != null) {
-            int minX = Math.min(pos1.getX(), pos2.getX());
-            int minY = Math.min(pos1.getY(), pos2.getY());
-            int minZ = Math.min(pos1.getZ(), pos2.getZ());
-            int maxX = Math.max(pos1.getX(), pos2.getX());
-            int maxY = Math.max(pos1.getY(), pos2.getY());
-            int maxZ = Math.max(pos1.getZ(), pos2.getZ());
-
-            event.renderer.box(new Box(minX, minY, minZ, maxX + 1, maxY + 1, maxZ + 1),
-                sideColor.get(), lineColor.get(), ShapeMode.Both, 0);
-        }
+        areaSelector.render(event);
 
         if (targetPos != null) {
-            event.renderer.box(targetPos, sideColor.get(), lineColor.get(), ShapeMode.Both, 0);
+            event.renderer.box(targetPos, areaSelector.getSideColor(), areaSelector.getLineColor(), ShapeMode.Both, 0);
         }
     }
 
@@ -1585,12 +1475,12 @@ public class BookshelfFiller extends Module {
     }
 
     public void setPos1(BlockPos pos) {
-        pos1 = pos;
+        areaSelector.setPos1(pos);
         info("§aPos1 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
     }
 
     public void setPos2(BlockPos pos) {
-        pos2 = pos;
+        areaSelector.setPos2(pos);
         info("§aPos2 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
     }
 
@@ -1598,14 +1488,14 @@ public class BookshelfFiller extends Module {
     public void onActivate() {
         fullReset();
         loadCache();
-        String toolName = selectionToolSetting.get().getName().getString();
+        String toolName = areaSelector.getSelectionToolItem().getName().getString();
         String extractToolName = extractTool.get().getName().getString();
         String counterToolName = counterTool.get().getName().getString();
         info("§aBookshelf Filler is activated.");
         info("§7- §f" + toolName + " §7= select area & fill");
         info("§7- §f" + extractToolName + " §7= extract books from a bookshelf");
         info("§7- §f" + counterToolName + " §7= count books in selected area");
-        if (requireToolInHand.get()) {
+        if (areaSelector.requiresToolInHand()) {
             info("§7Hold the tool to use it");
         }
         if (enableFilter.get()) {

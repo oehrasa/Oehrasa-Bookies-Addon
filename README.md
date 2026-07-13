@@ -29,57 +29,61 @@ Tested successfully with these mods, but other might work as well.
 - client_maps-1.3.2.jar (Recommended for Mapart-Namer module)
 - map-in-slot-3.4.1.jar (Recommended for Mapart-Namer module)
 
-> client_maps is not compatible with ev-mod vice versa.
+> [!IMPORTANT]
 >
->AnarchyMod is not compatible with the addon.
+> AnarchyMod is not compatible with the addon.
+>
+> client_maps is not compatible with ev-mod vice versa.
 
 ## Features
 
-**39 modules**, **5 commands**, **7 HUD elements**, and **6 mixin**
+**40 modules**, **5 commands**, **7 HUD elements**, and **6 mixin**
 
-## Modules (39 total)
+## Modules (40 total)
 <details>
 <summary><b>Modules</b> (Bookies modules)</summary>
 
-- **AudiobookReader** - Reads books aloud using narrator feature
-- **Auto-Beacon** - Builds a 4‑beacon pyramid at a selected location
-- **Auto-Loader** - Right-click shulker boxes, ender chests, or bundles in your inventory to instantly use
-- **Auto-Login** - Automatically logs in your account via file Data
-- **Auto-Moss** - Automatically uses bone meal on specific blocks
-- **Auto-Pot** - Amrita
-- **Auto-Take-Off** - Automatically starts elytra flight when on ground, in lava, or falling
-- **Auto-Sex** - Tries to have sex with the player or mob in freaky ways
-- **B36-Peacemaker** - Created this to make peace. Named after Convair B-36 Peacemaker
-- **Block-Radius** - Renders the range of powered beacons, lightning rods, and active conduits
-- **BLU-27/B-Napalm** - I love the smell of Napalm in the morning, Commit some trolling against the Vietnamese
-- **Better-BoatFly** - Transforms your boat into a plane
-- **Bookshelf-Filler** - oeh Yuri romcom bookshelves restocker
-- **Book-Import** - Automatically imports text files into signed books
-- **Chest-Tracker** - Track items in containers
-- **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block
-- **Dried-Ghast** - Give these cute and tiny little creatures a second chances
-- **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
-- **Get-Preview** - Shows an item preview overlay on bundles, shulkers, and books
-- **Homes-List** - Manage and teleport to your server homes with a GUI
-- **Item-Despawn** - Highlights items that are about to despawn
-- **Inventory-Info** - SHoiGu!! GEraShimov!!!
-- **KMDB** - Builds a Wither, Iron Golem, or Snow Golem in front of you
-- **Minecart-Placer** - Places any minecarts on any rails in range
-- **Map-Grid** - Highlights map grid boundaries around the player
-- **Mapart-Namer** - Auto‑names maps based on inventory slot layout
-- **Mob-Owner** - Shows entity owner by saving into cache
-- **Mats-Refill** - Automatically restocks materials from shulker boxes
-- **PacketEat** - Allows you to eat without interrupting other actions
-- **Platform** - Build a platform at a given y-level once in range
-- **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
-- **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in 1.13+ chunks
-- **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
-- **Sculk-Range** - Shows the detection range of calibrated sculk sensors.
-- **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
-- **Tnt-Fuse-Esp** - Shows the fuse time of lit tnt
-- **Trajectory-Plus** - Smooth projectile prediction and tracking
-- **Tsundere-Furry** - Transforms outgoing chat messages into animal sounds, tsundere, or both :>
-- **Unwax-Aura** - Automatically removes wax from waxed copper blocks
+1. **AudiobookReader** - Reads books aloud using narrator feature
+2. **Auto-Beacon** - Builds a 4‑beacon pyramid at a selected location
+3. **Auto-Loader** - Right-click shulker boxes, ender chests, or bundles in your inventory to instantly use
+4. **Auto-Login** - Automatically logs in your account via file Data
+5. **Auto-Farm** - Welcome to the rice fields, Motherfucka
+6. **Auto-Moss** - Automatically uses bone meal on specific blocks
+7. **Arena-M** - Throws wind charges to intercept incoming projectiles mid-air
+8. **Auto-Pot** - Then, Shalltear. Sorry but I'll have you wait a bit before we engage
+9. **Auto-Take-Off** - Automatically starts elytra flight when on ground, in lava, or falling
+10. **Auto-Sex** - Tries to have sex with the player or mob in freaky ways
+11. **B36-Peacemaker** - Created this to make peace. Named after Convair B-36 Peacemaker
+12. **Block-Radius** - Renders the range of powered beacons, lightning rods, and active conduits
+13. **BLU-27/B-Napalm** - I love the smell of Napalm in the morning, Commit some trolling against the Vietnamese
+14. **Bookshelf-Filler** - oeh Yuri romcom bookshelves restocker
+15. **Book-Import** - Automatically imports text files into signed books
+16. **Chest-Tracker** - Track items in containers
+17. **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block
+18. **Dried-Ghast** - Give these cute and tiny little creatures a second chances
+19. **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
+20. **Get-Preview** - Shows an item preview overlay on bundles, shulkers, and books
+21. **Homes-List** - Manage and teleport to your server homes with a GUI
+22. **Item-Despawn** - Highlights items that are about to despawn
+23. **Inventory-Info** - SHoiGu!! GEraShimov!!!
+24. **KMDB** - Builds Wither, Iron Golem, Snow Golem, or Copper Golem automatically
+25. **Minecart-Placer** - Places any minecarts on any rails in range
+26. **Map-Grid** - Highlights map grid boundaries around the player
+27. **Mapart-Namer** - Auto‑names maps based on inventory slot layout
+28. **Mats-Refill** - Automatically restocks materials from shulker boxes
+29. **Mob-Owner** - Shows entity owner by saving into cache
+30. **PacketEat** - Allows you to eat without interrupting other actions
+31. **Platform** - Build a platform at a given y-level once in range
+32. **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
+33. **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in
+    1.13+ chunks
+34. **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
+35. **Sculk-Range** - Shows the detection range of calibrated sculk sensors.
+36. **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
+37. **Tnt-Fuse-Esp** - Shows the fuse time of lit tnt
+38. **Trajectory-Plus** - Smooth projectile prediction and tracking
+39. **Tsundere-Furry** - Transforms outgoing chat messages into animal sounds, tsundere, or both :>
+40. **Unwax-Aura** - Automatically removes wax from waxed copper blocks
 
 </details>
 
