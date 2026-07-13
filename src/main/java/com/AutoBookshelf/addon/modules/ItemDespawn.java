@@ -1,9 +1,7 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
-import meteordevelopment.meteorclient.events.entity.EntityRemovedEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
-import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
@@ -12,22 +10,25 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.ItemEntity;
-import net.minecraft.util.math.Box;
-
-import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 public class ItemDespawn extends Module {
+    private static final int VANILLA_LIFETIME = 6000;
+
+    // Sentinel age values set by ItemEntity#setUnlimitedLifetime() / #setExtendedLifetime().
+    // See ItemEntity.tick(): "if (this.age != -32768) this.age++;" and the discard check
+    // "this.age >= 6000". An age of -32768 means the item never increments and never
+    // despawns; extended-lifetime items start at -6000 (get an extra 6000 ticks).
+    private static final int UNLIMITED_LIFETIME_AGE = -32768;
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRender = settings.createGroup("Render");
 
-    private final Setting<Integer> despawnTime = sgGeneral.add(new IntSetting.Builder()
-        .name("despawn-time")
-        .description("Total despawn time in ticks (6000 ticks = 5 minutes).")
+    private final Setting<Integer> warnThreshold = sgGeneral.add(new IntSetting.Builder()
+        .name("warn-threshold")
+        .description("Ticks remaining before despawn at which to start highlighting (vanilla despawn is fixed at 6000 total ticks).")
         .defaultValue(6000)
         .min(100)
-        .max(36000)
+        .max(12000) // extended-lifetime items can have up to 12000 effective ticks
         .build()
     );
 
@@ -58,6 +59,14 @@ public class ItemDespawn extends Module {
         .build()
     );
 
+    private final Setting<Boolean> closestFirst = sgGeneral.add(new BoolSetting.Builder()
+        .name("closest-first")
+        .description("When max-render is exceeded, prioritize the closest items instead of an arbitrary order.")
+        .defaultValue(true)
+        .visible(() -> maxRender.get() > 0)
+        .build()
+    );
+
     private final Setting<ShapeMode> shapeMode = sgRender.add(new EnumSetting.Builder<ShapeMode>()
         .name("shape-mode")
         .description("How the items are rendered.")
@@ -84,7 +93,7 @@ public class ItemDespawn extends Module {
     );
 
     private final Setting<Integer> sideOpacity = sgRender.add(new IntSetting.Builder()
-        .name("side-opacity.")
+        .name("side-opacity")
         .description("Opacity of the box sides (0-255).")
         .defaultValue(75)
         .min(0)
@@ -93,115 +102,97 @@ public class ItemDespawn extends Module {
         .build()
     );
 
-    private static class TrackedItem {
-        int totalAge;   // estimated total age in ticks
-        long lastTickSeen;  // world time when last present
-    }
-
-    private final ConcurrentHashMap<UUID, TrackedItem> trackedItems = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<UUID, Integer> renderAges = new ConcurrentHashMap<>();
+    // Bounded max-heap keyed by squared distance (farthest at the top). Used to keep only
+    // the closest `max` candidates without sorting the full candidate set.
+    private java.util.PriorityQueue<ItemEntity> closestHeap;
 
     public ItemDespawn() {
         super(Addon.CATEGORY, "Item-Despawn", "Highlights items that are about to despawn.");
     }
 
     @Override
-    public void onActivate() {
-        trackedItems.clear();
-        renderAges.clear();
-    }
-
-    @Override
     public void onDeactivate() {
-        trackedItems.clear();
-        renderAges.clear();
-    }
-
-    @EventHandler
-    private void onTick(TickEvent.Post event) {
-        if (mc.world == null) return;
-
-        long currentTick = mc.world.getTime();
-
-        // Update ages for all visible items
-        for (Entity entity : mc.world.getEntities()) {
-            if (!(entity instanceof ItemEntity item)) continue;
-
-            UUID uuid = item.getUuid();
-            TrackedItem tracked = trackedItems.computeIfAbsent(uuid, k -> {
-                TrackedItem t = new TrackedItem();
-                t.totalAge = 0;
-                t.lastTickSeen = currentTick;
-                return t;
-            });
-
-            tracked.lastTickSeen = currentTick;
-
-            // Store the age for rendering
-            renderAges.put(uuid, tracked.totalAge);
-
-            // Increase for the next tick
-            tracked.totalAge++;
-        }
+        if (closestHeap != null) closestHeap.clear();
     }
 
     @EventHandler
     private void onRender(Render3DEvent event) {
         if (mc.world == null || mc.player == null) return;
 
-        int rendered = 0;
         int max = maxRender.get();
-        double rangeSq = renderRange.get() * renderRange.get();
+        double rangeSq = (double) renderRange.get() * renderRange.get();
+        int warn = warnThreshold.get();
 
-        for (Entity entity : mc.world.getEntities()) {
-            if (!(entity instanceof ItemEntity)) continue;
-            if (mc.player.squaredDistanceTo(entity) > rangeSq) continue;
+        boolean useHeap = max > 0 && closestFirst.get();
 
-            Integer age = renderAges.get(entity.getUuid());
-            if (age == null) continue;
+        if (useHeap) {
+            if (closestHeap == null) {
+                closestHeap = new java.util.PriorityQueue<>(max + 1,
+                    (a, b) -> Double.compare(mc.player.squaredDistanceTo(b), mc.player.squaredDistanceTo(a)));
+            } else {
+                closestHeap.clear();
+            }
 
-            int timeLeft = despawnTime.get() - age;
-            if (timeLeft <= 0) continue;
+            for (Entity entity : mc.world.getEntities()) {
+                if (!(entity instanceof ItemEntity item)) continue;
+                double distSq = mc.player.squaredDistanceTo(entity);
+                if (distSq > rangeSq) continue;
 
-            Color color = computeColorFromTime.get()
-                ? despawnColor(timeLeft, despawnTime.get())
+                int age = item.getItemAge();
+                if (age == UNLIMITED_LIFETIME_AGE) continue;
+
+                int timeLeft = VANILLA_LIFETIME - age;
+                if (timeLeft <= 0 || timeLeft > warn) continue;
+
+                closestHeap.offer(item);
+                if (closestHeap.size() > max) {
+                    closestHeap.poll(); // discard farthest
+                }
+            }
+
+            for (ItemEntity item : closestHeap) {
+                renderItem(event, item, warn);
+            }
+        } else {
+            // No bound, or arbitrary-order truncation requested: single pass, cheapest path.
+            int rendered = 0;
+
+            for (Entity entity : mc.world.getEntities()) {
+                if (!(entity instanceof ItemEntity item)) continue;
+                if (mc.player.squaredDistanceTo(entity) > rangeSq) continue;
+
+                int age = item.getItemAge();
+                if (age == UNLIMITED_LIFETIME_AGE) continue;
+
+                int timeLeft = VANILLA_LIFETIME - age;
+                if (timeLeft <= 0 || timeLeft > warn) continue;
+
+                renderItem(event, item, warn);
+
+                if (max > 0 && ++rendered >= max) break;
+            }
+        }
+    }
+
+    private void renderItem(Render3DEvent event, ItemEntity item, int warn) {
+        int timeLeft = VANILLA_LIFETIME - item.getItemAge();
+
+        Color color = computeColorFromTime.get()
+            ? despawnColor(timeLeft, warn)
                 : customColor.get();
 
-            Color sideColor = new Color(color.r, color.g, color.b, sideOpacity.get());
-            Color lineColor = new Color(color.r, color.g, color.b, lineOpacity.get());
+        Color sideColor = new Color(color.r, color.g, color.b, sideOpacity.get());
+        Color lineColor = new Color(color.r, color.g, color.b, lineOpacity.get());
 
-            Box box = entity.getBoundingBox();
-            event.renderer.box(box, sideColor, lineColor, shapeMode.get(), 0);
-
-            rendered++;
-            if (max > 0 && rendered >= max) break;
-        }
+        event.renderer.box(item.getBoundingBox(), sideColor, lineColor, shapeMode.get(), 0);
     }
 
-    @EventHandler
-    private void onEntityRemoved(EntityRemovedEvent event) {
-        if (!(event.entity instanceof ItemEntity item)) return;
-
-        UUID uuid = item.getUuid();
-        // Only remove tracking when the item is truly destroyed
-        if (item.getRemovalReason() != Entity.RemovalReason.UNLOADED_TO_CHUNK) {
-            trackedItems.remove(uuid);
-            renderAges.remove(uuid);
-        }
-        // If unloaded, leave the tracked item in the map so age persists
-    }
-
-    private Color despawnColor(int timeLeft, int totalTime) {
-        double percent = (double) timeLeft / totalTime;
+    private Color despawnColor(int timeLeft, int warnWindow) {
+        double percent = (double) timeLeft / warnWindow;
         percent = Math.clamp(percent, 0.0, 1.0);
 
         int r = (int) (255 * (1.0 - percent));
         int g = (int) (255 * percent);
         return new Color(r, g, 0);
-    }
-
-    // Tracked UUIDs for external use
-    public Set<UUID> getTrackedIds() {
-        return trackedItems.keySet();
     }
 }

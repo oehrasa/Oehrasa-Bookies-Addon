@@ -1,6 +1,8 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.PlacementEngine;
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import meteordevelopment.meteorclient.events.meteor.MouseButtonEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.mixin.HandledScreenAccessor;
@@ -16,22 +18,21 @@ import net.minecraft.block.EnderChestBlock;
 import net.minecraft.block.ShulkerBoxBlock;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.item.*;
-import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
+import net.minecraft.network.packet.c2s.play.ClickSlotC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
 import net.minecraft.registry.tag.ItemTags;
 import net.minecraft.screen.slot.Slot;
+import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 
 public class AutoLoader extends Module {
@@ -48,6 +49,11 @@ public class AutoLoader extends Module {
         BREAK,
         BREAK_SECOND_ECHEST
     }
+
+    /**
+     * Shared placement search logic, also used by MaterialsRefill.
+     */
+    private final PlacementEngine placementEngine = new PlacementEngine(mc);
 
     // Mutable state
     private Stage stage = Stage.IDLE;
@@ -87,14 +93,13 @@ public class AutoLoader extends Module {
     private int breakAttempts = 0;
     private int secondPlaceAttempts = 0;
     private int preActionSlot = -1;
-    private boolean sneaking = false;
 
     private int freeingHotbarSlot = -1;
     private int freeSlotWaitTicks = 0;
 
     /**
      * Positions where placement was attempted but never materialized
-     * (e.g. blocked by the player's own hitbox), so findPlacement() can
+     * (blocked by the player's own hitbox), so PlacementEngine can
      * skip them on retry instead of looping on the same spot forever.
      */
     private final List<BlockPos> failedPositions = new ArrayList<>();
@@ -139,7 +144,7 @@ public class AutoLoader extends Module {
 
     private final Setting<Boolean> doubleEChest = sgGeneral.add(new BoolSetting.Builder()
         .name("double-ender-chest")
-        .description("Place a second ender chest to the left of the first, " +
+        .description("Place a second ender chest mirrored next to the first (same facing, same Y), " +
             "then open the first one. Both are broken after you close.")
         .defaultValue(false)
         .visible(() -> instantEChest.get() && breakAfterUse.get())
@@ -175,6 +180,14 @@ public class AutoLoader extends Module {
     private final Setting<Boolean> rotate = sgGeneral.add(new BoolSetting.Builder()
         .name("rotate")
         .description("Send server-side rotation packets when placing or interacting with containers.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> resyncAfterPlace = sgGeneral.add(new BoolSetting.Builder()
+        .name("resync-after-place")
+        .description("Sends an inventory resync packet shortly after placing a container. " +
+            "Helps prevent stuck placement caused by stacked/duplicated container items.")
         .defaultValue(true)
         .build()
     );
@@ -237,7 +250,6 @@ public class AutoLoader extends Module {
     }
 
     private void resetState() {
-        if (mc.player != null) stopSneaking();
         unlockRotation();
         isEnderChest = false;
         isBundle = false;
@@ -414,10 +426,26 @@ public class AutoLoader extends Module {
      * Places the first container and locks the rotation so the second chest matches its facing.
      */
     private void doPlace() {
+        if (mc.currentScreen instanceof HandledScreen) {
+            mc.player.closeHandledScreen();
+            delayTicks = 3;
+            return;
+        }
+
+        ItemStack handStack = mc.player.getInventory().getStack(containerHotbarSlot);
+        if (!isExpectedItem(handStack)) {
+            info("Container item missing from hotbar slot, aborting placement.");
+            stage = Stage.IDLE;
+            resetState();
+            return;
+        }
+
         mc.player.getInventory().setSelectedSlot(containerHotbarSlot);
         mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(containerHotbarSlot));
 
-        BlockPos placePos = findPlacement();
+        boolean needsSecondSpot = isEnderChest && doubleEChest.get();
+        BlockPos placePos = placementEngine.findPlacement(
+            placeRange.get(), airPlace.get(), preferSolidBlock.get(), failedPositions, needsSecondSpot);
         if (placePos == null) {
             info("No valid placement position found within range.");
             stage = Stage.IDLE;
@@ -439,42 +467,67 @@ public class AutoLoader extends Module {
 
         firstFacing = mc.player.getHorizontalFacing();
 
-        // findPlacement() will fall back to a side/back/up/down candidate when the
-        // spot directly ahead is blocked, so the chest doesn't always end up in front
-        // of the player. Derive "left" from where it actually landed relative to the player,
-        Direction approach = horizontalDirectionBetween(mc.player.getBlockPos(), placePos);
+        // The placement engine will fall back to a side/back candidate when the
+        // spot directly ahead is blocked, so the chest doesn't always end up in
+        // front of the player. Derive "left" from where it actually landed
+        // relative to the player.
+        Direction approach = placementEngine.horizontalDirectionBetween(mc.player.getBlockPos(), placePos);
         firstApproachFacing = approach != null ? approach : firstFacing;
 
         placedPos = placePos;
         placeBlock(placePos);
         delayTicks = 4;
 
-        stage = (isEnderChest && doubleEChest.get())
+        stage = needsSecondSpot
             ? Stage.CENTER // Simple solution to weird yaw
             : Stage.OPEN;
     }
 
+    private boolean secondPlacementPending = false;
+    private int secondPlacementWaitTicks = 0;
+
     private void doPlaceSecond() {
+        if (mc.currentScreen instanceof HandledScreen) {
+            mc.player.closeHandledScreen();
+            delayTicks = 3;
+            return;
+        }
+
         mc.player.getInventory().setSelectedSlot(containerHotbarSlot);
         mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(containerHotbarSlot));
 
         Direction leftDir = firstApproachFacing.rotateYCounterclockwise();
         BlockPos placePos = firstPos.offset(leftDir);
 
-        // Already placed by an earlier attempt?
         if (mc.world.getBlockState(placePos).getBlock() instanceof EnderChestBlock) {
-            stopSneaking();
             secondPos = placePos;
+            placedPos = firstPos;
+            secondPlacementPending = false;
+            stage = Stage.OPEN;
+            delayTicks = 2;
+            return;
+        }
+
+        if (secondPlacementPending) {
+            if (++secondPlacementWaitTicks > 20) { // ~1s, generous vs. a 4-tick retry
+                secondPlacementPending = false; // give up on this attempt, allow a genuine retry
+            } else {
+                delayTicks = 2;
+                return;
+            }
+        }
+
+        ItemStack handStack = mc.player.getInventory().getStack(containerHotbarSlot);
+        if (handStack.isEmpty() || handStack.getItem() != Items.ENDER_CHEST) {
+            info("Second ender chest item is gone, opening first only.");
             placedPos = firstPos;
             stage = Stage.OPEN;
             delayTicks = 2;
             return;
         }
 
-        // Target position is blocked or out of reach?
-        if (!isValidSecondPos(placePos, leftDir)) {
+        if (!placementEngine.isValidSecondPos(firstPos, placePos, leftDir)) {
             info("Can't place the second ender chest, opening first only.");
-            stopSneaking();
             placedPos = firstPos;
             stage = Stage.OPEN;
             delayTicks = 2;
@@ -483,24 +536,17 @@ public class AutoLoader extends Module {
 
         if (++secondPlaceAttempts > 12) {
             info("Failed to place the second ender chest after 12 attempts, opening first only.");
-            stopSneaking();
             placedPos = firstPos;
             stage = Stage.OPEN;
             delayTicks = 2;
             return;
         }
 
-        if (!sneaking) {
-            startSneaking();
-            delayTicks = 3;
-            return;
-        }
-
-        // Place against the left face of the first chest
-        // We pass firstYaw so the placed chest's horizontal facing matches the first chest.
-        // (placeAgainstFaceKeepYaw only rotates pitch, keeping yaw at firstYaw)
-        placeAgainstFaceKeepYaw(firstPos, leftDir, firstYaw);
-        delayTicks = 4;
+        secondPos = placePos;
+        placeMirrored(placePos, firstYaw);
+        secondPlacementPending = true;
+        secondPlacementWaitTicks = 0;
+        delayTicks = 2;
     }
 
     private void doCenter() {
@@ -548,39 +594,48 @@ public class AutoLoader extends Module {
             return;
         }
 
-        if (++openAttempts > 20) {
-            failedPositions.add(placedPos);
-            BlockPos retry = findPlacement();
-            if (retry == null) {
-                info("Timed out waiting for the container GUI to open, and no other placement spot found.");
-                stage = Stage.IDLE;
-                resetState();
-                return;
-            }
-            info("Placement at previous spot failed (likely blocked by your own hitbox), retrying elsewhere.");
-            firstPos = retry;
-            placedPos = retry;
-            openAttempts = 0;
-            Vec3d hitVec = airPlace.get()
-                ? Vec3d.ofCenter(retry)
-                : new Vec3d(retry.getX() + 0.5, retry.getY(), retry.getZ() + 0.5);
-            firstYaw = (float) Rotations.getYaw(hitVec);
-            lockRotation(firstYaw, (float) Rotations.getPitch(hitVec));
-            placeBlock(retry);
-            delayTicks = 4;
-            return;
-        }
-
         BlockState bs = mc.world.getBlockState(placedPos);
         boolean present = isEnderChest
             ? bs.getBlock() instanceof EnderChestBlock
             : bs.getBlock() instanceof ShulkerBoxBlock;
+
         if (!present) {
+            // Genuinely never materialized, this is the only case where it's
+            // safe to abandon and try elsewhere.
+            if (++openAttempts > 20) {
+                failedPositions.add(placedPos);
+                boolean needsSecondSpot = isEnderChest && doubleEChest.get();
+                BlockPos retry = placementEngine.findPlacement(
+                    placeRange.get(), airPlace.get(), preferSolidBlock.get(), failedPositions, needsSecondSpot);
+                if (retry == null) {
+                    info("Timed out waiting for the container GUI to open, and no other placement spot found.");
+                    stage = Stage.IDLE;
+                    resetState();
+                    return;
+                }
+                info("Placement at previous spot failed (likely blocked by your own hitbox), retrying elsewhere.");
+                firstPos = retry;
+                placedPos = retry;
+                openAttempts = 0;
+                Vec3d hitVec = airPlace.get()
+                    ? Vec3d.ofCenter(retry)
+                    : new Vec3d(retry.getX() + 0.5, retry.getY(), retry.getZ() + 0.5);
+                firstYaw = (float) Rotations.getYaw(hitVec);
+                lockRotation(firstYaw, (float) Rotations.getPitch(hitVec));
+                placeBlock(retry);
+                delayTicks = 4;
+                return;
+            }
             delayTicks = 2;
             return;
         }
 
-        if (mc.player.squaredDistanceTo(Vec3d.ofCenter(placedPos)) > INTERACTION_REACH_SQ) {
+        openAttempts++;
+        if (openAttempts % 20 == 0) {
+            sendResyncPacket();
+        }
+
+        if (mc.player.squaredDistanceTo(Vec3d.ofCenter(placedPos)) > PlacementEngine.INTERACTION_REACH_SQ) {
             info("Container was placed out of interaction range.");
             stage = Stage.IDLE;
             resetState();
@@ -729,40 +784,34 @@ public class AutoLoader extends Module {
                 mc.player.swingHand(Hand.MAIN_HAND);
             }
         }
+        if (resyncAfterPlace.get()) sendResyncPacket();
     }
 
-    private void placeAgainstFaceKeepYaw(BlockPos blockPos, Direction face, float keepYaw) {
-        Vec3d hitVec = Vec3d.ofCenter(blockPos).add(Vec3d.of(face.getVector()).multiply(0.5));
-        BlockHitResult hit = new BlockHitResult(hitVec, face, blockPos, false);
-
-        if (rotate.get()) {
+    private void placeMirrored(BlockPos pos, float yaw) {
+        Vec3d hitVec = Vec3d.ofCenter(pos);
+        if (airPlace.get()) {
+            BlockHitResult hit = new BlockHitResult(hitVec, Direction.UP, pos, false);
+            int rev = mc.player.currentScreenHandler.getRevision();
             float pitch = (float) Rotations.getPitch(hitVec);
-            Rotations.rotate(keepYaw, pitch, -100, () -> {
+            if (rotate.get())
+                Rotations.rotate(yaw, pitch, -100, () -> sendAirPlacePackets(hit, rev));
+            else
+                sendAirPlacePackets(hit, rev);
+        } else {
+            Vec3d supportHit = new Vec3d(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
+            BlockHitResult hit = new BlockHitResult(supportHit, Direction.UP, pos.down(), false);
+            float pitch = (float) Rotations.getPitch(supportHit);
+            if (rotate.get())
+                Rotations.rotate(yaw, pitch, -100, () -> {
+                    mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hit);
+                    mc.player.swingHand(Hand.MAIN_HAND);
+                });
+            else {
                 mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hit);
                 mc.player.swingHand(Hand.MAIN_HAND);
-            });
-        } else {
-            mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hit);
-            mc.player.swingHand(Hand.MAIN_HAND);
+            }
         }
-    }
-
-    private void startSneaking() {
-        if (sneaking || mc.player == null) return;
-        sneaking = true;
-        mc.player.setSneaking(true);
-        mc.options.sneakKey.setPressed(true);
-        mc.player.networkHandler.sendPacket(
-            new ClientCommandC2SPacket(mc.player, ClientCommandC2SPacket.Mode.PRESS_SHIFT_KEY));
-    }
-
-    private void stopSneaking() {
-        if (!sneaking || mc.player == null) return;
-        sneaking = false;
-        mc.player.setSneaking(false);
-        mc.options.sneakKey.setPressed(false);
-        mc.player.networkHandler.sendPacket(
-            new ClientCommandC2SPacket(mc.player, ClientCommandC2SPacket.Mode.RELEASE_SHIFT_KEY));
+        if (resyncAfterPlace.get()) sendResyncPacket();
     }
 
     private void lockRotation(float yaw, float pitch) {
@@ -785,126 +834,18 @@ public class AutoLoader extends Module {
         mc.player.swingHand(Hand.MAIN_HAND);
     }
 
-    /**
-     * Real interaction reach, independent of the placement search radius.
-     */
-    private static final double INTERACTION_REACH_SQ = 5.0 * 5.0;
-
-    private BlockPos findPlacement() {
-        BlockPos pp = mc.player.getBlockPos();
-        Direction facing = mc.player.getHorizontalFacing();
-        double rangeSq = (double) placeRange.get() * placeRange.get();
-        Vec3d playerPos = mc.player.getPos();
-        boolean needsSecondSpot = isEnderChest && doubleEChest.get();
-
-        List<BlockPos> cands = new ArrayList<>();
-        cands.add(pp.offset(facing));
-        cands.add(pp.offset(facing.rotateYClockwise()));
-        cands.add(pp.offset(facing.rotateYCounterclockwise()));
-        cands.add(pp.offset(facing.getOpposite()));
-        cands.add(pp.up());
-        cands.add(pp.down());
-        for (int d = 1; d <= placeRange.get(); d++) {
-            for (int x = -d; x <= d; x++) {
-                for (int z = -d; z <= d; z++) {
-                    if (Math.abs(x) == d || Math.abs(z) == d) {
-                        for (int y = -1; y <= 1; y++) cands.add(pp.add(x, y, z));
-                    }
-                }
-            }
-        }
-        // Closest candidates first; ties keep their original (front-biased) order.
-        cands.sort(Comparator.comparingDouble(pos -> Vec3d.ofCenter(pos).squaredDistanceTo(playerPos)));
-
-        // Double ender chest needs room beside the first chest too, so a "valid"
-        // first spot that's boxed in on its left side is still useless. Require
-        // both spots to be free before falling back to single-spot validity,
-        // otherwise we keep grabbing the closest-but-obstructed candidate.
-        if (needsSecondSpot) {
-            if (airPlace.get() && preferSolidBlock.get()) {
-                for (BlockPos pos : cands) {
-                    if (Vec3d.ofCenter(pos).squaredDistanceTo(playerPos) > rangeSq) continue;
-                    if (!spaceAbove(pos) || !validSolidPos(pos) || intersectsPlayer(pos) || failedPositions.contains(pos)) continue;
-                    if (hasRoomForSecond(pp, pos)) return pos;
-                }
-            }
-            for (BlockPos pos : cands) {
-                if (Vec3d.ofCenter(pos).squaredDistanceTo(playerPos) > rangeSq) continue;
-                if (!spaceAbove(pos)) continue;
-                boolean primaryValid = airPlace.get()
-                    ? canPlaceAt(pos)
-                    : (validSolidPos(pos) && !intersectsPlayer(pos) && !failedPositions.contains(pos));
-                if (!primaryValid) continue;
-                if (hasRoomForSecond(pp, pos)) return pos;
-            }
-            // No spot has room for a second chest; fall through to the normal
-            // single-spot search below, doPlaceSecond() will report and skip it.
-        }
-
-        if (airPlace.get() && preferSolidBlock.get()) {
-            for (BlockPos pos : cands) {
-                if (Vec3d.ofCenter(pos).squaredDistanceTo(playerPos) > rangeSq) continue;
-                if (!spaceAbove(pos) || intersectsPlayer(pos) || failedPositions.contains(pos)) continue;
-                if (validSolidPos(pos)) return pos;
-            }
-        }
-        for (BlockPos pos : cands) {
-            if (Vec3d.ofCenter(pos).squaredDistanceTo(playerPos) > rangeSq) continue;
-            if (!spaceAbove(pos)) continue;
-            if (airPlace.get()) {
-                if (canPlaceAt(pos)) return pos;
-            } else {
-                if (validSolidPos(pos) && !intersectsPlayer(pos) && !failedPositions.contains(pos)) return pos;
-            }
-        }
-        return null;
-    }
-
-    private boolean hasRoomForSecond(BlockPos from, BlockPos pos) {
-        Direction approach = horizontalDirectionBetween(from, pos);
-        if (approach == null) approach = mc.player.getHorizontalFacing();
-        BlockPos second = pos.offset(approach.rotateYCounterclockwise());
-        return isReplaceableOrAir(second) && isReplaceableOrAir(second.up());
-    }
-
-    private boolean isValidSecondPos(BlockPos pos, Direction faceDir) {
-        Vec3d hitPoint = Vec3d.ofCenter(firstPos).add(Vec3d.of(faceDir.getVector()).multiply(0.5));
-        return mc.player.getPos().squaredDistanceTo(hitPoint) <= INTERACTION_REACH_SQ
-            && isReplaceableOrAir(pos)
-            && isReplaceableOrAir(pos.up());
-    }
-
-    private boolean isReplaceableOrAir(BlockPos pos) {
-        BlockState state = mc.world.getBlockState(pos);
-        return state.isAir() || state.isReplaceable() || !state.getFluidState().isEmpty();
-    }
-
-    private boolean intersectsPlayer(BlockPos pos) {
-        Box playerBox = mc.player.getBoundingBox();
-        Box blockBox = new Box(pos);
-        return playerBox.intersects(blockBox);
-    }
-
-    private boolean canPlaceAt(BlockPos pos) {
-        return isReplaceableOrAir(pos) && !intersectsPlayer(pos) && !failedPositions.contains(pos);
-    }
-
-    private boolean spaceAbove(BlockPos pos) {
-        return isReplaceableOrAir(pos.up());
-    }
-
-    private boolean validSolidPos(BlockPos pos) {
-        return isReplaceableOrAir(pos)
-            && mc.world.getBlockState(pos.down()).isSolidBlock(mc.world, pos.down());
-    }
-
-    private Direction horizontalDirectionBetween(BlockPos from, BlockPos to) {
-        int dx = to.getX() - from.getX();
-        int dz = to.getZ() - from.getZ();
-        if (dx == 0 && dz == 0) return null;
-        return Math.abs(dx) >= Math.abs(dz)
-            ? (dx > 0 ? Direction.EAST : Direction.WEST)
-            : (dz > 0 ? Direction.SOUTH : Direction.NORTH);
+    private void sendResyncPacket() {
+        if (mc.player == null || mc.player.networkHandler == null) return;
+        var handler = mc.player.currentScreenHandler;
+        mc.player.networkHandler.sendPacket(new ClickSlotC2SPacket(
+            handler.syncId,
+            handler.getRevision(),
+            -1,
+            0,
+            SlotActionType.CLONE,
+            ItemStack.EMPTY,
+            new Int2ObjectOpenHashMap<>()
+        ));
     }
 
     private int resolveHotbarSlot() {

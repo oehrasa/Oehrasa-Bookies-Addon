@@ -32,9 +32,11 @@ public class Addon extends MeteorAddon {
 
         // Modules
         Modules.get().add(new AutoLogin(CATEGORY));
+        Modules.get().add(new ArenaM());
         Modules.get().add(new AutoPot());
         Modules.get().add(new AutoSex());
         Modules.get().add(new AutoMoss());
+        Modules.get().add(new AutoFarm());
         Modules.get().add(new AutoLoader());
         Modules.get().add(new AutoBeacon());
         Modules.get().add(new AutoTakeOff());
@@ -44,7 +46,6 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new BlockRadius());
         Modules.get().add(new BLU27BNapalm());
         Modules.get().add(new BookImporter());
-        Modules.get().add(new BetterBoatFly());
         Modules.get().add(new BookshelfFiller());
         // C
         Modules.get().add(new ContainerPeek());

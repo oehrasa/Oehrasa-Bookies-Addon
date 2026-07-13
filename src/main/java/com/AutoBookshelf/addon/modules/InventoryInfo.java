@@ -175,8 +175,6 @@ public class InventoryInfo extends Module {
             }
 
             if (count == 0) {
-                // No visible items skip this shulker entirely
-                setClicked(null);
                 continue;
             }
 
