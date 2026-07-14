@@ -477,12 +477,39 @@ public class HomesList extends Module {
             super.render(context, mouseX, mouseY, delta);
         }
 
+        private int rowsInColumn(int col) {
+            int count = 0;
+            for (int i = col; i < homes.size(); i += columns) count++;
+            return count;
+        }
+
         @Override
         public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
             if (verticalAmount != 0) {
-                if (selectedIndex < 0) selectedIndex = 0;
-                int dir = verticalAmount > 0 ? -columns : columns;
-                selectedIndex = Math.floorMod(selectedIndex + dir, homes.size());
+                if (selectedIndex < 0) {
+                    selectedIndex = 0;
+                    return true;
+                }
+
+                boolean up = verticalAmount > 0;
+                int col = selectedIndex % columns;
+                int row = selectedIndex / columns;
+
+                if (up) {
+                    row--;
+                    if (row < 0) {
+                        col = Math.floorMod(col - 1, columns);
+                        row = rowsInColumn(col) - 1;
+                    }
+                } else {
+                    row++;
+                    if (row >= rowsInColumn(col)) {
+                        col = Math.floorMod(col + 1, columns);
+                        row = 0;
+                    }
+                }
+
+                selectedIndex = row * columns + col;
                 return true;
             }
             return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);

@@ -45,23 +45,6 @@ import java.util.function.Supplier;
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 import static meteordevelopment.meteorclient.utils.Utils.WHITE;
 
-/**
- * Fixed against the real 1.21.11 rendering API (confirmed via the decompiled
- * {@code Renderer2D}/{@code AbstractTexture}/{@code NativeImageBackedTexture}
- * sources) instead of the older direct-GL-binding shape used before:
- * <ul>
- *   <li>There is no {@code GL} class anymore - binding a texture is folded
- *       into {@code Renderer2D.TEXTURE.render(GpuTextureView, GpuSampler)}
- *       itself, called after {@code begin()}/{@code texQuad(...)} instead of
- *       a separate bind step before them.</li>
- *   <li>{@code AbstractTexture} (the superclass of {@code NativeImageBackedTexture})
- *       exposes {@code getGlTextureView()} and {@code getSampler()} - those are
- *       what get passed into {@code render(...)}.</li>
- *   <li>{@code NativeImageBackedTexture}'s single-{@code NativeImage} constructor
- *       is gone; the replacement that keeps the image ownership semantics we want
- *       is {@code NativeImageBackedTexture(Supplier<String> nameSupplier, NativeImage image)}.</li>
- * </ul>
- */
 public class AnimePics extends HudElement {
     public static final HudElementInfo<AnimePics> INFO = new HudElementInfo<>(
         Addon.HUD_GROUP,

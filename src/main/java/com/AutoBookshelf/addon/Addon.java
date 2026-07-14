@@ -83,9 +83,12 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new ThrowEmptyShulkers());
         // U
         Modules.get().add(new UnwaxAura());
+        // Y
+        Modules.get().add(new YuriASMR());
 
         // HUD
         Hud.get().register(AnimePics.INFO);
+        Hud.get().register(AsmrRadioHud.INFO);
         Hud.get().register(ElytraTime.INFO);
         Hud.get().register(MayaChan.INFO);
         Hud.get().register(MapViewer.INFO);

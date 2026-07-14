@@ -2,6 +2,7 @@ package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
 import it.unimi.dsi.fastutil.ints.*;
+import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
@@ -36,54 +37,8 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
-/**
- * Repeatedly targets a chest minecart (and, optionally, barrel blocks),
- * right-clicks it open, shift-clicks every shulker box (plus any configured
- * extra items) out of the player's inventory into it, closes the GUI, waits,
- * then looks for the next one - built for a farm setup where the machine
- * constantly destroys and respawns a chest minecart (or has a fixed barrel)
- * in roughly the same spot.
- * <p>
- * Fixed against the AutoBookshelf project's actual base class (plain
- * {@link Module}, {@code Addon.CATEGORY}) instead of the unrelated reference
- * package used before, and against the confirmed-correct 1.21.11 Yarn API
- * shown in AxolotlTools:
- * <ul>
- *   <li>{@code Rotations.getYaw(entity)} / {@code Rotations.getPitch(entity, Target.Body)}
- *       take the {@link Entity} directly rather than a manually computed
- *       {@code Vec3d}.</li>
- *   <li>Entity position is read via {@code getEntityPos()}, not {@code getPos()}.</li>
- *   <li>{@code mc.world.getEntitiesByClass(Class, Box, predicate)} is used for
- *       the nearby search instead of manually filtering {@code getEntities()}.</li>
- *   <li>{@code ClickSlotC2SPacket}'s slot-id parameter is a {@code short} on
- *       this branch, so the resync packet's {@code -1} needs an explicit cast.</li>
- * </ul>
- * <p>
- * New for barrel + completion-tracking support - flagging these as
- * assumptions since they're not independently confirmed the way the
- * rotation/position APIs above are:
- * <ul>
- *   <li>{@code Rotations.getYaw(Vec3d)} / {@code Rotations.getPitch(Vec3d)}
- *       are assumed to exist as position-based overloads alongside the
- *       entity-based ones, for aiming at the barrel's block center.</li>
- *   <li>{@code BlockHitResult(Vec3d, Direction, BlockPos, boolean)} is assumed
- *       to be the constructor shape; the side passed ({@code Direction.UP})
- *       is arbitrary since opening a barrel doesn't care which face was hit.</li>
- *   <li>{@code mc.interactionManager.interactBlock(player, hand, hitResult)}
- *       returning an {@code ActionResult} with {@code isAccepted()} is
- *       assumed rather than confirmed against decompiled source.</li>
- *   <li>{@code PlayerInventory.size()} / {@code getStack(int)} are used
- *       instead of the {@code main} field directly, since the field name is
- *       more mapping-sensitive than the index-based accessors.</li>
- * </ul>
- * Still worth a quick double check: {@code ChestMinecartEntity}'s exact class
- * name/package, since I don't have that one independently confirmed the way
- * the rotation/position APIs now are.
- */
 public class Fatamorgana extends Module {
     private enum Stage {
         SEARCHING,
@@ -97,6 +52,7 @@ public class Fatamorgana extends Module {
     private final SettingGroup sgInteract = settings.createGroup("Interact");
     private final SettingGroup sgDeposit = settings.createGroup("Deposit");
     private final SettingGroup sgRender = settings.createGroup("Render");
+    private final SettingGroup sgDebug = settings.createGroup("Debug");
 
     private final Setting<Double> range = sgGeneral.add(new DoubleSetting.Builder()
         .name("range")
@@ -109,10 +65,10 @@ public class Fatamorgana extends Module {
 
     private final Setting<Integer> cycleDelay = sgGeneral.add(new IntSetting.Builder()
         .name("cycle-delay")
-        .description("Seconds to wait after closing the container before searching for the next one.")
-        .defaultValue(3)
+        .description("Ticks to wait after closing the container before searching for the next one.")
+        .defaultValue(60)
         .min(0)
-        .sliderMax(60)
+        .sliderRange(0, 1200)
         .build()
     );
 
@@ -120,6 +76,16 @@ public class Fatamorgana extends Module {
         .name("target-barrels")
         .description("Also fill barrels.")
         .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Integer> barrelRecheckTicks = sgGeneral.add(new IntSetting.Builder()
+        .name("barrel-recheck-ticks")
+        .description("How many ticks a barrel stays marked 'completed' before Fatamorgana re-checks it.")
+        .defaultValue(10)
+        .min(1)
+        .sliderRange(1, 300)   // up to 15 seconds
+        .visible(targetBarrels::get)
         .build()
     );
 
@@ -142,7 +108,7 @@ public class Fatamorgana extends Module {
         .description("Ticks to wait between interact attempts.")
         .defaultValue(4)
         .min(1)
-        .sliderMax(20)
+        .sliderMax(40)
         .build()
     );
 
@@ -160,7 +126,7 @@ public class Fatamorgana extends Module {
         .description("Items moved into the container per tick.")
         .defaultValue(6)
         .min(1)
-        .sliderMax(20)
+        .sliderMax(36)
         .build()
     );
 
@@ -173,7 +139,7 @@ public class Fatamorgana extends Module {
 
     private final Setting<List<Item>> extraItems = sgDeposit.add(new ItemListSetting.Builder()
         .name("extra-items")
-        .description("Extra items (besides all shulker box colors) to deposit into the container.")
+        .description("Extra items (besides all shulker box) to deposit into the container.")
         .defaultValue(new ArrayList<>())
         .build()
     );
@@ -182,6 +148,15 @@ public class Fatamorgana extends Module {
         .name("resync-after-deposit")
         .description("Sends an inventory resync packet after each deposit action.")
         .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> depositSettleDelay = sgDeposit.add(new IntSetting.Builder()
+        .name("deposit-settle-delay")
+        .description("Ticks to wait after the container GUI opens before evaluating deposit/close logic, to let the initial inventory sync packet arrive. Prevents the container being closed immediately (before anything is deposited) because slots briefly read as empty.")
+        .defaultValue(3)
+        .min(0)
+        .sliderMax(10)
         .build()
     );
 
@@ -214,6 +189,13 @@ public class Fatamorgana extends Module {
         .build()
     );
 
+    private final Setting<Boolean> logContainerState = sgDebug.add(new BoolSetting.Builder()
+        .name("log-container-state")
+        .description("Logs isContainerMenuOpen() transitions and slot-emptiness info, to diagnose deposit/sync timing issues.")
+        .defaultValue(false)
+        .build()
+    );
+
     // Mutable state.
     private Stage stage = Stage.SEARCHING;
 
@@ -233,15 +215,16 @@ public class Fatamorgana extends Module {
     private int ticksInStage = 0;
     private int interactAttempts = 0;
     private int cycleTicks = 0;
+    private int depositSettleTicks = 0;
+
+    /**
+     * Last value observed from {@link #isContainerMenuOpen()}, used purely to log transitions rather than spamming every tick.
+     */
+    private boolean lastLoggedContainerOpenState = false;
 
     private final IntSet completedEntityIds = new IntOpenHashSet();
 
-    /**
-     * Same idea as {@link #completedEntityIds}, but for barrel positions.
-     * Positions are pruned once the block there is no longer a barrel, so a
-     * freshly placed barrel at the same coordinates is treated as new.
-     */
-    private final Set<BlockPos> completedBarrelPositions = new HashSet<>();
+    private final Object2LongOpenHashMap<BlockPos> completedBarrelPositions = new Object2LongOpenHashMap<>();
 
     public Fatamorgana() {
         super(Addon.CATEGORY, "Fatamorgana", "Maho x Miho, Miho x Yukari, Maho x Erika.");
@@ -266,12 +249,41 @@ public class Fatamorgana extends Module {
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.world == null) return;
 
+        if (logContainerState.get()) logContainerStateIfChanged();
+
         switch (stage) {
             case SEARCHING -> doSearching();
             case INTERACTING -> doInteracting();
             case DEPOSITING -> doDepositing();
             case CLOSING -> doClosing();
             case WAITING -> doWaiting();
+        }
+    }
+
+    private void logContainerStateIfChanged() {
+        boolean open = isContainerMenuOpen();
+        if (open == lastLoggedContainerOpenState) return;
+        lastLoggedContainerOpenState = open;
+
+        if (open) {
+            ScreenHandler handler = mc.player.currentScreenHandler;
+            int containerSlots = SlotUtils.indexToId(SlotUtils.MAIN_START);
+
+            int containerFilled = 0;
+            for (int i = 0; i < containerSlots; i++) {
+                if (handler.getSlot(i).hasStack()) containerFilled++;
+            }
+
+            int playerDepositSlots = 0;
+            for (int i = containerSlots; i < containerSlots + 4 * 9; i++) {
+                Slot slot = handler.getSlot(i);
+                if (slot.hasStack() && isDepositItem(slot.getStack())) playerDepositSlots++;
+            }
+
+            info("Container opened. container-filled-slots=%d/%d, player-deposit-slots-seen=%d, settle-delay=%d ticks",
+                containerFilled, containerSlots, playerDepositSlots, depositSettleDelay.get());
+        } else {
+            info("Container closed. stage=%s", stage);
         }
     }
 
@@ -324,6 +336,7 @@ public class Fatamorgana extends Module {
 
         // Something already got the screen open
         if (isContainerMenuOpen()) {
+            depositSettleTicks = 0;
             stage = Stage.DEPOSITING;
             return;
         }
@@ -351,6 +364,7 @@ public class Fatamorgana extends Module {
         }
 
         if (isContainerMenuOpen()) {
+            depositSettleTicks = 0;
             stage = Stage.DEPOSITING;
             return;
         }
@@ -395,6 +409,16 @@ public class Fatamorgana extends Module {
         if (!targetStillValid || !isContainerMenuOpen()) {
             // Container died mid-transfer, or the screen was force-closed server side.
             stage = Stage.CLOSING;
+            return;
+        }
+
+        // Settle window: give the server's inventory-contents sync packet
+        // time to arrive before trusting slot contents for full/empty
+        // decisions. Without this, a freshly opened ScreenHandler can read
+        // every slot as empty for a tick or two, which previously caused
+        // autoClose to fire before a single item was ever deposited.
+        if (depositSettleTicks < depositSettleDelay.get()) {
+            depositSettleTicks++;
             return;
         }
 
@@ -467,7 +491,7 @@ public class Fatamorgana extends Module {
         }
 
         cycleTicks++;
-        if (cycleTicks >= cycleDelay.get() * 20) {
+        if (cycleTicks >= cycleDelay.get()) {
             resetToSearching();
         }
     }
@@ -478,14 +502,15 @@ public class Fatamorgana extends Module {
         interactAttempts = 0;
         ticksInStage = 0;
         cycleTicks = 0;
+        depositSettleTicks = 0;
         stage = Stage.SEARCHING;
     }
 
     private void markCurrentTargetCompleted() {
         if (targetEntityId != -1) {
             completedEntityIds.add(targetEntityId);
-        } else if (targetBlockPos != null) {
-            completedBarrelPositions.add(targetBlockPos);
+        } else if (targetBlockPos != null && mc.world != null) {
+            completedBarrelPositions.put(targetBlockPos, mc.world.getTime() + barrelRecheckTicks.get());
         }
     }
 
@@ -506,7 +531,10 @@ public class Fatamorgana extends Module {
         }
 
         if (!completedBarrelPositions.isEmpty() && mc.world != null) {
-            completedBarrelPositions.removeIf(pos -> mc.world.getBlockState(pos).getBlock() != Blocks.BARREL);
+            long now = mc.world.getTime();
+            completedBarrelPositions.object2LongEntrySet().removeIf(entry ->
+                mc.world.getBlockState(entry.getKey()).getBlock() != Blocks.BARREL || now >= entry.getLongValue()
+            );
         }
     }
 
@@ -576,7 +604,7 @@ public class Fatamorgana extends Module {
 
         for (BlockPos pos : BlockPos.iterate(playerBlockPos.add(-r, -r, -r), playerBlockPos.add(r, r, r))) {
             if (mc.world.getBlockState(pos).getBlock() != Blocks.BARREL) continue;
-            if (completedBarrelPositions.contains(pos)) continue;
+            if (completedBarrelPositions.containsKey(pos)) continue;
 
             double distSq = Vec3d.ofCenter(pos).squaredDistanceTo(playerPos);
             if (distSq > searchRangeSq) continue;
