@@ -134,13 +134,14 @@ public class TeleportTimer extends HudElement {
     private boolean pendingTpa = false;           // Tpa accept seen
     private String tpaTarget = "";
 
-    // Pattern
-    private static final Pattern TELEPORT_WARMUP   = Pattern.compile("Teleporting.*?\\bin\\s+(\\d+)\\s*seconds?");
-    private static final Pattern COOLDOWN_MSG      = Pattern.compile("You have to wait (?:(\\d+)m\\s*)?(\\d+)s\\s+to teleport again");
-    private static final Pattern TELEPORT_CANCEL   = Pattern.compile("Successfully cancelled your pending teleport request to:\\s*(\\S+)");
-    private static final Pattern TPA_ACCEPT = Pattern.compile("Your request sent to (\\S+) was accepted!");
-    private static final Pattern HOME_ARRIVAL = Pattern.compile("Teleporting to:");
-    private static final Pattern TPA_ARRIVAL  = Pattern.compile("Teleported to");
+    private static final Pattern FORMATTING_CODE = Pattern.compile("§[0-9a-fk-or]");
+
+    private static final Pattern TELEPORT_WARMUP = Pattern.compile("^Teleporting.*?\\bin\\s+(\\d+)\\s*seconds?");
+    private static final Pattern COOLDOWN_MSG = Pattern.compile("^You have to wait (?:(\\d+)m\\s*)?(\\d+)s\\s+to teleport again");
+    private static final Pattern TELEPORT_CANCEL = Pattern.compile("^Successfully cancelled your pending teleport request to:\\s*(\\S+)");
+    private static final Pattern TPA_ACCEPT = Pattern.compile("^Your request sent to (\\S+) was accepted!");
+    private static final Pattern HOME_ARRIVAL = Pattern.compile("^Teleporting to:");
+    private static final Pattern TPA_ARRIVAL = Pattern.compile("^Teleported to");
 
     public TeleportTimer() {
         super(INFO);
@@ -155,7 +156,7 @@ public class TeleportTimer extends HudElement {
     @EventHandler
     private void onMessageReceive(ReceiveMessageEvent event) {
         if (mc.player == null || mc.level == null) return;
-        String message = event.getMessage().getString();
+        String message = FORMATTING_CODE.matcher(event.getMessage().getString()).replaceAll("").trim();
 
         // Cancel
         if (TELEPORT_CANCEL.matcher(message).find()) {
@@ -295,10 +296,7 @@ public class TeleportTimer extends HudElement {
         if (tpaWarmupTicks > 0 && tpaWarmupTotal > 0) visibleBars++;
         if (homeTicksRemaining > 0 && homeTotalTicks > 0) visibleBars++;
         if (tpaTicksRemaining > 0 && tpaTotalTicks > 0) visibleBars++;
-        if (visibleBars == 0) {
-            setSize(100, renderer.textHeight(false, scale) * 2);
-            return;
-        }
+        if (visibleBars == 0) return;
 
         double lineH = renderer.textHeight(false, scale);
         double barGap = 2;

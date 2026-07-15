@@ -20,72 +20,82 @@
 ## Dependencies
 
 **You might need to install these mod**.
-Tested successfully with these mods, but other might work as well.
+Tested successfully with these mods.
 <font color="turquoise">Switch the branch repo if You want to see the other version config</font>
 
-- baritone-meteor-1.21.11.jar (Required!)
-- meteor-client-1.21.11-65.jar (Required!)
+- baritone-meteor-1.21.11.jar **(API Required!)**
+- meteor-client-1.21.11-65.jar **(Required!)**
 - BepHax-Final.jar (Optional)
 - client_maps-1.3.2.jar (Recommended for Mapart-Namer module)
 - map-in-slot-3.4.1.jar (Recommended for Mapart-Namer module)
 
-> client_maps is not compatible with ev-mod vice versa.
+> [!IMPORTANT]
 >
->AnarchyMod is not compatible with the addon.
+> AnarchyMod is not compatible with the addon.
+>
+> client_maps is not compatible with ev-mod vice versa.
 
 ## Features
 
-**37 modules**, **5 commands**, **6 HUD elements**, and **6 mixin**
+**42 modules**, **5 commands**, **8 HUD elements**, and **6 mixin**
 
-## Modules (37 total)
+## Modules (42 total)
 <details>
 <summary><b>Modules</b> (Bookies modules)</summary>
 
-- **AudiobookReader** - Reads books aloud using narrator feature
-- **Auto-Beacon** - Builds a 4‑beacon pyramid at a selected location
-- **Auto-Login** - Automatically logs in your account via file Data
-- **Auto-Moss** - Automatically uses bone meal on specific blocks
-- **Auto-Pot** - Amrita
-- **Auto-Take-Off** - Automatically starts elytra flight when on ground, in lava, or falling
-- **Auto-Sex** - Tries to have sex with the player or mob in freaky ways
-- **B36-Peacemaker** - Created this to make peace. Named after Convair B-36 Peacemaker
-- **Beacon-Range** - Renders the range of powered beacons
-- **BLU-27/B-Napalm** - I love the smell of Napalm in the morning, Commit some trolling against the Vietnamese
-- **Better-BoatFly** - Transforms your boat into a plane
-- **Bookshelf-Filler** - oeh Yuri romcom bookshelves restocker
-- **Book-Import** - Automatically imports text files into signed books
-- **Cart-Placer** - Places any minecarts on any rails in range
-- **Chest-Tracker** - Track items in containers
-- **Dried-Ghast** - Give these cute and tiny little creatures a second chances
-- **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block
-- **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
-- **Get-Preview** - Shows an item preview overlay on bundles, shulkers, and books
-- **Homes-List** - Manage and teleport to your server homes with a GUI
-- **Item-Despawn** - Highlights items that are about to despawn
-- **KMDB** - Builds a Wither, Iron Golem, or Snow Golem in front of you
-- **Minechest-Aura** - High-speed automatic container opener
-- **Map-Grid** - Highlights map grid boundaries around the player
-- **Mapart-Namer** - Auto‑names maps based on inventory slot layout
-- **Mob-Owner** - Shows entity owner by saving into cache
-- **Mats-Refill** - Automatically restocks materials from shulker boxes
-- **PacketEat** - Allows you to eat without interrupting other actions
-- **Platform** - Build a platform at a given y-level once in range
-- **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
-- **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in 1.13+ chunks
-- **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
-- **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
-- **Tnt-Fuse-Esp** - Shows the fuse time of lit tnt
-- **Trajectory-Plus** - Smooth projectile prediction and tracking
-- **Tsundere-Furry** - Transforms outgoing chat messages into animal sounds, tsundere, or both :>
-- **Unwax-Aura** - Automatically removes wax from waxed copper blocks
+1. **AudiobookReader** - Reads books aloud using narrator feature
+2. **Auto-Beacon** - Builds a 4‑beacon pyramid at a selected location
+3. **Auto-Loader** - Right-click shulker boxes, ender chests, or bundles in your inventory to instantly use
+4. **Auto-Login** - Automatically logs in your account via file Data
+5. **Auto-Farm** - Welcome to the rice fields, Motherfucka
+6. **Auto-Moss** - Automatically uses bone meal on specific blocks
+7. **Arena-M** - Throws wind charges to intercept incoming projectiles mid-air
+8. **Auto-Pot** - Then, Shalltear. Sorry but I'll have you wait a bit before we engage
+9. **Auto-Take-Off** - Automatically starts elytra flight when on ground, in lava, or falling
+10. **Auto-Sex** - Tries to have sex with the player or mob in freaky ways
+11. **B36-Peacemaker** - Created this to make peace. Named after Convair B-36 Peacemaker
+12. **Block-Radius** - Renders the range of powered beacons, lightning rods, and active conduits
+13. **BLU-27/B-Napalm** - I love the smell of Napalm in the morning, Commit some trolling against the Vietnamese
+14. **Bookshelf-Filler** - oeh Yuri romcom bookshelves restocker
+15. **Book-Import** - Automatically imports text files into signed books
+16. **Chest-Tracker** - Track items in containers
+17. **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block
+18. **Dried-Ghast** - Give these cute and tiny little creatures a second chances
+19. **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
+20. **Fatamorgana** - Maho x Miho, Miho x Yukari, Maho x Erika
+21. **Get-Preview** - Shows an item preview overlay on bundles, shulkers, and books
+22. **Homes-List** - Manage and teleport to your server homes with a GUI
+23. **Item-Despawn** - Highlights items that are about to despawn
+24. **Inventory-Info** - SHoiGu!! GEraShimov!!!
+25. **KMDB** - Builds Wither, Iron Golem, Snow Golem, or Copper Golem automatically
+26. **Minecart-Placer** - Places any minecarts on any rails in range
+27. **Map-Grid** - Highlights map grid boundaries around the player
+28. **Mapart-Namer** - Auto‑names maps based on inventory slot layout
+29. **Mats-Refill** - Automatically restocks materials from shulker boxes
+30. **Mob-Owner** - Shows entity owner by saving into cache
+31. **PacketEat** - Allows you to eat without interrupting other actions
+32. **Platform** - Build a platform at a given y-level once in range
+33. **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
+34. **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in
+    1.13+ chunks
+35. **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
+36. **Sculk-Range** - Shows the detection range of calibrated sculk sensors.
+37. **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
+38. **Tnt-Fuse-Esp** - Shows the fuse time of lit tnt
+39. **Trajectory-Plus** - Smooth projectile prediction and tracking
+40. **Tsundere-Furry** - Transforms outgoing chat messages into animal sounds, tsundere, or both :>
+41. **Unwax-Aura** - Automatically removes wax from waxed copper blocks
+42. **Yuri-Asmr** - Streams a random ASMR search result through yt-dlp + ffmpeg with integrated HUD
 
 </details>
 
-## HUD Elements (6)
+## HUD Elements (8)
 
-- **Anime-Pics** - Displays random Anime pictures ( Cheers >< )
+- **Anime-Pics** - Displays random Anime pictures/GIF ( Cheers >< )
+- **Asmr-Radio** - Shows the currently playing ASMR track
 - **Elytra-Time** - Gives you a rough estimate of the elytra flight time you have left
-- **MayaChan** - Render oehrasa beloved OC's : Nishizumi Maya
+- **MayaChan** - Renders oehrasa beloved OC's : Nishizumi Maya
+- **Map-Viewer** - Displays the contents of held maps on your HUD
 - **NeboM** - The radar system claims to be able to detect 5th generation aircraft (Loud Incorrect Buzzer noise)
 - **Online-Friends** - Displays online friends from your friend list
 - **Teleport-Timer** - Shows a countdown bar on pending teleportation
@@ -173,19 +183,20 @@ https://youtu.be/uZQGECqCU_A
 ## Credits
 List of addons I used as reference(skid? mwhehe), You should check them out it's pretty awesome!
 - **[FileAutoLogin](https://github.com/DortyTheGreat/FileAutoLogin)** - Base of this addon
-- **[Clarity](https://github.com/ck-clarity/addon)** - Boat module and image HUD
-- **[meerhax](https://github.com/dekrom/meeerhax)** - ELytra time HUD
+- **[Clarity](https://github.com/ck-clarity/addon)** - Image HUD
+- **[meerhax](https://github.com/dekrom/meeerhax)** - Elytra time HUD
 - **[BepHax](https://github.com/dekrom/BepHaxAddon)** - Basically a bunch including this README
 - **[lambda meteor utilities](https://github.com/lambda505/lambda-meteor-utilities)** - Online Friends HUD
 - **[Numby Hack](https://github.com/cqb13/Numby-hack)** - TntFuseEsp module
-- **[InvincibleMachineGun](https://github.com/adaxiaohu/InvincibleMachineGun)** - AutoChestAura module
+- **[Noratweak](https://github.com/noramibu/Nora-Tweaks)** - AutoFarm module
 - **[meteor community addon](https://github.com/lapoliciarobomiquesofrances/meteor-community-addon)** - AutoSex base
 - **[hybridious mod](https://github.com/Hybridious/hybridious_mod)** - B36, AutoMoss
 - **[lu public](https://github.com/CunnyCorp/lu-public)** - Auto Animal, Highlighter
 - **[nerv printer addon](https://github.com/Julflips/nerv-printer-addon)** - Map Namer base reference
-- **[JanitorAddon](https://github.com/Sleeepyv/JanitorAddon)** - ThrowEmptyShulker module
-- **[delirious](https://github.com/underscore-zi/delirious)** - Platform Builder module
-- **[Trouser](https://github.com/etianl/Trouser-Streak)** - PortalPatternFinder module
+- **[JanitorAddon](https://github.com/Sleeepyv/JanitorAddon)** - ThrowEmptyShulker
+- **[delirious](https://github.com/underscore-zi/delirious)** - Platform Builder
+- **[Trouser](https://github.com/etianl/Trouser-Streak)** - PortalPatternFinder
+- **[PathSeeker](https://github.com/FaxHack/PathSeeker)** - InventoryInfo
 - **[MeteorPlusPlus](https://github.com/zychen027/MeteorPlusPlusAddon)** - PacketEat
 
 ## Contributing
@@ -196,7 +207,6 @@ Open an [issue](https://github.com/oehrasa/Oehrasa-Bookies-Addon/issues) or subm
 
 [GNU GPLv3](LICENSE) - Free to fork and modify.
 
-> [!IMPORTANT]
 >## Disclaimer
 >Designed for anarchy servers like 6b6t.org. Use responsibly.
 >
@@ -205,3 +215,4 @@ Open an [issue](https://github.com/oehrasa/Oehrasa-Bookies-Addon/issues) or subm
 <h1 align="center">
   <img src="https://github.com/user-attachments/assets/0e9c7164-663c-411a-a222-e4416a74131e" alt="Header Image" style="width:70%; max-width:600px;"/>
 </h1>
+

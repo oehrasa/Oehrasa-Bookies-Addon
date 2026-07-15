@@ -18,7 +18,6 @@ import meteordevelopment.meteorclient.systems.hud.HudElementInfo;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.utils.network.Http;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.Identifier;
 import org.lwjgl.BufferUtils;
@@ -27,16 +26,21 @@ import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.metadata.IIOMetadata;
+import javax.imageio.metadata.IIOMetadataNode;
+import javax.imageio.stream.ImageInputStream;
+import java.awt.*;
+import java.awt.image.BufferedImage;
 import java.io.*;
+import java.net.URLDecoder;
 import java.net.URLEncoder;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
+import java.util.*;
 import java.util.List;
-import java.util.Random;
-import java.util.UUID;
+import java.util.function.Supplier;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 import static meteordevelopment.meteorclient.utils.Utils.WHITE;
@@ -45,17 +49,33 @@ public class AnimePics extends HudElement {
     public static final HudElementInfo<AnimePics> INFO = new HudElementInfo<>(
         Addon.HUD_GROUP,
         "Anime-Pics",
-        "Displays random Anime pictures from Nekos.life or WaifuIM or Safebooru or even Custom.",
+        "Displays random Anime pictures/Gif from Nekos.life or WaifuIM or Safebooru or even Custom.",
         AnimePics::create
     );
 
     private boolean locked = false;
     private boolean empty = true;
     private int ticks = 0;
-    private byte[] currentImageBytes = null;   // cached PNG bytes of the displayed image
-    private final PointerBuffer saveFilters;         // file filter for save dialogue
+    private final PointerBuffer saveFilters;         // file filters for save dialogue
     private volatile boolean manualRefresh = false; // true = next load must use fixed tag
     private final Identifier textureId;   // unique per element
+
+    // Save Image support: the original bytes/name of whatever was loaded (not the converted display PNG)
+    private byte[] currentRawBytes = null;
+    private String currentImageName = null;
+
+    // Persistent GPU texture. Recreated only when the pixel dimensions actually change; otherwise every
+    // frame swap (GIF animation or a same-size static image) reuses it via copyFrom()+upload() so no
+    // repeated GL texture allocation.
+    private DynamicTexture activeTexture = null;
+    private int textureWidth = -1;
+    private int textureHeight = -1;
+
+    private List<NativeImage> gifFrames = null;
+    private int[] gifDelaysMs = null;
+    private int gifFrameIndex = 0;
+    // GIF animation timing now uses system millis directly (accurate, decoupled from tick rate)
+    private long lastFrameTime = System.currentTimeMillis();
 
     // Settings
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -185,6 +205,42 @@ public class AnimePics extends HudElement {
         .build()
     );
 
+    // GIF settings
+    private final Setting<Boolean> animateGifs = sgGeneral.add(new BoolSetting.Builder()
+        .name("animate-gifs")
+        .description("Play animated GIFs. Disable to show only the first frame — much cheaper on CPU/GPU and memory.")
+        .defaultValue(true)
+        .onChanged(v -> refreshNow())
+        .build()
+    );
+
+    private final Setting<Boolean> animateInMenus = sgGeneral.add(new BoolSetting.Builder()
+        .name("animate-in-menus")
+        .description("Keep animating GIFs while a menu/screen is open (inventory, chat, settings, etc). Off by default since there's no visual benefit while the HUD isn't drawn.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Integer> maxGifFrames = sgGeneral.add(new IntSetting.Builder()
+        .name("max-gif-frames")
+        .description("Max frames decoded from a GIF. Long or high-fps GIFs get truncated to this to bound memory and decode time.")
+        .defaultValue(150)
+        .min(2)
+        .max(500)
+        .sliderRange(2, 500)
+        .build()
+    );
+
+    private final Setting<Integer> minFrameIntervalMs = sgGeneral.add(new IntSetting.Builder()
+        .name("min-gif-frame-interval")
+        .description("Minimum milliseconds between GIF frame swaps, regardless of the GIF's own timing. Raise this if fast GIFs cause stutter.")
+        .defaultValue(150)
+        .min(16)
+        .max(1000)
+        .sliderRange(16, 1000)
+        .build()
+    );
+
     // Local folder cycle
     private List<File> localImageFiles = new ArrayList<>();
     private int localImageIndex = 0;
@@ -194,10 +250,12 @@ public class AnimePics extends HudElement {
         super(INFO);
         this.textureId = Identifier.fromNamespaceAndPath("autobookshelf", "animepics_" + UUID.randomUUID());
 
-        // PNG filter for the save dialogue
-        ByteBuffer pngFilter = MemoryUtil.memASCII("*.png");
-        saveFilters = BufferUtils.createPointerBuffer(1);
-        saveFilters.put(pngFilter);
+        // Save dialogue filters: png (converted stills) + gif/jpg/jpeg (original downloaded formats)
+        String[] filterPatterns = {"*.png", "*.gif", "*.jpg", "*.jpeg"};
+        saveFilters = BufferUtils.createPointerBuffer(filterPatterns.length);
+        for (String pattern : filterPatterns) {
+            saveFilters.put(MemoryUtil.memASCII(pattern));
+        }
         saveFilters.rewind();
 
         MeteorClient.EVENT_BUS.subscribe(this);
@@ -207,9 +265,11 @@ public class AnimePics extends HudElement {
     public void remove() {
         super.remove();
         MeteorClient.EVENT_BUS.unsubscribe(this);
+        closeGifFrames(); // cached frames hold native memory — must be freed explicitly, GC won't do it
         if (mc.getTextureManager() != null) {
             mc.getTextureManager().release(textureId);
         }
+        activeTexture = null;
     }
 
     private static AnimePics create() {
@@ -262,12 +322,13 @@ public class AnimePics extends HudElement {
     }
 
     private void saveImage() {
-        if (currentImageBytes == null || currentImageBytes.length == 0) {
+        if (currentRawBytes == null || currentRawBytes.length == 0) {
             MeteorClient.LOG.info("[AnimePics] No image to save.");
             return;
         }
 
-        String suggestedName = "animepic.png";
+        String suggestedName = currentImageName != null ? currentImageName : "animepic.png";
+
         String path = TinyFileDialogs.tinyfd_saveFileDialog(
             "Save Image",
             new File(MeteorClient.FOLDER, suggestedName).getAbsolutePath(),
@@ -278,7 +339,7 @@ public class AnimePics extends HudElement {
         if (path == null) return;   // user cancelled
 
         try {
-            Files.write(Path.of(path), currentImageBytes);
+            Files.write(Path.of(path), currentRawBytes);
             MeteorClient.LOG.info("[AnimePics] Image saved to " + path);
         } catch (IOException e) {
             MeteorClient.LOG.error("[AnimePics] Save error: " + e.getMessage());
@@ -311,17 +372,19 @@ public class AnimePics extends HudElement {
         File dir = new File(folderPath);
         File[] files = dir.listFiles((d, name) -> {
             String lower = name.toLowerCase();
-            return lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg");
+            return lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".gif");
         });
         if (files != null) localImageFiles.addAll(List.of(files));
     }
 
     @EventHandler
     public void onTick(TickEvent.Post event) {
-        // Do nothing, it's Joever
-        if (mc.options.hideGui || mc.screen != null) return;
+        if (mc.options.hideGui) return;
+        if (mc.level == null) return;
 
-        if (pauseRefresh.get()) return;
+        boolean menuOpen = mc.screen != null;
+        // Pause fetching new images (but NOT animation) when a menu is open
+        if (pauseRefresh.get() || menuOpen) return;
 
         // If source is local but the file list was never loaded (after relog), load it now
         if (source.get() == Source.LocalFolder && localImageFiles.isEmpty()) {
@@ -353,15 +416,26 @@ public class AnimePics extends HudElement {
             loadImage();
             return;
         }
-        AbstractTexture tex = mc.getTextureManager().getTexture(textureId);
-        if (tex == null) return;
 
-        var textureView = tex.getTextureView();
-        var sampler = tex.getSampler();
+        // ---- GIF animation (runs every render frame, accurate timing) ----
+        if (gifFrames != null && gifFrames.size() > 1 && animateGifs.get()) {
+            boolean menuOpen = mc.screen != null;
+            if (!menuOpen || animateInMenus.get()) {
+                long now = System.currentTimeMillis();
+                int delay = Math.max(gifDelaysMs[gifFrameIndex], minFrameIntervalMs.get());
+                if (now - lastFrameTime >= delay) {
+                    lastFrameTime = now;
+                    gifFrameIndex = (gifFrameIndex + 1) % gifFrames.size();
+                    applyFrame(gifFrames.get(gifFrameIndex));
+                }
+            }
+        }
+
+        if (activeTexture == null) return;
 
         Renderer2D.TEXTURE.begin();
         Renderer2D.TEXTURE.texQuad(x, y, imgWidth.get(), imgHeight.get(), WHITE);
-        Renderer2D.TEXTURE.render(textureView, sampler);
+        Renderer2D.TEXTURE.render(activeTexture.getTextureView(), activeTexture.getSampler());
     }
 
     private void updateSize() { setSize(imgWidth.get(), imgHeight.get()); }
@@ -458,6 +532,25 @@ public class AnimePics extends HudElement {
         return file;
     }
 
+    /**
+     * Derives a display filename (with extension) from an image URL, for use in Save Image.
+     */
+    private static String deriveFileName(String url) {
+        if (url == null) return null;
+        String path = url;
+        int q = path.indexOf('?');
+        if (q >= 0) path = path.substring(0, q);
+        int slash = path.lastIndexOf('/');
+        String name = slash >= 0 ? path.substring(slash + 1) : path;
+        try {
+            name = URLDecoder.decode(name, StandardCharsets.UTF_8);
+        } catch (Exception ignored) {
+            // keep raw name if decoding fails
+        }
+        if (name.isEmpty() || !name.contains(".")) return null; // no usable extension, caller falls back
+        return name;
+    }
+
     private void loadImage() {
         if (locked) return;
         new Thread(() -> {
@@ -467,70 +560,258 @@ public class AnimePics extends HudElement {
                 manualRefresh = false;
 
                 String url = fetchImageUrl(useFixed);
-                if (url == null) { locked = false; return; }
-
-                byte[] imageBytes;
-
-                if (url.startsWith("local://")) {
-                    // Local file
-                    File file = getNextLocalImage();
-                    if (file == null) { locked = false; return; }
-                    if (file.getName().toLowerCase().endsWith(".png")) {
-                        imageBytes = Files.readAllBytes(file.toPath());
-                    } else {
-                        java.awt.image.BufferedImage img = ImageIO.read(file);
-                        if (img == null) {
-                            MeteorClient.LOG.error("[AnimePics] Could not read image: " + file.getName());
-                            locked = false;
-                            return;
-                        }
-                        var baos = new ByteArrayOutputStream();
-                        ImageIO.write(img, "png", baos);
-                        imageBytes = baos.toByteArray();
-                    }
-                } else {
-                    // Network source
-                    MeteorClient.LOG.info("[AnimePics] Image URL: " + url);
-                    InputStream stream = Http.get(url).sendInputStream();
-                    imageBytes = stream.readAllBytes();
-                    stream.close();
-
-                    // Check if it's already a PNG
-                    if (!isPNG(imageBytes)) {
-                        // Convert to PNG via ImageIO
-                        var bais = new ByteArrayInputStream(imageBytes);
-                        java.awt.image.BufferedImage img = ImageIO.read(bais);
-                        if (img == null) {
-                            throw new IOException("Unsupported image format for URL: " + url);
-                        }
-                        var baos = new ByteArrayOutputStream();
-                        ImageIO.write(img, "png", baos);
-                        imageBytes = baos.toByteArray();
-                    }
+                if (url == null) {
+                    locked = false;
+                    return;
                 }
 
-                this.currentImageBytes = imageBytes;
+                byte[] rawBytes;
+                String imageName;
 
-                byte[] finalBytes = imageBytes;
-                mc.execute(() -> {
-                    try {
-                        if (mc.getTextureManager() == null) return;
-                        mc.getTextureManager().release(textureId);
-                        NativeImage nativeImage = NativeImage.read(new ByteArrayInputStream(finalBytes));
-                        mc.getTextureManager().register(textureId,
-                            new DynamicTexture(() -> "AnimePics", nativeImage));
-                        empty = false;
-                        MeteorClient.LOG.info("[AnimePics] Image loaded!");
-                    } catch (Exception ex) {
-                        MeteorClient.LOG.error("[AnimePics] Texture register error: " + ex.getMessage());
+                if (url.startsWith("local://")) {
+                    File file = getNextLocalImage();
+                    if (file == null) {
+                        locked = false;
+                        return;
                     }
-                });
+                    rawBytes = Files.readAllBytes(file.toPath());
+                    imageName = file.getName();
+                } else {
+                    MeteorClient.LOG.info("[AnimePics] Image URL: " + url);
+                    try (InputStream stream = Http.get(url).sendInputStream()) {
+                        rawBytes = stream.readAllBytes();
+                    }
+                    imageName = deriveFileName(url);
+                }
+
+                if (imageName == null) {
+                    String ext = isGIF(rawBytes) ? ".gif" : isPNG(rawBytes) ? ".png" : ".jpg";
+                    imageName = "animepic" + ext;
+                }
+
+                currentRawBytes = rawBytes;
+                currentImageName = imageName;
+
+                if (isGIF(rawBytes)) {
+                    handleGif(rawBytes);
+                } else {
+                    handleStaticImage(rawBytes, url);
+                }
             } catch (Exception e) {
                 MeteorClient.LOG.error("[AnimePics] " + e.getMessage());
             }
             locked = false;
         }).start();
         updateSize();
+    }
+
+    private void handleStaticImage(byte[] rawBytes, String url) throws IOException {
+        NativeImage frame = isPNG(rawBytes) ? NativeImage.read(rawBytes) : null;
+        if (frame == null) {
+            BufferedImage img = ImageIO.read(new ByteArrayInputStream(rawBytes));
+            if (img == null) throw new IOException("Unsupported image format for URL: " + url);
+            frame = bufferedImageToNativeImage(img);
+        }
+
+        NativeImage finalFrame = frame;
+        mc.execute(() -> {
+            closeGifFrames(); // stop and free any previous animation
+            applyFrame(finalFrame);
+            finalFrame.close(); // was only a copyFrom() source, not owned by the texture
+            empty = false;
+            MeteorClient.LOG.info("[AnimePics] Image loaded!");
+        });
+    }
+
+    private void handleGif(byte[] rawBytes) throws IOException {
+        if (!animateGifs.get()) {
+            BufferedImage first = ImageIO.read(new ByteArrayInputStream(rawBytes)); // ImageIO reads only frame 0 for GIFs
+            if (first == null) throw new IOException("Could not read GIF");
+            NativeImage frame = bufferedImageToNativeImage(first);
+
+            mc.execute(() -> {
+                closeGifFrames();
+                applyFrame(frame);
+                frame.close();
+                empty = false;
+                MeteorClient.LOG.info("[AnimePics] Image loaded! (GIF animation disabled)");
+            });
+            return;
+        }
+
+        List<DecodedFrame> decoded = decodeGif(rawBytes, maxGifFrames.get());
+        if (decoded.isEmpty()) throw new IOException("GIF had no readable frames");
+
+        List<NativeImage> frames = new ArrayList<>(decoded.size());
+        int[] delays = new int[decoded.size()];
+        for (int i = 0; i < decoded.size(); i++) {
+            frames.add(bufferedImageToNativeImage(decoded.get(i).image()));
+            delays[i] = decoded.get(i).delayMs();
+        }
+
+        mc.execute(() -> {
+            closeGifFrames(); // free the previous GIF's cached frames before replacing them
+            gifFrames = frames;
+            gifDelaysMs = delays;
+            gifFrameIndex = 0;
+            lastFrameTime = System.currentTimeMillis();
+            applyFrame(frames.get(0));
+            empty = false;
+            MeteorClient.LOG.info("[AnimePics] Image loaded! (" + frames.size() + " GIF frames)");
+        });
+    }
+
+    /**
+     * Closes and releases all cached GIF frame NativeImages. Must be called before replacing them or on removal.
+     */
+    private void closeGifFrames() {
+        if (gifFrames != null) {
+            for (NativeImage frame : gifFrames) frame.close();
+        }
+        gifFrames = null;
+        gifDelaysMs = null;
+    }
+
+    private static List<DecodedFrame> decodeGif(byte[] gifBytes, int maxFrames) throws IOException {
+        List<DecodedFrame> frames = new ArrayList<>();
+        Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName("gif");
+        if (!readers.hasNext()) throw new IOException("No GIF reader available");
+        ImageReader reader = readers.next();
+
+        try (ImageInputStream iis = ImageIO.createImageInputStream(new ByteArrayInputStream(gifBytes))) {
+            reader.setInput(iis, false);
+            int frameCount = reader.getNumImages(true);
+            int limit = Math.min(frameCount, maxFrames);
+
+            // Logical screen size
+            int screenW = -1, screenH = -1;
+            IIOMetadata streamMetadata = reader.getStreamMetadata();
+            if (streamMetadata != null) {
+                IIOMetadataNode streamRoot = (IIOMetadataNode) streamMetadata.getAsTree("javax_imageio_gif_stream_1.0");
+                IIOMetadataNode lsd = getChildNode(streamRoot, "LogicalScreenDescriptor");
+                if (lsd != null) {
+                    screenW = parseIntSafe(lsd.getAttribute("logicalScreenWidth"), -1);
+                    screenH = parseIntSafe(lsd.getAttribute("logicalScreenHeight"), -1);
+                }
+            }
+
+            BufferedImage canvas = null;
+            BufferedImage restoreSnapshot = null;
+
+            for (int i = 0; i < limit; i++) {
+                BufferedImage frame = reader.read(i);
+                IIOMetadata metadata = reader.getImageMetadata(i);
+                IIOMetadataNode root = (IIOMetadataNode) metadata.getAsTree("javax_imageio_gif_image_1.0");
+
+                int delayCs = 10; // default 100ms if metadata is missing
+                String disposal = "none";
+                int fx = 0, fy = 0;
+
+                IIOMetadataNode gce = getChildNode(root, "GraphicControlExtension");
+                if (gce != null) {
+                    delayCs = parseIntSafe(gce.getAttribute("delayTime"), delayCs);
+                    String disp = gce.getAttribute("disposalMethod");
+                    if (disp != null && !disp.isEmpty()) disposal = disp;
+                }
+                IIOMetadataNode descriptor = getChildNode(root, "ImageDescriptor");
+                if (descriptor != null) {
+                    fx = parseIntSafe(descriptor.getAttribute("imageLeftPosition"), 0);
+                    fy = parseIntSafe(descriptor.getAttribute("imageTopPosition"), 0);
+                }
+
+                if (canvas == null) {
+                    int w = screenW > 0 ? screenW : Math.max(frame.getWidth(), fx + frame.getWidth());
+                    int h = screenH > 0 ? screenH : Math.max(frame.getHeight(), fy + frame.getHeight());
+                    canvas = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+                }
+
+                if ("restoreToPrevious".equals(disposal)) {
+                    restoreSnapshot = copyImage(canvas);
+                }
+
+                Graphics2D g = canvas.createGraphics();
+                g.drawImage(frame, fx, fy, null);
+                g.dispose();
+
+                frames.add(new DecodedFrame(copyImage(canvas), Math.max(delayCs * 10, 20)));
+
+                switch (disposal) {
+                    case "restoreToBackgroundColor" -> {
+                        Graphics2D clear = canvas.createGraphics();
+                        clear.setComposite(AlphaComposite.Clear);
+                        clear.fillRect(fx, fy, frame.getWidth(), frame.getHeight());
+                        clear.dispose();
+                    }
+                    case "restoreToPrevious" -> {
+                        if (restoreSnapshot != null) canvas = restoreSnapshot;
+                    }
+                    default -> { /* "none" / "doNotDispose" / "unspecified" so leave canvas as-is */ }
+                }
+            }
+        } finally {
+            reader.dispose();
+        }
+        return frames;
+    }
+
+    private record DecodedFrame(BufferedImage image, int delayMs) {
+    }
+
+    private static IIOMetadataNode getChildNode(IIOMetadataNode root, String name) {
+        if (root == null) return null;
+        for (int i = 0; i < root.getLength(); i++) {
+            if (root.item(i).getNodeName().equalsIgnoreCase(name)) return (IIOMetadataNode) root.item(i);
+        }
+        return null;
+    }
+
+    private static int parseIntSafe(String s, int fallback) {
+        try {
+            return Integer.parseInt(s);
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private static BufferedImage copyImage(BufferedImage src) {
+        BufferedImage copy = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = copy.createGraphics();
+        g.drawImage(src, 0, 0, null);
+        g.dispose();
+        return copy;
+    }
+
+    private static byte[] bufferedImageToPng(BufferedImage img) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        ImageIO.write(img, "png", baos);
+        return baos.toByteArray();
+    }
+
+    /**
+     * Converts a BufferedImage to a NativeImage via a PNG round-trip.
+     */
+    private static NativeImage bufferedImageToNativeImage(BufferedImage img) throws IOException {
+        return NativeImage.read(bufferedImageToPng(img));
+    }
+
+    private void applyFrame(NativeImage frame) {
+        if (mc.getTextureManager() == null) return;
+
+        if (activeTexture == null || frame.getWidth() != textureWidth || frame.getHeight() != textureHeight) {
+            mc.getTextureManager().release(textureId); // closes the previous texture + its owned image, if any
+            NativeImage owned = new NativeImage(frame.getWidth(), frame.getHeight(), false);
+            owned.copyFrom(frame);
+            Supplier<String> nameSupplier = textureId::toString;
+            activeTexture = new DynamicTexture(nameSupplier, owned);
+            mc.getTextureManager().register(textureId, activeTexture);
+            textureWidth = frame.getWidth();
+            textureHeight = frame.getHeight();
+        } else {
+            NativeImage current = activeTexture.getPixels();
+            if (current == null) return; // texture was disposed elsewhere; the next load will recreate it
+            current.copyFrom(frame);
+            activeTexture.upload();
+        }
     }
 
     /** Checks if the given bytes start with the PNG signature. */
@@ -545,5 +826,14 @@ public class AnimePics extends HudElement {
             bytes[5] == 0x0A &&
             bytes[6] == 0x1A &&
             bytes[7] == 0x0A;
+    }
+
+    /**
+     * Checks if the given bytes start with the GIF signature (GIF87a or GIF89a).
+     */
+    private static boolean isGIF(byte[] bytes) {
+        if (bytes.length < 6) return false;
+        return bytes[0] == 'G' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == '8'
+            && (bytes[4] == '7' || bytes[4] == '9') && bytes[5] == 'a';
     }
 }

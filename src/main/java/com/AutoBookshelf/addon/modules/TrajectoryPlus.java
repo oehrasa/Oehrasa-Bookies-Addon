@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.ProjectilePhysics;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
@@ -215,7 +216,7 @@ public class TrajectoryPlus extends Module {
     private void predictProjectilePath(Render3DEvent event, Entity projectile) {
         SimResult result = simulatePath(
             projectile.position(), projectile.getDeltaMovement(), projectile,
-            0.99, getProjectileGravity(projectile), 60,
+            ProjectilePhysics.getDrag(projectile), ProjectilePhysics.getGravity(projectile), 60,
             event, existingProjectileColor.get()
         );
 
@@ -287,24 +288,6 @@ public class TrajectoryPlus extends Module {
             entity instanceof ThrownExperienceBottle ||
             entity instanceof AbstractThrownPotion ||
             entity instanceof WindCharge;
-    }
-
-    private double getProjectileGravity(Entity projectile) {
-        if (projectile instanceof Arrow) return 0.05;
-        if (projectile instanceof SpectralArrow) return 0.05;
-        if (projectile instanceof ThrownTrident) return 0.05;
-        if (projectile instanceof Snowball) return 0.03;
-        if (projectile instanceof ThrownEgg) return 0.03;
-        if (projectile instanceof ThrownEnderpearl) return 0.03;
-        if (projectile instanceof ThrownExperienceBottle) return 0.03;
-        if (projectile instanceof AbstractThrownPotion) return 0.05;
-        if (projectile instanceof LargeFireball) return 0.0;
-        if (projectile instanceof SmallFireball) return 0.0;
-        if (projectile instanceof DragonFireball) return 0.0;
-        if (projectile instanceof WitherSkull) return 0.0;
-        if (projectile instanceof ShulkerBullet) return 0.0;
-        if (projectile instanceof WindCharge) return 0.0;
-        return 0.03;
     }
 
     private EntityHitResult findEntityHit(Vec3 start, Vec3 end, Entity ignoreEntity) {
