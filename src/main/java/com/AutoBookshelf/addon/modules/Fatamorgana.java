@@ -1,0 +1,681 @@
+package com.AutoBookshelf.addon.modules;
+
+import com.AutoBookshelf.addon.Addon;
+import it.unimi.dsi.fastutil.ints.*;
+import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap;
+import meteordevelopment.meteorclient.events.render.Render3DEvent;
+import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.renderer.ShapeMode;
+import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.entity.Target;
+import meteordevelopment.meteorclient.utils.player.InvUtils;
+import meteordevelopment.meteorclient.utils.player.Rotations;
+import meteordevelopment.meteorclient.utils.player.SlotUtils;
+import meteordevelopment.meteorclient.utils.render.color.SettingColor;
+import meteordevelopment.orbit.EventHandler;
+import net.minecraft.block.Blocks;
+import net.minecraft.block.ShulkerBoxBlock;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.player.PlayerInventory;
+import net.minecraft.entity.vehicle.ChestMinecartEntity;
+import net.minecraft.item.BlockItem;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
+import net.minecraft.network.packet.c2s.play.ClickSlotC2SPacket;
+import net.minecraft.screen.ScreenHandler;
+import net.minecraft.screen.ScreenHandlerType;
+import net.minecraft.screen.slot.Slot;
+import net.minecraft.screen.slot.SlotActionType;
+import net.minecraft.util.ActionResult;
+import net.minecraft.util.Hand;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
+import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.Vec3d;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class Fatamorgana extends Module {
+    private enum Stage {
+        SEARCHING,
+        INTERACTING,
+        DEPOSITING,
+        CLOSING,
+        WAITING
+    }
+
+    private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgInteract = settings.createGroup("Interact");
+    private final SettingGroup sgDeposit = settings.createGroup("Deposit");
+    private final SettingGroup sgRender = settings.createGroup("Render");
+    private final SettingGroup sgDebug = settings.createGroup("Debug");
+
+    private final Setting<Double> range = sgGeneral.add(new DoubleSetting.Builder()
+        .name("range")
+        .description("Search radius used to find the chest minecart (and barrels, if enabled).")
+        .defaultValue(6.0)
+        .min(1.0)
+        .sliderMax(16.0)
+        .build()
+    );
+
+    private final Setting<Integer> cycleDelay = sgGeneral.add(new IntSetting.Builder()
+        .name("cycle-delay")
+        .description("Ticks to wait after closing the container before searching for the next one.")
+        .defaultValue(60)
+        .min(0)
+        .sliderRange(0, 1200)
+        .build()
+    );
+
+    private final Setting<Boolean> targetBarrels = sgGeneral.add(new BoolSetting.Builder()
+        .name("target-barrels")
+        .description("Also fill barrels.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Integer> barrelRecheckTicks = sgGeneral.add(new IntSetting.Builder()
+        .name("barrel-recheck-ticks")
+        .description("How many ticks a barrel stays marked 'completed' before Fatamorgana re-checks it.")
+        .defaultValue(10)
+        .min(1)
+        .sliderRange(1, 300)   // up to 15 seconds
+        .visible(targetBarrels::get)
+        .build()
+    );
+
+    private final Setting<Boolean> requireDepositItems = sgGeneral.add(new BoolSetting.Builder()
+        .name("require-deposit-items")
+        .description("Stay completely idle in the meantime.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> rotate = sgInteract.add(new BoolSetting.Builder()
+        .name("rotate")
+        .description("Rotate towards the chest minecart/barrel before interacting with it.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> interactDelay = sgInteract.add(new IntSetting.Builder()
+        .name("interact-delay")
+        .description("Ticks to wait between interact attempts.")
+        .defaultValue(4)
+        .min(1)
+        .sliderMax(40)
+        .build()
+    );
+
+    private final Setting<Integer> maxInteractAttempts = sgInteract.add(new IntSetting.Builder()
+        .name("max-interact-attempts")
+        .description("Give up on this target and search for a new one after this many failed attempts to open it.")
+        .defaultValue(15)
+        .min(1)
+        .sliderMax(60)
+        .build()
+    );
+
+    private final Setting<Integer> depositRate = sgDeposit.add(new IntSetting.Builder()
+        .name("deposit-rate")
+        .description("Items moved into the container per tick.")
+        .defaultValue(6)
+        .min(1)
+        .sliderMax(36)
+        .build()
+    );
+
+    private final Setting<Boolean> autoClose = sgDeposit.add(new BoolSetting.Builder()
+        .name("auto-close")
+        .description("Close the container automatically once nothing more can be deposited.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<List<Item>> extraItems = sgDeposit.add(new ItemListSetting.Builder()
+        .name("extra-items")
+        .description("Extra items (besides all shulker box) to deposit into the container.")
+        .defaultValue(new ArrayList<>())
+        .build()
+    );
+
+    private final Setting<Boolean> resyncAfterDeposit = sgDeposit.add(new BoolSetting.Builder()
+        .name("resync-after-deposit")
+        .description("Sends an inventory resync packet after each deposit action.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> depositSettleDelay = sgDeposit.add(new IntSetting.Builder()
+        .name("deposit-settle-delay")
+        .description("Ticks to wait after the container GUI opens before evaluating deposit/close logic, to let the initial inventory sync packet arrive. Prevents the container being closed immediately (before anything is deposited) because slots briefly read as empty.")
+        .defaultValue(3)
+        .min(0)
+        .sliderMax(10)
+        .build()
+    );
+
+    private final Setting<Boolean> renderTarget = sgRender.add(new BoolSetting.Builder()
+        .name("render-target")
+        .description("Renders a box around the current target (chest minecart or barrel).")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<ShapeMode> shapeMode = sgRender.add(new EnumSetting.Builder<ShapeMode>()
+        .name("shape-mode")
+        .description("How the target box is rendered.")
+        .defaultValue(ShapeMode.Both)
+        .visible(renderTarget::get)
+        .build()
+    );
+
+    private final Setting<SettingColor> sideColor = sgRender.add(new ColorSetting.Builder()
+        .name("side-color")
+        .defaultValue(new SettingColor(0, 225, 0, 75))
+        .visible(renderTarget::get)
+        .build()
+    );
+
+    private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
+        .name("line-color")
+        .defaultValue(new SettingColor(0, 225, 0, 255))
+        .visible(renderTarget::get)
+        .build()
+    );
+
+    private final Setting<Boolean> logContainerState = sgDebug.add(new BoolSetting.Builder()
+        .name("log-container-state")
+        .description("Logs isContainerMenuOpen() transitions and slot-emptiness info, to diagnose deposit/sync timing issues.")
+        .defaultValue(false)
+        .build()
+    );
+
+    // Mutable state.
+    private Stage stage = Stage.SEARCHING;
+
+    /**
+     * Entity id of the chest minecart we're currently working with, or -1 if
+     * the current target is a barrel (or there is no target). Entity ids are
+     * unique per spawned instance.
+     */
+    private int targetEntityId = -1;
+
+    /**
+     * Position of the barrel we're currently working with, or null if the
+     * current target is a chest minecart (or there is no target).
+     */
+    private BlockPos targetBlockPos = null;
+
+    private int ticksInStage = 0;
+    private int interactAttempts = 0;
+    private int cycleTicks = 0;
+    private int depositSettleTicks = 0;
+
+    /**
+     * Last value observed from {@link #isContainerMenuOpen()}, used purely to log transitions rather than spamming every tick.
+     */
+    private boolean lastLoggedContainerOpenState = false;
+
+    private final IntSet completedEntityIds = new IntOpenHashSet();
+
+    private final Object2LongOpenHashMap<BlockPos> completedBarrelPositions = new Object2LongOpenHashMap<>();
+
+    public Fatamorgana() {
+        super(Addon.CATEGORY, "Fatamorgana", "Maho x Miho, Miho x Yukari, Maho x Erika.");
+    }
+
+    @Override
+    public void onActivate() {
+        completedEntityIds.clear();
+        completedBarrelPositions.clear();
+        resetToSearching();
+    }
+
+    @Override
+    public void onDeactivate() {
+        if (mc.player != null && mc.player.currentScreenHandler != mc.player.playerScreenHandler) {
+            mc.player.closeHandledScreen();
+        }
+        resetToSearching();
+    }
+
+    @EventHandler
+    private void onTick(TickEvent.Pre event) {
+        if (mc.player == null || mc.world == null) return;
+
+        if (logContainerState.get()) logContainerStateIfChanged();
+
+        switch (stage) {
+            case SEARCHING -> doSearching();
+            case INTERACTING -> doInteracting();
+            case DEPOSITING -> doDepositing();
+            case CLOSING -> doClosing();
+            case WAITING -> doWaiting();
+        }
+    }
+
+    private void logContainerStateIfChanged() {
+        boolean open = isContainerMenuOpen();
+        if (open == lastLoggedContainerOpenState) return;
+        lastLoggedContainerOpenState = open;
+
+        if (open) {
+            ScreenHandler handler = mc.player.currentScreenHandler;
+            int containerSlots = SlotUtils.indexToId(SlotUtils.MAIN_START);
+
+            int containerFilled = 0;
+            for (int i = 0; i < containerSlots; i++) {
+                if (handler.getSlot(i).hasStack()) containerFilled++;
+            }
+
+            int playerDepositSlots = 0;
+            for (int i = containerSlots; i < containerSlots + 4 * 9; i++) {
+                Slot slot = handler.getSlot(i);
+                if (slot.hasStack() && isDepositItem(slot.getStack())) playerDepositSlots++;
+            }
+
+            info("Container opened. container-filled-slots=%d/%d, player-deposit-slots-seen=%d, settle-delay=%d ticks",
+                containerFilled, containerSlots, playerDepositSlots, depositSettleDelay.get());
+        } else {
+            info("Container closed. stage=%s", stage);
+        }
+    }
+
+    private void doSearching() {
+        pruneCompletedTargets();
+
+        // Idle guard: don't bother searching/rotating/opening anything if we
+        // couldn't deposit even if we found a target.
+        if (requireDepositItems.get() && !hasAnyDepositItem()) return;
+
+        Entity entityTarget = findNearestChestMinecart(range.get());
+        if (entityTarget != null) {
+            targetEntityId = entityTarget.getId();
+            targetBlockPos = null;
+            interactAttempts = 0;
+            ticksInStage = 0;
+            stage = Stage.INTERACTING;
+            return;
+        }
+
+        if (targetBarrels.get()) {
+            BlockPos barrelTarget = findNearestBarrel(range.get());
+            if (barrelTarget != null) {
+                targetEntityId = -1;
+                targetBlockPos = barrelTarget;
+                interactAttempts = 0;
+                ticksInStage = 0;
+                stage = Stage.INTERACTING;
+            }
+        }
+    }
+
+    private void doInteracting() {
+        if (targetEntityId != -1) {
+            doInteractingEntity();
+        } else if (targetBlockPos != null) {
+            doInteractingBarrel();
+        } else {
+            resetToSearching();
+        }
+    }
+
+    private void doInteractingEntity() {
+        Entity target = getTargetEntity();
+        if (target == null) {
+            // Destroyed before we managed to open it - jump straight to the next one.
+            resetToSearching();
+            return;
+        }
+
+        // Something already got the screen open
+        if (isContainerMenuOpen()) {
+            depositSettleTicks = 0;
+            stage = Stage.DEPOSITING;
+            return;
+        }
+
+        ticksInStage++;
+        if (ticksInStage < interactDelay.get()) return;
+        ticksInStage = 0;
+
+        if (++interactAttempts > maxInteractAttempts.get()) {
+            resetToSearching();
+            return;
+        }
+
+        if (rotate.get()) {
+            Rotations.rotate(Rotations.getYaw(target), Rotations.getPitch(target, Target.Body), 50, () -> interactEntityTarget(target));
+        } else {
+            interactEntityTarget(target);
+        }
+    }
+
+    private void doInteractingBarrel() {
+        if (!isBarrelStillPresent(targetBlockPos)) {
+            resetToSearching();
+            return;
+        }
+
+        if (isContainerMenuOpen()) {
+            depositSettleTicks = 0;
+            stage = Stage.DEPOSITING;
+            return;
+        }
+
+        ticksInStage++;
+        if (ticksInStage < interactDelay.get()) return;
+        ticksInStage = 0;
+
+        if (++interactAttempts > maxInteractAttempts.get()) {
+            resetToSearching();
+            return;
+        }
+
+        BlockPos pos = targetBlockPos;
+        Vec3d hitPos = Vec3d.ofCenter(pos);
+        if (rotate.get()) {
+            Rotations.rotate(Rotations.getYaw(hitPos), Rotations.getPitch(hitPos), 50, () -> interactBarrelTarget(pos));
+        } else {
+            interactBarrelTarget(pos);
+        }
+    }
+
+    private void interactEntityTarget(Entity target) {
+        if (mc.player == null || mc.interactionManager == null || !target.isAlive()) return;
+        mc.interactionManager.interactEntity(mc.player, target, Hand.MAIN_HAND);
+        mc.player.swingHand(Hand.MAIN_HAND);
+    }
+
+    private void interactBarrelTarget(BlockPos pos) {
+        if (mc.player == null || mc.interactionManager == null || !isBarrelStillPresent(pos)) return;
+
+        BlockHitResult hitResult = new BlockHitResult(Vec3d.ofCenter(pos), Direction.UP, pos, false);
+        ActionResult result = mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND, hitResult);
+        if (result.isAccepted()) mc.player.swingHand(Hand.MAIN_HAND);
+    }
+
+    private void doDepositing() {
+        boolean targetStillValid = targetEntityId != -1
+            ? getTargetEntity() != null
+            : targetBlockPos != null && isBarrelStillPresent(targetBlockPos);
+
+        if (!targetStillValid || !isContainerMenuOpen()) {
+            // Container died mid-transfer, or the screen was force-closed server side.
+            stage = Stage.CLOSING;
+            return;
+        }
+
+        // Settle window: give the server's inventory-contents sync packet
+        // time to arrive before trusting slot contents for full/empty
+        // decisions. Without this, a freshly opened ScreenHandler can read
+        // every slot as empty for a tick or two, which previously caused
+        // autoClose to fire before a single item was ever deposited.
+        if (depositSettleTicks < depositSettleDelay.get()) {
+            depositSettleTicks++;
+            return;
+        }
+
+        // Completion check: if every container slot is already occupied by a
+        // deposit item, there's nothing more we can do here so we mark it and
+        // stop bothering with this specific entity/position.
+        if (isContainerFullOfDepositItems()) {
+            markCurrentTargetCompleted();
+            stage = Stage.CLOSING;
+            return;
+        }
+
+        boolean playerHasDepositItems = false;
+        for (int i = SlotUtils.indexToId(SlotUtils.MAIN_START); i < SlotUtils.indexToId(SlotUtils.MAIN_START) + 4 * 9; i++) {
+            Slot slot = mc.player.currentScreenHandler.getSlot(i);
+            if (slot.hasStack() && isDepositItem(slot.getStack())) {
+                playerHasDepositItems = true;
+                break;
+            }
+        }
+
+        if (!playerHasDepositItems) {
+            if (autoClose.get()) stage = Stage.CLOSING;
+            return;
+        }
+
+        boolean containerHasEmptySlots = false;
+        for (int i = 0; i < SlotUtils.indexToId(SlotUtils.MAIN_START); i++) {
+            if (!mc.player.currentScreenHandler.getSlot(i).hasStack()) {
+                containerHasEmptySlots = true;
+                break;
+            }
+        }
+
+        if (!containerHasEmptySlots) {
+            if (autoClose.get()) stage = Stage.CLOSING;
+            return;
+        }
+
+        int moved = 0;
+        for (int i = SlotUtils.indexToId(SlotUtils.MAIN_START); i < SlotUtils.indexToId(SlotUtils.MAIN_START) + 4 * 9; i++) {
+            if (moved >= depositRate.get()) break;
+
+            Slot slot = mc.player.currentScreenHandler.getSlot(i);
+            if (!slot.hasStack() || !isDepositItem(slot.getStack())) continue;
+
+            InvUtils.shiftClick().slotId(i);
+            moved++;
+        }
+
+        if (moved > 0 && resyncAfterDeposit.get()) sendResyncPacket();
+    }
+
+    private void doClosing() {
+        if (mc.player != null && mc.player.currentScreenHandler != mc.player.playerScreenHandler) {
+            mc.player.closeHandledScreen();
+        }
+        cycleTicks = 0;
+        stage = Stage.WAITING;
+    }
+
+    private void doWaiting() {
+        boolean stillExists = targetEntityId != -1
+            ? getTargetEntity() != null
+            : targetBlockPos != null && isBarrelStillPresent(targetBlockPos);
+
+        if (!stillExists) {
+            resetToSearching();
+            return;
+        }
+
+        cycleTicks++;
+        if (cycleTicks >= cycleDelay.get()) {
+            resetToSearching();
+        }
+    }
+
+    private void resetToSearching() {
+        targetEntityId = -1;
+        targetBlockPos = null;
+        interactAttempts = 0;
+        ticksInStage = 0;
+        cycleTicks = 0;
+        depositSettleTicks = 0;
+        stage = Stage.SEARCHING;
+    }
+
+    private void markCurrentTargetCompleted() {
+        if (targetEntityId != -1) {
+            completedEntityIds.add(targetEntityId);
+        } else if (targetBlockPos != null && mc.world != null) {
+            completedBarrelPositions.put(targetBlockPos, mc.world.getTime() + barrelRecheckTicks.get());
+        }
+    }
+
+    private boolean isContainerFullOfDepositItems() {
+        for (int i = 0; i < SlotUtils.indexToId(SlotUtils.MAIN_START); i++) {
+            Slot slot = mc.player.currentScreenHandler.getSlot(i);
+            if (!slot.hasStack() || !isDepositItem(slot.getStack())) return false;
+        }
+        return true;
+    }
+
+    private void pruneCompletedTargets() {
+        if (!completedEntityIds.isEmpty()) {
+            IntIterator it = completedEntityIds.iterator();
+            while (it.hasNext()) {
+                if (!entityExists(it.nextInt())) it.remove();
+            }
+        }
+
+        if (!completedBarrelPositions.isEmpty() && mc.world != null) {
+            long now = mc.world.getTime();
+            completedBarrelPositions.object2LongEntrySet().removeIf(entry ->
+                mc.world.getBlockState(entry.getKey()).getBlock() != Blocks.BARREL || now >= entry.getLongValue()
+            );
+        }
+    }
+
+    private boolean entityExists(int entityId) {
+        if (mc.world == null) return false;
+        for (Entity entity : mc.world.getEntities()) {
+            if (entity.getId() == entityId) return entity.isAlive();
+        }
+        return false;
+    }
+
+    private boolean isBarrelStillPresent(BlockPos pos) {
+        return mc.world != null && pos != null && mc.world.getBlockState(pos).getBlock() == Blocks.BARREL;
+    }
+
+    private Entity getTargetEntity() {
+        if (targetEntityId == -1 || mc.world == null) return null;
+
+        for (Entity entity : mc.world.getEntities()) {
+            if (entity.getId() == targetEntityId) {
+                return entity.isAlive() && entity instanceof ChestMinecartEntity ? entity : null;
+            }
+        }
+
+        return null;
+    }
+
+    private Entity findNearestChestMinecart(double searchRange) {
+        if (mc.player == null || mc.world == null) return null;
+
+        List<ChestMinecartEntity> nearby = mc.world.getEntitiesByClass(
+            ChestMinecartEntity.class,
+            mc.player.getBoundingBox().expand(searchRange),
+            entity -> entity.isAlive() && !completedEntityIds.contains(entity.getId())
+        );
+
+        Vec3d playerPos = mc.player.getPos();
+        Entity nearest = null;
+        double closestDistSq = Double.MAX_VALUE;
+
+        for (ChestMinecartEntity entity : nearby) {
+            double distSq = entity.getPos().squaredDistanceTo(playerPos);
+            if (distSq < closestDistSq) {
+                closestDistSq = distSq;
+                nearest = entity;
+            }
+        }
+
+        return nearest;
+    }
+
+    /**
+     * Manual block scan (there's no equivalent of {@code getEntitiesByClass}
+     * for blocks) over a cube around the player, filtered down to the actual
+     * search radius and to barrels not already marked completed.
+     */
+    private BlockPos findNearestBarrel(double searchRange) {
+        if (mc.player == null || mc.world == null) return null;
+
+        BlockPos playerBlockPos = mc.player.getBlockPos();
+        int r = (int) Math.ceil(searchRange);
+        Vec3d playerPos = mc.player.getPos();
+        double searchRangeSq = searchRange * searchRange;
+
+        BlockPos nearest = null;
+        double closestDistSq = Double.MAX_VALUE;
+
+        for (BlockPos pos : BlockPos.iterate(playerBlockPos.add(-r, -r, -r), playerBlockPos.add(r, r, r))) {
+            if (mc.world.getBlockState(pos).getBlock() != Blocks.BARREL) continue;
+            if (completedBarrelPositions.containsKey(pos)) continue;
+
+            double distSq = Vec3d.ofCenter(pos).squaredDistanceTo(playerPos);
+            if (distSq > searchRangeSq) continue;
+
+            if (distSq < closestDistSq) {
+                closestDistSq = distSq;
+                nearest = pos.toImmutable();
+            }
+        }
+
+        return nearest;
+    }
+
+    private boolean isContainerMenuOpen() {
+        if (mc.player == null) return false;
+        ScreenHandler handler = mc.player.currentScreenHandler;
+        return handler != mc.player.playerScreenHandler && handler.getType() == ScreenHandlerType.GENERIC_9X3;
+    }
+
+    private boolean isDepositItem(ItemStack stack) {
+        if (stack.isEmpty()) return false;
+        if (isShulkerBox(stack)) return true;
+        return extraItems.get().contains(stack.getItem());
+    }
+
+    private boolean isShulkerBox(ItemStack stack) {
+        return stack.getItem() instanceof BlockItem bi && bi.getBlock() instanceof ShulkerBoxBlock;
+    }
+
+    /**
+     * Checked before searching at all, so the module doesn't rotate/interact
+     * for an empty run when there's genuinely nothing to deposit.
+     */
+    private boolean hasAnyDepositItem() {
+        if (mc.player == null) return false;
+
+        PlayerInventory inventory = mc.player.getInventory();
+        for (int i = 0; i < inventory.size(); i++) {
+            ItemStack stack = inventory.getStack(i);
+            if (!stack.isEmpty() && isDepositItem(stack)) return true;
+        }
+
+        return false;
+    }
+
+    @EventHandler
+    private void onRender(Render3DEvent event) {
+        if (!renderTarget.get()) return;
+
+        if (targetEntityId != -1) {
+            Entity target = getTargetEntity();
+            if (target != null) {
+                event.renderer.box(target.getBoundingBox(), sideColor.get(), lineColor.get(), shapeMode.get(), 0);
+            }
+        } else if (targetBlockPos != null && isBarrelStillPresent(targetBlockPos)) {
+            event.renderer.box(new Box(targetBlockPos), sideColor.get(), lineColor.get(), shapeMode.get(), 0);
+        }
+    }
+
+    private void sendResyncPacket() {
+        if (mc.player == null || mc.player.networkHandler == null) return;
+
+        ScreenHandler handler = mc.player.currentScreenHandler;
+        Int2ObjectMap<ItemStack> modifiedStacks = new Int2ObjectOpenHashMap<>();
+        mc.player.networkHandler.sendPacket(new ClickSlotC2SPacket(
+            handler.syncId,
+            handler.getRevision(),
+            -1,
+            0,
+            SlotActionType.CLONE,
+            ItemStack.EMPTY,
+            modifiedStacks
+        ));
+    }
+}

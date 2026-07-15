@@ -50,8 +50,9 @@ public class Addon extends MeteorAddon {
         // C
         Modules.get().add(new ContainerPeek());
         Modules.get().add(new com.AutoBookshelf.addon.modules.chesttracker.ChestTrackerModule());
-        // E G
+        // E F G
         Modules.get().add(new ElytraPath());
+        Modules.get().add(new Fatamorgana());
         Modules.get().add(new GetPreview());
         // H
         Modules.get().add(new HomesList());
@@ -81,9 +82,12 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new ThrowEmptyShulkers(CATEGORY2));
         // U
         Modules.get().add(new UnwaxAura());
+        // Y
+        Modules.get().add(new YuriASMR());
 
         // HUD
         Hud.get().register(AnimePics.INFO);
+        Hud.get().register(AsmrRadioHud.INFO);
         Hud.get().register(ElytraTime.INFO);
         Hud.get().register(MayaChan.INFO);
         Hud.get().register(MapViewer.INFO);
