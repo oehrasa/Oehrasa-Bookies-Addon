@@ -37,7 +37,7 @@ Tested successfully with these mods.
 
 ## Features
 
-**42 modules**, **5 commands**, **8 HUD elements**, and **6 mixin**
+**42 modules**, **5 commands**, **8 HUD elements**, and **8 mixin**
 
 ## Modules (42 total)
 <details>
