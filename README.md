@@ -23,11 +23,10 @@
 Tested successfully with these mods.
 <font color="turquoise">Switch the branch repo if You want to see the other version config</font>
 
-- baritone-meteor-1.21.11.jar **(API Required!)**
-- meteor-client-1.21.11-65.jar **(Required!)**
-- BepHax-Final.jar (Optional)
-- client_maps-1.3.2.jar (Recommended for Mapart-Namer module)
-- map-in-slot-3.4.1.jar (Recommended for Mapart-Namer module)
+- baritone-meteor-26.1.jar **(API Required!)**
+- meteor-client-26.1.2-22.jar **(Required!)**
+- client_maps-1.3.2+26.1.jar (Recommended for Mapart-Namer module)
+- map-in-slot-3.5.0.jar (Recommended for Mapart-Namer module)
 
 > [!IMPORTANT]
 >
@@ -37,7 +36,7 @@ Tested successfully with these mods.
 
 ## Features
 
-**42 modules**, **5 commands**, **8 HUD elements**, and **6 mixin**
+**42 modules**, **5 commands**, **8 HUD elements**, and **8 mixin**
 
 ## Modules (42 total)
 <details>
