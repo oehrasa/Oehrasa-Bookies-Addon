@@ -132,7 +132,7 @@ public class HomesList extends Module {
     private List<HomeEntry> homes = new ArrayList<>();
     private boolean waitingForServerHomes = false;
 
-    // Signal to HomesScreen.tick() that the server response was processed and the table needs a redraw
+    // Signal to HomesScreen.tick() that the server response was processed and the table needs a redraw.
     private volatile boolean needsTableRebuild = false;
 
     private QuickSelectScreen quickScreen = null;
@@ -142,7 +142,7 @@ public class HomesList extends Module {
     private boolean quickForceClosed = false;
 
     public HomesList() {
-        super(Addon.CATEGORY, "Homes-List", "Manage and teleport to your server homes with two GUI.");
+        super(Addon.CATEGORY, "Homes-List", "Manage and teleport to your server homes with a GUI.");
         saveFile = new File(new File(MeteorClient.mc.runDirectory, "meteor-client"), "homes.json");
     }
 
@@ -214,6 +214,8 @@ public class HomesList extends Module {
             serverHomes.add(homeName);
 
             if (homes.stream().noneMatch(h -> h.originalName.equals(homeName))) {
+                // pick a unique icon from the full item
+                // registry instead of a small fixed pool, so auto-added homes don't collide.
                 HomeEntry entry = new HomeEntry(homeName, homeName, getRandomUniqueIcon());
                 entry.autoAdded = true;
                 homes.add(entry);
@@ -259,11 +261,6 @@ public class HomesList extends Module {
         if (debugMode.get()) info("Teleport to " + homeName);
     }
 
-    /**
-     * Returns a random item from the entire game registry that is not already
-     * used as an icon by any existing home entry. Falls back to a truly random
-     * item if every single item in the registry is already taken.
-     */
     private Item getRandomUniqueIcon() {
         Set<Item> usedIcons = homes.stream()
             .map(HomeEntry::getIcon)
@@ -329,7 +326,7 @@ public class HomesList extends Module {
      * Called by QuickSelectScreen when the cancel key is pressed.
      */
     public void cancelQuickSelect() {
-        quickCancelled   = true;
+        quickCancelled = true;
         quickForceClosed = true;
         closeQuickScreen(false);
     }
@@ -341,7 +338,8 @@ public class HomesList extends Module {
         public boolean favorite = false;
         String iconId = null;   // package-visible so the adapter can set it
 
-        public HomeEntry() {}
+        public HomeEntry() {
+        }
 
         public HomeEntry(String originalName, String displayName, Item icon) {
             this.originalName = originalName;
@@ -369,7 +367,8 @@ public class HomesList extends Module {
         }
 
         public String getDisplayName() {
-            return displayName;  }
+            return displayName;
+        }
     }
 
     private static class HomeEntryAdapter implements JsonSerializer<HomeEntry>, JsonDeserializer<HomeEntry> {
@@ -416,12 +415,13 @@ public class HomesList extends Module {
         }
 
         public int getSelectedIndex() {
-            return selectedIndex; }
+            return selectedIndex;
+        }
 
         @Override
         public void render(DrawContext context, int mouseX, int mouseY, float delta) {
             int iconSize = 16;
-            int padding   = 4;
+            int padding = 4;
             int rowHeight = iconSize + padding;
 
             int[] colWidths = new int[columns];
@@ -469,19 +469,46 @@ public class HomesList extends Module {
                     MeteorClient.mc.textRenderer, homes.get(i).displayName,
                     cellX + padding + iconSize + padding,
                     rowY + (rowHeight - MeteorClient.mc.textRenderer.fontHeight) / 2,
-                    sel ? 0xFFFF55 : 0xFFFFFF
+                    sel ? 0xFFFFFF55 : 0xFFFFFFFF
                 );
             }
 
             super.render(context, mouseX, mouseY, delta);
         }
 
+        private int rowsInColumn(int col) {
+            int count = 0;
+            for (int i = col; i < homes.size(); i += columns) count++;
+            return count;
+        }
+
         @Override
         public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
             if (verticalAmount != 0) {
-                if (selectedIndex < 0) selectedIndex = 0;
-                int dir = verticalAmount > 0 ? -columns : columns;
-                selectedIndex = Math.floorMod(selectedIndex + dir, homes.size());
+                if (selectedIndex < 0) {
+                    selectedIndex = 0;
+                    return true;
+                }
+
+                boolean up = verticalAmount > 0;
+                int col = selectedIndex % columns;
+                int row = selectedIndex / columns;
+
+                if (up) {
+                    row--;
+                    if (row < 0) {
+                        col = Math.floorMod(col - 1, columns);
+                        row = rowsInColumn(col) - 1;
+                    }
+                } else {
+                    row++;
+                    if (row >= rowsInColumn(col)) {
+                        col = Math.floorMod(col + 1, columns);
+                        row = 0;
+                    }
+                }
+
+                selectedIndex = row * columns + col;
                 return true;
             }
             return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
@@ -614,6 +641,7 @@ public class HomesList extends Module {
             return n + (n == 1 ? " home" : " homes");
         }
 
+        // auto-rebuild the table when a server response arrives while the screen is open.
         @Override
         public void tick() {
             if (module.needsTableRebuild) {
@@ -626,18 +654,18 @@ public class HomesList extends Module {
     private static class EditHomeScreen extends WindowScreen {
         private final HomesList module;
         private final HomeEntry home;
-        private final int        index;
+        private final int index;
         private final HomesScreen parent;
 
         private final Setting<String> displayName;
-        private final Setting<Item>   icon;
+        private final Setting<Item> icon;
         private final Setting<String> originalName;
 
         public EditHomeScreen(GuiTheme theme, HomesList module, HomeEntry home, int index, HomesScreen parent) {
             super(theme, home == null ? "New Home" : "Edit Home");
             this.module = module;
             this.home = home;
-            this.index  = index;
+            this.index = index;
             this.parent = parent;
 
             Settings settings = new Settings();

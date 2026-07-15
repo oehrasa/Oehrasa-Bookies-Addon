@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.ProjectilePhysics;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
@@ -211,7 +212,7 @@ public class TrajectoryPlus extends Module {
     private void predictProjectilePath(Render3DEvent event, Entity projectile) {
         SimResult result = simulatePath(
             projectile.getPos(), projectile.getVelocity(), projectile,
-            0.99, getProjectileGravity(projectile), 60,
+            ProjectilePhysics.getDrag(projectile), ProjectilePhysics.getGravity(projectile), 60,
             event, existingProjectileColor.get()
         );
 
@@ -283,24 +284,6 @@ public class TrajectoryPlus extends Module {
             entity instanceof ExperienceBottleEntity ||
             entity instanceof PotionEntity ||
             entity instanceof WindChargeEntity;
-    }
-
-    private double getProjectileGravity(Entity projectile) {
-        if (projectile instanceof ArrowEntity) return 0.05;
-        if (projectile instanceof SpectralArrowEntity) return 0.05;
-        if (projectile instanceof TridentEntity) return 0.05;
-        if (projectile instanceof SnowballEntity) return 0.03;
-        if (projectile instanceof EggEntity) return 0.03;
-        if (projectile instanceof EnderPearlEntity) return 0.03;
-        if (projectile instanceof ExperienceBottleEntity) return 0.03;
-        if (projectile instanceof PotionEntity) return 0.05;
-        if (projectile instanceof FireballEntity) return 0.0;
-        if (projectile instanceof SmallFireballEntity) return 0.0;
-        if (projectile instanceof DragonFireballEntity) return 0.0;
-        if (projectile instanceof WitherSkullEntity) return 0.0;
-        if (projectile instanceof ShulkerBulletEntity) return 0.0;
-        if (projectile instanceof WindChargeEntity) return 0.0;
-        return 0.03;
     }
 
     private EntityHitResult findEntityHit(Vec3d start, Vec3d end, Entity ignoreEntity) {

@@ -35,6 +35,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new AutoPot());
         Modules.get().add(new AutoSex());
         Modules.get().add(new AutoMoss());
+        Modules.get().add(new ArenaM());
         Modules.get().add(new AutoLoader());
         Modules.get().add(new AutoBeacon());
         Modules.get().add(new AutoTakeOff());
@@ -44,15 +45,15 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new BlockRadius());
         Modules.get().add(new BLU27BNapalm());
         Modules.get().add(new BookImporter());
-        Modules.get().add(new BetterBoatFly());
         Modules.get().add(new BookshelfFiller());
         // C
         Modules.get().add(new ContainerPeek());
         Modules.get().add(new com.AutoBookshelf.addon.modules.chesttracker.ChestTrackerModule());
         // D
         Modules.get().add(new DriedGhastPlacer());
-        // E G
+        // E F G
         Modules.get().add(new ElytraPath());
+        Modules.get().add(new Fatamorgana());
         Modules.get().add(new GetPreview());
         // H
         Modules.get().add(new HomesList());
@@ -65,8 +66,8 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new MobOwner());
         Modules.get().add(new MapartNamer());
         Modules.get().add(new MapGridZone());
-        Modules.get().add(new MinecartPlacer());
         Modules.get().add(new MaterialsRefill());
+        Modules.get().add(new MinecartPlacer());
         // P
         Modules.get().add(new PacketEat());
         Modules.get().add(new PortalCave());
@@ -82,9 +83,12 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new ThrowEmptyShulkers(CATEGORY2));
         // U
         Modules.get().add(new UnwaxAura());
+        // Y
+        Modules.get().add(new YuriASMR());
 
         // HUD
         Hud.get().register(AnimePics.INFO);
+        Hud.get().register(AsmrRadioHud.INFO);
         Hud.get().register(ElytraTime.INFO);
         Hud.get().register(MayaChan.INFO);
         Hud.get().register(MapViewer.INFO);
@@ -93,11 +97,11 @@ public class Addon extends MeteorAddon {
         Hud.get().register(TeleportTimer.INFO);
 
         // COMMANDS
+        Commands.add(new AssignOwnerCommand());
         Commands.add(new BookCommand());
         Commands.add(new BookTranslateCommand());
         Commands.add(new IfpeekCommand());
         Commands.add(new ShelfCommand());
-        Commands.add(new AssignOwnerCommand());
 
     }
 

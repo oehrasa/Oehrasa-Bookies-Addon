@@ -35,7 +35,9 @@ public class PacketEat extends Module {
 
     private static final int OFFHAND_EAT_TICKS = 10;
 
-    private static final int HOTBAR_EAT_TICKS = 33;
+    private static final int HOTBAR_EAT_TICKS = 32;
+
+    private static final int CONFIRM_TIMEOUT_TICKS = 20;
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgAutoEat = settings.createGroup("Auto Eat");
@@ -93,6 +95,22 @@ public class PacketEat extends Module {
         .build()
     );
 
+    private final Setting<Boolean> swapBack = sgAutoEat.add(new BoolSetting.Builder()
+        .name("swap-back")
+        .description("Swap back to the previously held hotbar slot after finishing a hotbar eat cycle.")
+        .defaultValue(true)
+        .visible(autoEat::get)
+        .build()
+    );
+
+    private final Setting<Boolean> confirmFinish = sgAutoEat.add(new BoolSetting.Builder()
+        .name("confirm-finish")
+        .description("Wait for the client to confirm the eat animation actually ended before swapping back, instead of trusting the tick count alone.")
+        .defaultValue(true)
+        .visible(autoEat::get)
+        .build()
+    );
+
     private final Setting<ThresholdMode> thresholdMode = sgAutoEat.add(new EnumSetting.Builder<ThresholdMode>()
         .name("threshold-mode")
         .description("Which stat(s) must be below their threshold to trigger eating.")
@@ -140,12 +158,14 @@ public class PacketEat extends Module {
     private int eatSlot = -1;
     private int prevSlot = -1;
 
+    private int eatStackCountAtStart = -1;
+
     // Aura/baritone pause state
     private final List<Class<? extends Module>> wasAura = new ArrayList<>();
     private boolean wasBaritone = false;
 
     public PacketEat() {
-        super(Addon.CATEGORY2, "PacketEat", "Eat without interrupting movement or combat. Auto-eat mirrors Meteor's AutoEat with offhand-native support.");
+        super(Addon.CATEGORY2, "PacketEat", "Eat without interrupting movement or combat.");
     }
 
     @Override
@@ -194,6 +214,12 @@ public class PacketEat extends Module {
     private void handleAutoEat(ClientPlayerEntity player) {
         // Phase 1: actively in an eat cycle
         if (autoEating) {
+            if (eatStackCountAtStart != -1 && getStackCount(player, eatSlot) < eatStackCountAtStart) {
+                stopAutoEating();
+                postEatCooldown = cooldownTicks.get();
+                return;
+            }
+
             eatTicks++;
 
             // de-sync spam during the active window
@@ -204,7 +230,16 @@ public class PacketEat extends Module {
                 );
             }
 
-            if (eatTicks >= eatDuration) {
+            boolean minTicksReached = eatTicks >= eatDuration;
+            boolean timedOut = eatTicks >= eatDuration + CONFIRM_TIMEOUT_TICKS;
+
+            // Don't trust the tick count alone: if confirm-finish is on, also wait for the
+            // client to actually report the item as no longer in use (getItemUseTimeLeft() == 0)
+            // before stopping/swapping back, so a slow/desynced eat doesn't get cut short.
+            // A timeout still forces the stop so we never get stuck indefinitely.
+            boolean readyToStop = minTicksReached && (!confirmFinish.get() || !player.isUsingItem() || player.getItemUseTimeLeft() <= 0);
+
+            if (readyToStop || timedOut) {
                 stopAutoEating();
                 postEatCooldown = cooldownTicks.get();
             }
@@ -251,11 +286,15 @@ public class PacketEat extends Module {
             eatDuration = OFFHAND_EAT_TICKS;
         } else {
             // Hotbar: we're temporarily swapping the hotbar selection, so we must stay
-            // on this slot for the entire vanilla eat duration before swapping back.
+            // on this slot until the eat is confirmed finished before swapping back.
             eatDuration = HOTBAR_EAT_TICKS;
             prevSlot = player.getInventory().getSelectedSlot();
             InvUtils.swap(eatSlot, false);
         }
+
+        // Record the stack count baseline right before we start consuming, so the
+        // per-tick guard in handleAutoEat can detect the moment it drops.
+        eatStackCountAtStart = getStackCount(player, eatSlot);
 
         // Send the initial use-item packet to begin eating
         Hand hand = eatSlot == SlotUtils.OFFHAND ? Hand.OFF_HAND : Hand.MAIN_HAND;
@@ -268,15 +307,18 @@ public class PacketEat extends Module {
     }
 
     private void stopAutoEating() {
-        // Revert hotbar slot if we swapped
+        // Revert hotbar slot if we swapped and swap-back is enabled
         if (eatSlot != SlotUtils.OFFHAND && prevSlot != -1) {
-            InvUtils.swap(prevSlot, false);
+            if (swapBack.get()) {
+                InvUtils.swap(prevSlot, false);
+            }
             prevSlot = -1;
         }
 
         eatSlot = -1;
         eatDuration = 0;
         autoEating = false;
+        eatStackCountAtStart = -1;
 
         // Resume auras
         if (pauseAuras.get()) {
@@ -293,6 +335,17 @@ public class PacketEat extends Module {
             wasBaritone = false;
             PathManagers.get().resume();
         }
+    }
+
+    /**
+     * Reads the current stack count for the given slot (hotbar index or SlotUtils.OFFHAND).
+     * For whether the server has consumed an item, since isUsingItem()/getItemUseTimeLeft()
+     * Can lag or briefly desync relative to the actual inventory state.
+     */
+    private int getStackCount(ClientPlayerEntity player, int slot) {
+        return slot == SlotUtils.OFFHAND
+            ? player.getOffHandStack().getCount()
+            : player.getInventory().getStack(slot).getCount();
     }
 
     private int findSlot(ClientPlayerEntity player) {

@@ -1,0 +1,579 @@
+/*
+ * This code partially adapted from Meteor Rejects
+ * Original source: https://github.com/AntiCope/meteor-rejects/
+ * Credit: Meteor Rejects contributors
+ * Heavily modified with additional features by Nora Tweaks
+ */
+package com.AutoBookshelf.addon.modules;
+
+import com.AutoBookshelf.addon.Addon;
+import meteordevelopment.meteorclient.events.entity.player.BreakBlockEvent;
+import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.misc.Pool;
+import meteordevelopment.meteorclient.utils.player.FindItemResult;
+import meteordevelopment.meteorclient.utils.player.InvUtils;
+import meteordevelopment.meteorclient.utils.player.Rotations;
+import meteordevelopment.meteorclient.utils.world.BlockIterator;
+import meteordevelopment.orbit.EventHandler;
+import net.minecraft.block.*;
+import net.minecraft.item.HoeItem;
+import net.minecraft.item.Item;
+import net.minecraft.item.Items;
+import net.minecraft.registry.tag.BlockTags;
+import net.minecraft.registry.tag.FluidTags;
+import net.minecraft.util.Hand;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.WorldView;
+
+import java.util.*;
+
+public class AutoFarm extends Module {
+    private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgTill = settings.createGroup("Till");
+    private final SettingGroup sgHarvest = settings.createGroup("Harvest Crops");
+    private final SettingGroup sgTallCrops = settings.createGroup("Harvest Tall Crops");
+    private final SettingGroup sgPlant = settings.createGroup("Plant");
+    private final SettingGroup sgBonemeal = settings.createGroup("Bonemeal");
+
+    private final Setting<Integer> range = sgGeneral.add(new IntSetting.Builder()
+        .name("range")
+        .description("Auto farm range.")
+        .defaultValue(4)
+        .min(1)
+        .sliderMax(6)
+        .build()
+    );
+
+    private final Setting<Integer> bpt = sgGeneral.add(new IntSetting.Builder()
+        .name("blocks-per-tick")
+        .description("Amount of operations that can be applied in one tick.")
+        .min(1)
+        .defaultValue(1)
+        .sliderMax(10)
+        .build()
+    );
+
+    private final Setting<Boolean> rotate = sgGeneral.add(new BoolSetting.Builder()
+        .name("rotate")
+        .description("Whether or not to rotate towards block.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> swingHand = sgGeneral.add(new BoolSetting.Builder()
+        .name("swing-hand")
+        .description("Swing hand when performing actions (helps with anti-cheat).")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> till = sgTill.add(new BoolSetting.Builder()
+        .name("till")
+        .description("Turn nearby dirt into farmland.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> moist = sgTill.add(new BoolSetting.Builder()
+        .name("moist")
+        .description("Only till blocks near water.")
+        .defaultValue(true)
+        .visible(till::get)
+        .build()
+    );
+
+    private final Setting<Boolean> harvest = sgHarvest.add(new BoolSetting.Builder()
+        .name("harvest")
+        .description("Harvest mature crops.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<List<Block>> harvestBlocks = sgHarvest.add(new BlockListSetting.Builder()
+        .name("harvest-blocks")
+        .description("Which crops to harvest.")
+        .defaultValue()
+        .filter(this::harvestFilter)
+        .visible(harvest::get)
+        .build()
+    );
+
+    private final Setting<Boolean> harvestTallCrops = sgTallCrops.add(new BoolSetting.Builder()
+        .name("harvest-tall-crops")
+        .description("Harvest sugar cane, bamboo, kelp (breaks upper blocks, leaves bottom).")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<List<Block>> tallCropBlocks = sgTallCrops.add(new BlockListSetting.Builder()
+        .name("harvest-tall-blocks")
+        .description("Which tall crops to harvest.")
+        .defaultValue(Blocks.SUGAR_CANE, Blocks.BAMBOO, Blocks.KELP_PLANT)
+        .filter(this::tallCropFilter)
+        .visible(harvestTallCrops::get)
+        .build()
+    );
+
+    private final Setting<Integer> tallCropMinHeight = sgTallCrops.add(new IntSetting.Builder()
+        .name("min-height")
+        .description("Minimum total height before harvesting. With min height 2, breaks when at least 2 blocks tall (keeps bottom 1).")
+        .defaultValue(2)
+        .min(2)
+        .sliderRange(2, 10)
+        .visible(harvestTallCrops::get)
+        .build()
+    );
+
+    private final Setting<Boolean> tallCropSwingHand = sgTallCrops.add(new BoolSetting.Builder()
+        .name("swing-hand")
+        .description("Swing hand when breaking tall crops.")
+        .defaultValue(true)
+        .visible(harvestTallCrops::get)
+        .build()
+    );
+
+    private final Setting<Boolean> plant = sgPlant.add(new BoolSetting.Builder()
+        .name("plant")
+        .description("Plant crops.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<List<Item>> plantItems = sgPlant.add(new ItemListSetting.Builder()
+        .name("plant-items")
+        .description("Which crops to plant.")
+        .defaultValue()
+        .filter(this::plantFilter)
+        .visible(plant::get)
+        .build()
+    );
+
+    private final Setting<Boolean> onlyReplant = sgPlant.add(new BoolSetting.Builder()
+        .name("only-replant")
+        .description("Only replant where crops were previously harvested.")
+        .defaultValue(true)
+        .visible(plant::get)
+        .onChanged(b -> clearReplantMap())
+        .build()
+    );
+
+    private final Setting<Boolean> bonemeal = sgBonemeal.add(new BoolSetting.Builder()
+        .name("bonemeal")
+        .description("Bonemeal crops.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<List<Block>> bonemealBlocks = sgBonemeal.add(new BlockListSetting.Builder()
+        .name("bonemeal-blocks")
+        .description("Which crops to bonemeal.")
+        .defaultValue()
+        .filter(this::bonemealFilter)
+        .visible(bonemeal::get)
+        .build()
+    );
+
+    private final Map<BlockPos, Item> replantMap = new HashMap<>();
+    private final Pool<BlockPos.Mutable> blockPosPool = new Pool<>(BlockPos.Mutable::new);
+    private final List<BlockPos.Mutable> blocks = new ArrayList<>();
+    private int actions = 0;
+    private int tickCounter = 0;
+    private static final int REPLANT_CLEANUP_INTERVAL = 100;
+    private static final double REPLANT_MAX_DISTANCE = 32.0;
+
+    public AutoFarm() {
+        super(Addon.CATEGORY, "Auto-Farm", "Welcome to the rice fields, Mothafucka");
+    }
+
+    @Override
+    public void onDeactivate() {
+        clearReplantMap();
+        freeBlockPool();
+    }
+
+    @EventHandler
+    private void onBreakBlock(BreakBlockEvent event) {
+        if (!onlyReplant.get()) return;
+
+        BlockState state = mc.world.getBlockState(event.blockPos);
+        Block block = state.getBlock();
+        Item seedItem = getCropSeed(block);
+
+        if (seedItem != null) {
+            replantMap.put(event.blockPos.toImmutable(), seedItem);
+        }
+    }
+
+    @EventHandler
+    private void onTick(TickEvent.Pre event) {
+        if (mc.player == null || mc.world == null) return;
+
+        actions = 0;
+        tickCounter++;
+
+        if (tickCounter >= REPLANT_CLEANUP_INTERVAL) {
+            cleanupReplantMap();
+            tickCounter = 0;
+        }
+
+        collectBlocks();
+
+        BlockIterator.after(() -> {
+            sortBlocksByDistance();
+            processBlocks();
+            freeBlockPool();
+        });
+    }
+
+    private void collectBlocks() {
+        BlockIterator.register(range.get(), range.get(), (pos, state) -> {
+            if (isWithinRange(pos)) {
+                blocks.add(blockPosPool.get().set(pos));
+            }
+        });
+    }
+
+    private void sortBlocksByDistance() {
+        blocks.sort(Comparator.comparingDouble(pos -> getPlayerDistance(pos)));
+    }
+
+    private void processBlocks() {
+        for (BlockPos pos : blocks) {
+            if (actions >= bpt.get()) break;
+
+            BlockState state = mc.world.getBlockState(pos);
+            Block block = state.getBlock();
+
+            if (tryTill(pos, block)) continue;
+            if (tryHarvest(pos, state, block)) continue;
+            if (tryHarvestTallCrop(pos, block)) continue;
+            if (tryPlant(pos, block)) continue;
+            tryBonemeal(pos, state, block);
+        }
+    }
+
+    private void freeBlockPool() {
+        for (BlockPos.Mutable blockPos : blocks) {
+            blockPosPool.free(blockPos);
+        }
+        blocks.clear();
+    }
+
+    private boolean tryTill(BlockPos pos, Block block) {
+        if (!till.get()) return false;
+        if (!isTillable(block)) return false;
+        if (!mc.world.getBlockState(pos.up()).isAir()) return false;
+        if (moist.get() && !isWaterNearby(mc.world, pos)) return false;
+
+        FindItemResult hoe = InvUtils.findInHotbar(stack -> stack.getItem() instanceof HoeItem);
+        if (!hoe.found()) return false;
+
+        performInteraction(pos, hoe);
+        actions++;
+        return true;
+    }
+
+    private boolean isTillable(Block block) {
+        return block == Blocks.GRASS_BLOCK ||
+            block == Blocks.DIRT_PATH ||
+            block == Blocks.DIRT ||
+            block == Blocks.COARSE_DIRT ||
+            block == Blocks.ROOTED_DIRT;
+    }
+
+    private boolean tryHarvest(BlockPos pos, BlockState state, Block block) {
+        if (!harvest.get()) return false;
+        if (!harvestBlocks.get().contains(block)) return false;
+        if (!isMature(state, block)) return false;
+
+        if (block instanceof SweetBerryBushBlock) {
+            if (rotate.get()) {
+                Rotations.rotate(Rotations.getYaw(pos), Rotations.getPitch(pos), -100, () -> {
+                    mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND,
+                        new BlockHitResult(Vec3d.ofCenter(pos), Direction.UP, pos, false));
+                    if (swingHand.get()) mc.player.swingHand(Hand.MAIN_HAND);
+                });
+            } else {
+                mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND,
+                    new BlockHitResult(Vec3d.ofCenter(pos), Direction.UP, pos, false));
+                if (swingHand.get()) mc.player.swingHand(Hand.MAIN_HAND);
+            }
+        } else {
+            if (rotate.get()) {
+                Rotations.rotate(Rotations.getYaw(pos), Rotations.getPitch(pos), -100, () -> {
+                    mc.interactionManager.updateBlockBreakingProgress(pos, Direction.UP);
+                    if (swingHand.get()) mc.player.swingHand(Hand.MAIN_HAND);
+                });
+            } else {
+                mc.interactionManager.updateBlockBreakingProgress(pos, Direction.UP);
+                if (swingHand.get()) mc.player.swingHand(Hand.MAIN_HAND);
+            }
+        }
+        actions++;
+        return true;
+    }
+
+    private boolean tryHarvestTallCrop(BlockPos pos, Block block) {
+        if (!harvestTallCrops.get()) return false;
+        if (!tallCropBlocks.get().contains(block) && !isTallCrop(block)) return false;
+
+        int totalHeight = getTotalTallCropHeight(pos, block);
+        if (totalHeight < tallCropMinHeight.get()) return false;
+
+        Block blockBelow = mc.world.getBlockState(pos.down()).getBlock();
+        if (!isSameTallCrop(block, blockBelow)) return false;
+
+        if (rotate.get()) {
+            Rotations.rotate(Rotations.getYaw(pos), Rotations.getPitch(pos), -100, () -> {
+                mc.interactionManager.updateBlockBreakingProgress(pos, Direction.UP);
+                if (tallCropSwingHand.get()) mc.player.swingHand(Hand.MAIN_HAND);
+            });
+        } else {
+            mc.interactionManager.updateBlockBreakingProgress(pos, Direction.UP);
+            if (tallCropSwingHand.get()) mc.player.swingHand(Hand.MAIN_HAND);
+        }
+        actions++;
+        return true;
+    }
+
+    private boolean isTallCrop(Block block) {
+        return block == Blocks.SUGAR_CANE ||
+            block == Blocks.BAMBOO ||
+            block == Blocks.KELP_PLANT ||
+            block == Blocks.KELP;
+    }
+
+    private boolean tallCropFilter(Block block) {
+        return block == Blocks.SUGAR_CANE ||
+            block == Blocks.BAMBOO ||
+            block == Blocks.KELP_PLANT ||
+            block == Blocks.KELP ||
+            block == Blocks.CACTUS;
+    }
+
+    private boolean isSameTallCrop(Block a, Block b) {
+        if ((a == Blocks.KELP || a == Blocks.KELP_PLANT) &&
+            (b == Blocks.KELP || b == Blocks.KELP_PLANT)) {
+            return true;
+        }
+        return a == b;
+    }
+
+    private int getTotalTallCropHeight(BlockPos pos, Block block) {
+        int below = 0;
+        BlockPos checkPos = pos.down();
+        while (below < 16) {
+            Block b = mc.world.getBlockState(checkPos).getBlock();
+            if (!isSameTallCrop(block, b)) break;
+            below++;
+            checkPos = checkPos.down();
+        }
+
+        int above = 1;
+        checkPos = pos.up();
+        while (above < 16) {
+            Block b = mc.world.getBlockState(checkPos).getBlock();
+            if (!isSameTallCrop(block, b)) break;
+            above++;
+            checkPos = checkPos.up();
+        }
+
+        return below + above;
+    }
+
+    private boolean tryPlant(BlockPos pos, Block block) {
+        if (!plant.get()) return false;
+        if (!mc.world.isAir(pos.up())) return false;
+        if (!(block instanceof FarmlandBlock) && !(block instanceof SoulSandBlock)) return false;
+
+        FindItemResult findItemResult = null;
+
+        if (onlyReplant.get()) {
+            BlockPos cropPos = pos.up();
+            if (replantMap.containsKey(cropPos)) {
+                findItemResult = InvUtils.findInHotbar(replantMap.get(cropPos));
+                if (findItemResult.found()) {
+                    replantMap.remove(cropPos);
+                }
+            }
+        } else {
+            findItemResult = findPlantableItem(block);
+        }
+
+        if (findItemResult != null && findItemResult.found()) {
+            performInteraction(pos.up(), findItemResult);
+            actions++;
+            return true;
+        }
+
+        return false;
+    }
+
+    private FindItemResult findPlantableItem(Block soilBlock) {
+        if (soilBlock instanceof FarmlandBlock) {
+            return InvUtils.findInHotbar(stack -> {
+                Item item = stack.getItem();
+                return item != Items.NETHER_WART &&
+                    item != Items.PITCHER_POD &&
+                    plantItems.get().contains(item);
+            });
+        }
+
+        if (soilBlock instanceof SoulSandBlock) {
+            return InvUtils.findInHotbar(stack -> {
+                Item item = stack.getItem();
+                return item == Items.NETHER_WART && plantItems.get().contains(Items.NETHER_WART);
+            });
+        }
+
+        return null;
+    }
+
+    private boolean tryBonemeal(BlockPos pos, BlockState state, Block block) {
+        if (!bonemeal.get()) return false;
+        if (!bonemealBlocks.get().contains(block)) return false;
+        if (isMature(state, block)) return false;
+
+        FindItemResult bonemealItem = InvUtils.findInHotbar(Items.BONE_MEAL);
+        if (!bonemealItem.found()) return false;
+
+        performInteraction(pos, bonemealItem);
+        actions++;
+        return true;
+    }
+
+    private void performInteraction(BlockPos pos, FindItemResult item) {
+        Runnable action = () -> {
+            boolean wasSneaking = mc.player.isSneaking();
+            mc.player.setSneaking(false);
+            InvUtils.swap(item.slot(), true);
+            mc.interactionManager.interactBlock(mc.player, Hand.MAIN_HAND,
+                new BlockHitResult(Vec3d.ofCenter(pos), Direction.UP, pos, false));
+            if (swingHand.get()) mc.player.swingHand(Hand.MAIN_HAND);
+            InvUtils.swapBack();
+            mc.player.setSneaking(wasSneaking);
+        };
+
+        if (rotate.get()) {
+            Rotations.rotate(Rotations.getYaw(pos), Rotations.getPitch(pos), -100, action);
+        } else {
+            action.run();
+        }
+    }
+
+    private boolean isWithinRange(BlockPos pos) {
+        return getPlayerDistance(pos) <= range.get();
+    }
+
+    private double getPlayerDistance(BlockPos pos) {
+        //? if >=1.21.9 {
+        return mc.player.getEyePos().distanceTo(Vec3d.ofCenter(pos));
+        //?} else
+        /*return mc.player.getPos().distanceTo(Vec3d.ofCenter(pos));
+         */
+    }
+
+    private boolean isWaterNearby(WorldView world, BlockPos pos) {
+        for (BlockPos blockPos : BlockPos.iterate(pos.add(-4, 0, -4), pos.add(4, 1, 4))) {
+            if (world.getFluidState(blockPos).isIn(FluidTags.WATER)) return true;
+        }
+        return false;
+    }
+
+    private void clearReplantMap() {
+        replantMap.clear();
+    }
+
+    private void cleanupReplantMap() {
+        if (mc.player == null || replantMap.isEmpty()) return;
+
+        //? if >=1.21.9 {
+        Vec3d playerPos = mc.player.getPos();
+        //?} else
+        /*Vec3d playerPos = mc.player.getPos();
+         */
+
+        replantMap.entrySet().removeIf(entry ->
+            playerPos.distanceTo(Vec3d.ofCenter(entry.getKey())) > REPLANT_MAX_DISTANCE
+        );
+    }
+
+    private boolean isMature(BlockState state, Block block) {
+        if (state.isIn(BlockTags.CROPS)) {
+            if (block instanceof CropBlock cropBlock) {
+                return cropBlock.isMature(state);
+            }
+        }
+
+        if (block instanceof CropBlock cropBlock) {
+            return cropBlock.isMature(state);
+        } else if (block instanceof CocoaBlock) {
+            return state.get(CocoaBlock.AGE) >= 2;
+        } else if (block instanceof StemBlock) {
+            return state.get(StemBlock.AGE) == StemBlock.MAX_AGE;
+        } else if (block instanceof SweetBerryBushBlock) {
+            return state.get(SweetBerryBushBlock.AGE) >= 2;
+        } else if (block instanceof NetherWartBlock) {
+            return state.get(NetherWartBlock.AGE) >= 3;
+        } else if (block instanceof PitcherCropBlock) {
+            return state.get(PitcherCropBlock.AGE) >= 4;
+        }
+
+        return false;
+    }
+
+    private Item getCropSeed(Block block) {
+        if (block == Blocks.WHEAT) return Items.WHEAT_SEEDS;
+        if (block == Blocks.CARROTS) return Items.CARROT;
+        if (block == Blocks.POTATOES) return Items.POTATO;
+        if (block == Blocks.BEETROOTS) return Items.BEETROOT_SEEDS;
+        if (block == Blocks.NETHER_WART) return Items.NETHER_WART;
+        if (block == Blocks.PITCHER_CROP) return Items.PITCHER_POD;
+        if (block == Blocks.TORCHFLOWER) return Items.TORCHFLOWER_SEEDS;
+        if (block == Blocks.TORCHFLOWER_CROP) return Items.TORCHFLOWER_SEEDS;
+        return null;
+    }
+
+    private boolean bonemealFilter(Block block) {
+        if (block instanceof CropBlock) return true;
+        if (block instanceof StemBlock) return true;
+        if (block instanceof SaplingBlock) return true;
+        if (block instanceof MushroomPlantBlock) return true;
+        if (block instanceof AzaleaBlock) return true;
+
+        return block == Blocks.COCOA ||
+            block == Blocks.SWEET_BERRY_BUSH ||
+            block == Blocks.PITCHER_CROP ||
+            block == Blocks.TORCHFLOWER ||
+            block == Blocks.TORCHFLOWER_CROP;
+    }
+
+    private boolean harvestFilter(Block block) {
+        if (block instanceof CropBlock) return true;
+
+        return block == Blocks.PUMPKIN ||
+            block == Blocks.MELON ||
+            block == Blocks.NETHER_WART ||
+            block == Blocks.SWEET_BERRY_BUSH ||
+            block == Blocks.COCOA ||
+            block == Blocks.PITCHER_CROP ||
+            block == Blocks.TORCHFLOWER;
+    }
+
+    private boolean plantFilter(Item item) {
+        return item == Items.WHEAT_SEEDS ||
+            item == Items.CARROT ||
+            item == Items.POTATO ||
+            item == Items.BEETROOT_SEEDS ||
+            item == Items.PUMPKIN_SEEDS ||
+            item == Items.MELON_SEEDS ||
+            item == Items.NETHER_WART ||
+            item == Items.PITCHER_POD ||
+            item == Items.TORCHFLOWER_SEEDS;
+    }
+}
