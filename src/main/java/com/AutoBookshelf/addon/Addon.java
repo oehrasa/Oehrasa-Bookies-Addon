@@ -27,15 +27,17 @@ public class Addon extends MeteorAddon {
     @Override
     public void onInitialize() {
         LOG.info("Honey, dinner's ready, Identified AutoBookshelf Addon.");
+        com.AutoBookshelf.addon.utils.Checks.init();
 
         PayloadTypeRegistry.playC2S().register(JoinPayload.TYPE, JoinPayload.CODEC);
 
         // Modules
         Modules.get().add(new AutoLogin(CATEGORY));
+        Modules.get().add(new ArenaM());
         Modules.get().add(new AutoPot());
         Modules.get().add(new AutoSex());
         Modules.get().add(new AutoMoss());
-        Modules.get().add(new ArenaM());
+        Modules.get().add(new AutoFarm());
         Modules.get().add(new AutoLoader());
         Modules.get().add(new AutoBeacon());
         Modules.get().add(new AutoTakeOff());
@@ -90,6 +92,7 @@ public class Addon extends MeteorAddon {
         Hud.get().register(AnimePics.INFO);
         Hud.get().register(AsmrRadioHud.INFO);
         Hud.get().register(ElytraTime.INFO);
+        Hud.get().register(EntityList.INFO);
         Hud.get().register(MayaChan.INFO);
         Hud.get().register(MapViewer.INFO);
         Hud.get().register(NeboM.INFO);

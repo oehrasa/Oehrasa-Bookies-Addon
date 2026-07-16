@@ -31,7 +31,7 @@ Tested successfully with these mods.
 
 > [!IMPORTANT]
 >
-> AnarchyMod is not compatible with the addon.
+> AnarchyMod is not compatible with the addon. **(Its Already Integrated)**
 >
 > client_maps is not compatible with ev-mod vice versa.
 

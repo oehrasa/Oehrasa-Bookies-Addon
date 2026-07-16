@@ -1,6 +1,5 @@
 package com.AutoBookshelf.addon.utils;
 
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.projectile.*;
 import net.minecraft.entity.projectile.thrown.*;
@@ -11,6 +10,8 @@ import net.minecraft.world.RaycastContext;
 
 import java.util.ArrayList;
 import java.util.List;
+
+import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 /**
  * Single source of truth for ballistic prediction constants and integration.
@@ -93,7 +94,6 @@ public final class ProjectilePhysics {
      * @param maxTicks how many ticks to simulate forward
      */
     public static Result simulate(Entity source, Vec3d startPos, Vec3d startVel, int maxTicks) {
-        MinecraftClient mc = MinecraftClient.getInstance();
         double gravity = getGravity(source);
         double drag = getDrag(source);
         boolean legacyOrder = getTickOrder(source) == TickOrder.LEGACY_POS_DRAG_ACCEL;

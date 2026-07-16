@@ -56,7 +56,7 @@ public class AutoLoader extends Module {
     /**
      * Shared placement search logic, also used by MaterialsRefill.
      */
-    private final PlacementEngine placementEngine = new PlacementEngine(mc);
+    private final PlacementEngine placementEngine = new PlacementEngine();
 
     // Mutable state
     private Stage stage = Stage.IDLE;
@@ -189,8 +189,7 @@ public class AutoLoader extends Module {
 
     private final Setting<Boolean> resyncAfterPlace = sgGeneral.add(new BoolSetting.Builder()
         .name("resync-after-place")
-        .description("Sends an inventory resync packet shortly after placing a container. " +
-            "Helps prevent stuck placement caused by stacked/duplicated container items.")
+        .description("Sends an inventory resync packet shortly after placing a container.")
         .defaultValue(true)
         .build()
     );

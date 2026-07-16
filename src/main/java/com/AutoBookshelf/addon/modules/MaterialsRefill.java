@@ -18,7 +18,7 @@ import java.util.List;
 
 public class MaterialsRefill extends Module {
 
-    private final PlacementEngine placementEngine = new PlacementEngine(mc);
+    private final PlacementEngine placementEngine = new PlacementEngine();
 
     private final ShulkerRestockEngine restockEngine = new ShulkerRestockEngine(mc, placementEngine,
         new ShulkerRestockEngine.RestockCallback() {

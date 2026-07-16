@@ -104,7 +104,8 @@ public class ItemDespawn extends Module {
 
     // Bounded max-heap keyed by squared distance (farthest at the top). Used to keep only
     // the closest `max` candidates without sorting the full candidate set.
-    private java.util.PriorityQueue<ItemEntity> closestHeap;
+    private final java.util.PriorityQueue<ItemEntity> closestHeap = new java.util.PriorityQueue<>(11,
+            (a, b) -> Double.compare(mc.player.squaredDistanceTo(b), mc.player.squaredDistanceTo(a)));
 
     public ItemDespawn() {
         super(Addon.CATEGORY, "Item-Despawn", "Highlights items that are about to despawn.");
@@ -112,7 +113,7 @@ public class ItemDespawn extends Module {
 
     @Override
     public void onDeactivate() {
-        if (closestHeap != null) closestHeap.clear();
+        closestHeap.clear();
     }
 
     @EventHandler
@@ -126,12 +127,7 @@ public class ItemDespawn extends Module {
         boolean useHeap = max > 0 && closestFirst.get();
 
         if (useHeap) {
-            if (closestHeap == null) {
-                closestHeap = new java.util.PriorityQueue<>(max + 1,
-                    (a, b) -> Double.compare(mc.player.squaredDistanceTo(b), mc.player.squaredDistanceTo(a)));
-            } else {
-                closestHeap.clear();
-            }
+            closestHeap.clear();
 
             for (Entity entity : mc.world.getEntities()) {
                 if (!(entity instanceof ItemEntity item)) continue;
