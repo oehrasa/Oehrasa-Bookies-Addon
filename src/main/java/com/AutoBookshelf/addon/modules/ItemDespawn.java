@@ -13,6 +13,7 @@ import net.minecraft.world.entity.item.ItemEntity;
 
 public class ItemDespawn extends Module {
     private static final int VANILLA_LIFETIME = 6000;
+    private static final int EXTENDED_LIFETIME = VANILLA_LIFETIME + 6000; // extended items get +6000 ticks
 
     // Sentinel age values set by ItemEntity#setUnlimitedLifetime() / #setExtendedLifetime().
     // See ItemEntity.tick(): "if (this.age != -32768) this.age++;" and the discard check
@@ -104,7 +105,8 @@ public class ItemDespawn extends Module {
 
     // Bounded max-heap keyed by squared distance (farthest at the top). Used to keep only
     // the closest `max` candidates without sorting the full candidate set.
-    private java.util.PriorityQueue<ItemEntity> closestHeap;
+    private final java.util.PriorityQueue<ItemEntity> closestHeap = new java.util.PriorityQueue<>(11,
+        (a, b) -> Double.compare(mc.player.distanceToSqr(b), mc.player.distanceToSqr(a)));
 
     public ItemDespawn() {
         super(Addon.CATEGORY, "Item-Despawn", "Highlights items that are about to despawn.");
@@ -112,7 +114,7 @@ public class ItemDespawn extends Module {
 
     @Override
     public void onDeactivate() {
-        if (closestHeap != null) closestHeap.clear();
+        closestHeap.clear();
     }
 
     @EventHandler
@@ -126,12 +128,7 @@ public class ItemDespawn extends Module {
         boolean useHeap = max > 0 && closestFirst.get();
 
         if (useHeap) {
-            if (closestHeap == null) {
-                closestHeap = new java.util.PriorityQueue<>(max + 1,
-                    (a, b) -> Double.compare(mc.player.distanceToSqr(b), mc.player.distanceToSqr(a)));
-            } else {
-                closestHeap.clear();
-            }
+            closestHeap.clear();
 
             for (Entity entity : mc.level.entitiesForRendering()) {
                 if (!(entity instanceof ItemEntity item)) continue;
@@ -141,7 +138,7 @@ public class ItemDespawn extends Module {
                 int age = item.getAge();
                 if (age == UNLIMITED_LIFETIME_AGE) continue;
 
-                int timeLeft = VANILLA_LIFETIME - age;
+                int timeLeft = timeLeft(age);
                 if (timeLeft <= 0 || timeLeft > warn) continue;
 
                 closestHeap.offer(item);
@@ -164,7 +161,7 @@ public class ItemDespawn extends Module {
                 int age = item.getAge();
                 if (age == UNLIMITED_LIFETIME_AGE) continue;
 
-                int timeLeft = VANILLA_LIFETIME - age;
+                int timeLeft = timeLeft(age);
                 if (timeLeft <= 0 || timeLeft > warn) continue;
 
                 renderItem(event, item, warn);
@@ -174,11 +171,24 @@ public class ItemDespawn extends Module {
         }
     }
 
+    private static int timeLeft(int age) {
+        return VANILLA_LIFETIME - age;
+    }
+
     private void renderItem(Render3DEvent event, ItemEntity item, int warn) {
-        int timeLeft = VANILLA_LIFETIME - item.getAge();
+        int age = item.getAge();
+        int timeLeft = timeLeft(age);
+
+        // Normalize against the item's own max lifetime, not just the raw warn-threshold
+        // setting, so extended-lifetime items (age starts at -6000, max timeLeft 12000)
+        // don't get squashed into a gradient sized for normal items (max timeLeft 6000),
+        // and vice versa when warn-threshold is raised above 6000 to catch extended items.
+        boolean extended = age < 0;
+        int itemMaxLifetime = extended ? EXTENDED_LIFETIME : VANILLA_LIFETIME;
+        int denom = Math.min(warn, itemMaxLifetime);
 
         Color color = computeColorFromTime.get()
-            ? despawnColor(timeLeft, warn)
+            ? despawnColor(timeLeft, denom)
             : customColor.get();
 
         Color sideColor = new Color(color.r, color.g, color.b, sideOpacity.get());
@@ -187,12 +197,17 @@ public class ItemDespawn extends Module {
         event.renderer.box(item.getBoundingBox(), sideColor, lineColor, shapeMode.get(), 0);
     }
 
-    private Color despawnColor(int timeLeft, int warnWindow) {
-        double percent = (double) timeLeft / warnWindow;
+    private Color despawnColor(int timeLeft, int denom) {
+        double percent = (double) timeLeft / denom;
         percent = Math.clamp(percent, 0.0, 1.0);
 
-        int r = (int) (255 * (1.0 - percent));
-        int g = (int) (255 * percent);
-        return new Color(r, g, 0);
+        // Straight RGB lerp from (0,255,0) to (255,0,0) passes through (127,127,0)
+        float hue = (float) (percent * 120.0 / 360.0); // 120/360 = green, 0 = red
+        int rgb = java.awt.Color.HSBtoRGB(hue, 1.0f, 1.0f);
+
+        int r = (rgb >> 16) & 0xFF;
+        int g = (rgb >> 8) & 0xFF;
+        int b = rgb & 0xFF;
+        return new Color(r, g, b);
     }
 }

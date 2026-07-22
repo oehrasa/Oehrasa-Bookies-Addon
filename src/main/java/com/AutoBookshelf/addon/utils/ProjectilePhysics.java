@@ -1,6 +1,5 @@
 package com.AutoBookshelf.addon.utils;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.projectile.ShulkerBullet;
 import net.minecraft.world.entity.projectile.arrow.Arrow;
@@ -19,6 +18,8 @@ import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.List;
+
+import static meteordevelopment.meteorclient.MeteorClient.mc;
 
 /**
  * Single source of truth for ballistic prediction constants and integration.
@@ -101,7 +102,6 @@ public final class ProjectilePhysics {
      * @param maxTicks how many ticks to simulate forward
      */
     public static Result simulate(Entity source, Vec3 startPos, Vec3 startVel, int maxTicks) {
-        Minecraft mc = Minecraft.getInstance();
         double gravity = getGravity(source);
         double drag = getDrag(source);
         boolean legacyOrder = getTickOrder(source) == TickOrder.LEGACY_POS_DRAG_ACCEL;

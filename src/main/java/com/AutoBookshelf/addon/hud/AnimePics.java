@@ -40,6 +40,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
@@ -49,11 +50,11 @@ public class AnimePics extends HudElement {
     public static final HudElementInfo<AnimePics> INFO = new HudElementInfo<>(
         Addon.HUD_GROUP,
         "Anime-Pics",
-        "Displays random Anime pictures/Gif from Nekos.life or WaifuIM or Safebooru or even Custom.",
+        "Displays random Anime pictures/GIF from Nekos.life or WaifuIM or Safebooru or even Custom.",
         AnimePics::create
     );
 
-    private boolean locked = false;
+    private final AtomicBoolean locked = new AtomicBoolean(false);
     private boolean empty = true;
     private int ticks = 0;
     private final PointerBuffer saveFilters;         // file filters for save dialogue
@@ -74,8 +75,7 @@ public class AnimePics extends HudElement {
     private List<NativeImage> gifFrames = null;
     private int[] gifDelaysMs = null;
     private int gifFrameIndex = 0;
-    // GIF animation timing now uses system millis directly (accurate, decoupled from tick rate)
-    private long lastFrameTime = System.currentTimeMillis();
+    private int gifElapsedMs = 0;
 
     // Settings
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -109,7 +109,6 @@ public class AnimePics extends HudElement {
         .description("Image source to use.")
         .defaultValue(Source.WaifuIM)
         .onChanged(v -> {
-            if (v == Source.LocalFolder) loadLocalFileList();
             loggedEmptyFolder = false;
             refreshNow();
             updateSourceButtonsVisibility();
@@ -208,7 +207,7 @@ public class AnimePics extends HudElement {
     // GIF settings
     private final Setting<Boolean> animateGifs = sgGeneral.add(new BoolSetting.Builder()
         .name("animate-gifs")
-        .description("Play animated GIFs. Disable to show only the first frame — much cheaper on CPU/GPU and memory.")
+        .description("Play animated GIFs. Disable to show only the first frame.")
         .defaultValue(true)
         .onChanged(v -> refreshNow())
         .build()
@@ -216,7 +215,7 @@ public class AnimePics extends HudElement {
 
     private final Setting<Boolean> animateInMenus = sgGeneral.add(new BoolSetting.Builder()
         .name("animate-in-menus")
-        .description("Keep animating GIFs while a menu/screen is open (inventory, chat, settings, etc). Off by default since there's no visual benefit while the HUD isn't drawn.")
+        .description("Keep animating GIFs while a menu/screen is open (inventory, chat, settings, etc).")
         .defaultValue(false)
         .build()
     );
@@ -245,6 +244,7 @@ public class AnimePics extends HudElement {
     private List<File> localImageFiles = new ArrayList<>();
     private int localImageIndex = 0;
     private boolean loggedEmptyFolder = false;
+    private String loadedFolderPath = null; // path localImageFiles was last built from; null = never loaded
 
     public AnimePics() {
         super(INFO);
@@ -318,7 +318,7 @@ public class AnimePics extends HudElement {
     public void refreshNow() {
         manualRefresh = true;
         empty = true;
-        ticks = 0;
+        ticks = 0; // next scheduled refresh is a full refreshRate ticks after this action
     }
 
     private void saveImage() {
@@ -357,8 +357,18 @@ public class AnimePics extends HudElement {
             localFolderPath.set(path);
             source.set(Source.LocalFolder);
             MeteorClient.LOG.info("Image folder set to " + path);
+            loadedFolderPath = null; // force ensureLocalFolderLoaded() to reload even if source didn't change
             loggedEmptyFolder = false;
             refreshNow();
+        }
+    }
+
+    private void ensureLocalFolderLoaded() {
+        String path = localFolderPath.get();
+        if (!Objects.equals(path, loadedFolderPath)) {
+            loadLocalFileList();
+            loadedFolderPath = path;
+            loggedEmptyFolder = false;
         }
     }
 
@@ -380,30 +390,46 @@ public class AnimePics extends HudElement {
     @EventHandler
     public void onTick(TickEvent.Post event) {
         if (mc.options.hideGui) return;
-        if (mc.level == null) return;
 
         boolean menuOpen = mc.screen != null;
-        // Pause fetching new images (but NOT animation) when a menu is open
-        if (pauseRefresh.get() || menuOpen) return;
+        if (menuOpen && !animateInMenus.get()) return;
 
-        // If source is local but the file list was never loaded (after relog), load it now
-        if (source.get() == Source.LocalFolder && localImageFiles.isEmpty()) {
-            loadLocalFileList();
+        if (mc.level == null) return;
+
+        // Advance GIF animation at tick resolution (20Hz ceiling) rather than every render call, so
+        // animation speed is decoupled from FPS.
+        if (gifFrames != null && gifFrames.size() > 1 && animateGifs.get()) {
+            gifElapsedMs += 50; // one client tick ≈ 50ms
+            int delay = Math.max(gifDelaysMs[gifFrameIndex], minFrameIntervalMs.get());
+            if (gifElapsedMs >= delay) {
+                gifElapsedMs -= delay;
+                gifFrameIndex = (gifFrameIndex + 1) % gifFrames.size();
+                applyFrame(gifFrames.get(gifFrameIndex));
+            }
         }
 
-        // If the folder is still empty, log once and stop refreshing
-        if (source.get() == Source.LocalFolder && localImageFiles.isEmpty()) {
-            if (!loggedEmptyFolder) {
-                MeteorClient.LOG.error("[AnimePics] No images found in folder.");
-                loggedEmptyFolder = true;
+        // A menu being open only pauses fetching *new* images, not the animation above.
+        if (menuOpen) return;
+
+        // If source is local, keep the file list in sync with the current path (handles
+        // startup ordering and folder changes) before deciding whether to refresh.
+        if (source.get() == Source.LocalFolder) {
+            ensureLocalFolderLoaded();
+            if (localImageFiles.isEmpty()) {
+                if (!loggedEmptyFolder) {
+                    MeteorClient.LOG.error("[AnimePics] No images found in folder.");
+                    loggedEmptyFolder = true;
+                }
+                return;
             }
-            return;
         } else {
             loggedEmptyFolder = false;
         }
 
+        if (pauseRefresh.get() && !manualRefresh) return; // manual refresh still fires even while paused
+
         ticks++;
-        if (ticks >= refreshRate.get()) {
+        if (manualRefresh || empty || ticks >= refreshRate.get()) {
             ticks = 0;
             loadImage();
         }
@@ -411,30 +437,12 @@ public class AnimePics extends HudElement {
 
     @Override
     public void render(HudRenderer renderer) {
-        if (empty) {
-            if (source.get() == Source.LocalFolder && localImageFiles.isEmpty()) return;
-            loadImage();
-            return;
-        }
-
-        // ---- GIF animation (runs every render frame, accurate timing) ----
-        if (gifFrames != null && gifFrames.size() > 1 && animateGifs.get()) {
-            boolean menuOpen = mc.screen != null;
-            if (!menuOpen || animateInMenus.get()) {
-                long now = System.currentTimeMillis();
-                int delay = Math.max(gifDelaysMs[gifFrameIndex], minFrameIntervalMs.get());
-                if (now - lastFrameTime >= delay) {
-                    lastFrameTime = now;
-                    gifFrameIndex = (gifFrameIndex + 1) % gifFrames.size();
-                    applyFrame(gifFrames.get(gifFrameIndex));
-                }
-            }
-        }
-
-        if (activeTexture == null) return;
+        if (empty || activeTexture == null) return; // loading is onTick's responsibility; render only draws
 
         Renderer2D.TEXTURE.begin();
         Renderer2D.TEXTURE.texQuad(x, y, imgWidth.get(), imgHeight.get(), WHITE);
+        // Binding is no longer a separate GL call which the texture view + sampler
+        // are passed straight into render(), which does the bind internally.
         Renderer2D.TEXTURE.render(activeTexture.getTextureView(), activeTexture.getSampler());
     }
 
@@ -552,16 +560,14 @@ public class AnimePics extends HudElement {
     }
 
     private void loadImage() {
-        if (locked) return;
+        if (!locked.compareAndSet(false, true)) return; // already loading; avoids duplicate concurrent loads
         new Thread(() -> {
             try {
-                locked = true;
                 boolean useFixed = manualRefresh;
                 manualRefresh = false;
 
                 String url = fetchImageUrl(useFixed);
                 if (url == null) {
-                    locked = false;
                     return;
                 }
 
@@ -571,7 +577,6 @@ public class AnimePics extends HudElement {
                 if (url.startsWith("local://")) {
                     File file = getNextLocalImage();
                     if (file == null) {
-                        locked = false;
                         return;
                     }
                     rawBytes = Files.readAllBytes(file.toPath());
@@ -599,8 +604,9 @@ public class AnimePics extends HudElement {
                 }
             } catch (Exception e) {
                 MeteorClient.LOG.error("[AnimePics] " + e.getMessage());
+            } finally {
+                locked.set(false);
             }
-            locked = false;
         }).start();
         updateSize();
     }
@@ -654,7 +660,7 @@ public class AnimePics extends HudElement {
             gifFrames = frames;
             gifDelaysMs = delays;
             gifFrameIndex = 0;
-            lastFrameTime = System.currentTimeMillis();
+            gifElapsedMs = 0;
             applyFrame(frames.get(0));
             empty = false;
             MeteorClient.LOG.info("[AnimePics] Image loaded! (" + frames.size() + " GIF frames)");

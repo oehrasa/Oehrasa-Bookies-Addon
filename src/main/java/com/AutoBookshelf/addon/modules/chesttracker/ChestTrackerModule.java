@@ -234,10 +234,14 @@ public class ChestTrackerModule extends Module {
     private final ChestTrackerDataV2 data;
     private Item currentSearchItem;
     private BlockPos lastInteractedBlock = null;
+
     private boolean awaiting = false;
+    private boolean autoOpened = false;
     private int awaitingTicks = 0;
-    private int tickCounter = 0;
+    private List<ItemStack> lastSnapshot = null;
     private BlockPos[] currentOpenPositions = new BlockPos[2];
+
+    private int tickCounter = 0;
     private List<TrackedContainer> renderCache = new ArrayList<>();
     private long lastRenderCacheUpdate = 0;
     private boolean shouldAutoClose = false;
@@ -270,7 +274,9 @@ public class ChestTrackerModule extends Module {
         lastInteractedBlock = null;
         currentSearchItem = null;
         awaiting = false;
+        autoOpened = false;
         awaitingTicks = 0;
+        lastSnapshot = null;
         tickCounter = 0;
         currentOpenPositions = new BlockPos[2];
         renderCache.clear();
@@ -348,47 +354,24 @@ public class ChestTrackerModule extends Module {
             }
         }
 
-        // Awaiting container inventory
         if (awaiting) {
             if (isInContainerScreen()) {
-                awaitingTicks++;
-                if (awaitingTicks > 5) {
-                    // Manual processing if inventory event didn't fire
-                    AbstractContainerMenu handler = mc.player.containerMenu;
-                    if (handler != null && currentOpenPositions[0] != null) {
-                        // Normalise before saving even for auto-opened containers
-                        BlockPos trackPos = getCanonicalChestPos(currentOpenPositions[0]);
-                        awaiting = false;
-                        awaitingTicks = 0;
-                        blockedContainers.remove(trackPos);
-                        if (currentOpenPositions[1] != null) {
-                            blockedContainers.remove(currentOpenPositions[1]);
-                        }
-                        List<ItemStack> items = new ArrayList<>();
-                        int containerSlots = handler.slots.size() - 36;
-                        for (int i = 0; i < containerSlots && i < handler.slots.size(); i++) {
-                            Slot slot = handler.slots.get(i);
-                            ItemStack stack = slot.getItem();
-                            if (!stack.isEmpty()) items.add(stack.copy());
-                        }
-                        String currentDim = getCurrentDimension();
-                        String containerType = getContainerType(trackPos);
-                        data.trackContainer(trackPos, currentDim, containerType, items);
-                        if (debugMode.get()) info("Manually tracked " + containerType + " (" + items.size() + " items)");
-
-                        int closeDelay = autoOpenCloseDelay.get();
-                        if (closeDelay == 0) mc.player.closeContainer();
-                        else {
-                            shouldAutoClose = true;
-                            ticksUntilClose = closeDelay;
-                        }
-                        currentOpenPositions = new BlockPos[2];
+                AbstractContainerMenu handler = mc.player.containerMenu;
+                if (handler != null && currentOpenPositions[0] != null) {
+                    List<ItemStack> snapshot = snapshotContainerSlots(handler);
+                    if (lastSnapshot != null && snapshotsEqual(snapshot, lastSnapshot)) {
+                        commitTrackedContainer(snapshot);
                     } else {
-                        awaiting = false;
-                        awaitingTicks = 0;
-                        currentOpenPositions = new BlockPos[2];
-                        if (debugMode.get()) info("Reset awaiting flag (can't process inventory)");
+                        lastSnapshot = snapshot;
+                        awaitingTicks++;
+                        if (awaitingTicks > AWAITING_TIMEOUT) {
+                            if (debugMode.get()) info("Contents never stabilized, giving up capture");
+                            failPendingCapture();
+                        }
                     }
+                } else {
+                    awaitingTicks++;
+                    if (awaitingTicks > AWAITING_TIMEOUT) failPendingCapture();
                 }
             } else {
                 awaitingTicks++;
@@ -397,10 +380,7 @@ public class ChestTrackerModule extends Module {
                         blockedContainers.put(currentOpenPositions[0], BLOCKED_COOLDOWN_TICKS);
                         if (debugMode.get()) info("Container at " + currentOpenPositions[0].toShortString() + " failed to open (timeout), adding to blocked list");
                     }
-                    awaiting = false;
-                    awaitingTicks = 0;
-                    currentOpenPositions = new BlockPos[2];
-                    if (debugMode.get()) info("Reset awaiting flag (timeout)");
+                    failPendingCapture();
                 }
             }
         }
@@ -459,7 +439,9 @@ public class ChestTrackerModule extends Module {
                     if (result == InteractionResult.SUCCESS || result == InteractionResult.CONSUME) {
                         blockedContainers.remove(blockPos);
                         awaiting = true;
+                        autoOpened = true;
                         awaitingTicks = 0;
+                        lastSnapshot = null;
                         currentOpenPositions[0] = canonicalPos; // store canonical from the start
                         currentOpenPositions[1] = null;
                         if (block instanceof ChestBlock) {
@@ -485,48 +467,9 @@ public class ChestTrackerModule extends Module {
     @EventHandler
     private void onInventory(InventoryEvent event) {
         if (!isActive()) return;
-        AbstractContainerMenu handler = mc.player.containerMenu;
-        if (handler == null) return;
+        if (!awaiting) return;
 
-        BlockPos rawPos = currentOpenPositions[0];
-        if (rawPos == null) rawPos = lastInteractedBlock;
-        if (rawPos == null) {
-            awaiting = false;
-            awaitingTicks = 0;
-            return;
-        }
-
-        // Always resolve to the canonical half before writing any data.
-        BlockPos trackPos = getCanonicalChestPos(rawPos);
-
-        boolean wasAutoOpened = awaiting;
-        awaiting = false;
-        awaitingTicks = 0;
-        blockedContainers.remove(trackPos);
-        if (currentOpenPositions[1] != null) blockedContainers.remove(currentOpenPositions[1]);
-
-        // Track items
-        List<ItemStack> items = new ArrayList<>();
-        int containerSlots = handler.slots.size() - 36;
-        for (int i = 0; i < containerSlots && i < handler.slots.size(); i++) {
-            Slot slot = handler.slots.get(i);
-            if (!slot.getItem().isEmpty()) items.add(slot.getItem().copy());
-        }
-        data.trackContainer(trackPos, getCurrentDimension(), getContainerType(trackPos), items);
-        if (debugMode.get()) info("Tracked " + getContainerType(trackPos) + " at " + trackPos.toShortString() + " (" + items.size() + " items)");
-
-        if (wasAutoOpened) {
-            int closeDelay = autoOpenCloseDelay.get();
-            if (closeDelay == 0) mc.player.closeContainer();
-            else {
-                shouldAutoClose = true;
-                ticksUntilClose = closeDelay;
-                if (debugMode.get()) info("Set shouldAutoClose=true, ticksUntilClose=" + closeDelay);
-            }
-        }
-
-        lastInteractedBlock = null;
-        currentOpenPositions = new BlockPos[2];
+        lastSnapshot = null;
     }
 
     @EventHandler
@@ -663,6 +606,82 @@ public class ChestTrackerModule extends Module {
         if (tracked != null && !screenTitle.equals(defaultName)) {
             tracked.setCustomName(screenTitle);
         }
+
+        // If this screen wasn't already reserved by the auto-open loop, this is a
+        // manual open - start the same stability-tracked capture used for auto-opens
+        // so a manual open reliably saves without needing to be reopened.
+        if (!awaiting && isTrackableContainer(block)) {
+            awaiting = true;
+            autoOpened = false;
+            awaitingTicks = 0;
+            lastSnapshot = null;
+            currentOpenPositions[0] = trackPos;
+            currentOpenPositions[1] = findDoubleChestOtherHalf(trackPos);
+        }
+    }
+
+    private List<ItemStack> snapshotContainerSlots(AbstractContainerMenu handler) {
+        int containerSlots = handler.slots.size() - 36;
+        List<ItemStack> snapshot = new ArrayList<>(Math.max(containerSlots, 0));
+        for (int i = 0; i < containerSlots && i < handler.slots.size(); i++) {
+            Slot slot = handler.slots.get(i);
+            snapshot.add(slot.getItem().copy());
+        }
+        return snapshot;
+    }
+
+    private boolean snapshotsEqual(List<ItemStack> a, List<ItemStack> b) {
+        if (a.size() != b.size()) return false;
+        for (int i = 0; i < a.size(); i++) {
+            if (!stacksMatch(a.get(i), b.get(i))) return false;
+        }
+        return true;
+    }
+
+    private boolean stacksMatch(ItemStack a, ItemStack b) {
+        if (a.isEmpty() && b.isEmpty()) return true;
+        if (a.isEmpty() != b.isEmpty()) return false;
+        return a.getCount() == b.getCount() && ItemStack.isSameItemSameComponents(a, b);
+    }
+
+    private void commitTrackedContainer(List<ItemStack> snapshot) {
+        BlockPos trackPos = currentOpenPositions[0];
+        BlockPos otherPos = currentOpenPositions[1];
+        boolean wasAutoOpened = autoOpened;
+
+        awaiting = false;
+        autoOpened = false;
+        awaitingTicks = 0;
+        lastSnapshot = null;
+        currentOpenPositions = new BlockPos[2];
+        lastInteractedBlock = null;
+
+        blockedContainers.remove(trackPos);
+        if (otherPos != null) blockedContainers.remove(otherPos);
+
+        List<ItemStack> items = new ArrayList<>();
+        for (ItemStack stack : snapshot) {
+            if (!stack.isEmpty()) items.add(stack);
+        }
+        data.trackContainer(trackPos, getCurrentDimension(), getContainerType(trackPos), items);
+        if (debugMode.get()) info("Tracked " + getContainerType(trackPos) + " at " + trackPos.toShortString() + " (" + items.size() + " items)");
+
+        if (wasAutoOpened) {
+            int closeDelay = autoOpenCloseDelay.get();
+            if (closeDelay == 0) mc.player.closeContainer();
+            else {
+                shouldAutoClose = true;
+                ticksUntilClose = closeDelay;
+            }
+        }
+    }
+
+    private void failPendingCapture() {
+        awaiting = false;
+        autoOpened = false;
+        awaitingTicks = 0;
+        lastSnapshot = null;
+        currentOpenPositions = new BlockPos[2];
     }
 
     private BlockPos findDoubleChestOtherHalf(BlockPos pos) {

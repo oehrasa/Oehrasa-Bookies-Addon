@@ -5,7 +5,6 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.multiplayer.ServerData;
-
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -31,24 +30,36 @@ public class Checks {
 
     private static final Set<String> domains = new HashSet<>();
     private static final Gson gson = new Gson();
+    private static final HttpClient httpClient = HttpClient.newHttpClient();
 
     static {
-        DEFAULT.forEach(d -> domains.add(d.toLowerCase(Locale.ROOT)));
-        loadRemote();
+        domains.addAll(DEFAULT);
     }
 
-    private static void loadRemote() {
+    public static void init() {
+        loadRemoteAsync();
+    }
+
+    private static void loadRemoteAsync() {
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(DOMAINS_URL))
+            .timeout(Duration.ofSeconds(15))
+            .GET()
+            .build();
+
+        httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+            .thenAccept(Checks::onRemoteResponse)
+            .exceptionally(t -> {
+                LOGGER.warning("Failed to load domains from remote, using defaults: " + t.getMessage());
+                return null;
+            });
+    }
+
+    private static void onRemoteResponse(HttpResponse<String> response) {
         try {
-            HttpClient client = HttpClient.newHttpClient();
-            HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(DOMAINS_URL))
-                .timeout(Duration.ofSeconds(15))
-                .GET()
-                .build();
-
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
             JsonObject json = gson.fromJson(response.body(), JsonObject.class);
+            if (json == null) return;
+
             JsonArray array = json.getAsJsonArray("domains");
             if (array == null) return;
 
@@ -56,7 +67,7 @@ public class Checks {
                 domains.add(element.getAsString().toLowerCase(Locale.ROOT))
             );
         } catch (Throwable t) {
-            LOGGER.warning("Failed to load domains from remote, using defaults: " + t.getMessage());
+            LOGGER.warning("Failed to parse remote domains response, using defaults: " + t.getMessage());
         }
     }
 
@@ -98,9 +109,5 @@ public class Checks {
         ServerData server = mc.getCurrentServer();
         if (server == null || server.isLan()) return false;
         return contains(server.ip);
-    }
-
-    public static boolean isDevEnvOrHasExtraArgs() {
-        return FabricLoader.getInstance().isDevelopmentEnvironment() || Boolean.getBoolean("sixbees.extra");
     }
 }

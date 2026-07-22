@@ -5,18 +5,21 @@ import com.google.gson.*;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.text.TextRenderer;
-import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.DoubleSetting;
+import meteordevelopment.meteorclient.settings.Setting;
+import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.Utils;
-import meteordevelopment.meteorclient.utils.render.NametagUtils;
-import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.network.Http;
 import meteordevelopment.meteorclient.utils.network.MeteorExecutor;
+import meteordevelopment.meteorclient.utils.render.NametagUtils;
+import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.TamableAnimal;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl;
+import net.minecraft.world.entity.projectile.Projectile;
 import org.joml.Vector3d;
 
 import java.io.File;
@@ -26,8 +29,9 @@ import java.util.Map;
 import java.util.UUID;
 
 public class MobOwner extends Module {
-    private static final Color BACKGROUND = new Color(0, 0, 0, 75);
     private static final Color TEXT = new Color(255, 255, 255);
+    private static final Color ONLINE_COLOR = new Color(255, 255, 0);
+    private static final String UNKNOWN_OWNER_TEXT = "Unknown Owner";
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgCache = settings.createGroup("Cache");
@@ -55,6 +59,20 @@ public class MobOwner extends Module {
         .build()
     );
 
+    private final Setting<Boolean> showProjectiles = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-projectiles")
+        .description("Show the owner of other projectiles not just ender pearls.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> highlightOnline = sgGeneral.add(new BoolSetting.Builder()
+        .name("highlight-online")
+        .description("Show the owner's nametag in yellow while they're online (in the tab list), white when offline.")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<Boolean> persistentCache = sgCache.add(new BoolSetting.Builder()
         .name("persistent-cache")
         .description("Save cache to disk and load on startup.")
@@ -74,13 +92,15 @@ public class MobOwner extends Module {
     // Caches Owner UUID to Owner Name
     private final Map<UUID, String> ownerNameCache = new HashMap<>();
     private final Map<UUID, UUID> mobToOwner = new HashMap<>();
+    // caches whether the owner is currently in the tab list, refreshed once per scan
+    private final Map<UUID, Boolean> ownerOnlineCache = new HashMap<>();
 
     private File cacheFile;
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
     private int tickCounter = 0;
 
     public MobOwner() {
-        super(Addon.CATEGORY, "Mob-Owner", "Shows entity owner by saving into cache.");
+        super(Addon.CATEGORY2, "Mob-Owner", "Shows entity owner by saving into cache.");
     }
 
     @Override
@@ -89,7 +109,7 @@ public class MobOwner extends Module {
             loadCache();
         }
         if (debugMode.get()) {
-            info("§aModule activated - Debug mode ON");
+            info("§aModule activated. Debug mode ON");
         }
     }
 
@@ -99,11 +119,12 @@ public class MobOwner extends Module {
             saveCache();
         }
         ownerNameCache.clear();
+        ownerOnlineCache.clear();
     }
 
     private void loadCache() {
         try {
-            cacheFile = new File(mc.gameDirectory, "cracked_mob_owner_cache.json");
+            cacheFile = new File(mc.gameDirectory, "mob_owner_cache.json");
             if (cacheFile.exists()) {
                 String json = new String(Files.readAllBytes(cacheFile.toPath()));
                 JsonObject root = JsonParser.parseString(json).getAsJsonObject();
@@ -127,7 +148,7 @@ public class MobOwner extends Module {
 
     private void saveCache() {
         if (cacheFile == null) {
-            cacheFile = new File(mc.gameDirectory, "cracked_mob_owner_cache.json");
+            cacheFile = new File(mc.gameDirectory, "mob_owner_cache.json");
         }
         try {
             JsonObject root = new JsonObject();
@@ -150,15 +171,29 @@ public class MobOwner extends Module {
         if (tickCounter < 20) return;   // scan every second
         tickCounter = 0;
 
+        // This snapshot is also reused for the online/offline highlight below.
+        Map<UUID, String> tabListNames = new HashMap<>();
+        if (mc.getConnection() != null) {
+            for (var entry : mc.getConnection().getOnlinePlayers()) {
+                UUID id = entry.getProfile().id();
+                var displayName = entry.getTabListDisplayName();
+                tabListNames.put(id, displayName != null ? displayName.getString() : entry.getProfile().name());
+            }
+        }
+
         int newNames = 0;
 
         for (Entity entity : mc.level.entitiesForRendering()) {
             UUID ownerUuid = getOwnerUuid(entity);
             if (ownerUuid == null) continue;
 
+            // refresh online status every scan so the nametag colour updates as
+            // owners join/leave, not just when we first resolve their name.
+            ownerOnlineCache.put(ownerUuid, tabListNames.containsKey(ownerUuid));
+
             if (!ownerNameCache.containsKey(ownerUuid)) {
-                // Try to resolve name from tab list immediately
-                String name = findNameInTabList(ownerUuid);
+                // Try to resolve name from tab list snapshot immediately
+                String name = tabListNames.get(ownerUuid);
                 if (name != null) {
                     ownerNameCache.put(ownerUuid, name);
                     newNames++;
@@ -189,40 +224,66 @@ public class MobOwner extends Module {
         if (mc.level == null) return;
 
         for (Entity entity : mc.level.entitiesForRendering()) {
-            UUID ownerUuid = getOwnerUuid(entity);
-            if (ownerUuid == null) continue;
+            UUID manualUuid = mobToOwner.get(entity.getUUID());
+            UUID ownerUuid = manualUuid != null ? manualUuid : getRealOwnerUuid(entity);
+
+            // No owner concept applies to this entity at all (not tameable, not a
+            // tracked projectile) -> nothing to show regardless of show-unknown.
+            if (ownerUuid == null && manualUuid == null && !isOwnableEntity(entity)) continue;
+
+            boolean unresolved = ownerUuid == null;
+            if (unresolved && !showUnknown.get()) continue;
 
             Utils.set(pos, entity, event.tickDelta);
             pos.add(0, entity.getEyeHeight(entity.getPose()) + 0.75, 0);
 
             if (NametagUtils.to2D(pos, scale.get())) {
-                String name = getOwnerName(ownerUuid);
+                String name;
+                Color color = TEXT;
+
+                if (unresolved) {
+                    name = UNKNOWN_OWNER_TEXT;
+                } else {
+                    name = showUUID.get() ? ownerUuid.toString() : getOwnerName(ownerUuid);
+                    if (highlightOnline.get() && Boolean.TRUE.equals(ownerOnlineCache.get(ownerUuid))) {
+                        color = ONLINE_COLOR;
+                    }
+                }
+
                 if (name != null) {
-                    renderNametag(name);
+                    renderNametag(name, color);
                 }
             }
         }
     }
 
-    /**
-     * Extracts the owner's UUID from an entity using the modern API.
-     * Uses LazyEntityReference for TameableEntity, direct getOwner() for EnderPearlEntity.
-     */
-    private UUID getOwnerUuid(Entity entity) {
-        // 1) If a manual mapping was added by the command, use that
-        UUID manualUuid = mobToOwner.get(entity.getUUID());
-        if (manualUuid != null) return manualUuid;
+    private boolean isOwnableEntity(Entity entity) {
+        return entity instanceof TamableAnimal || (showProjectiles.get() && entity instanceof Projectile);
+    }
 
-        // 2) Otherwise, read the real owner from the entity
+    /**
+     * Reads the real (non-manual) owner UUID directly from the entity, using the
+     * modern API: LazyEntityReference for TameableEntity, and the generic
+     * ProjectileEntity owner API for all projectiles.
+     */
+    private UUID getRealOwnerUuid(Entity entity) {
         if (entity instanceof TamableAnimal tame) {
             var ref = tame.getOwnerReference();
             return ref != null ? ref.getUUID() : null;
         }
-        if (entity instanceof ThrownEnderpearl pearl) {
-            Entity owner = pearl.getOwner();
+
+        if (showProjectiles.get() && entity instanceof Projectile proj) {
+            Entity owner = proj.getOwner();
             return owner != null ? owner.getUUID() : null;
         }
         return null;
+    }
+
+    private UUID getOwnerUuid(Entity entity) {
+        UUID manualUuid = mobToOwner.get(entity.getUUID());
+        if (manualUuid != null) return manualUuid;
+
+        return getRealOwnerUuid(entity);
     }
 
     private String getOwnerName(UUID ownerUuid) {
@@ -256,7 +317,7 @@ public class MobOwner extends Module {
         return "Retrieving";
     }
 
-    private void renderNametag(String name) {
+    private void renderNametag(String name, Color color) {
         TextRenderer text = TextRenderer.get();
         NametagUtils.begin(pos);
         text.beginBig();
@@ -266,22 +327,10 @@ public class MobOwner extends Module {
         double x = -w / 2;
         double y = -h;
 
-        text.render(name, x, y, TEXT);
+        text.render(name, x, y, color);
 
         text.end();
         NametagUtils.end();
-    }
-
-    private String findNameInTabList(UUID uuid) {
-        if (mc.getConnection() == null) return null;
-        for (var entry : mc.getConnection().getOnlinePlayers()) {
-            if (entry.getProfile().id().equals(uuid)) {
-                var displayName = entry.getTabListDisplayName();
-                if (displayName != null) return displayName.getString();
-                return entry.getProfile().name();
-            }
-        }
-        return null;
     }
 
     private static class ProfileResponse {
@@ -296,11 +345,5 @@ public class MobOwner extends Module {
         if (debugMode.get()) {
             info("Manually assigned " + ownerName + " to " + entity.getType().getDescription().getString());
         }
-    }
-
-    /** Expose the cache for the command (optional)*/
-    public void addOwnerName(UUID ownerUuid, String name) {
-        ownerNameCache.put(ownerUuid, name);
-        if (persistentCache.get()) saveCache();
     }
 }
