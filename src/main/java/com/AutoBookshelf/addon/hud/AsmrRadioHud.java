@@ -1,7 +1,5 @@
 package com.AutoBookshelf.addon.hud;
 
-// TODO: point this at your addon's actual main class (wherever CATEGORY / HUD_GROUP live).
-
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.AsmrAudioEngine;
 

@@ -24,23 +24,14 @@ public class AutoTakeOff extends Module {
     // Mode selection
     private final Setting<Mode> mode = sgGeneral.add(new EnumSetting.Builder<Mode>()
         .name("mode")
-        .description("Normal = pitch adjustment + rotation packets. Simple = only double‑jump (no rotation).")
-        .defaultValue(Mode.Normal)
-        .build()
-    );
-
-    // Rotation settings (for Normal mode)
-    private final Setting<RotationMode> rotationMode = sgRotation.add(new EnumSetting.Builder<RotationMode>()
-        .name("rotation-mode")
-        .description("Normal: sends rotation packets (server sees you turn). Silent: client‑side only (no packets)")
-        .defaultValue(RotationMode.Silent)
-        .visible(() -> mode.get() == Mode.Normal)
+        .description("Normal = pitch adjustment + rotation packets. Simple = direct camera pitch set + jump.")
+        .defaultValue(Mode.Simple)
         .build()
     );
 
     private final Setting<Boolean> setPitch = sgGeneral.add(new BoolSetting.Builder()
         .name("set-pitch")
-        .description("Temporarily set pitch to a specific value during takeoff")
+        .description("Override the pitch sent to the server during takeoff, without moving your camera")
         .defaultValue(true)
         .visible(() -> mode.get() == Mode.Normal)
         .build()
@@ -57,11 +48,34 @@ public class AutoTakeOff extends Module {
         .build()
     );
 
-    private final Setting<Boolean> restorePitch = sgRotation.add(new BoolSetting.Builder()
-        .name("restore-pitch")
-        .description("Restore original pitch after takeoff (Normal mode only)")
+    private final Setting<Integer> rotationPriority = sgRotation.add(new IntSetting.Builder()
+        .name("rotation-priority")
+        .description("Priority passed to Rotations.rotate; raise this if another module keeps overriding the takeoff pitch.")
+        .defaultValue(90)
+        .min(0)
+        .max(1000)
+        .sliderRange(0, 200)
+        .visible(() -> mode.get() == Mode.Normal && setPitch.get())
+        .build()
+    );
+
+    // Simple mode pitch (direct camera pitch, mc.player.setPitch())
+    private final Setting<Boolean> simpleSetPitch = sgGeneral.add(new BoolSetting.Builder()
+        .name("simple-set-pitch")
+        .description("Directly set your camera pitch during Simple mode takeoff.")
         .defaultValue(true)
-        .visible(() -> mode.get() == Mode.Normal)
+        .visible(() -> mode.get() == Mode.Simple)
+        .build()
+    );
+
+    private final Setting<Double> simpleTakeoffPitch = sgGeneral.add(new DoubleSetting.Builder()
+        .name("simple-takeoff-pitch")
+        .description("Pitch angle to set during Simple mode takeoff (negative = looking down)")
+        .defaultValue(-28)
+        .min(-90)
+        .max(90)
+        .sliderRange(-90, 90)
+        .visible(() -> mode.get() == Mode.Simple && simpleSetPitch.get())
         .build()
     );
 
@@ -128,7 +142,14 @@ public class AutoTakeOff extends Module {
         .build()
     );
 
-    // Auto disable after takeoff
+    private final Setting<Boolean> silentRockets = sgFirework.add(new BoolSetting.Builder()
+        .name("silent-rockets")
+        .description("Suppresses the hand swing animation when firing the firework.")
+        .defaultValue(true)
+        .visible(useFirework::get)
+        .build()
+    );
+
     private final Setting<Boolean> disableAfterTakeoff = sgDisable.add(new BoolSetting.Builder()
         .name("disable-after-takeoff")
         .description("Automatically disable the module after a successful takeoff")
@@ -151,9 +172,6 @@ public class AutoTakeOff extends Module {
     private int takeOffDelay = 0;
     private int waitingForGlide = 0;
     private int fireworkTimer = 0;
-    private int originalHotbarSlot = -1;
-    private int fireworkSlot = -1;
-    private float originalPitch;
     private float originalYaw;
     private int disableTimer = 0;
 
@@ -175,8 +193,6 @@ public class AutoTakeOff extends Module {
         takeOffDelay = 0;
         waitingForGlide = 0;
         fireworkTimer = 0;
-        originalHotbarSlot = -1;
-        fireworkSlot = -1;
         simpleJumped = false;
         simpleWaitingForGlide = 0;
         disableTimer = 0;
@@ -195,38 +211,64 @@ public class AutoTakeOff extends Module {
         mc.player.networkHandler.sendPacket(new ClientCommandC2SPacket(mc.player, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
     }
 
-    // Rotation helper using Rotations.rotate (like reference)
-    private void setRotation(float yaw, float pitch, boolean silent) {
-        Rotations.rotate(yaw, pitch, 50, silent, null);
+    private void rotateThenTakeOff() {
+        Rotations.rotate(originalYaw, (float) takeoffPitch.get().doubleValue(), rotationPriority.get(), this::sendStartFlyingPacket);
     }
 
-    private int findFireworkInHotbar() {
-        for (int i = 0; i < 9; i++) {
+    // Re-issued every tick while waiting for the glide to register so the
+    // overridden pitch keeps holding until gliding starts or the window times out.
+    private void holdTakeoffRotation() {
+        Rotations.rotate(originalYaw, (float) takeoffPitch.get().doubleValue(), rotationPriority.get(), null);
+    }
+
+    private void applySimplePitch() {
+        if (simpleSetPitch.get()) {
+            mc.player.setPitch((float) simpleTakeoffPitch.get().doubleValue());
+        }
+    }
+
+    private int countFireworks() {
+        if (mc.player == null) return 0;
+        int count = 0;
+        for (int i = 0; i < 36; i++) {
             ItemStack stack = mc.player.getInventory().getStack(i);
-            if (stack.getItem() instanceof FireworkRocketItem) {
-                return i;
+            if (stack.getItem() instanceof FireworkRocketItem) count += stack.getCount();
+        }
+        ItemStack offhand = mc.player.getOffHandStack();
+        if (offhand.getItem() instanceof FireworkRocketItem) count += offhand.getCount();
+        return count;
+    }
+
+    private void fireRocket() {
+        if (mc.player == null || mc.interactionManager == null) return;
+
+        int rocketSlot = -1;
+        for (int i = 0; i < 9; i++) {
+            if (mc.player.getInventory().getStack(i).getItem() instanceof FireworkRocketItem) {
+                rocketSlot = i;
+                break;
             }
         }
-        return -1;
-    }
 
-    private void useFirework() {
-        if (fireworkSlot == -1) return;
-        originalHotbarSlot = mc.player.getInventory().getSelectedSlot();
-        InvUtils.swap(fireworkSlot, false);
-        mc.interactionManager.interactItem(mc.player, Hand.MAIN_HAND);
-        mc.execute(() -> {
-            if (originalHotbarSlot != -1 && originalHotbarSlot != mc.player.getInventory().getSelectedSlot()) {
-                InvUtils.swap(originalHotbarSlot, false);
+        if (rocketSlot == -1) {
+            if (mc.player.getOffHandStack().getItem() instanceof FireworkRocketItem) {
+                mc.interactionManager.interactItem(mc.player, Hand.OFF_HAND);
+                if (!silentRockets.get()) mc.player.swingHand(Hand.OFF_HAND);
             }
-            originalHotbarSlot = -1;
-        });
+            return;
+        }
+
+        InvUtils.swap(rocketSlot, true);
+        mc.interactionManager.interactItem(mc.player, Hand.MAIN_HAND);
+        if (!silentRockets.get()) mc.player.swingHand(Hand.MAIN_HAND);
+        InvUtils.swapBack();
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.player == null) return;
 
+        // Auto-disable countdown always runs, independent of cooldown/gliding state.
         if (disableTimer > 0) {
             disableTimer--;
             if (disableTimer == 0 && disableAfterTakeoff.get()) {
@@ -235,16 +277,49 @@ public class AutoTakeOff extends Module {
             }
         }
 
-        if (cooldownTimer > 0) {
-            cooldownTimer--;
+        // Firework countdown always runs. This must be checked before the cooldown
+        // and isGliding early-returns below, otherwise it can never reach 0 while
+        // cooldownTimer is still counting down or once gliding has started.
+        if (fireworkTimer > 0) {
+            fireworkTimer--;
+            if (fireworkTimer == 0 && useFirework.get()) {
+                if (countFireworks() > 0) fireRocket();
+                fireworkTimer = -1;
+            }
+            return;
+        }
+
+        if (waitingForGlide > 0) {
+            waitingForGlide--;
+            if (setPitch.get() && mode.get() == Mode.Normal && !mc.player.isGliding()) {
+                holdTakeoffRotation();
+            }
+            if (mc.player.isGliding()) {
+                waitingForGlide = 0;
+                if (useFirework.get()) fireworkTimer = fireworkDelay.get() + 1;
+                if (disableAfterTakeoff.get()) disableTimer = disableDelay.get();
+            }
+            return;
+        }
+
+        if (simpleWaitingForGlide > 0) {
+            simpleWaitingForGlide--;
+            if (mc.player.isGliding()) {
+                simpleWaitingForGlide = 0;
+                if (useFirework.get()) fireworkTimer = fireworkDelay.get() + 1;
+                if (disableAfterTakeoff.get()) disableTimer = disableDelay.get();
+            }
             return;
         }
 
         if (mc.player.isGliding()) {
             takeOffDelay = 0;
-            waitingForGlide = 0;
             simpleJumped = false;
-            simpleWaitingForGlide = 0;
+            return;
+        }
+
+        if (cooldownTimer > 0) {
+            cooldownTimer--;
             return;
         }
 
@@ -263,31 +338,11 @@ public class AutoTakeOff extends Module {
             brokenMessageCooldown = 0;
         }
 
-        // Firework timer
-        if (fireworkTimer > 0) {
-            fireworkTimer--;
-            if (fireworkTimer == 0 && useFirework.get()) {
-                fireworkSlot = findFireworkInHotbar();
-                if (fireworkSlot != -1) useFirework();
-                fireworkTimer = -1;
-            }
-            return;
-        }
-
         if (mode.get() == Mode.Simple) {
-            if (simpleWaitingForGlide > 0) {
-                simpleWaitingForGlide--;
-                if (mc.player.isGliding()) {
-                    simpleWaitingForGlide = 0;
-                    if (useFirework.get()) fireworkTimer = fireworkDelay.get() + 1;
-                    if (disableAfterTakeoff.get()) disableTimer = disableDelay.get();
-                }
-                return;
-            }
-
-            // Ground takeoff: double jump
+            // Ground takeoff: pitch + double jump
             if (mc.player.isOnGround()) {
                 if (!simpleJumped) {
+                    applySimplePitch();
                     mc.player.jump();
                     simpleJumped = true;
                     takeOffDelay = 2;
@@ -306,6 +361,7 @@ public class AutoTakeOff extends Module {
 
             // Falling takeoff
             if (takeOffWhenFalling.get() && !mc.player.isOnGround() && mc.player.getVelocity().y < fallingVelocityThreshold.get()) {
+                applySimplePitch();
                 mc.player.jump();
                 sendStartFlyingPacket();
                 cooldownTimer = cooldown.get();
@@ -315,6 +371,8 @@ public class AutoTakeOff extends Module {
 
             // Lava takeoff
             if (takeOffInLava.get() && mc.player.isInLava()) {
+                applySimplePitch();
+                mc.player.jump();
                 sendStartFlyingPacket();
                 cooldownTimer = cooldown.get();
                 simpleWaitingForGlide = 10;
@@ -326,32 +384,17 @@ public class AutoTakeOff extends Module {
         if (takeOffDelay > 0) {
             takeOffDelay--;
             if (takeOffDelay == 0) {
-                if (setPitch.get()) {
-                    boolean silent = (rotationMode.get() == RotationMode.Silent);
-                    setRotation(originalYaw, (float) takeoffPitch.get().doubleValue(), silent);
+                if (mc.player.isOnGround()) {
+                    takeOffDelay = 1;
+                    return;
                 }
-                sendStartFlyingPacket();
+                if (setPitch.get()) {
+                    rotateThenTakeOff();
+                } else {
+                    sendStartFlyingPacket();
+                }
                 cooldownTimer = cooldown.get();
                 waitingForGlide = 10;
-            }
-            return;
-        }
-
-        if (waitingForGlide > 0) {
-            waitingForGlide--;
-            if (mc.player.isGliding()) {
-                if (restorePitch.get() && setPitch.get()) {
-                    // Restore original pitch, client‑side only (no packet)
-                    setRotation(originalYaw, originalPitch, true);
-                }
-                waitingForGlide = 0;
-                if (useFirework.get()) fireworkTimer = fireworkDelay.get() + 1;
-                if (disableAfterTakeoff.get()) disableTimer = disableDelay.get();
-            } else if (waitingForGlide == 0) {
-                // Timeout – restore anyway
-                if (restorePitch.get() && setPitch.get()) {
-                    setRotation(originalYaw, originalPitch, true);
-                }
             }
             return;
         }
@@ -360,7 +403,6 @@ public class AutoTakeOff extends Module {
         if (takeOffOnGround.get() && mc.player.isOnGround()) {
             if (setPitch.get()) {
                 originalYaw = mc.player.getYaw();
-                originalPitch = mc.player.getPitch();
             }
             mc.player.jump();
             takeOffDelay = 2;
@@ -369,13 +411,13 @@ public class AutoTakeOff extends Module {
 
         // Lava takeoff
         if (takeOffInLava.get() && mc.player.isInLava()) {
+            mc.player.jump();
             if (setPitch.get()) {
                 originalYaw = mc.player.getYaw();
-                originalPitch = mc.player.getPitch();
-                boolean silent = (rotationMode.get() == RotationMode.Silent);
-                setRotation(originalYaw, (float) takeoffPitch.get().doubleValue(), silent);
+                rotateThenTakeOff();
+            } else {
+                sendStartFlyingPacket();
             }
-            sendStartFlyingPacket();
             cooldownTimer = cooldown.get();
             waitingForGlide = 10;
             return;
@@ -385,7 +427,6 @@ public class AutoTakeOff extends Module {
         if (takeOffWhenFalling.get() && !mc.player.isOnGround() && mc.player.getVelocity().y < fallingVelocityThreshold.get()) {
             if (setPitch.get()) {
                 originalYaw = mc.player.getYaw();
-                originalPitch = mc.player.getPitch();
             }
             mc.player.jump();
             takeOffDelay = 2;
@@ -396,10 +437,5 @@ public class AutoTakeOff extends Module {
     public enum Mode {
         Normal,
         Simple
-    }
-
-    public enum RotationMode {
-        Normal,
-        Silent
     }
 }

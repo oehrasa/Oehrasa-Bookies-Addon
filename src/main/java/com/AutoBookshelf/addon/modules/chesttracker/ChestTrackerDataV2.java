@@ -10,12 +10,16 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 
@@ -31,6 +35,16 @@ public class ChestTrackerDataV2 {
     private File tempFile;
     private long lastSaveTime = 0;
     private int saveFailures = 0;
+
+    private static final long SAVE_DEBOUNCE_MS = 2000;
+    private final ScheduledExecutorService saveExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "ChestTracker-Save");
+        t.setDaemon(true);
+        return t;
+    });
+
+    private volatile boolean dirty = false;
+    private ScheduledFuture<?> pendingSave = null;
 
     public ChestTrackerDataV2() {
         this.containers = new ConcurrentHashMap<>();
@@ -52,6 +66,19 @@ public class ChestTrackerDataV2 {
         }
     }
 
+    private synchronized void markDirty() {
+        dirty = true;
+        if (pendingSave == null || pendingSave.isDone()) {
+            pendingSave = saveExecutor.schedule(this::flushIfDirty, SAVE_DEBOUNCE_MS, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private void flushIfDirty() {
+        if (!dirty) return;
+        dirty = false;
+        saveData();
+    }
+
     public void trackContainer(BlockPos pos, String dimension, String containerType, List<ItemStack> contents) {
         lock.writeLock().lock();
         try {
@@ -65,6 +92,7 @@ public class ChestTrackerDataV2 {
         } finally {
             lock.writeLock().unlock();
         }
+        markDirty();
     }
 
     public TrackedContainer getContainer(BlockPos pos, String dimension) {
@@ -177,6 +205,7 @@ public class ChestTrackerDataV2 {
         } finally {
             lock.writeLock().unlock();
         }
+        markDirty();
     }
 
     public void clearCurrentDimension() {
@@ -187,6 +216,7 @@ public class ChestTrackerDataV2 {
         } finally {
             lock.writeLock().unlock();
         }
+        markDirty();
     }
 
     public void saveData() {
@@ -338,6 +368,7 @@ public class ChestTrackerDataV2 {
         } finally {
             lock.writeLock().unlock();
         }
+        markDirty();
     }
 
     Map<String, Map<BlockPos, TrackedContainer>> getContainers() {

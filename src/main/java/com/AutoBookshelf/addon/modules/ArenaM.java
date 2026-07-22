@@ -20,12 +20,10 @@ import net.minecraft.util.Hand;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
+import java.util.*;
 
 /**
- * Arena M “Active Protection System”.
+ * Arena M "Active Protection System".
  * Every tick the module scans for hostile projectiles heading towards the player,
  * predicts their real flight path (real gravity/drag applied via ProjectilePhysics,
  * the same physics utility TrajectoryPlus uses and, if one is considered dangerous enough,
@@ -116,7 +114,7 @@ public class ArenaM extends Module {
 
     private final Setting<Boolean> ignoreLanded = sgThreats.add(new BoolSetting.Builder()
         .name("ignore-landed")
-        .description("Ignore projectiles that are already stuck/landed (near-zero velocity). Mainly matters with intercept-non-target on, since that setting skips the normal moving-towards-you filter that would otherwise exclude them.")
+        .description("Ignore projectiles that are already stuck/landed (near-zero velocity). Mainly matters with intercept-non-target on.")
         .defaultValue(true)
         .build()
     );
@@ -151,6 +149,14 @@ public class ArenaM extends Module {
         .build()
     );
 
+    private final Setting<SettingColor> confirmedHitColor = sgRender.add(new ColorSetting.Builder()
+        .name("confirmed-hit-color")
+        .description("Color of the box where the thrown wind charge's real hitbox is confirmed to touch the threat's real hitbox.")
+        .defaultValue(new SettingColor(80, 255, 80, 130))
+        .visible(debugRender::get)
+        .build()
+    );
+
     private final Setting<ShapeMode> shapeMode = sgRender.add(new EnumSetting.Builder<ShapeMode>()
         .name("shape-mode")
         .description("How the intercept point box is rendered.")
@@ -163,10 +169,13 @@ public class ArenaM extends Module {
     private static final double WIND_SPEED = 1.5;        // blocks/tick
     private static final double WIND_HALF_SIZE = 0.25;
     private static final double SAFETY_MARGIN = 1.5;     // threats that miss by more than this are ignored
-    private static final int MAX_DELAY = 10;             // max ticks for rotation before throwing
     private static final int MAX_LEAD = 30;              // max ticks the wind charge is simulated for
-    private static final int DETECTION_TICKS = MAX_DELAY + MAX_LEAD; // full simulation horizon
+    private static final int DETECTION_TICKS = MAX_LEAD; // full simulation horizon
     private static final double MIN_THREAT_SPEED_SQ = 0.0025; // below this, treat as landed/stuck
+
+    private static final int CHARGE_SPAWN_SEARCH_TICKS = 5;
+    private static final int CHARGE_TRACK_TIMEOUT_TICKS = MAX_LEAD + 10;
+    private static final int CONFIRMED_HIT_DISPLAY_TICKS = 20;
 
     private enum Stage {
         IDLE,       // scanning for threats
@@ -177,13 +186,22 @@ public class ArenaM extends Module {
     private record Threat(Entity entity, Vec3d[] path, int impactTick, double closestDistance) {
     }
 
-    private record Solution(int delay, Vec3d direction, int ticksToImpact) {
+    private record Solution(Vec3d direction, int ticksToImpact) {
     }
 
     private Stage stage = Stage.IDLE;
     private int cooldownTimer = 0;
     private Threat lastTarget;
     private Solution lastSolution;
+
+    private final Set<Integer> preThrowChargeIds = new HashSet<>();
+    private boolean awaitingChargeSpawn = false;
+    private int spawnSearchTimer = 0;
+    private Entity trackedCharge;
+    private Entity trackedThreatEntity;
+    private int trackTimer = 0;
+    private Box confirmedHitBox;
+    private int confirmedHitTimer = 0;
 
     public ArenaM() {
         super(Addon.CATEGORY, "Arena-M", "Throws wind charges to intercept incoming projectiles mid-air.");
@@ -204,11 +222,22 @@ public class ArenaM extends Module {
         cooldownTimer = 0;
         lastTarget = null;
         lastSolution = null;
+        awaitingChargeSpawn = false;
+        spawnSearchTimer = 0;
+        trackedCharge = null;
+        trackedThreatEntity = null;
+        trackTimer = 0;
+        confirmedHitBox = null;
+        confirmedHitTimer = 0;
+        preThrowChargeIds.clear();
     }
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.world == null) return;
+
+        // Cheap no-op when nothing was just thrown (see updateChargeTracking()).
+        updateChargeTracking();
 
         if (stage == Stage.COOLDOWN) {
             if (cooldownTimer > 0) {
@@ -247,7 +276,10 @@ public class ArenaM extends Module {
         stage = Stage.AIMING;
 
         Rotations.rotate(rot[0], rot[1], rotationPriority.get(), () -> {
-            if (mc.player != null) throwWindCharge();
+            if (mc.player != null) {
+                beginChargeTracking(target.entity());
+                throwWindCharge();
+            }
             cooldownTimer = cooldownTicks.get();
             stage = Stage.COOLDOWN;
         });
@@ -342,41 +374,28 @@ public class ArenaM extends Module {
         return owner != null && owner.getUuid().equals(mc.player.getUuid());
     }
 
-    // Interception solver
-    // Unified lead/impact-tick variable: the direction we aim in is derived from
-    // path[delay+tau], and that same tau is what we test for collision, so the
-    // returned solution's direction always corresponds to the tick the collision
-    // was actually found at. (Previously "lead" picked the aim point and an
-    // independent "t" tested collision, so a fixed ray aimed far ahead could clip
-    // the threat's curved path at some unrelated earlier/later tick the source
-    // of the early/late "desync" throws.)
     private Solution solveIntercept(Threat target, Vec3d eyePos) {
         Box baseBox = target.entity().getBoundingBox();
         Vec3d basePos = target.entity().getEntityPos();
 
-        for (int delay = 0; delay <= MAX_DELAY; delay++) {
-            if (target.path()[delay] == null) continue;
+        for (int tau = 1; tau <= MAX_LEAD; tau++) {
+            if (tau >= target.path().length || target.path()[tau] == null) break; // path ends here; larger tau can't help either
 
-            for (int tau = 1; tau <= MAX_LEAD; tau++) {
-                int aimIndex = delay + tau;
-                if (aimIndex >= target.path().length || target.path()[aimIndex] == null) break; // path ends here; larger tau can't help either
+            Vec3d aimPoint = target.path()[tau];
+            Vec3d direction = aimPoint.subtract(eyePos).normalize();
+            Vec3d windPos = eyePos.add(direction.multiply(WIND_SPEED * tau));
 
-                Vec3d aimPoint = target.path()[aimIndex];
-                Vec3d direction = aimPoint.subtract(eyePos).normalize();
-                Vec3d windPos = eyePos.add(direction.multiply(WIND_SPEED * tau));
+            Vec3d threatPrev = target.path()[tau - 1] != null ? target.path()[tau - 1] : aimPoint;
+            Vec3d windPrev = eyePos.add(direction.multiply(WIND_SPEED * (tau - 1)));
 
-                Vec3d threatPrev = target.path()[aimIndex - 1] != null ? target.path()[aimIndex - 1] : aimPoint;
-                Vec3d windPrev = eyePos.add(direction.multiply(WIND_SPEED * (tau - 1)));
+            Box threatBoxPrev = baseBox.offset(threatPrev.subtract(basePos));
+            Box threatBoxCurr = baseBox.offset(aimPoint.subtract(basePos));
 
-                Box threatBoxPrev = baseBox.offset(threatPrev.subtract(basePos));
-                Box threatBoxCurr = baseBox.offset(aimPoint.subtract(basePos));
+            Box windBoxPrev = windBoxAt(windPrev);
+            Box windBoxCurr = windBoxAt(windPos);
 
-                Box windBoxPrev = windBoxAt(windPrev);
-                Box windBoxCurr = windBoxAt(windPos);
-
-                if (union(threatBoxPrev, threatBoxCurr).intersects(union(windBoxPrev, windBoxCurr))) {
-                    return new Solution(delay, direction, tau);
-                }
+            if (union(threatBoxPrev, threatBoxCurr).intersects(union(windBoxPrev, windBoxCurr))) {
+                return new Solution(direction, tau);
             }
         }
         return null;
@@ -436,9 +455,63 @@ public class ArenaM extends Module {
         }
     }
 
+    private void beginChargeTracking(Entity threatEntity) {
+        preThrowChargeIds.clear();
+        for (Entity e : mc.world.getEntities()) {
+            if (e instanceof WindChargeEntity) preThrowChargeIds.add(e.getId());
+        }
+        trackedThreatEntity = threatEntity;
+        awaitingChargeSpawn = true;
+        spawnSearchTimer = CHARGE_SPAWN_SEARCH_TICKS;
+        trackedCharge = null;
+    }
+
+    private void updateChargeTracking() {
+        if (confirmedHitBox != null && --confirmedHitTimer <= 0) {
+            confirmedHitBox = null;
+        }
+
+        if (awaitingChargeSpawn) {
+            spawnSearchTimer--;
+            for (Entity e : mc.world.getEntities()) {
+                if (!(e instanceof WindChargeEntity)) continue;
+                if (preThrowChargeIds.contains(e.getId())) continue;
+                if (!isOwnedByPlayer(e)) continue;
+                trackedCharge = e;
+                awaitingChargeSpawn = false;
+                trackTimer = CHARGE_TRACK_TIMEOUT_TICKS;
+                break;
+            }
+            if (spawnSearchTimer <= 0) awaitingChargeSpawn = false; // gave up; charge likely never spawned
+            preThrowChargeIds.clear();
+            return;
+        }
+
+        if (trackedCharge == null || trackedThreatEntity == null) return;
+
+        if (trackedCharge.isRemoved() || trackedThreatEntity.isRemoved() || --trackTimer <= 0) {
+            trackedCharge = null;
+            trackedThreatEntity = null;
+            return;
+        }
+
+        if (trackedCharge.getBoundingBox().intersects(trackedThreatEntity.getBoundingBox())) {
+            confirmedHitBox = trackedCharge.getBoundingBox();
+            confirmedHitTimer = CONFIRMED_HIT_DISPLAY_TICKS;
+            trackedCharge = null;
+            trackedThreatEntity = null;
+        }
+    }
+
     @EventHandler
     private void onRender(Render3DEvent event) {
-        if (!debugRender.get() || lastTarget == null || lastSolution == null || mc.player == null) return;
+        if (!debugRender.get() || mc.player == null) return;
+
+        if (confirmedHitBox != null) {
+            event.renderer.box(confirmedHitBox, confirmedHitColor.get(), confirmedHitColor.get(), shapeMode.get(), 0);
+        }
+
+        if (lastTarget == null || lastSolution == null) return;
 
         Vec3d[] path = lastTarget.path();
         for (int i = 0; i < path.length - 1; i++) {

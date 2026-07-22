@@ -26,8 +26,6 @@ public class EntityList extends HudElement {
     private final SettingGroup sgColors = settings.createGroup("Colors");
     private final SettingGroup sgBackground = settings.createGroup("Background");
 
-    // General
-
     private final Setting<Boolean> showTitle = sgGeneral.add(new BoolSetting.Builder()
         .name("show-title")
         .description("Display the HUD title.")
@@ -84,10 +82,10 @@ public class EntityList extends HudElement {
         .sliderRange(0.0, 500.0)
         .build()
     );
-    private final Setting<Boolean> sortByDistance = sgGeneral.add(new BoolSetting.Builder()
-        .name("sort-by-distance")
-        .description("Sort entities by distance.")
-        .defaultValue(true)
+    private final Setting<SortMode> sortMode = sgGeneral.add(new EnumSetting.Builder<SortMode>()
+        .name("sort-mode")
+        .description("How to order entities in the list.")
+        .defaultValue(SortMode.Distance)
         .build()
     );
     private final Setting<Boolean> showDistance = sgGeneral.add(new BoolSetting.Builder()
@@ -124,7 +122,12 @@ public class EntityList extends HudElement {
     );
 
     // Colors
-
+    private final Setting<SettingColor> titleColor = sgColors.add(new ColorSetting.Builder()
+        .name("title-color")
+        .description("Color for the HUD title.")
+        .defaultValue(new SettingColor(255, 255, 255, 255))
+        .build()
+    );
     private final Setting<SettingColor> playerColor = sgColors.add(new ColorSetting.Builder()
         .name("player-color")
         .description("Color for player entities.")
@@ -223,7 +226,7 @@ public class EntityList extends HudElement {
 
                 if (background.get()) renderer.quad(x, y, getWidth(), getHeight(), backgroundColor.get());
                 double drawX = x + box.alignX(getWidth(), titleWidth, alignment.get());
-                renderer.text(title, drawX, y, playerColor.get(), textShadow.get(), textScale.get());
+                renderer.text(title, drawX, y, titleColor.get(), textShadow.get(), textScale.get());
             }
             return;
         }
@@ -283,29 +286,14 @@ public class EntityList extends HudElement {
             }
         }
 
-        List<Aggregated> aggregatedList = new ArrayList<>(map.values());
-        if (sortByDistance.get()) {
-            aggregatedList.sort(Comparator.comparingDouble(a -> a.minDist));
-        }
-
         double textHeight = renderer.textHeight(textShadow.get(), textScale.get());
         double spacing = 2;
 
-        // Pass 1: build the line texts/widths and measure the element so alignment has a
-        // correct width to align against on this same frame.
-        List<Line> lines = new ArrayList<>();
-        double maxWidth = 0;
-        double totalHeight = 0;
-
-        if (showTitle.get()) {
-            String title = "Entity List";
-            double titleWidth = renderer.textWidth(title, textShadow.get(), textScale.get());
-            lines.add(new Line(title, playerColor.get(), titleWidth));
-            maxWidth = Math.max(maxWidth, titleWidth);
-            totalHeight += textHeight + spacing;
-        }
-
-        for (Aggregated agg : aggregatedList) {
+        // Build the display text/width for every aggregated entry up front, since sorting by
+        // Length needs the final rendered text (name + count + distance suffix), not just the
+        // raw entity name.
+        List<Line> entityLines = new ArrayList<>();
+        for (Aggregated agg : map.values()) {
             String text = agg.name;
             if (agg.count > 1) {
                 text += " x" + agg.count;
@@ -314,20 +302,46 @@ public class EntityList extends HudElement {
                 text += " (" + (int) agg.minDist + "m)";
             }
             double textWidth = renderer.textWidth(text, textShadow.get(), textScale.get());
-            lines.add(new Line(text, agg.color, textWidth));
-            maxWidth = Math.max(maxWidth, textWidth);
+            entityLines.add(new Line(text, agg.color, textWidth, agg.minDist));
+        }
+
+        switch (sortMode.get()) {
+            // Sort by rendered pixel width rather than String#length(): length() counts UTF-16
+            // code units, which misrepresents entities with non-ASCII/wide-glyph names (and any
+            // future locale-translated names) relative to the actual on-screen size of the
+            // name + count + distance suffix.
+            case Distance -> entityLines.sort(Comparator.comparingDouble(Line::minDist));
+            case Length -> entityLines.sort(Comparator.comparingDouble(Line::width).reversed());
+            case Name -> entityLines.sort(Comparator.comparing(Line::text, String.CASE_INSENSITIVE_ORDER));
+        }
+
+        List<Line> lines = new ArrayList<>();
+        double maxWidth = 0;
+        double totalHeight = 0;
+
+        if (showTitle.get()) {
+            String title = "Entity List";
+            double titleWidth = renderer.textWidth(title, textShadow.get(), textScale.get());
+            lines.add(new Line(title, titleColor.get(), titleWidth, 0));
+            maxWidth = Math.max(maxWidth, titleWidth);
             totalHeight += textHeight + spacing;
         }
+
+        for (Line line : entityLines) {
+            maxWidth = Math.max(maxWidth, line.width());
+            totalHeight += textHeight + spacing;
+        }
+        lines.addAll(entityLines);
 
         setSize(maxWidth, Math.max(0, totalHeight - spacing));
 
         if (background.get()) renderer.quad(x, y, getWidth(), getHeight(), backgroundColor.get());
 
-        // Pass 2: draw, aligning each line within the now-correct element width.
+        // Draw, aligning each line within the now-correct element width.
         double curY = y;
         for (Line line : lines) {
-            double drawX = x + box.alignX(getWidth(), line.width, alignment.get());
-            renderer.text(line.text, drawX, curY, line.color, textShadow.get(), textScale.get());
+            double drawX = x + box.alignX(getWidth(), line.width(), alignment.get());
+            renderer.text(line.text(), drawX, curY, line.color(), textShadow.get(), textScale.get());
             curY += textHeight + spacing;
         }
     }
@@ -362,6 +376,12 @@ public class EntityList extends HudElement {
         };
     }
 
+    public enum SortMode {
+        Distance,
+        Length,
+        Name
+    }
+
     private static class Aggregated {
         String name;
         int count;
@@ -369,6 +389,6 @@ public class EntityList extends HudElement {
         SettingColor color;
     }
 
-    private record Line(String text, SettingColor color, double width) {
+    private record Line(String text, SettingColor color, double width, double minDist) {
     }
 }

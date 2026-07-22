@@ -47,6 +47,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new BlockRadius());
         Modules.get().add(new BLU27BNapalm());
         Modules.get().add(new BookImporter());
+        Modules.get().add(new BetterBoatFly());
         Modules.get().add(new BookshelfFiller());
         // C
         Modules.get().add(new ContainerPeek());
