@@ -90,6 +90,11 @@ Tested successfully with these mods.
 
 </details>
 
+<details>
+<summary><b>Display</b> (in-game)</summary>
+https://github.com/user-attachments/assets/6cb65235-2089-4839-9445-47f7afbf1f9a
+</details>
+
 ## HUD Elements (9)
 
 - **Anime-Pics** - Displays random Anime pictures/GIF ( Cheers >< )
