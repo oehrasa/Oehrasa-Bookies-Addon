@@ -14,9 +14,9 @@ import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.WrittenBookContentComponent;
-import net.minecraft.network.packet.c2s.play.BookUpdateC2SPacket;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.network.packet.c2s.play.BookUpdateC2SPacket;
 import net.minecraft.text.RawFilteredPair;
 import net.minecraft.text.StringVisitable;
 import net.minecraft.text.Text;
@@ -177,7 +177,10 @@ public class BookImporter extends Module {
         }
 
         loadProgress();      // loads completed parts set from file
-        scanAndQueueFiles();
+        if (!scanAndQueueFiles()) {
+            toggle();
+            return;
+        }
 
         if (tasks.isEmpty()) {
             sendMessage("No .txt files found in " + importFolder.get());
@@ -317,29 +320,26 @@ public class BookImporter extends Module {
         }
     }
 
-    private void scanAndQueueFiles() {
+    private boolean scanAndQueueFiles() {
         tasks.clear();
 
         if (useSelectedFile.get()) {
             String path = selectedFilePath.get();
             if (path.isEmpty()) {
                 sendMessage("§cNo file selected. Please use the 'Select File' button.");
-                toggle();
-                return;
+                return false;
             }
             File file = new File(path);
             if (!file.exists() || !file.getName().endsWith(".txt")) {
                 sendMessage("§cSelected file is not a valid .txt file.");
-                toggle();
-                return;
+                return false;
             }
             try {
                 List<String> lines = Files.readAllLines(file.toPath());
                 List<String> pages = convertLinesToPages(lines);
                 if (pages.isEmpty()) {
                     sendMessage("§cFile is empty.");
-                    toggle();
-                    return;
+                    return false;
                 }
                 String baseTitle = file.getName().replace(".txt", "");
                 if (baseTitle.length() > 32) baseTitle = baseTitle.substring(0, 32);
@@ -348,9 +348,9 @@ public class BookImporter extends Module {
                 sendMessage("Queued: " + file.getName() + " (" + pages.size() + " pages, " + totalParts + " part(s))");
             } catch (IOException e) {
                 sendMessage("§cFailed to read file.");
-                toggle();
+                return false;
             }
-            return;
+            return true;
         }
 
         Path folder = Paths.get(mc.runDirectory.getPath(), importFolder.get());
@@ -360,18 +360,16 @@ public class BookImporter extends Module {
                 Files.createDirectories(folder);
                 sendMessage("§aCreated folder: " + folder);
                 sendMessage("§7Place your .txt files in this folder, then re-enable the module");
-                toggle();
-                return;
+                return false;
             } catch (IOException e) {
                 error("Failed to create folder: " + folder);
-                return;
+                return false;
             }
         }
 
         File[] files = folder.toFile().listFiles((dir, name) -> name.endsWith(".txt"));
-        if (files == null) return;
+        if (files == null) return true;
 
-        // Custom natural sorting
         Arrays.sort(files, (a, b) -> {
             String nameA = a.getName();
             String nameB = b.getName();
@@ -409,6 +407,7 @@ public class BookImporter extends Module {
                 error("Failed to read file: " + file.getName());
             }
         }
+        return true;
     }
 
     @Override

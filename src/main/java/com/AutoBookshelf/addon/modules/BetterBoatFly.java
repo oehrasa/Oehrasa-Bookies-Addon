@@ -39,7 +39,7 @@ public class BetterBoatFly extends Module {
         speed = sgGeneral.add(new DoubleSetting.Builder()
             .name("speed")
             .description("Horizontal speed in blocks per second.")
-            .defaultValue(10.0)
+            .defaultValue(19.0)
             .min(0.0)
             .sliderMax(50.0)
             .build());
@@ -47,7 +47,7 @@ public class BetterBoatFly extends Module {
         verticalSpeed = sgGeneral.add(new DoubleSetting.Builder()
             .name("vertical-speed")
             .description("Vertical speed in blocks per second.")
-            .defaultValue(6.0)
+            .defaultValue(20.0)
             .min(0.0)
             .sliderMax(20.0)
             .build());
@@ -55,7 +55,7 @@ public class BetterBoatFly extends Module {
         fallSpeed = sgGeneral.add(new DoubleSetting.Builder()
             .name("fall-speed")
             .description("How fast you fall in blocks per second.")
-            .defaultValue(0.1)
+            .defaultValue(0.0)
             .min(0.0)
             .build());
 
@@ -68,7 +68,7 @@ public class BetterBoatFly extends Module {
         autoMount = sgGeneral.add(new BoolSetting.Builder()
             .name("boat-auto-mount")
             .description("Automatically mounts the nearest boat if not already riding one.")
-            .defaultValue(false)
+            .defaultValue(true)
             .build());
 
         rotate = sgGeneral.add(new BoolSetting.Builder()
