@@ -146,7 +146,7 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 2. Put the .txt file into folder : `\minecraft\AutoBookshelf\books`
 3. _Recommend to use alongside Bookshelf-Filler module_
 4. Press set key in the module settings to continue to next file
-> I will post the Python code soon
+> I post the Python code [here](https://github.com/oehrasa/Auto-Written-Book)
 </details>
 
 <details>
