@@ -1,13 +1,14 @@
 package com.AutoBookshelf.addon.hud;
 
 import com.AutoBookshelf.addon.Addon;
-import meteordevelopment.meteorclient.MeteorClient;
+import com.AutoBookshelf.addon.utils.DistanceUtil;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.hud.Alignment;
 import meteordevelopment.meteorclient.systems.hud.HudElement;
 import meteordevelopment.meteorclient.systems.hud.HudElementInfo;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
+import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.item.ItemEntity;
@@ -15,7 +16,6 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.FireworkRocketEntity;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.vehicle.VehicleEntity;
-
 import java.util.*;
 
 public class EntityList extends HudElement {
@@ -217,7 +217,9 @@ public class EntityList extends HudElement {
 
     @Override
     public void render(HudRenderer renderer) {
-        if (MeteorClient.mc.level == null || MeteorClient.mc.player == null) {
+        // lol
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || mc.player == null) {
             if (isInEditor()) {
                 String title = "Entity List";
                 double titleWidth = renderer.textWidth(title, textShadow.get(), textScale.get());
@@ -232,17 +234,9 @@ public class EntityList extends HudElement {
         }
 
         Map<String, Aggregated> map = new HashMap<>();
-        for (Entity entity : MeteorClient.mc.level.entitiesForRendering()) {
-            if (entity == MeteorClient.mc.player) continue;
-            double dx = entity.getX() - MeteorClient.mc.player.getX();
-            double dz = entity.getZ() - MeteorClient.mc.player.getZ();
-            double distance;
-            if (includeYLevel.get()) {
-                double dy = entity.getY() - MeteorClient.mc.player.getY();
-                distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            } else {
-                distance = Math.sqrt(dx * dx + dz * dz);
-            }
+        for (Entity entity : mc.level.entitiesForRendering()) {
+            if (entity == mc.player) continue;
+            double distance = DistanceUtil.distance(entity, mc.player, includeYLevel.get());
             if (distance > maxDistance.get()) continue;
 
             // Classify into exactly one category, most specific first.

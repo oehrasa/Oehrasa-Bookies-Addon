@@ -1,11 +1,10 @@
 package com.AutoBookshelf.addon.modules.chesttracker;
 
-import meteordevelopment.meteorclient.utils.render.color.SettingColor;
-import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -14,7 +13,10 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.Vec3;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 public class ChestTrackerScreen extends Screen {
@@ -36,7 +38,6 @@ public class ChestTrackerScreen extends Screen {
     private static final int MIN_VISIBLE_ROWS = 5;
     private Button clearSearchButton;
     private Button sortButton;
-    private SortMode currentSortMode = SortMode.COUNT_DESC;
     private boolean isDraggingScrollbar = false;
     private int scrollbarDragStartY = 0;
     private int scrollbarDragStartOffset = 0;
@@ -46,6 +47,7 @@ public class ChestTrackerScreen extends Screen {
     private int cachedTotalRows;
     private int cachedVisibleHeight;
     private Map<Item, Double> distanceCache = new HashMap<>();
+    private List<TrackedContainer> dimensionContainers = new ArrayList<>();
 
     public ChestTrackerScreen(ChestTrackerModule module) {
         super(Component.literal("Chest Tracker"));
@@ -82,10 +84,10 @@ public class ChestTrackerScreen extends Screen {
         this.addRenderableWidget(clearSearchButton);
 
         sortButton = Button.builder(
-                Component.literal("Sort: " + currentSortMode.getDisplayName()),
+                Component.literal("Sort: " + module.getSortMode().getDisplayName()),
                 button -> {
-                    currentSortMode = currentSortMode.next();
-                    button.setMessage(Component.literal("Sort: " + currentSortMode.getDisplayName()));
+                    module.setSortMode(module.getSortMode().next());
+                    button.setMessage(Component.literal("Sort: " + module.getSortMode().getDisplayName()));
                     sortItems();
                     filterItems();
                 }
@@ -102,7 +104,8 @@ public class ChestTrackerScreen extends Screen {
         allItems = new ArrayList<>();
         Map<String, Integer> itemCounts = new HashMap<>();
         String currentDim = getCurrentDimension();
-        for (TrackedContainer container : data.getAllContainers(currentDim)) {
+        dimensionContainers = data.getAllContainers(currentDim);
+        for (TrackedContainer container : dimensionContainers) {
             for (Map.Entry<String, Integer> entry : container.getItems().entrySet()) {
                 itemCounts.merge(entry.getKey(), entry.getValue(), Integer::sum);
             }
@@ -118,7 +121,7 @@ public class ChestTrackerScreen extends Screen {
     }
 
     private void sortItems() {
-        switch (currentSortMode) {
+        switch (module.getSortMode()) {
             case COUNT_DESC -> allItems.sort((a, b) -> Integer.compare(b.count, a.count));
             case COUNT_ASC  -> allItems.sort((a, b) -> Integer.compare(a.count, b.count));
             case NAME_ASC   -> allItems.sort((a, b) -> a.item.getName(a.item.getDefaultInstance()).getString().compareToIgnoreCase(b.item.getName(b.item.getDefaultInstance()).getString()));
@@ -126,21 +129,10 @@ public class ChestTrackerScreen extends Screen {
             case DISTANCE -> {
                 if (minecraft.player == null) break;
                 Vec3 playerPos = minecraft.player.position();
-                List<TrackedContainer> containers = data.getAllContainers(getCurrentDimension());
-
                 distanceCache.clear();
                 for (ItemEntry entry : allItems) {
-                    double closest = Double.MAX_VALUE;
-                    for (TrackedContainer c : containers) {
-                        if (c.containsItem(entry.item)) {
-                            BlockPos pos = c.getPosition();
-                            double dist = playerPos.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
-                            if (dist < closest) closest = dist;
-                        }
-                    }
-                    distanceCache.put(entry.item, Math.sqrt(closest));
+                    distanceCache.put(entry.item, getClosestContainerDistance(entry.item, playerPos, dimensionContainers));
                 }
-
                 allItems.sort((a, b) -> Double.compare(
                     distanceCache.getOrDefault(a.item, Double.MAX_VALUE),
                     distanceCache.getOrDefault(b.item, Double.MAX_VALUE)
@@ -183,6 +175,33 @@ public class ChestTrackerScreen extends Screen {
         cachedMaxY = TOP_PADDING + cachedVisibleHeight;
     }
 
+    // Finds the nearest tracked container that holds this item, or null if none do.
+    private TrackedContainer findClosestContainer(Item item, Vec3 playerPos, List<TrackedContainer> containers) {
+        TrackedContainer closest = null;
+        double closestSq = Double.MAX_VALUE;
+        for (TrackedContainer c : containers) {
+            if (c.containsItem(item)) {
+                BlockPos pos = c.getPosition();
+                double distSq = playerPos.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
+                if (distSq < closestSq) {
+                    closestSq = distSq;
+                    closest = c;
+                }
+            }
+        }
+        return closest;
+    }
+
+    private double getClosestContainerDistance(Item item, Vec3 playerPos, List<TrackedContainer> containers) {
+        TrackedContainer closest = findClosestContainer(item, playerPos, containers);
+        if (closest == null) return Double.POSITIVE_INFINITY;
+        BlockPos pos = closest.getPosition();
+        return Math.sqrt(playerPos.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5));
+    }
+
+    // Was: @Override public void render(GuiGraphics context, int mouseX, int mouseY, float delta)
+    // Screen#render is now final (see references/Screen.java) — this is the overridable
+    // content hook it delegates to. Background is handled separately via extractBackground.
     @Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
         updateCachedBounds();
@@ -206,26 +225,26 @@ public class ChestTrackerScreen extends Screen {
             currentDim.contains("end") ? "End" : currentDim;
         context.centeredText(
             this.font,
-            Component.literal("§l§eChest Tracker §r§7- " + dimName),
+            "§l§eChest Tracker §r§7- " + dimName,
             this.width / 2,
             8,
             0xFFFFFF
         );
-        searchField.extractRenderState(context, mouseX, mouseY, delta);         // renamed method
+        searchField.extractRenderState(context, mouseX, mouseY, delta);
         clearSearchButton.visible = !searchQuery.isEmpty();
         clearSearchButton.active = !searchQuery.isEmpty();
         renderItemGrid(context, mouseX, mouseY);
         renderScrollbar(context, mouseX, mouseY);
-        super.extractRenderState(context, mouseX, mouseY, delta);               // renamed super call
+        super.extractRenderState(context, mouseX, mouseY, delta);
         renderTooltip(context, mouseX, mouseY);
     }
 
-    // renderBackground is no longer a separate override; it's handled inside extractRenderState if needed.
-    // We remove the empty override entirely.
+    // Was: @Override public void renderBackground(GuiGraphics context, int mouseX, int mouseY, float delta)
+    @Override
+    public void extractBackground(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+    }
 
     private void renderItemGrid(GuiGraphicsExtractor context, int mouseX, int mouseY) {
-        // ... (unchanged, using context.item and context.text/fill as before) ...
-        // (Same code as previously, but I'll include the full method for completeness)
         int index = scrollOffset * ITEMS_PER_ROW;
         int maxIndex = filteredItems.size();
         int panelWidth = (ITEMS_PER_ROW * ITEM_SIZE) + 20;
@@ -233,6 +252,7 @@ public class ChestTrackerScreen extends Screen {
         context.enableScissor(panelX + 10, TOP_PADDING, panelX + panelWidth - 10, cachedMaxY);
         int visibleRows = (cachedVisibleHeight / ITEM_SIZE) + 2;
         int maxRow = Math.min(visibleRows, cachedTotalRows - scrollOffset);
+
         for (int row = 0; row < maxRow; row++) {
             for (int col = 0; col < ITEMS_PER_ROW; col++) {
                 if (index >= maxIndex) break;
@@ -255,6 +275,7 @@ public class ChestTrackerScreen extends Screen {
                     context.fill(x, y + ITEM_SIZE - 1, x + ITEM_SIZE, y + ITEM_SIZE, 0xFF2A2A2A);
                 }
                 context.item(new ItemStack(entry.item), x + 1, y + 1);
+
                 index++;
             }
             if (index >= maxIndex) break;
@@ -274,7 +295,6 @@ public class ChestTrackerScreen extends Screen {
     }
 
     private void renderScrollbar(GuiGraphicsExtractor context, int mouseX, int mouseY) {
-        // (unchanged)
         if (maxScroll <= 0) return;
         int panelWidth = (ITEMS_PER_ROW * ITEM_SIZE) + 20;
         int scrollbarX = this.width / 2 + panelWidth / 2 + 5;
@@ -294,7 +314,6 @@ public class ChestTrackerScreen extends Screen {
     }
 
     private void renderTooltip(GuiGraphicsExtractor context, int mouseX, int mouseY) {
-        // (unchanged except getName fix already done)
         int index = scrollOffset * ITEMS_PER_ROW;
         int maxIndex = filteredItems.size();
         int visibleRows = (cachedVisibleHeight / ITEM_SIZE) + 2;
@@ -308,26 +327,20 @@ public class ChestTrackerScreen extends Screen {
                 if (mouseX >= x && mouseX < x + ITEM_SIZE && mouseY >= y && mouseY < y + ITEM_SIZE) {
                     ItemEntry entry = filteredItems.get(index);
                     List<TrackedContainer> containers = data.searchItem(entry.item);
-                    int withinRange = 0;
-                    double renderDist = module.getRenderDistance();
-                    if (minecraft != null && minecraft.player != null) {
-                        for (TrackedContainer container : containers) {
-                            BlockPos pos = container.getPosition();
-                            double distSq = minecraft.player.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
-                            if (distSq <= renderDist * renderDist) withinRange++;
-                        }
-                    }
                     List<Component> tooltip = new ArrayList<>();
                     tooltip.add(Component.literal("§f§l" + entry.item.getName(entry.item.getDefaultInstance()).getString()));
                     tooltip.add(Component.literal(""));
                     tooltip.add(Component.literal("§7Total Amount: §a" + formatCountFull(entry.count)));
-                    tooltip.add(Component.literal("§7Found in: §e" + containers.size() + " §7container(s)"));
-                    if (withinRange > 0 && withinRange < containers.size()) {
-                        tooltip.add(Component.literal("§7Will highlight: §e" + withinRange + " §7nearby"));
-                        tooltip.add(Component.literal("§8(Increase render distance for more)"));
-                    } else if (withinRange == 0) {
-                        tooltip.add(Component.literal("§cAll containers are far away!"));
-                        tooltip.add(Component.literal("§8(Increase render distance in settings)"));
+                    tooltip.add(Component.literal("§7Found in: §e" + containers.size() + " §7containers"));
+                    if (module.showDistance() && minecraft != null && minecraft.player != null) {
+                        Vec3 playerPos = minecraft.player.position();
+                        TrackedContainer closest = findClosestContainer(entry.item, playerPos, dimensionContainers);
+                        if (closest != null) {
+                            BlockPos pos = closest.getPosition();
+                            double dist = Math.sqrt(playerPos.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5));
+                            tooltip.add(Component.literal("§7Nearest: §b" + Math.round(dist) + " blocks §7("
+                                + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + ")"));
+                        }
                     }
                     tooltip.add(Component.literal(""));
                     tooltip.add(Component.literal("§e§l» Click to Highlight All Within Range «"));
@@ -339,14 +352,13 @@ public class ChestTrackerScreen extends Screen {
         }
     }
 
+    // Mouse events using Click
     @Override
-    public boolean mouseClicked(MouseButtonEvent click, boolean doubled) {   // MouseButtonEvent import added
+    public boolean mouseClicked(MouseButtonEvent click, boolean doubled) {
         double mouseX = click.x();
         double mouseY = click.y();
         int button = click.button();
 
-        // ... rest of mouseClicked unchanged (scrollbar logic, item click) ...
-        // (Include the exact same logic as before, but using MouseButtonEvent)
         if (maxScroll > 0 && button == 0) {
             int panelWidth = (ITEMS_PER_ROW * ITEM_SIZE) + 20;
             int scrollbarX = this.width / 2 + panelWidth / 2 + 5;
@@ -399,19 +411,8 @@ public class ChestTrackerScreen extends Screen {
     private void onItemClicked(ItemEntry entry) {
         List<TrackedContainer> results = data.searchItem(entry.item);
         module.searchItem(entry.item);
-        int withinRange = 0;
         if (minecraft != null && minecraft.player != null) {
-            double renderDist = module.getRenderDistance();
-            for (TrackedContainer container : results) {
-                BlockPos pos = container.getPosition();
-                double distSq = minecraft.player.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
-                if (distSq <= renderDist * renderDist) withinRange++;
-            }
-        }
-        if (minecraft != null && minecraft.player != null) {
-            String msg = withinRange < results.size()
-                ? String.format("§aLit: §e%d§7/§f%d §7(%d far)", withinRange, results.size(), results.size() - withinRange)
-                : String.format("§aLit: §e%d §7boxes", results.size());
+            String msg = String.format("§aLit: §e%d §7boxes", results.size());
             minecraft.player.sendSystemMessage(Component.literal(msg));
         }
         this.onClose();
@@ -456,7 +457,9 @@ public class ChestTrackerScreen extends Screen {
     }
 
     @Override
-    public boolean isPauseScreen() { return false; }
+    public boolean isPauseScreen() {
+        return false;
+    }
 
     private String formatCountFull(int count) { return String.format("%,d", count); }
 
@@ -469,20 +472,5 @@ public class ChestTrackerScreen extends Screen {
         final Item item;
         final int count;
         ItemEntry(Item item, int count) { this.item = item; this.count = count; }
-    }
-
-    private enum SortMode {
-        COUNT_DESC("Count ↓"),
-        COUNT_ASC("Count ↑"),
-        NAME_ASC("Name A-Z"),
-        NAME_DESC("Name Z-A"),
-        DISTANCE("Distance");
-        private final String displayName;
-        SortMode(String displayName) { this.displayName = displayName; }
-        public String getDisplayName() { return displayName; }
-        public SortMode next() {
-            SortMode[] values = values();
-            return values[(this.ordinal() + 1) % values.length];
-        }
     }
 }

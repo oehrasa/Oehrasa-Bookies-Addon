@@ -11,12 +11,14 @@ import net.minecraft.world.level.Level;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.*;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
@@ -159,60 +161,10 @@ public class ChestTrackerDataV2 {
         }
     }
 
-    public int removeEmptyContainers() {
-        lock.writeLock().lock();
-        try {
-            int removed = 0;
-            for (Map<BlockPos, TrackedContainer> dimContainers : containers.values()) {
-                Iterator<Map.Entry<BlockPos, TrackedContainer>> it = dimContainers.entrySet().iterator();
-                while (it.hasNext()) {
-                    if (it.next().getValue().isEmpty()) {
-                        it.remove();
-                        removed++;
-                    }
-                }
-            }
-            return removed;
-        } finally {
-            lock.writeLock().unlock();
-        }
-    }
-
-    public int removeOldContainers(int days) {
-        lock.writeLock().lock();
-        try {
-            long cutoff = System.currentTimeMillis() - (days * 24L * 60 * 60 * 1000);
-            int removed = 0;
-            for (Map<BlockPos, TrackedContainer> dimContainers : containers.values()) {
-                Iterator<Map.Entry<BlockPos, TrackedContainer>> it = dimContainers.entrySet().iterator();
-                while (it.hasNext()) {
-                    if (it.next().getValue().getLastUpdated() < cutoff) {
-                        it.remove();
-                        removed++;
-                    }
-                }
-            }
-            return removed;
-        } finally {
-            lock.writeLock().unlock();
-        }
-    }
-
     public void clearAll() {
         lock.writeLock().lock();
         try {
             containers.clear();
-        } finally {
-            lock.writeLock().unlock();
-        }
-        markDirty();
-    }
-
-    public void clearCurrentDimension() {
-        String dimension = getCurrentDimension();
-        lock.writeLock().lock();
-        try {
-            containers.remove(dimension);
         } finally {
             lock.writeLock().unlock();
         }
@@ -248,29 +200,6 @@ public class ChestTrackerDataV2 {
             LOGGER.error("Failed to save data (attempt {})", saveFailures, e);
             if (saveFailures > 3) {
                 LOGGER.error("Multiple save failures, data may be lost!");
-            }
-        } finally {
-            lock.readLock().unlock();
-        }
-    }
-
-    public void saveBackup() throws IOException {
-        lock.readLock().lock();
-        try {
-            JsonObject root = new JsonObject();
-            root.addProperty("version", CURRENT_VERSION);
-            root.addProperty("backupTime", System.currentTimeMillis());
-            JsonObject dimensions = new JsonObject();
-            for (Map.Entry<String, Map<BlockPos, TrackedContainer>> dimEntry : containers.entrySet()) {
-                JsonArray dimArray = new JsonArray();
-                for (TrackedContainer container : dimEntry.getValue().values()) {
-                    dimArray.add(container.toJson());
-                }
-                dimensions.add(dimEntry.getKey(), dimArray);
-            }
-            root.add("dimensions", dimensions);
-            try (Writer writer = new OutputStreamWriter(new FileOutputStream(backupFile), StandardCharsets.UTF_8)) {
-                GSON.toJson(root, writer);
             }
         } finally {
             lock.readLock().unlock();
@@ -331,31 +260,6 @@ public class ChestTrackerDataV2 {
         } catch (Exception e) {
             LOGGER.error("Failed to load from file: {}", file.getName(), e);
             return false;
-        }
-    }
-
-    public void exportData(String filename) throws IOException {
-        lock.readLock().lock();
-        try {
-            File exportFile = new File(new File(MeteorClient.FOLDER, "ChestTracker"), filename);
-            JsonObject export = new JsonObject();
-            export.addProperty("version", CURRENT_VERSION);
-            export.addProperty("exportTime", System.currentTimeMillis());
-            export.addProperty("totalContainers", getTotalContainerCount());
-            JsonObject dimensions = new JsonObject();
-            for (Map.Entry<String, Map<BlockPos, TrackedContainer>> dimEntry : containers.entrySet()) {
-                JsonArray dimArray = new JsonArray();
-                for (TrackedContainer container : dimEntry.getValue().values()) {
-                    dimArray.add(container.toJson());
-                }
-                dimensions.add(dimEntry.getKey(), dimArray);
-            }
-            export.add("dimensions", dimensions);
-            try (Writer writer = new OutputStreamWriter(new FileOutputStream(exportFile), StandardCharsets.UTF_8)) {
-                GSON.toJson(export, writer);
-            }
-        } finally {
-            lock.readLock().unlock();
         }
     }
 

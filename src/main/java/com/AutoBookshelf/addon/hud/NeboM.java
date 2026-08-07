@@ -16,14 +16,15 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.components.PlayerFaceExtractor;
 import net.minecraft.client.multiplayer.PlayerInfo;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
-import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
-import net.minecraft.network.protocol.game.ClientboundBlockDestructionPacket;
-import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
+import net.minecraft.network.protocol.game.*;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.player.PlayerSkin;
 import net.minecraft.world.item.*;
+import net.minecraft.world.level.block.*;
 import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;  // added missing import
 
@@ -217,6 +218,15 @@ public class NeboM extends HudElement {
     private static final int ICON_TEXT_GAP = 2;
     private final Map<UUID, Integer> crystalPlaceTicks = new HashMap<>(); // player UUID -> ticks left
     private final Map<Integer, Integer> miningTicks = new HashMap<>(); // entity ID -> ticks left
+    private final Map<UUID, Integer> totemPopTicks = new HashMap<>(); // player UUID -> ticks left
+    private final Map<UUID, Integer> throwTicks = new HashMap<>(); // player UUID -> ticks left
+    private final Map<UUID, ItemStack> throwItemStack = new HashMap<>(); // player UUID -> what was thrown
+    private final Map<UUID, Integer> containerOpenTicks = new HashMap<>(); // player UUID -> ticks left
+    private final Map<UUID, ItemStack> containerOpenIcon = new HashMap<>(); // player UUID -> container icon
+
+    // Nearest-player search radii (squared, in blocks) for events that don't carry the actor's identity directly
+    private static final double THROW_MATCH_RADIUS_SQ = 64.0;   // 8 blocks, matches existing crystal-guess radius
+    private static final double CONTAINER_MATCH_RADIUS_SQ = 16.0; // 4 blocks, containers are stationary so this can be tighter
 
     // Cache for head textures (per player UUID)
     private final Map<UUID, PlayerSkin> headTextureCache = new HashMap<>();
@@ -412,6 +422,22 @@ public class NeboM extends HudElement {
         return players;
     }
 
+    // Finds the closest player to a world position, used for packets (entity spawn, block event)
+    // that don't carry the acting player's identity directly. Returns null if nobody is within radius.
+    @Nullable
+    private Player findNearestPlayer(Vec3 pos, double maxDistSq) {
+        Player nearest = null;
+        double nearestDist = maxDistSq;
+        for (Player p : mc.level.players()) {
+            double dist = p.position().distanceToSqr(pos);
+            if (dist < nearestDist) {
+                nearestDist = dist;
+                nearest = p;
+            }
+        }
+        return nearest;
+    }
+
     private List<String> getActiveStates(Player player) {
         List<String> states = new ArrayList<>();
         if (player.isFallFlying()) states.add("Fly");
@@ -423,6 +449,24 @@ public class NeboM extends HudElement {
         Integer crystalTicks = crystalPlaceTicks.get(player.getUUID());
         if (crystalTicks != null && crystalTicks > 0) {
             states.add("Crystal");
+        }
+
+        // Totem of undying popped (recent packet)
+        Integer totemTicks = totemPopTicks.get(player.getUUID());
+        if (totemTicks != null && totemTicks > 0) {
+            states.add("Totem");
+        }
+
+        // Thrown projectile (ender pearl / snowball / egg / potion / etc, recent packet)
+        Integer throwT = throwTicks.get(player.getUUID());
+        if (throwT != null && throwT > 0) {
+            states.add("Throw");
+        }
+
+        // Container opened nearby (recent packet)
+        Integer containerT = containerOpenTicks.get(player.getUUID());
+        if (containerT != null && containerT > 0) {
+            states.add("Container");
         }
 
         // Continuous item use
@@ -461,13 +505,22 @@ public class NeboM extends HudElement {
             }
             case "Place" -> player.getUseItem().copy();
             case "Mining" -> player.getMainHandItem().copy();
+            case "Totem" -> new ItemStack(Items.TOTEM_OF_UNDYING);
+            case "Throw" -> {
+                ItemStack thrown = throwItemStack.get(player.getUUID());
+                yield thrown != null ? thrown.copy() : null;
+            }
+            case "Container" -> {
+                ItemStack icon = containerOpenIcon.get(player.getUUID());
+                yield icon != null ? icon.copy() : new ItemStack(Items.CHEST);
+            }
             default -> null;
         };
     }
 
     private boolean isActionState(String state) {
         return switch (state) {
-            case "Bow", "Crystal", "Place", "Eat", "Drink", "Mining" -> true;
+            case "Bow", "Crystal", "Place", "Eat", "Drink", "Mining", "Totem", "Throw", "Container" -> true;
             default -> false;
         };
     }
@@ -480,6 +533,42 @@ public class NeboM extends HudElement {
             case "Swim" -> swimmingColor.get();
             default -> usingItemColor.get();
         };
+    }
+
+    private boolean isContainerBlock(Block block) {
+        return block instanceof TrappedChestBlock
+            || block instanceof ChestBlock
+            || block instanceof EnderChestBlock
+            || block instanceof ShulkerBoxBlock;
+    }
+
+    // TrappedChestBlock extends ChestBlock, so it's checked first here too.
+    private ItemStack getContainerIcon(Block block) {
+        if (block instanceof TrappedChestBlock) return new ItemStack(Items.TRAPPED_CHEST);
+        if (block instanceof ChestBlock) return new ItemStack(Items.CHEST);
+        if (block instanceof EnderChestBlock) return new ItemStack(Items.ENDER_CHEST);
+        if (block instanceof ShulkerBoxBlock) return new ItemStack(Items.SHULKER_BOX);
+        return new ItemStack(Items.CHEST);
+    }
+
+    // Projectile types thrown via a single instant right-click (not charged like a bow).
+    private boolean isThrowable(EntityType<?> type) {
+        return type == EntityType.ENDER_PEARL
+            || type == EntityType.SNOWBALL
+            || type == EntityType.EGG
+            || type == EntityType.SPLASH_POTION
+            || type == EntityType.LINGERING_POTION
+            || type == EntityType.EXPERIENCE_BOTTLE;
+    }
+
+    private ItemStack getThrowableIcon(EntityType<?> type) {
+        if (type == EntityType.ENDER_PEARL) return new ItemStack(Items.ENDER_PEARL);
+        if (type == EntityType.SNOWBALL) return new ItemStack(Items.SNOWBALL);
+        if (type == EntityType.EGG) return new ItemStack(Items.EGG);
+        if (type == EntityType.SPLASH_POTION) return new ItemStack(Items.SPLASH_POTION);
+        if (type == EntityType.LINGERING_POTION) return new ItemStack(Items.LINGERING_POTION);
+        if (type == EntityType.EXPERIENCE_BOTTLE) return new ItemStack(Items.EXPERIENCE_BOTTLE);
+        return ItemStack.EMPTY;
     }
 
     @EventHandler
@@ -503,39 +592,69 @@ public class NeboM extends HudElement {
             miningTicks.put(entityId, actionDisplayTicks.get());
         }
 
-        // Crystal placed by anyone, guess who placed it by distance
-        if (event.packet instanceof ClientboundAddEntityPacket packet
-            && packet.getType() == EntityType.END_CRYSTAL) {
-
-            Vec3 crystalPos = new Vec3(packet.getX(), packet.getY(), packet.getZ());
-            Player nearest = null;
-            double nearestDist = Double.MAX_VALUE;
-
-            for (Player p : mc.level.players()) {
-                double dist = p.position().distanceToSqr(crystalPos);
-                if (dist < 64.0 && dist < nearestDist) {
-                    nearestDist = dist;
-                    nearest = p;
+        // Totem of undying popped. entity status/event 35 is the vanilla "totem used" event
+        if (event.packet instanceof ClientboundEntityEventPacket packet) {
+            if (packet.getEventId() == 35) {
+                Entity entity = packet.getEntity(mc.level);
+                if (entity instanceof Player player) {
+                    totemPopTicks.put(player.getUUID(), actionDisplayTicks.get());
                 }
             }
+        }
 
-            if (nearest != null) {
-                crystalPlaceTicks.put(nearest.getUUID(), actionDisplayTicks.get());
+        // Crystal placed / projectile thrown by anyone (guess who did it by nearest player to the spawn position)
+        if (event.packet instanceof ClientboundAddEntityPacket packet) {
+            EntityType<?> type = packet.getType();
+            Vec3 spawnPos = new Vec3(packet.getX(), packet.getY(), packet.getZ());
+
+            if (type == EntityType.END_CRYSTAL) {
+                Player nearest = findNearestPlayer(spawnPos, 64.0);
+                if (nearest != null) {
+                    crystalPlaceTicks.put(nearest.getUUID(), actionDisplayTicks.get());
+                }
+            } else if (isThrowable(type)) {
+                Player nearest = findNearestPlayer(spawnPos, THROW_MATCH_RADIUS_SQ);
+                if (nearest != null) {
+                    throwTicks.put(nearest.getUUID(), actionDisplayTicks.get());
+                    throwItemStack.put(nearest.getUUID(), getThrowableIcon(type));
+                }
+            }
+        }
+
+        // Container opened (chest/trapped chest/ender chest/shulker box) block event packet is broadcast
+        // to nearby clients when a container's viewer count changes. Barrels don't use this (their open
+        // state is a plain blockstate property), so they aren't detectable this way.
+        if (event.packet instanceof ClientboundBlockEventPacket packet) {
+            Block block = packet.getBlock();
+            if (isContainerBlock(block)) {
+                BlockPos pos = packet.getPos();
+                Vec3 center = new Vec3(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
+                Player nearest = findNearestPlayer(center, CONTAINER_MATCH_RADIUS_SQ);
+                if (nearest != null) {
+                    containerOpenTicks.put(nearest.getUUID(), actionDisplayTicks.get());
+                    containerOpenIcon.put(nearest.getUUID(), getContainerIcon(block));
+                }
             }
         }
     }
 
+    private static <K> void decrementTicks(Map<K, Integer> ticks) {
+        ticks.entrySet().removeIf(entry -> {
+            entry.setValue(entry.getValue() - 1);
+            return entry.getValue() <= 0;
+        });
+    }
+
     @EventHandler
     private void onTickPost(TickEvent.Post event) {
-        // Decrement crystal timers
-        crystalPlaceTicks.entrySet().removeIf(entry -> {
-            entry.setValue(entry.getValue() - 1);
-            return entry.getValue() <= 0;
-        });
-        // Decrement mining timers
-        miningTicks.entrySet().removeIf(entry -> {
-            entry.setValue(entry.getValue() - 1);
-            return entry.getValue() <= 0;
-        });
+        decrementTicks(crystalPlaceTicks);
+        decrementTicks(miningTicks);
+        decrementTicks(totemPopTicks);
+        decrementTicks(throwTicks);
+        decrementTicks(containerOpenTicks);
+
+        // Drop cached icons once their matching tick entry expires, so they don't linger forever
+        throwItemStack.keySet().retainAll(throwTicks.keySet());
+        containerOpenIcon.keySet().retainAll(containerOpenTicks.keySet());
     }
 }

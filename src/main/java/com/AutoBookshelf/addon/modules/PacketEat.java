@@ -104,7 +104,7 @@ public class PacketEat extends Module {
 
     private final Setting<Boolean> confirmFinish = sgAutoEat.add(new BoolSetting.Builder()
         .name("confirm-finish")
-        .description("Wait for the client to confirm the eat animation actually ended before swapping back, instead of trusting the tick count alone.")
+        .description("Only end a cycle on an actual server-confirmed stack-count drop (or the timeout).")
         .defaultValue(true)
         .visible(autoEat::get)
         .build()
@@ -232,11 +232,7 @@ public class PacketEat extends Module {
             boolean minTicksReached = eatTicks >= eatDuration;
             boolean timedOut = eatTicks >= eatDuration + CONFIRM_TIMEOUT_TICKS;
 
-            // Don't trust the tick count alone: if confirm-finish is on, also wait for the
-            // client to actually report the item as no longer in use (getItemUseTimeLeft() == 0)
-            // before stopping/swapping back, so a slow/desynced eat doesn't get cut short.
-            // A timeout still forces the stop so we never get stuck indefinitely.
-            boolean readyToStop = minTicksReached && (!confirmFinish.get() || !player.isUsingItem() || player.getUseItemRemainingTicks() <= 0);
+            boolean readyToStop = minTicksReached && !confirmFinish.get();
 
             if (readyToStop || timedOut) {
                 stopAutoEating();

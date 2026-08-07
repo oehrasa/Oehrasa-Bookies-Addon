@@ -63,9 +63,16 @@ public class TrajectoryPlus extends Module {
         .build()
     );
 
-    private final Setting<Boolean> renderTrail = sgTrail.add(new BoolSetting.Builder()
-        .name("render-trail")
-        .description("Render the projectile trail.")
+    private final Setting<Boolean> renderTrailAhead = sgTrail.add(new BoolSetting.Builder()
+        .name("render-trail-ahead")
+        .description("Render the predicted trail ahead of a projectile as predicted path.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> renderTrailBehind = sgTrail.add(new BoolSetting.Builder()
+        .name("render-trail-behind")
+        .description("Render trail behind an existing projectile.")
         .defaultValue(true)
         .build()
     );
@@ -126,8 +133,19 @@ public class TrajectoryPlus extends Module {
         .build()
     );
 
+    private final Setting<Boolean> ignoreLanded = sgGeneral.add(new BoolSetting.Builder()
+        .name("ignore-landed")
+        .description("Ignore existing projectiles that are already stuck/landed (near-zero velocity).")
+        .defaultValue(true)
+        .visible(renderExistingProjectiles::get)
+        .build()
+    );
+
     // Store projectile trails
     private final ConcurrentHashMap<UUID, List<Vec3>> projectileTrails = new ConcurrentHashMap<>();
+
+    // Just reusing threshold from ArenaM
+    private static final double MIN_THREAT_SPEED_SQ = 0.0025;
 
     // Shared simulation result record
     private record SimResult(List<Vec3> path, Entity hitEntity) {
@@ -168,7 +186,8 @@ public class TrajectoryPlus extends Module {
 
         SimResult result = simulatePath(pos, vel, null, getDrag(stack.getItem()), getGravity(stack.getItem()), 100, event, boxColor.get());
 
-        if (renderTrail.get()) {
+        // Only "ahead" applies here
+        if (renderTrailAhead.get()) {
             SettingColor color = result.hitEntity() != null ? entityHighlightColor.get() : trailColor.get();
             renderPath(event, result.path(), color);
         }
@@ -183,6 +202,8 @@ public class TrajectoryPlus extends Module {
 
         for (Entity entity : mc.level.entitiesForRendering()) {
             if (!isProjectile(entity)) continue;
+            // Skip stuck/landed projectiles entirely
+            if (ignoreLanded.get() && entity.getDeltaMovement().lengthSqr() < MIN_THREAT_SPEED_SQ) continue;
 
             UUID id = entity.getUUID();
             Vec3 currentPos = entity.position();
@@ -196,7 +217,8 @@ public class TrajectoryPlus extends Module {
 
             predictProjectilePath(event, entity);
 
-            if (renderTrail.get()) {
+            // "Behind" the breadcrumb trail.
+            if (renderTrailBehind.get()) {
                 renderPath(event, trail, existingProjectileColor.get());
             }
 
@@ -220,7 +242,8 @@ public class TrajectoryPlus extends Module {
             event, existingProjectileColor.get()
         );
 
-        if (renderTrail.get()) {
+        // "Ahead" which is  the predicted future path, rendered in trackExistingProjectiles().
+        if (renderTrailAhead.get()) {
             SettingColor color = result.hitEntity() != null ? entityHighlightColor.get() : existingProjectileColor.get();
             renderPath(event, result.path(), color);
         }

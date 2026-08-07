@@ -22,12 +22,6 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
  * failedPositions list, settings, etc. and pass them in per call.
  */
 public class PlacementEngine {
-
-    /**
-     * Real interaction reach, independent of the placement search radius.
-     */
-    public static final double INTERACTION_REACH_SQ = 5.0 * 5.0;
-
     public BlockPos findPlacement(int range, boolean airPlace, boolean preferSolidBlock,
                                   List<BlockPos> failedPositions, boolean requireSecondSlot) {
         BlockPos pp = mc.player.blockPosition();
@@ -142,7 +136,7 @@ public class PlacementEngine {
 
     public boolean isValidSecondPos(BlockPos firstPos, BlockPos pos, Direction faceDir) {
         Vec3 hitPoint = Vec3.atCenterOf(firstPos).add(Vec3.atLowerCornerOf(faceDir.getUnitVec3i()).scale(0.5));
-        return mc.player.position().distanceToSqr(hitPoint) <= INTERACTION_REACH_SQ
+        return mc.player.position().distanceToSqr(hitPoint) <= 25.0
             && isReplaceableOrAir(pos)
             && isReplaceableOrAir(pos.above());
     }

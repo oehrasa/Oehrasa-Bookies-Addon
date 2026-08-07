@@ -68,7 +68,7 @@ public class TrackedContainer {
     public int getItemCount(String itemId) { return items.getOrDefault(itemId, 0); }
     public Map<String, Integer> getItems() { return new HashMap<>(items); }
     public List<ItemStack> getItemStacks() {
-        // If we already have stacks (freshly tracked), return them directly
+        // If we already have stacks (e.g. freshly tracked), return them directly
         if (!itemStacks.isEmpty()) {
             return new ArrayList<>(itemStacks);
         }
@@ -79,7 +79,7 @@ public class TrackedContainer {
             Identifier id = Identifier.tryParse(entry.getKey());
             if (id == null) continue;
             Item item = BuiltInRegistries.ITEM.getValue(id);
-            if (item == null) continue;
+            if (item == null) continue;               // mod removed?
             int count = entry.getValue();
             int maxStack = item.getDefaultMaxStackSize();
             while (count > 0) {
@@ -198,11 +198,9 @@ public class TrackedContainer {
         if (!(stack.getItem() instanceof BlockItem bi && bi.getBlock() instanceof ShulkerBoxBlock)) return null;
         ItemContainerContents container = stack.get(DataComponents.CONTAINER);
         if (container == null) return null;
-
         Map<Item, Integer> counts = new HashMap<>();
         container.nonEmptyItemCopyStream().forEach(s -> counts.merge(s.getItem(), s.getCount(), Integer::sum));
         if (counts.isEmpty()) return null;
-
         return counts.entrySet().stream()
             .max(Map.Entry.comparingByValue())
             .map(e -> BuiltInRegistries.ITEM.getKey(e.getKey()).toString())
@@ -211,13 +209,6 @@ public class TrackedContainer {
 
     public Map<Integer, String> getDominantItems() {
         return new HashMap<>(dominantItems);
-    }
-
-    public String getDisplayName() {
-        if (customName != null && !customName.isEmpty()) return customName;
-        return String.format("%s [%d, %d, %d]",
-            containerType.substring(0, 1).toUpperCase() + containerType.substring(1),
-            position.getX(), position.getY(), position.getZ());
     }
 
     @Override

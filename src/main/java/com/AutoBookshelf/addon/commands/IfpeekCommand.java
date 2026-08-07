@@ -4,23 +4,19 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import meteordevelopment.meteorclient.commands.Command;
+import net.minecraft.client.gui.screens.inventory.BookViewScreen;
 import net.minecraft.client.multiplayer.ClientSuggestionProvider;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.decoration.ItemFrame;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.WritableBookContent;
 import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.HitResult;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
-import static com.mojang.brigadier.Command.SINGLE_SUCCESS;
-import static meteordevelopment.meteorclient.MeteorClient.mc;
+import java.util.*;
 
 public class IfpeekCommand extends Command {
 
@@ -94,6 +90,21 @@ public class IfpeekCommand extends Command {
                 showBookStats();
                 return SINGLE_SUCCESS;
             })
+        );
+
+        // GUI subcommand
+        builder.then(literal("gui")
+            .executes(ctx -> {
+                openBookGui(1);
+                return SINGLE_SUCCESS;
+            })
+            .then(argument("page", IntegerArgumentType.integer(1, 100))
+                .executes(ctx -> {
+                    int pageNum = IntegerArgumentType.getInteger(ctx, "page");
+                    openBookGui(pageNum);
+                    return SINGLE_SUCCESS;
+                })
+            )
         );
     }
 
@@ -332,6 +343,39 @@ public class IfpeekCommand extends Command {
         info("§6=========================");
     }
 
+    private void openBookGui(int startPage) {
+        ItemStack item = getTargetedBookStack();
+        if (item == null) return;
+
+        int pageCount = getPageCount(item);
+        int targetIndex = Math.max(0, Math.min(startPage - 1, Math.max(0, pageCount - 1)));
+
+        // Commands run synchronously inside ClientPlayNetworkHandler#sendChatMessage (intercepted
+        // by Meteor before the packet is sent). Control then returns to vanilla ChatScreen, which
+        // immediately calls setScreen(null) to close itself, believing the message sent normally
+        mc.execute(() -> {
+            BookViewScreen screen = new BookViewScreen(BookViewScreen.BookAccess.fromItem(item));
+            mc.setScreen(screen);
+
+            if (targetIndex == 0) return;
+            screen.setPage(targetIndex);
+        });
+    }
+
+    private int getPageCount(ItemStack item) {
+        if (item.is(Items.WRITTEN_BOOK)) {
+            WrittenBookContent content = item.get(DataComponents.WRITTEN_BOOK_CONTENT);
+            return content != null ? content.pages().size() : 0;
+        }
+
+        if (item.is(Items.WRITABLE_BOOK)) {
+            WritableBookContent content = item.get(DataComponents.WRITABLE_BOOK_CONTENT);
+            return content != null ? content.pages().size() : 0;
+        }
+
+        return 0;
+    }
+
     private boolean isStopWord(String word) {
         return Set.of(
             "the", "be", "to", "of", "and", "a", "in", "that", "have", "i",
@@ -359,5 +403,28 @@ public class IfpeekCommand extends Command {
             }
         }
         return null;
+    }
+
+    // Shared targeting + validation for the gui subcommand, since it needs to accept both
+    // written and writable (unsigned) books, unlike getBookFromItemFrame() above.
+    private ItemStack getTargetedBookStack() {
+        if (!(mc.hitResult instanceof EntityHitResult hitResult) ||
+            !(hitResult.getEntity() instanceof ItemFrame itemFrame)) {
+            error("You have to point at an item frame first");
+            return null;
+        }
+
+        ItemStack item = itemFrame.getItem();
+        if (item.isEmpty()) {
+            error("There is no item on the item frame.");
+            return null;
+        }
+
+        if (!item.is(Items.WRITTEN_BOOK) && !item.is(Items.WRITABLE_BOOK)) {
+            error("This item is not a book!");
+            return null;
+        }
+
+        return item;
     }
 }

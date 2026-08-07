@@ -78,7 +78,7 @@ public class MapGridZone extends Module {
     private int ticks = 0;
 
     public MapGridZone() {
-        super(Addon.CATEGORY, "Map-Grid", "Highlights map grid boundaries around the player.");
+        super(Addon.CATEGORY2, "Map-Grid", "Highlights map grid boundaries around the player.");
     }
 
     @EventHandler

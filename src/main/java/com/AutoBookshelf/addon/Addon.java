@@ -40,6 +40,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new AutoLoader());
         Modules.get().add(new AutoBeacon());
         Modules.get().add(new AutoTakeOff());
+        Modules.get().add(new AxolotlTools());
         Modules.get().add(new AudiobookReader());
         // B
         Modules.get().add(new B36());
@@ -53,6 +54,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new com.AutoBookshelf.addon.modules.chesttracker.ChestTrackerModule());
         // D
         Modules.get().add(new DriedGhastPlacer());
+        Modules.get().add(new DoubleCrystalPopper());
         // E F G
         Modules.get().add(new ElytraPath());
         Modules.get().add(new Fatamorgana());
@@ -62,10 +64,12 @@ public class Addon extends MeteorAddon {
         // I
         Modules.get().add(new ItemDespawn());
         Modules.get().add(new InventoryInfo());
+        Modules.get().add(new InventoryTracker());
         // K
         Modules.get().add(new KMDB());
         // M
         Modules.get().add(new MobOwner());
+        Modules.get().add(new MURADAESA());
         Modules.get().add(new MapartNamer());
         Modules.get().add(new MapGridZone());
         Modules.get().add(new MaterialsRefill());
@@ -104,6 +108,7 @@ public class Addon extends MeteorAddon {
         Commands.add(new BookCommand());
         Commands.add(new BookTranslateCommand());
         Commands.add(new IfpeekCommand());
+        Commands.add(new InvseeCommand());
         Commands.add(new ShelfCommand());
 
     }

@@ -164,7 +164,7 @@ public class MinecartPlacer extends Module {
     );
 
     public MinecartPlacer() {
-        super(Addon.CATEGORY, "Minecart-Placer", "Places any minecarts on any rails in range.");
+        super(Addon.CATEGORY2, "Minecart-Placer", "Places any minecarts on any rails in range.");
     }
 
     @Override

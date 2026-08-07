@@ -126,7 +126,7 @@ public final class ProjectilePhysics {
             }
 
             BlockHitResult blockHit = mc.level.clip(new ClipContext(
-                currentPos, nextPos, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, mc.player
+                currentPos, nextPos, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, mc.player
             ));
 
             if (blockHit.getType() != HitResult.Type.MISS) {
