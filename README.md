@@ -23,10 +23,11 @@
 Tested successfully with these mods.
 <font color="turquoise">Switch the branch repo if You want to see the other version config</font>
 
-- baritone-meteor-26.1.jar **(API Required!)**
-- meteor-client-26.1.2-22.jar **(Required!)**
-- client_maps-1.3.2+26.1.jar (Recommended for Mapart-Namer module)
-- map-in-slot-3.5.0.jar (Recommended for Mapart-Namer module)
+- baritone-meteor-1.21.11.jar **(API Required!)**
+- meteor-client-1.21.11-65.jar **(Required!)**
+- BepHax-Final.jar (Optional)
+- client_maps-1.3.2.jar (Recommended for Mapart-Namer module)
+- map-in-slot-3.4.1.jar (Recommended for Mapart-Namer module)
 
 > [!IMPORTANT]
 >
@@ -36,9 +37,9 @@ Tested successfully with these mods.
 
 ## Features
 
-**43 modules**, **5 commands**, **9 HUD elements**, and **8 mixin**
+**47 modules**, **6 commands**, **9 HUD elements**, and **9 mixin**
 
-## Modules (43 total)
+## Modules (47 total)
 <details>
 <summary><b>Modules</b> (Bookies modules)</summary>
 
@@ -47,51 +48,55 @@ Tested successfully with these mods.
 3. **Auto-Loader** - Right-click shulker boxes, ender chests, or bundles in your inventory to instantly use
 4. **Auto-Login** - Automatically logs in your account via file Data
 5. **Auto-Farm** - Welcome to the rice fields, Motherfucka
-6. **Auto-Moss** - Automatically uses bone meal on specific blocks
-7. **Arena-M** - Throws wind charges to intercept incoming projectiles mid-air
-8. **Auto-Pot** - Then, Shalltear. Sorry but I'll have you wait a bit before we engage
-9. **Auto-Take-Off** - Automatically starts elytra flight when on ground, in lava, or falling
-10. **Auto-Sex** - Tries to have sex with the player or mob in freaky ways
-11. **B36-Peacemaker** - Created this to make peace. Named after Convair B-36 Peacemaker
-12. **Block-Radius** - Renders the range of powered beacons, lightning rods, and active conduits
-13. **Better-BoatFly** - Transforms your boat into a plane
-14. **BLU-27/B-Napalm** - I love the smell of Napalm in the morning, Commit some trolling against the Vietnamese
-15. **Bookshelf-Filler** - oeh Yuri romcom bookshelves restocker
-16. **Book-Import** - Automatically imports text files into signed books
-17. **Chest-Tracker** - Track items in containers
-18. **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block
-19. **Dried-Ghast** - Give these cute and tiny little creatures a second chances
-20. **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
-21. **Fatamorgana** - Maho x Miho, Miho x Yukari, Maho x Erika
-22. **Get-Preview** - Shows an item preview overlay on bundles, shulkers, and books
-23. **Homes-List** - Manage and teleport to your server homes with a GUI
-24. **Item-Despawn** - Highlights items that are about to despawn
-25. **Inventory-Info** - SHoiGu!! GEraShimov!!!
-26. **KMDB** - Builds Wither, Iron Golem, Snow Golem, or Copper Golem automatically
-27. **Minecart-Placer** - Places any minecarts on any rails in range
-28. **Map-Grid** - Highlights map grid boundaries around the player
-29. **Mapart-Namer** - Auto‑names maps based on inventory slot layout
-30. **Mats-Refill** - Automatically restocks materials from shulker boxes
-31. **Mob-Owner** - Shows entity owner by saving into cache
-32. **PacketEat** - Allows you to eat without interrupting other actions
-33. **Platform** - Build a platform at a given y-level once in range
-34. **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
-35. **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in
+6. **AxolotlTools** - Extrasensory perception for axolotl variants, auto-collector & auto-breeder
+7. **Auto-Moss** - Automatically uses bone meal on specific blocks
+8. **Arena-M** - Throws wind charges to intercept incoming projectiles mid-air
+9. **Auto-Pot** - Then, Shalltear. Sorry but I'll have you wait a bit before we engage
+10. **Auto-Take-Off** - Automatically starts elytra flight when on ground, in lava, or falling
+11. **Auto-Sex** - Tries to have sex with the player or mob in freaky ways
+12. **B36-Peacemaker** - Created this to make peace. Named after Convair B-36 Peacemaker
+13. **Block-Radius** - Renders the range of powered beacons, lightning rods, and active conduits
+14. **Better-BoatFly** - Transforms your boat into a plane
+15. **BLU-27/B-Napalm** - I love the smell of Napalm in the morning, Commit some trolling against the Vietnamese
+16. **Bookshelf-Filler** - oeh Yuri romcom bookshelves restocker
+17. **Book-Import** - Automatically imports text files into signed books
+18. **Chest-Tracker** - Track items in containers
+19. **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block
+20. **Dried-Ghast** - Give these cute and tiny little creatures a second chances
+21. **DoubleCrystalPopper** - Attacks a locked target then pops two crystals with configurable delays
+22. **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
+23. **Fatamorgana** - Maho x Miho, Miho x Yukari, Maho x Erika
+24. **Get-Preview** - Shows an item preview overlay on bundles, shulkers, and books
+25. **Homes-List** - Manage and teleport to your server homes with a GUI
+26. **Item-Despawn** - Highlights items that are about to despawn
+27. **Inventory-Info** - SHoiGu!! GEraShimov!!!
+28. **InventoryTracker** - Tracks and shows the equipment/slot history of other players in render distance (use .invsee to open screen)
+29. **KMDB** - Builds Wither, Iron Golem, Snow Golem, or Copper Golem automatically
+30. **MURADAESA** - Detects likely player activity outside 128 blocks by scoring world-change packet patterns
+31. **Minecart-Placer** - Places any minecarts on any rails in range
+32. **Map-Grid** - Highlights map grid boundaries around the player
+33. **Mapart-Namer** - Auto‑names maps based on inventory slot layout
+34. **Mats-Refill** - Automatically restocks materials from shulker boxes
+35. **Mob-Owner** - Shows entity owner by saving into cache
+36. **PacketEat** - Allows you to eat without interrupting other actions
+37. **Platform** - Build a platform at a given y-level once in range
+38. **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
+39. **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in
     1.13+ chunks
-36. **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
-37. **Sculk-Range** - Shows the detection range of calibrated sculk sensors.
-38. **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
-39. **Tnt-Fuse-Esp** - Shows the fuse time of lit tnt
-40. **Trajectory-Plus** - Smooth projectile prediction and tracking
-41. **Tsundere-Furry** - Transforms outgoing chat messages into animal sounds, tsundere, or both :>
-42. **Unwax-Aura** - Automatically removes wax from waxed copper blocks
-43. **Yuri-Asmr** - Streams a random ASMR search result through yt-dlp + ffmpeg with integrated HUD
+40. **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
+41. **Sculk-Range** - Shows the detection range of calibrated sculk sensors.
+42. **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
+43. **Tnt-Fuse-Esp** - Shows the fuse time of lit tnt
+44. **Trajectory-Plus** - Smooth projectile prediction and tracking
+45. **Tsundere-Furry** - Transforms outgoing chat messages into animal sounds, tsundere, or both :>
+46. **Unwax-Aura** - Automatically removes wax from waxed copper blocks
+47. **Yuri-Asmr** - Streams a random ASMR search result through yt-dlp + ffmpeg with integrated HUD
 
 </details>
 
 <details>
 <summary><b>Display</b> (in-game)</summary>
-https://github.com/user-attachments/assets/6cb65235-2089-4839-9445-47f7afbf1f9a
+https://github.com/user-attachments/assets/effb0d4a-7b45-4a17-a928-ec849490df9a
 </details>
 
 ## HUD Elements (9)
@@ -106,13 +111,14 @@ https://github.com/user-attachments/assets/6cb65235-2089-4839-9445-47f7afbf1f9a
 - **Online-Friends** - Displays online friends from your friend list
 - **Teleport-Timer** - Shows a countdown bar on pending teleportation
 
-## Commands (5)
+## Commands (6)
 | Command          | Description                                                                |
 |------------------|----------------------------------------------------------------------------|
 | `.assowner`      | Assign a cracked account name as the owner of the entity you're looking at |
 | `.book`          | Shows book information from your held item                                 |
 | `.booktranslate` | Translates the held written book into another language                     |
 | `.ifpeek`        | Shows book information from an item frame                                  |
+| `.invsee`        | Opens a simulated screen of tracked InventoryTracker module                |
 | `.shelf`         | Extracts a book from a chiseled bookshelf slot, reads it, and puts it back |
 
 ## TUTORIALS
@@ -145,7 +151,7 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 2. Put the .txt file into folder : `\minecraft\AutoBookshelf\books`
 3. _Recommend to use alongside Bookshelf-Filler module_
 4. Press set key in the module settings to continue to next file
-> I will post the Python code soon
+> I post the Python code [here](https://github.com/oehrasa/Auto-Written-Book)
 </details>
 
 <details>
@@ -188,7 +194,8 @@ https://youtu.be/uZQGECqCU_A
 
 ## Credits
 List of addons I used as reference(skid? mwhehe), You should check them out it's pretty awesome!
-- **[FileAutoLogin](https://github.com/DortyTheGreat/FileAutoLogin)** - Base of this addon
+
+- **[FileAutoLogin](https://github.com/DortyTheGreat/FileAutoLogin)** - Base of this addon rip
 - **[Clarity](https://github.com/ck-clarity/addon)** - Image HUD
 - **[meerhax](https://github.com/dekrom/meeerhax)** - Elytra time HUD
 - **[BepHax](https://github.com/dekrom/BepHaxAddon)** - Basically a bunch including this README
@@ -215,7 +222,7 @@ Open an [issue](https://github.com/oehrasa/Oehrasa-Bookies-Addon/issues) or subm
 
 >## Disclaimer
 >Designed for anarchy servers like 6b6t.org. Use responsibly.
->
+> 
 >Ask a question or make a discussions with me on discord : oeh4233
 
 <h1 align="center">
