@@ -56,10 +56,18 @@ public abstract class MixinHandledScreen extends Screen {
         return super.charTyped(input);
     }
 
-    @Inject(method = "keyPressed", at = @At("HEAD"))
+    @Inject(method = "keyPressed", at = @At("HEAD"), cancellable = true)
     private void onKeyPressed(KeyInput input, CallbackInfoReturnable<Boolean> cir) {
         InventoryInfo m = Modules.get().get(InventoryInfo.class);
         if (m == null || !m.isActive()) return;
+
+        boolean wasFocused = m.isSearchFocused();
         m.onSearchKeyPressed(input.key());
+
+        if (wasFocused) {
+            // Search bar had focus when this key was pressed
+            cir.setReturnValue(true);
+            cir.cancel();
+        }
     }
 }

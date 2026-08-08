@@ -637,7 +637,7 @@ public class AutoLoader extends Module {
             sendResyncPacket();
         }
 
-        if (mc.player.squaredDistanceTo(Vec3d.ofCenter(placedPos)) > PlacementEngine.INTERACTION_REACH_SQ) {
+        if (mc.player.squaredDistanceTo(Vec3d.ofCenter(placedPos)) > 25.0) {
             info("Container was placed out of interaction range.");
             stage = Stage.IDLE;
             resetState();

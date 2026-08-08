@@ -118,7 +118,7 @@ public final class ProjectilePhysics {
             }
 
             BlockHitResult blockHit = mc.world.raycast(new RaycastContext(
-                currentPos, nextPos, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, mc.player
+                currentPos, nextPos, RaycastContext.ShapeType.COLLIDER, RaycastContext.FluidHandling.NONE, mc.player
             ));
 
             if (blockHit.getType() != HitResult.Type.MISS) {

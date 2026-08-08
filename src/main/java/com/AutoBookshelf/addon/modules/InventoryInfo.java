@@ -384,4 +384,8 @@ public class InventoryInfo extends Module {
             searchFocused = false;
         }
     }
+
+    public boolean isSearchFocused() {
+        return searchFocused;
+    }
 }

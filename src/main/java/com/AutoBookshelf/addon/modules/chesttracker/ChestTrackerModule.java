@@ -126,6 +126,20 @@ public class ChestTrackerModule extends Module {
         .build()
     );
 
+    private final Setting<Boolean> showDistance = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-distance")
+        .description("Shows distance to the nearest container for each item in the browser screen.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<SortMode> sortMode = sgGeneral.add(new EnumSetting.Builder<SortMode>()
+        .name("sort-mode")
+        .description("Sort order for the item browser screen.")
+        .defaultValue(SortMode.COUNT_DESC)
+        .build()
+    );
+
     private final Setting<ShapeMode> shapeMode = sgRender.add(new EnumSetting.Builder<ShapeMode>()
         .name("shape-mode")
         .description("Render shape mode.")
@@ -742,14 +756,6 @@ public class ChestTrackerModule extends Module {
         return mc.world.getRegistryKey().getValue().toString();
     }
 
-    public Item getCurrentSearchItem() {
-        return currentSearchItem;
-    }
-
-    public void setCurrentSearchItem(Item item) {
-        this.currentSearchItem = item;
-    }
-
     public ChestTrackerDataV2 getData() {
         return data;
     }
@@ -758,8 +764,16 @@ public class ChestTrackerModule extends Module {
         currentSearchItem = item;
     }
 
-    public double getRenderDistance() {
-        return renderDistance.get();
+    public SortMode getSortMode() {
+        return sortMode.get();
+    }
+
+    public void setSortMode(SortMode mode) {
+        sortMode.set(mode);
+    }
+
+    public boolean showDistance() {
+        return showDistance.get();
     }
 
     @Override

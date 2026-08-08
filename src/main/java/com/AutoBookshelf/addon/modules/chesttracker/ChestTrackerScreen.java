@@ -1,6 +1,5 @@
 package com.AutoBookshelf.addon.modules.chesttracker;
 
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
@@ -13,7 +12,11 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
-import java.util.*;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 public class ChestTrackerScreen extends Screen {
@@ -35,7 +38,6 @@ public class ChestTrackerScreen extends Screen {
     private static final int MIN_VISIBLE_ROWS = 5;
     private ButtonWidget clearSearchButton;
     private ButtonWidget sortButton;
-    private SortMode currentSortMode = SortMode.COUNT_DESC;
     private boolean isDraggingScrollbar = false;
     private int scrollbarDragStartY = 0;
     private int scrollbarDragStartOffset = 0;
@@ -45,6 +47,7 @@ public class ChestTrackerScreen extends Screen {
     private int cachedTotalRows;
     private int cachedVisibleHeight;
     private Map<Item, Double> distanceCache = new HashMap<>();
+    private List<TrackedContainer> dimensionContainers = new ArrayList<>();
 
     public ChestTrackerScreen(ChestTrackerModule module) {
         super(Text.literal("Chest Tracker"));
@@ -81,10 +84,10 @@ public class ChestTrackerScreen extends Screen {
         this.addDrawableChild(clearSearchButton);
 
         sortButton = ButtonWidget.builder(
-                Text.literal("Sort: " + currentSortMode.getDisplayName()),
+                Text.literal("Sort: " + module.getSortMode().getDisplayName()),
                 button -> {
-                    currentSortMode = currentSortMode.next();
-                    button.setMessage(Text.literal("Sort: " + currentSortMode.getDisplayName()));
+                    module.setSortMode(module.getSortMode().next());
+                    button.setMessage(Text.literal("Sort: " + module.getSortMode().getDisplayName()));
                     sortItems();
                     filterItems();
                 }
@@ -101,7 +104,8 @@ public class ChestTrackerScreen extends Screen {
         allItems = new ArrayList<>();
         Map<String, Integer> itemCounts = new HashMap<>();
         String currentDim = getCurrentDimension();
-        for (TrackedContainer container : data.getAllContainers(currentDim)) {
+        dimensionContainers = data.getAllContainers(currentDim);
+        for (TrackedContainer container : dimensionContainers) {
             for (Map.Entry<String, Integer> entry : container.getItems().entrySet()) {
                 itemCounts.merge(entry.getKey(), entry.getValue(), Integer::sum);
             }
@@ -117,7 +121,7 @@ public class ChestTrackerScreen extends Screen {
     }
 
     private void sortItems() {
-        switch (currentSortMode) {
+        switch (module.getSortMode()) {
             case COUNT_DESC -> allItems.sort((a, b) -> Integer.compare(b.count, a.count));
             case COUNT_ASC  -> allItems.sort((a, b) -> Integer.compare(a.count, b.count));
             case NAME_ASC   -> allItems.sort((a, b) -> a.item.getName().getString().compareToIgnoreCase(b.item.getName().getString()));
@@ -125,23 +129,10 @@ public class ChestTrackerScreen extends Screen {
             case DISTANCE -> {
                 if (client.player == null) break;
                 Vec3d playerPos = client.player.getEntityPos();
-                List<TrackedContainer> containers = data.getAllContainers(getCurrentDimension());
-
-                // Precompute closest distance for each item
                 distanceCache.clear();
                 for (ItemEntry entry : allItems) {
-                    double closest = Double.MAX_VALUE;
-                    for (TrackedContainer c : containers) {
-                        if (c.containsItem(entry.item)) {
-                            BlockPos pos = c.getPosition();
-                            double dist = playerPos.squaredDistanceTo(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
-                            if (dist < closest) closest = dist;
-                        }
-                    }
-                    distanceCache.put(entry.item, Math.sqrt(closest));
+                    distanceCache.put(entry.item, getClosestContainerDistance(entry.item, playerPos, dimensionContainers));
                 }
-
-                // Sort using the cached values
                 allItems.sort((a, b) -> Double.compare(
                     distanceCache.getOrDefault(a.item, Double.MAX_VALUE),
                     distanceCache.getOrDefault(b.item, Double.MAX_VALUE)
@@ -184,16 +175,28 @@ public class ChestTrackerScreen extends Screen {
         cachedMaxY = TOP_PADDING + cachedVisibleHeight;
     }
 
-    private double getClosestContainerDistance(Item item, Vec3d playerPos, List<TrackedContainer> containers) {
-        double closest = Double.MAX_VALUE;
+    // Finds the nearest tracked container that holds this item, or null if none do.
+    private TrackedContainer findClosestContainer(Item item, Vec3d playerPos, List<TrackedContainer> containers) {
+        TrackedContainer closest = null;
+        double closestSq = Double.MAX_VALUE;
         for (TrackedContainer c : containers) {
             if (c.containsItem(item)) {
                 BlockPos pos = c.getPosition();
-                double dist = playerPos.squaredDistanceTo(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
-                if (dist < closest) closest = dist;
+                double distSq = playerPos.squaredDistanceTo(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
+                if (distSq < closestSq) {
+                    closestSq = distSq;
+                    closest = c;
+                }
             }
         }
-        return Math.sqrt(closest);
+        return closest;
+    }
+
+    private double getClosestContainerDistance(Item item, Vec3d playerPos, List<TrackedContainer> containers) {
+        TrackedContainer closest = findClosestContainer(item, playerPos, containers);
+        if (closest == null) return Double.POSITIVE_INFINITY;
+        BlockPos pos = closest.getPosition();
+        return Math.sqrt(playerPos.squaredDistanceTo(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5));
     }
 
     @Override
@@ -244,6 +247,7 @@ public class ChestTrackerScreen extends Screen {
         context.enableScissor(panelX + 10, TOP_PADDING, panelX + panelWidth - 10, cachedMaxY);
         int visibleRows = (cachedVisibleHeight / ITEM_SIZE) + 2;
         int maxRow = Math.min(visibleRows, cachedTotalRows - scrollOffset);
+
         for (int row = 0; row < maxRow; row++) {
             for (int col = 0; col < ITEMS_PER_ROW; col++) {
                 if (index >= maxIndex) break;
@@ -266,6 +270,7 @@ public class ChestTrackerScreen extends Screen {
                     context.fill(x, y + ITEM_SIZE - 1, x + ITEM_SIZE, y + ITEM_SIZE, 0xFF2A2A2A);
                 }
                 context.drawItem(new ItemStack(entry.item), x + 1, y + 1);
+
                 index++;
             }
             if (index >= maxIndex) break;
@@ -317,26 +322,20 @@ public class ChestTrackerScreen extends Screen {
                 if (mouseX >= x && mouseX < x + ITEM_SIZE && mouseY >= y && mouseY < y + ITEM_SIZE) {
                     ItemEntry entry = filteredItems.get(index);
                     List<TrackedContainer> containers = data.searchItem(entry.item);
-                    int withinRange = 0;
-                    double renderDist = module.getRenderDistance();
-                    if (client != null && client.player != null) {
-                        for (TrackedContainer container : containers) {
-                            BlockPos pos = container.getPosition();
-                            double distSq = client.player.squaredDistanceTo(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
-                            if (distSq <= renderDist * renderDist) withinRange++;
-                        }
-                    }
                     List<Text> tooltip = new ArrayList<>();
                     tooltip.add(Text.literal("§f§l" + entry.item.getName().getString()));
                     tooltip.add(Text.literal(""));
                     tooltip.add(Text.literal("§7Total Amount: §a" + formatCountFull(entry.count)));
-                    tooltip.add(Text.literal("§7Found in: §e" + containers.size() + " §7container(s)"));
-                    if (withinRange > 0 && withinRange < containers.size()) {
-                        tooltip.add(Text.literal("§7Will highlight: §e" + withinRange + " §7nearby"));
-                        tooltip.add(Text.literal("§8(Increase render distance for more)"));
-                    } else if (withinRange == 0) {
-                        tooltip.add(Text.literal("§cAll containers are far away!"));
-                        tooltip.add(Text.literal("§8(Increase render distance in settings)"));
+                    tooltip.add(Text.literal("§7Found in: §e" + containers.size() + " §7containers"));
+                    if (module.showDistance() && client != null && client.player != null) {
+                        Vec3d playerPos = client.player.getEntityPos();
+                        TrackedContainer closest = findClosestContainer(entry.item, playerPos, dimensionContainers);
+                        if (closest != null) {
+                            BlockPos pos = closest.getPosition();
+                            double dist = Math.sqrt(playerPos.squaredDistanceTo(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5));
+                            tooltip.add(Text.literal("§7Nearest: §b" + Math.round(dist) + " blocks §7("
+                                + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + ")"));
+                        }
                     }
                     tooltip.add(Text.literal(""));
                     tooltip.add(Text.literal("§e§l» Click to Highlight All Within Range «"));
@@ -407,19 +406,8 @@ public class ChestTrackerScreen extends Screen {
     private void onItemClicked(ItemEntry entry) {
         List<TrackedContainer> results = data.searchItem(entry.item);
         module.searchItem(entry.item);
-        int withinRange = 0;
         if (client != null && client.player != null) {
-            double renderDist = module.getRenderDistance();
-            for (TrackedContainer container : results) {
-                BlockPos pos = container.getPosition();
-                double distSq = client.player.squaredDistanceTo(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
-                if (distSq <= renderDist * renderDist) withinRange++;
-            }
-        }
-        if (client != null && client.player != null) {
-            String msg = withinRange < results.size()
-                ? String.format("§aLit: §e%d§7/§f%d §7(%d far)", withinRange, results.size(), results.size() - withinRange)
-                : String.format("§aLit: §e%d §7boxes", results.size());
+            String msg = String.format("§aLit: §e%d §7boxes", results.size());
             client.player.sendMessage(Text.literal(msg), false);
         }
         this.close();
@@ -477,20 +465,5 @@ public class ChestTrackerScreen extends Screen {
         final Item item;
         final int count;
         ItemEntry(Item item, int count) { this.item = item; this.count = count; }
-    }
-
-    private enum SortMode {
-        COUNT_DESC("Count ↓"),
-        COUNT_ASC("Count ↑"),
-        NAME_ASC("Name A-Z"),
-        NAME_DESC("Name Z-A"),
-        DISTANCE("Distance");
-        private final String displayName;
-        SortMode(String displayName) { this.displayName = displayName; }
-        public String getDisplayName() { return displayName; }
-        public SortMode next() {
-            SortMode[] values = values();
-            return values[(this.ordinal() + 1) % values.length];
-        }
     }
 }

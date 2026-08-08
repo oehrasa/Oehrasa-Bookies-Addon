@@ -127,7 +127,7 @@ public class MapartNamer extends Module {
     );
 
     public MapartNamer() {
-        super(Addon.CATEGORY, "Mapart-Namer", "Auto‑names maps based on inventory slot layout.");
+        super(Addon.CATEGORY2, "Mapart-Namer", "Auto‑names maps based on inventory slot layout.");
     }
 
     private enum State { AwaitInteract, AwaitScreen, HandleMaps }

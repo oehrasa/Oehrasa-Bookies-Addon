@@ -21,7 +21,7 @@ public class MapGridZone extends Module {
     public final Setting<Boolean> mapZoneRender = sgDefault.add(new BoolSetting.Builder()
         .name("map-zones")
         .description("Render zones of map boundaries.")
-        .defaultValue(false)
+        .defaultValue(true)
         .build());
 
     private final Setting<Integer> mapZoneRange = sgDefault.add(new IntSetting.Builder()
@@ -78,7 +78,7 @@ public class MapGridZone extends Module {
     private int ticks = 0;
 
     public MapGridZone() {
-        super(Addon.CATEGORY, "Map-Grid", "Highlights map grid boundaries around the player.");
+        super(Addon.CATEGORY2, "Map-Grid", "Highlights map grid boundaries around the player.");
     }
 
     @EventHandler

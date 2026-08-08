@@ -211,13 +211,6 @@ public class TrackedContainer {
         return new HashMap<>(dominantItems);
     }
 
-    public String getDisplayName() {
-        if (customName != null && !customName.isEmpty()) return customName;
-        return String.format("%s [%d, %d, %d]",
-            containerType.substring(0, 1).toUpperCase() + containerType.substring(1),
-            position.getX(), position.getY(), position.getZ());
-    }
-
     @Override
     public boolean equals(Object obj) {
         if (this == obj) return true;

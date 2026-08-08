@@ -151,7 +151,7 @@ public class MaterialsRefill extends Module {
     );
 
     public MaterialsRefill() {
-        super(Addon.CATEGORY, "Mats-Refill",
+        super(Addon.CATEGORY2, "Mats-Refill",
             "Automatically restocks materials from shulker boxes.");
     }
 

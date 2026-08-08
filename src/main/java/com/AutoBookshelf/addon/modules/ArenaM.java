@@ -1,4 +1,5 @@
 package com.AutoBookshelf.addon.modules;
+// V2
 
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.ProjectilePhysics;
@@ -26,9 +27,8 @@ import java.util.*;
  * Arena M "Active Protection System".
  * Every tick the module scans for hostile projectiles heading towards the player,
  * predicts their real flight path (real gravity/drag applied via ProjectilePhysics,
- * the same physics utility TrajectoryPlus uses and, if one is considered dangerous enough,
- * rotates towards a calculated intercept point
- * and throws a wind charge to try and neutralize it.
+ * the same physics utility TrajectoryPlus uses) and, if one is considered dangerous enough,
+ * rotates towards a calculated intercept point and throws a wind charge to neutralize it)
  */
 public class ArenaM extends Module {
 
@@ -78,9 +78,9 @@ public class ArenaM extends Module {
     );
 
     private final Setting<Boolean> interceptThrowables = sgThreats.add(new BoolSetting.Builder()
-        .name("throwables")
+        .name("throwable")
         .description("Intercept snowballs, eggs, ender pearls and experience bottles.")
-        .defaultValue(true)
+        .defaultValue(false)
         .build()
     );
 
@@ -106,15 +106,15 @@ public class ArenaM extends Module {
     );
 
     private final Setting<Boolean> interceptNonTargeting = sgThreats.add(new BoolSetting.Builder()
-        .name("intercept-non-target")
-        .description("Also consider incoming threat that aren't actually on course to hit you (inacurate like Pantsir).")
-        .defaultValue(false)
+        .name("pantsir-mode")
+        .description("Also consider incoming threat that aren't actually on course to hit you (inaccurate like the real Pantsir).")
+        .defaultValue(true)
         .build()
     );
 
     private final Setting<Boolean> ignoreLanded = sgThreats.add(new BoolSetting.Builder()
         .name("ignore-landed")
-        .description("Ignore projectiles that are already stuck/landed (near-zero velocity). Mainly matters with intercept-non-target on.")
+        .description("Ignore projectiles that are already stuck/landed (near-zero velocity). Mainly matters with intercept-non-target on, since that setting skips the normal moving-towards-you filter that would otherwise exclude them.")
         .defaultValue(true)
         .build()
     );
@@ -129,7 +129,7 @@ public class ArenaM extends Module {
     private final Setting<Boolean> debugRender = sgRender.add(new BoolSetting.Builder()
         .name("debug-render")
         .description("Renders the predicted threat path and the calculated intercept path.")
-        .defaultValue(false)
+        .defaultValue(true)
         .build()
     );
 
@@ -151,7 +151,7 @@ public class ArenaM extends Module {
 
     private final Setting<SettingColor> confirmedHitColor = sgRender.add(new ColorSetting.Builder()
         .name("confirmed-hit-color")
-        .description("Color of the box where the thrown wind charge's real hitbox is confirmed to touch the threat's real hitbox.")
+        .description("Color of the box drawn where the thrown wind charge's real hitbox is confirmed to touch the threat's real hitbox. Unlike threat-color/intercept-color (which are drawn from the prediction), this only shows up on an actual confirmed collision, so it's the ground truth to compare the prediction against.")
         .defaultValue(new SettingColor(80, 255, 80, 130))
         .visible(debugRender::get)
         .build()
@@ -173,9 +173,13 @@ public class ArenaM extends Module {
     private static final int DETECTION_TICKS = MAX_LEAD; // full simulation horizon
     private static final double MIN_THREAT_SPEED_SQ = 0.0025; // below this, treat as landed/stuck
 
+    // Real-hit tracking constants. These only drive updateChargeTracking(), which
+    // is a debug-render concern, not the detection/solver hot path.
     private static final int CHARGE_SPAWN_SEARCH_TICKS = 5;
     private static final int CHARGE_TRACK_TIMEOUT_TICKS = MAX_LEAD + 10;
     private static final int CONFIRMED_HIT_DISPLAY_TICKS = 20;
+    // How fast the learned spawn-latency average adapts to new samples (EMA alpha).
+    private static final double LATENCY_SMOOTHING_ALPHA = 0.3;
 
     private enum Stage {
         IDLE,       // scanning for threats
@@ -202,6 +206,9 @@ public class ArenaM extends Module {
     private int trackTimer = 0;
     private Box confirmedHitBox;
     private int confirmedHitTimer = 0;
+
+    private double averageSpawnLatencyTicks = 1.0; // seeded conservatively until measured
+    private int ticksWaitedForSpawn = 0;
 
     public ArenaM() {
         super(Addon.CATEGORY, "Arena-M", "Throws wind charges to intercept incoming projectiles mid-air.");
@@ -377,16 +384,20 @@ public class ArenaM extends Module {
     private Solution solveIntercept(Threat target, Vec3d eyePos) {
         Box baseBox = target.entity().getBoundingBox();
         Vec3d basePos = target.entity().getEntityPos();
+        int latencyTicks = getEffectiveLatencyTicks();
 
         for (int tau = 1; tau <= MAX_LEAD; tau++) {
             if (tau >= target.path().length || target.path()[tau] == null) break; // path ends here; larger tau can't help either
 
+            int windTicks = tau - latencyTicks;
+            if (windTicks <= 0) continue; // charge hasn't actually left the barrel yet at this real-time tick
+
             Vec3d aimPoint = target.path()[tau];
             Vec3d direction = aimPoint.subtract(eyePos).normalize();
-            Vec3d windPos = eyePos.add(direction.multiply(WIND_SPEED * tau));
+            Vec3d windPos = eyePos.add(direction.multiply(WIND_SPEED * windTicks));
 
             Vec3d threatPrev = target.path()[tau - 1] != null ? target.path()[tau - 1] : aimPoint;
-            Vec3d windPrev = eyePos.add(direction.multiply(WIND_SPEED * (tau - 1)));
+            Vec3d windPrev = eyePos.add(direction.multiply(WIND_SPEED * (windTicks - 1)));
 
             Box threatBoxPrev = baseBox.offset(threatPrev.subtract(basePos));
             Box threatBoxCurr = baseBox.offset(aimPoint.subtract(basePos));
@@ -395,10 +406,16 @@ public class ArenaM extends Module {
             Box windBoxCurr = windBoxAt(windPos);
 
             if (union(threatBoxPrev, threatBoxCurr).intersects(union(windBoxPrev, windBoxCurr))) {
-                return new Solution(direction, tau);
+                // Solution.ticksToImpact() means "how long the real charge actually
+                // flies", which is windTicks, not tau
+                return new Solution(direction, windTicks);
             }
         }
         return null;
+    }
+
+    private int getEffectiveLatencyTicks() {
+        return (int) Math.round(Math.max(0, Math.min(averageSpawnLatencyTicks, MAX_LEAD - 1)));
     }
 
     private Box windBoxAt(Vec3d pos) {
@@ -463,6 +480,7 @@ public class ArenaM extends Module {
         trackedThreatEntity = threatEntity;
         awaitingChargeSpawn = true;
         spawnSearchTimer = CHARGE_SPAWN_SEARCH_TICKS;
+        ticksWaitedForSpawn = 0;
         trackedCharge = null;
     }
 
@@ -473,6 +491,7 @@ public class ArenaM extends Module {
 
         if (awaitingChargeSpawn) {
             spawnSearchTimer--;
+            ticksWaitedForSpawn++;
             for (Entity e : mc.world.getEntities()) {
                 if (!(e instanceof WindChargeEntity)) continue;
                 if (preThrowChargeIds.contains(e.getId())) continue;
@@ -480,9 +499,13 @@ public class ArenaM extends Module {
                 trackedCharge = e;
                 awaitingChargeSpawn = false;
                 trackTimer = CHARGE_TRACK_TIMEOUT_TICKS;
+                // EMA update: nudge the running latency estimate towards this real sample.
+                averageSpawnLatencyTicks += (ticksWaitedForSpawn - averageSpawnLatencyTicks) * LATENCY_SMOOTHING_ALPHA;
                 break;
             }
-            if (spawnSearchTimer <= 0) awaitingChargeSpawn = false; // gave up; charge likely never spawned
+            // Gave up without finding it; charge likely never spawned (e.g. throw failed).
+            // Don't feed a non-sample into the average.
+            if (spawnSearchTimer <= 0) awaitingChargeSpawn = false;
             preThrowChargeIds.clear();
             return;
         }
