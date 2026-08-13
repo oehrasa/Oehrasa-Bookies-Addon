@@ -62,16 +62,16 @@ public class GetPreview extends Module {
         .build()
     );
 
-    public final Setting<Integer> multipleSize = sgGeneral.add(new IntSetting.Builder()
-        .name("multiple-size")
-        .description("Font size of the multiple indicator text.")
-        .defaultValue(8).min(4).max(16).sliderMin(4).sliderMax(16)
-        .build()
-    );
-
     public final Setting<Boolean> previewShulkers = sgGeneral.add(new BoolSetting.Builder()
         .name("preview-shulkers")
         .description("Also show a preview icon on shulker boxes.")
+        .defaultValue(true)
+        .build()
+    );
+
+    public final Setting<Boolean> previewBundles = sgGeneral.add(new BoolSetting.Builder()
+        .name("preview-bundles")
+        .description("Show a preview icon on bundles.")
         .defaultValue(true)
         .build()
     );
@@ -173,7 +173,7 @@ public class GetPreview extends Module {
             return;
         }
 
-        if (stack.contains(DataComponentTypes.BUNDLE_CONTENTS)) {
+        if (previewBundles.get() && stack.contains(DataComponentTypes.BUNDLE_CONTENTS)) {
             renderContainerOverlay(context, x, y, stack, bundleCache, false);
         } else if (previewShulkers.get() && hasShulkerContents(stack)) {
             renderContainerOverlay(context, x, y, stack, shulkerCache, true);
