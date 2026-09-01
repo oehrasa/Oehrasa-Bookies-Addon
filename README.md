@@ -95,8 +95,10 @@ Tested successfully with these mods.
 </details>
 
 <details>
-<summary><b>Display</b> (in-game)</summary>
-https://github.com/user-attachments/assets/effb0d4a-7b45-4a17-a928-ec849490df9a
+<summary><b>Display of the addon</b> (in-game)</summary>
+<h1 align="left">
+  <img src="https://github.com/user-attachments/assets/effb0d4a-7b45-4a17-a928-ec849490df9a" alt="Header Image" style="width:70%; max-width:600px;"/>
+</h1>
 </details>
 
 ## HUD Elements (9)
