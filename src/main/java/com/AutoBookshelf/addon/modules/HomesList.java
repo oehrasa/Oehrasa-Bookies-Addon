@@ -1,5 +1,5 @@
 package com.AutoBookshelf.addon.modules;
-
+//1.21.11
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.JoinPayload;
 import com.google.gson.*;
@@ -86,6 +86,20 @@ public class HomesList extends Module {
         .build()
     );
 
+    private final Setting<String> renameCommandFormat = sgGeneral.add(new StringSetting.Builder()
+        .name("rename-command")
+        .description("Command sent when you use the Rename button. {oldName} is the current server name, {name} is the new name you typed.")
+        .defaultValue("homerename {oldName} {name}")
+        .build()
+    );
+
+    private final Setting<String> deleteCommandFormat = sgGeneral.add(new StringSetting.Builder()
+        .name("delete-command")
+        .description("Command sent when you confirm the Delete Home button. {name} is replaced with the home's server name.")
+        .defaultValue("delhome {name}")
+        .build()
+    );
+
     public final Setting<Keybind> quickSelectKey = sgQuickSelect.add(new KeybindSetting.Builder()
         .name("quick-select-key")
         .description("Hold to open the screen. Scroll to select, then release to TP to highlighted home.")
@@ -130,6 +144,7 @@ public class HomesList extends Module {
         .create();
 
     private File saveFile;
+    private final Object homesLock = new Object();
     private List<HomeEntry> homes = new ArrayList<>();
     private boolean waitingForServerHomes = false;
 
@@ -168,21 +183,41 @@ public class HomesList extends Module {
     }
 
     private void load() {
-        if (!saveFile.exists()) return;
-        try (Reader reader = new FileReader(saveFile)) {
-            Type listType = new TypeToken<List<HomeEntry>>() {
-            }.getType();
-            homes = GSON.fromJson(reader, listType);
-            if (homes == null) homes = new ArrayList<>();
-        } catch (IOException e) {
-            homes = new ArrayList<>();
+        synchronized (homesLock) {
+            if (!saveFile.exists()) return;
+            try (Reader reader = new FileReader(saveFile)) {
+                Type listType = new TypeToken<List<HomeEntry>>() {
+                }.getType();
+                List<HomeEntry> loaded = GSON.fromJson(reader, listType);
+                homes = loaded != null ? loaded : new ArrayList<>();
+            } catch (Exception e) {
+                // back up the corrupt file instead of silently discarding it
+                File corrupt = new File(saveFile.getParentFile(), saveFile.getName() + ".corrupt-" + System.currentTimeMillis());
+                saveFile.renameTo(corrupt);
+                homes = new ArrayList<>();
+                e.printStackTrace();
+            }
         }
     }
 
     public void save() {
-        try (Writer writer = new FileWriter(saveFile)) {
-            GSON.toJson(homes, writer);
-        } catch (IOException ignored) {
+        synchronized (homesLock) {
+            File tmp = new File(saveFile.getParentFile(), saveFile.getName() + ".tmp");
+            try (Writer writer = new FileWriter(tmp)) {
+                GSON.toJson(homes, writer);
+            } catch (Exception e) {
+                e.printStackTrace();
+                return; // don't touch the real file if the write failed
+            }
+            if (!tmp.renameTo(saveFile)) {
+                // fallback for platforms where atomic rename over existing file fails
+                try {
+                    java.nio.file.Files.move(tmp.toPath(), saveFile.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
         }
     }
 
@@ -214,7 +249,7 @@ public class HomesList extends Module {
             if (homeName.isEmpty()) continue;
             serverHomes.add(homeName);
 
-            if (homes.stream().noneMatch(h -> h.originalName.equals(homeName))) {
+            if (homes.stream().noneMatch(h -> h.serverHome.equals(homeName))) {
                 // pick a unique icon from the full item
                 // registry instead of a small fixed pool, so auto-added homes don't collide.
                 HomeEntry entry = new HomeEntry(homeName, homeName, getRandomUniqueIcon());
@@ -223,7 +258,7 @@ public class HomesList extends Module {
             }
         }
 
-        homes.removeIf(home -> !home.favorite && !serverHomes.contains(home.originalName));
+        homes.removeIf(home -> !home.favorite && !serverHomes.contains(home.serverHome));
         sortHomes();
         waitingForServerHomes = false;
         save();
@@ -260,6 +295,40 @@ public class HomesList extends Module {
         if (MeteorClient.mc.player == null) return;
         MeteorClient.mc.player.networkHandler.sendChatCommand("home " + homeName);
         if (debugMode.get()) info("Teleport to " + homeName);
+    }
+
+    public void renameHome(HomeEntry entry, String newName) {
+        if (MeteorClient.mc.player == null || entry == null) return;
+        newName = newName == null ? "" : newName.trim();
+        if (newName.isEmpty()) return;
+
+        String command = renameCommandFormat.get()
+            .replace("{oldName}", entry.serverHome == null ? "" : entry.serverHome)
+            .replace("{name}", newName);
+        MeteorClient.mc.player.networkHandler.sendChatCommand(command);
+
+        if (entry.displayName == null || entry.displayName.equals(entry.serverHome)) {
+            entry.displayName = newName;
+        }
+        entry.serverHome = newName;
+        sortHomes();
+        save();
+
+        if (debugMode.get()) info("Renamed home to " + newName);
+    }
+
+    public void deleteHome(HomeEntry entry) {
+        if (MeteorClient.mc.player == null || entry == null) return;
+
+        if (entry.serverHome != null && !entry.serverHome.isEmpty()) {
+            String command = deleteCommandFormat.get().replace("{name}", entry.serverHome);
+            MeteorClient.mc.player.networkHandler.sendChatCommand(command);
+        }
+
+        homes.remove(entry);
+        save();
+
+        if (debugMode.get()) info("Deleted home " + entry.serverHome);
     }
 
     private Item getRandomUniqueIcon() {
@@ -318,7 +387,7 @@ public class HomesList extends Module {
         quickScreen = null;
 
         if (doTeleport && !quickCancelled && quickSelectedIndex >= 0 && quickSelectedIndex < quickHomes.size()) {
-            teleportTo(quickHomes.get(quickSelectedIndex).originalName);
+            teleportTo(quickHomes.get(quickSelectedIndex).serverHome);
         }
         quickHomes.clear();
     }
@@ -333,7 +402,7 @@ public class HomesList extends Module {
     }
 
     public static class HomeEntry {
-        public String originalName;
+        public String serverHome;
         public String displayName;
         public boolean autoAdded = false;
         public boolean favorite = false;
@@ -342,10 +411,10 @@ public class HomesList extends Module {
         public HomeEntry() {
         }
 
-        public HomeEntry(String originalName, String displayName, Item icon) {
-            this.originalName = originalName;
-            this.displayName = displayName;
+        public HomeEntry(String serverHome, String displayName, Item icon) {
             setIcon(icon);
+            this.displayName = displayName;
+            this.serverHome = serverHome;
         }
 
         public Item getIcon() {
@@ -376,7 +445,8 @@ public class HomesList extends Module {
         @Override
         public JsonElement serialize(HomeEntry src, Type typeOfSrc, JsonSerializationContext ctx) {
             JsonObject obj = new JsonObject();
-            obj.addProperty("originalName", src.originalName);
+            // JSON key stays "originalName" on purpose so existing homes.json saves still load.
+            obj.addProperty("originalName", src.serverHome);
             obj.addProperty("displayName", src.displayName);
             obj.addProperty("autoAdded", src.autoAdded);
             obj.addProperty("favorite", src.favorite);
@@ -389,7 +459,7 @@ public class HomesList extends Module {
             throws JsonParseException {
             JsonObject obj = json.getAsJsonObject();
             HomeEntry entry = new HomeEntry();
-            entry.originalName = obj.get("originalName").getAsString();
+            entry.serverHome = obj.get("originalName").getAsString();
             entry.displayName = obj.get("displayName").getAsString();
             entry.autoAdded = obj.has("autoAdded") && obj.get("autoAdded").getAsBoolean();
             entry.favorite = obj.has("favorite") && obj.get("favorite").getAsBoolean();
@@ -611,7 +681,7 @@ public class HomesList extends Module {
                 int showing = filtered.size();
                 countLabel.set(searchText.isEmpty()
                     ? countText(total)
-                    : showing + " / " + total + " homes");
+                    : showing + " / " + total + " h");
             }
 
             if (filtered.isEmpty()) {
@@ -631,7 +701,7 @@ public class HomesList extends Module {
                 table.add(theme.label(home.displayName));
 
                 WButton teleport = table.add(theme.button("Teleport")).widget();
-                teleport.action = () -> module.teleportTo(home.originalName);
+                teleport.action = () -> module.teleportTo(home.serverHome);
 
                 WButton edit = table.add(theme.button(GuiRenderer.EDIT)).widget();
                 edit.action = () -> MeteorClient.mc.setScreen(
@@ -669,9 +739,9 @@ public class HomesList extends Module {
         private final int index;
         private final HomesScreen parent;
 
+        private final Setting<String> serverHomeSetting;
         private final Setting<String> displayName;
         private final Setting<Item> icon;
-        private final Setting<String> originalName;
 
         public EditHomeScreen(GuiTheme theme, HomesList module, HomeEntry home, int index, HomesScreen parent) {
             super(theme, home == null ? "New Home" : "Edit Home");
@@ -682,12 +752,12 @@ public class HomesList extends Module {
 
             Settings settings = new Settings();
             SettingGroup sg = settings.getDefaultGroup();
-            originalName = sg.add(new StringSetting.Builder().name("original-name")
-                .defaultValue(home != null ? home.originalName : "").build());
-            displayName = sg.add(new StringSetting.Builder().name("display-name")
-                .defaultValue(home != null ? home.displayName : "").build());
             icon = sg.add(new ItemSetting.Builder().name("icon")
                 .defaultValue(home != null ? home.getIcon() : Items.GRASS_BLOCK).build());
+            displayName = sg.add(new StringSetting.Builder().name("display-name")
+                .defaultValue(home != null ? home.displayName : "").build());
+            serverHomeSetting = sg.add(new StringSetting.Builder().name("server-home")
+                .defaultValue(home != null ? home.serverHome : "").build());
             add(theme.settings(settings)).expandX();
         }
 
@@ -698,7 +768,7 @@ public class HomesList extends Module {
 
             WButton save = actions.add(theme.button(home == null ? "Create" : "Update")).expandX().widget();
             save.action = () -> {
-                HomeEntry newEntry = new HomeEntry(originalName.get(), displayName.get(), icon.get());
+                HomeEntry newEntry = new HomeEntry(serverHomeSetting.get(), displayName.get(), icon.get());
                 newEntry.autoAdded = home != null && home.autoAdded;
                 newEntry.favorite = home != null && home.favorite;
                 if (home == null) module.addHome(newEntry);
@@ -711,6 +781,74 @@ public class HomesList extends Module {
 
             WButton cancel = actions.add(theme.button("Cancel")).expandX().widget();
             cancel.action = () -> MeteorClient.mc.setScreen(parent != null ? parent : null);
+
+            // Rename and delete only apply to a home that already exists on the server.
+            if (home != null) {
+                add(theme.horizontalSeparator()).expandX();
+
+                WHorizontalList renameRow = add(theme.horizontalList()).expandX().widget();
+                renameRow.add(theme.label("Rename to: "));
+                WTextBox renameBox = renameRow.add(theme.textBox("", "New name...")).expandX().widget();
+                WButton renameButton = renameRow.add(theme.button("Rename")).widget();
+                renameButton.action = () -> {
+                    String newName = renameBox.get().trim();
+                    if (newName.isEmpty()) return;
+
+                    module.renameHome(home, newName);
+                    serverHomeSetting.set(newName);
+                    renameBox.set("");
+
+                    if (parent != null) parent.rebuildTable();
+                };
+
+                WHorizontalList deleteRow = add(theme.horizontalList()).expandX().widget();
+                WButton deleteButton = deleteRow.add(theme.button("Delete Home")).expandX().widget();
+                deleteButton.action = () -> MeteorClient.mc.setScreen(new ConfirmDeleteScreen(
+                    theme,
+                    home.displayName,
+                    () -> {
+                        module.deleteHome(home);
+                        if (parent != null) {
+                            parent.rebuildTable();
+                            MeteorClient.mc.setScreen(parent);
+                        } else MeteorClient.mc.setScreen(null);
+                    },
+                    () -> MeteorClient.mc.setScreen(EditHomeScreen.this)
+                ));
+            }
+        }
+    }
+
+    // Small yes/no popup shown before a home is actually deleted
+    private static class ConfirmDeleteScreen extends WindowScreen {
+        private final Runnable onConfirm;
+        private final Runnable onCancel;
+        private final String homeDisplayName;
+
+        protected ConfirmDeleteScreen(GuiTheme theme, String homeDisplayName, Runnable onConfirm, Runnable onCancel) {
+            super(theme, "Delete Home?");
+            this.onConfirm = onConfirm;
+            this.onCancel = onCancel;
+            this.homeDisplayName = homeDisplayName;
+        }
+
+        @Override
+        public void initWidgets() {
+            add(theme.label("Are you sure you want to delete \"" + homeDisplayName + "\"?")).expandX();
+            add(theme.horizontalSeparator()).expandX();
+
+            WHorizontalList row = add(theme.horizontalList()).expandX().widget();
+
+            WButton confirm = row.add(theme.button("Delete")).expandX().widget();
+            confirm.action = () -> onConfirm.run();
+
+            WButton cancel = row.add(theme.button("Cancel")).expandX().widget();
+            cancel.action = () -> onCancel.run();
+        }
+
+        @Override
+        public boolean shouldCloseOnEsc() {
+            return false;
         }
     }
 }

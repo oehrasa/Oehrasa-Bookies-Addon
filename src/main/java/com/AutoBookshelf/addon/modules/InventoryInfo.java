@@ -115,7 +115,6 @@ public class InventoryInfo extends Module {
     //TODO
     // Make proper component display.
     // Add profile target, litematica Material list feature.
-    // Whisper/info panel.
 
     @EventHandler
     private void onTick(TickEvent.Post event) {

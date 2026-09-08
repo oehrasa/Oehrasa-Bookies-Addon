@@ -1,13 +1,18 @@
 package com.AutoBookshelf.addon;
 
 import com.AutoBookshelf.addon.commands.*;
+import com.AutoBookshelf.addon.gui.EnemiesTab;
 import com.AutoBookshelf.addon.hud.*;
 import com.AutoBookshelf.addon.modules.*;
+import com.AutoBookshelf.addon.modules.livemessage.LiveMessage;
+import com.AutoBookshelf.addon.utils.EnemyManager;
 import com.AutoBookshelf.addon.utils.JoinPayload;
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
 import meteordevelopment.meteorclient.commands.Commands;
+import meteordevelopment.meteorclient.gui.tabs.Tabs;
+import meteordevelopment.meteorclient.systems.Systems;
 import meteordevelopment.meteorclient.systems.hud.Hud;
 import meteordevelopment.meteorclient.systems.hud.HudGroup;
 import meteordevelopment.meteorclient.systems.modules.Category;
@@ -30,6 +35,7 @@ public class Addon extends MeteorAddon {
         com.AutoBookshelf.addon.utils.Checks.init();
 
         PayloadTypeRegistry.playC2S().register(JoinPayload.TYPE, JoinPayload.CODEC);
+        Systems.add(new EnemyManager());
 
         // Modules
         Modules.get().add(new AutoLogin(CATEGORY));
@@ -68,6 +74,8 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new InventoryTracker());
         // K
         Modules.get().add(new KMDB());
+        // L
+        Modules.get().add(new LiveMessage());
         // M
         Modules.get().add(new MobOwner());
         Modules.get().add(new MURADAESA());
@@ -81,6 +89,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new PressItemFrame());
         Modules.get().add(new PlatformBuilder());
         // S
+        Modules.get().add(new SignRender());
         Modules.get().add(new SculkRange());
         Modules.get().add(new ShulkBookRestock());
         // T
@@ -103,14 +112,20 @@ public class Addon extends MeteorAddon {
         Hud.get().register(NeboM.INFO);
         Hud.get().register(OnlineFriendsHUD.INFO);
         Hud.get().register(TeleportTimer.INFO);
+        Hud.get().register(Weather.INFO);
 
         // COMMANDS
         Commands.add(new AssignOwnerCommand());
         Commands.add(new BookCommand());
         Commands.add(new BookTranslateCommand());
+        Commands.add(new EnemyCommand());
         Commands.add(new IfpeekCommand());
         Commands.add(new InvseeCommand());
+        Commands.add(new QueueCommand());
         Commands.add(new ShelfCommand());
+
+        // TABS
+        Tabs.add(new EnemiesTab());
 
     }
 

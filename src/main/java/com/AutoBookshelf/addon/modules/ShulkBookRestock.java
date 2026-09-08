@@ -9,6 +9,7 @@ import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.ShulkerBoxBlock;
+import net.minecraft.component.DataComponentTypes;
 import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -34,7 +35,7 @@ public class ShulkBookRestock extends Module {
 
     private final Setting<Boolean> keepOneInInventory = sgGeneral.add(new BoolSetting.Builder()
         .name("keep-one")
-        .description("Keep at least one item in inventory.")
+        .description("Keep at least one of the specific item that ran out (same item/color and custom name) in inventory.")
         .defaultValue(false)
         .build()
     );
@@ -74,6 +75,21 @@ public class ShulkBookRestock extends Module {
         .build()
     );
 
+    private final Setting<Boolean> matchColor = sgItems.add(new BoolSetting.Builder()
+        .name("match-color")
+        .description("Only restock/switch to a shulker box of the same color that was used.")
+        .defaultValue(false)
+        .visible(restockShulkers::get)
+        .build()
+    );
+
+    private final Setting<Boolean> matchName = sgItems.add(new BoolSetting.Builder()
+        .name("match-name")
+        .description("Only restock/switch to an item with the same custom name that was used.")
+        .defaultValue(false)
+        .build()
+    );
+
     private final Setting<Boolean> restockWritableBooks = sgItems.add(new BoolSetting.Builder()
         .name("restock-writable-books")
         .description("Restock writable books (book and quill).")
@@ -83,11 +99,14 @@ public class ShulkBookRestock extends Module {
 
     private int timer = 0;
     private int[] previousCounts = new int[9];
+    private Item[] previousItems = new Item[9];
+    private String[] previousNames = new String[9];
     private boolean pendingRestock = false;
     private int slotToRestock = -1;
     private boolean autoSwitchInProgress = false;
     private int switchCooldown = 0;
     private int lastUsedSlot = -1;
+    private boolean wasScreenOpen = false;
 
     public ShulkBookRestock() {
         super(Addon.CATEGORY2, "SBB-Restock", "Automatically restocks shulkers and books in your hotbar when used");
@@ -106,21 +125,29 @@ public class ShulkBookRestock extends Module {
         autoSwitchInProgress = false;
         switchCooldown = 0;
         lastUsedSlot = -1;
+        wasScreenOpen = false;
 
-        for (int i = 0; i < 9; i++) {
-            try {
-                ItemStack stack = mc.player.getInventory().getStack(i);
-                previousCounts[i] = (stack != null && isValidItem(stack)) ? stack.getCount() : 0;
-            } catch (Exception e) {
-                previousCounts[i] = 0;
-            }
-        }
+        captureBaseline();
     }
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.player.getInventory() == null) return;
-        if (mc.currentScreen != null) return;   // never restock while a GUI is open
+
+        if (mc.currentScreen != null) {
+            // GUI open: don't track or restock. Remember that it was open so the
+            // tick it closes on can resync instead of comparing across the gap.
+            wasScreenOpen = true;
+            return;
+        }
+
+        if (wasScreenOpen) {
+            // The screen just closed. Whatever changed while it was open (items
+            // moved between slots, sorted, etc.)
+            wasScreenOpen = false;
+            captureBaseline();
+            return;
+        }
 
         if (switchCooldown > 0) switchCooldown--;
         if (pendingRestock && timer > 0) {
@@ -137,11 +164,38 @@ public class ShulkBookRestock extends Module {
             handleAutoSwitch();
         }
 
-        if (!pendingRestock && isHotbarEmpty()) {
-            slotToRestock = findBestSlotToRestock();
-            if (slotToRestock != -1) {
+        if (!pendingRestock) {
+            int candidate = findSlotNeedingRestock();
+            if (candidate != -1) {
+                slotToRestock = candidate;
                 pendingRestock = true;
                 timer = restockDelay.get();
+            }
+        }
+    }
+
+    /**
+     * Snapshots all 9 hotbar slots into previousCounts/Items/Names without flagging any usage.
+     */
+    private void captureBaseline() {
+        for (int i = 0; i < 9; i++) {
+            try {
+                ItemStack stack = mc.player.getInventory().getStack(i);
+                if (stack != null && isValidItem(stack)) {
+                    previousCounts[i] = stack.getCount();
+                    previousItems[i] = stack.getItem();
+                    previousNames[i] = stack.get(DataComponentTypes.CUSTOM_NAME) != null
+                        ? stack.get(DataComponentTypes.CUSTOM_NAME).getString()
+                        : null;
+                } else {
+                    previousCounts[i] = 0;
+                    previousItems[i] = null;
+                    previousNames[i] = null;
+                }
+            } catch (Exception e) {
+                previousCounts[i] = 0;
+                previousItems[i] = null;
+                previousNames[i] = null;
             }
         }
     }
@@ -160,6 +214,10 @@ public class ShulkBookRestock extends Module {
                         lastUsedSlot = i;
                     }
                     previousCounts[i] = currentCount;
+                    previousItems[i] = stack.getItem();
+                    previousNames[i] = stack.get(DataComponentTypes.CUSTOM_NAME) != null
+                        ? stack.get(DataComponentTypes.CUSTOM_NAME).getString()
+                        : null;
                 } else {
                     if (previousCounts[i] > 0) {
                         lastUsedSlot = i;
@@ -172,6 +230,40 @@ public class ShulkBookRestock extends Module {
         }
     }
 
+    /**
+     * Candidate-selection matching: honors the match-color/match-name toggles.
+     */
+    private boolean matchesTarget(ItemStack candidate, int targetSlot) {
+        if (matchColor.get() && previousItems[targetSlot] != null) {
+            if (candidate.getItem() != previousItems[targetSlot]) return false;
+        }
+        if (matchName.get()) {
+            var customName = candidate.get(DataComponentTypes.CUSTOM_NAME);
+            String candidateName = customName != null ? customName.getString() : null;
+            String targetName = previousNames[targetSlot];
+            if (candidateName == null || targetName == null) {
+                return candidateName == targetName;
+            } else return candidateName.equals(targetName);
+        }
+        return true;
+    }
+
+    /**
+     * Exact-variant matching for keep-one: always compares item (colour included, since
+     * each shulker colour is a distinct Item) and custom name, regardless of whether
+     * match-colour/match-name are enabled. Keep-one should always mean "keep at least
+     * one of the specific thing that ran out,"
+     */
+    private boolean isSameVariant(ItemStack candidate, int targetSlot) {
+        if (previousItems[targetSlot] != null && candidate.getItem() != previousItems[targetSlot]) return false;
+        var customName = candidate.get(DataComponentTypes.CUSTOM_NAME);
+        String candidateName = customName != null ? customName.getString() : null;
+        String targetName = previousNames[targetSlot];
+        if (candidateName == null && targetName == null) return true;
+        if (candidateName == null || targetName == null) return false;
+        return candidateName.equals(targetName);
+    }
+
     private void handleAutoSwitch() {
         if (mc.player == null || mc.player.getInventory() == null) return;
         if (lastUsedSlot == -1) return;
@@ -180,7 +272,7 @@ public class ShulkBookRestock extends Module {
         boolean isSlotEmpty = usedStack == null || usedStack.isEmpty() || !isValidItem(usedStack);
 
         if (isSlotEmpty) {
-            List<Integer> validSlots = getValidHotbarSlots();
+            List<Integer> validSlots = getValidHotbarSlots(lastUsedSlot);
             validSlots.remove(Integer.valueOf(lastUsedSlot));
 
             if (!validSlots.isEmpty()) {
@@ -193,45 +285,43 @@ public class ShulkBookRestock extends Module {
         autoSwitchInProgress = false;
     }
 
-    private List<Integer> getValidHotbarSlots() {
+    private List<Integer> getValidHotbarSlots(int targetSlot) {
         List<Integer> validSlots = new ArrayList<>();
         if (mc.player == null || mc.player.getInventory() == null) return validSlots;
 
         for (int i = 0; i < 9; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
-            if (stack != null && isValidItem(stack) && !stack.isEmpty()) {
-                validSlots.add(i);
-            }
+            try {
+                ItemStack stack = mc.player.getInventory().getStack(i);
+                if (stack != null && isValidItem(stack) && !stack.isEmpty() && matchesTarget(stack, targetSlot)) {
+                    validSlots.add(i);
+                }
+            } catch (Exception ignored) {}
         }
         return validSlots;
     }
 
-    private boolean isHotbarEmpty() {
-        if (mc.player == null || mc.player.getInventory() == null) return true;
-        for (int i = 0; i < 9; i++) {
-            ItemStack stack = mc.player.getInventory().getStack(i);
-            if (stack != null && isValidItem(stack) && !stack.isEmpty()) return false;
-        }
-        return true;
-    }
-
-    private int findBestSlotToRestock() {
+    /**
+     * Auto-detect: only restock the slot that was actually just used up by real
+     * gameplay consumption (checkForItemUsage)
+     */
+    private int findSlotNeedingRestock() {
         if (mc.player == null || mc.player.getInventory() == null) return -1;
         int targetSlot = restockSlot.get();
 
-        if (targetSlot == 0) {
-            if (lastUsedSlot != -1 && lastUsedSlot < 9) {
-                ItemStack stack = mc.player.getInventory().getStack(lastUsedSlot);
-                if (stack == null || stack.isEmpty() || !isValidItem(stack)) return lastUsedSlot;
-            }
-            for (int i = 0; i < 9; i++) {
-                ItemStack stack = mc.player.getInventory().getStack(i);
-                if (stack == null || stack.isEmpty() || !isValidItem(stack)) return i;
-            }
-            return -1;
-        } else {
-            return targetSlot - 1;
+        if (targetSlot != 0) {
+            // Manual slot: always this slot, no tracking required
+            int slot = targetSlot - 1;
+            ItemStack stack = mc.player.getInventory().getStack(slot);
+            boolean empty = stack == null || stack.isEmpty() || !isValidItem(stack);
+            return empty ? slot : -1;
         }
+
+        if (lastUsedSlot != -1) {
+            ItemStack stack = mc.player.getInventory().getStack(lastUsedSlot);
+            boolean empty = stack == null || stack.isEmpty() || !isValidItem(stack);
+            if (empty) return lastUsedSlot;
+        }
+        return -1;
     }
 
     private void performRestock() {
@@ -242,45 +332,66 @@ public class ShulkBookRestock extends Module {
         ItemStack currentStack = mc.player.getInventory().getStack(targetSlot);
         if (currentStack != null && isValidItem(currentStack) && !currentStack.isEmpty()) return;
 
-        int itemSlot = findValidItemInInventoryExcludingHotbar();
+        int itemSlot = findValidItemInInventoryExcludingHotbar(targetSlot);
         if (itemSlot == -1) return;
 
         moveToHotbar(itemSlot, targetSlot);
     }
 
-    private int findValidItemInInventoryExcludingHotbar() {
+    private int findValidItemInInventoryExcludingHotbar(int targetSlot) {
         if (mc.player == null || mc.player.getInventory() == null) return -1;
-        int totalCount = 0;
         List<Integer> candidateSlots = new ArrayList<>();
 
         for (int i = 9; i < 36; i++) {
+            ItemStack stack;
             try {
-                ItemStack stack = mc.player.getInventory().getStack(i);
-                if (stack != null && isValidItem(stack) && !stack.isEmpty()) {
-                    totalCount += stack.getCount();
+                stack = mc.player.getInventory().getStack(i);
+            } catch (Exception ignored) {
+                continue;
+            }
+
+            if (stack == null || !isValidItem(stack) || stack.isEmpty()) continue;
+
+            try {
+                if (matchesTarget(stack, targetSlot)) {
                     candidateSlots.add(i);
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }
+
+        if (candidateSlots.isEmpty()) return -1;
 
         if (keepOneInInventory.get()) {
-            int hotbarCount = countValidItemsInHotbar();
-            if (totalCount <= 1 && hotbarCount > 0) return -1;
+            int chosen = candidateSlots.get(0);
+            ItemStack chosenStack = mc.player.getInventory().getStack(chosen);
+            // Reserve check is always exact-variant, independent of match-colour/match-name,
+            // so "keep one" always protects one of the specific item that ran out.
+            int exactCount = countExactVariant(targetSlot, chosen);
+            if (exactCount <= 1) return -1;
         }
 
-        return candidateSlots.isEmpty() ? -1 : candidateSlots.get(0);
+        return candidateSlots.get(0);
     }
 
-    private int countValidItemsInHotbar() {
+    /**
+     * Counts stacks (hotbar + main inventory, excluding the chosen slot itself) matching the exact variant of targetSlot's former contents.
+     */
+    private int countExactVariant(int targetSlot, int excludingSlot) {
         if (mc.player == null || mc.player.getInventory() == null) return 0;
         int count = 0;
-        for (int i = 0; i < 9; i++) {
+        for (int i = 0; i < 36; i++) {
+            if (i == excludingSlot) continue;
             try {
                 ItemStack stack = mc.player.getInventory().getStack(i);
-                if (stack != null && isValidItem(stack) && !stack.isEmpty()) count++;
-            } catch (Exception ignored) {}
+                if (stack != null && isValidItem(stack) && !stack.isEmpty() && isSameVariant(stack, targetSlot)) {
+                    count++;
+                }
+            } catch (Exception ignored) {
+            }
         }
-        return count;
+        // +1 for the excluded (chosen) stack itself, since it's still in inventory until the move happens.
+        return count + 1;
     }
 
     private boolean isValidItem(ItemStack stack) {

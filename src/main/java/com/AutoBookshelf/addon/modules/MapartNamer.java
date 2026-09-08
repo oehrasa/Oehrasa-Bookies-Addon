@@ -1,7 +1,6 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
-import com.AutoBookshelf.addon.interfaces.IClientPlayerInteractionManager;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
@@ -18,7 +17,6 @@ import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.network.packet.c2s.play.RenameItemC2SPacket;
 import net.minecraft.network.packet.s2c.play.CloseScreenS2CPacket;
-import net.minecraft.network.packet.s2c.play.InventoryS2CPacket;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.math.BlockPos;
 
@@ -160,9 +158,9 @@ public class MapartNamer extends Module {
         // If the anvil screen is already open, skip the "await interact" step
         if (mc.currentScreen instanceof AnvilScreen) {
             state = State.AwaitScreen;
-            info("Anvil screen already open – waiting for inventory packet…");
+            info("Anvil screen already open, waiting for screen detection…");
         } else {
-            info("§aEnabled. Right‑click an anvil with maps in your inventory.");
+            info("§aEnabled. Right-click an anvil with maps in your inventory.");
         }
     }
 
@@ -178,7 +176,7 @@ public class MapartNamer extends Module {
         return list;
     }
 
-    // Returns true if the current screen is NOT an anvil
+    // Return everything else except anvil screen
     private boolean isNotAnvilScreen() {
         return !(mc.currentScreen instanceof AnvilScreen);
     }
@@ -198,12 +196,12 @@ public class MapartNamer extends Module {
         if (state == State.HandleMaps && event.packet instanceof CloseScreenS2CPacket) {
             info("Anvil closed. Next batch starts at Y = " + getNextBatchStartY());
             state = State.AwaitInteract;
-            return;
         }
-        if (state != State.AwaitScreen) return;
-        if (!(event.packet instanceof InventoryS2CPacket)) return;
+    }
 
-        // Collect all filled maps
+    private void collectMapsAndStart() {
+        if (mc.player == null || !(mc.currentScreen instanceof AnvilScreen)) return;
+
         List<MapSlotInfo> allMaps = new ArrayList<>();
         for (int invSlot = 0; invSlot < 36; invSlot++) {
             ItemStack stack = mc.player.getInventory().getStack(invSlot);
@@ -225,7 +223,6 @@ public class MapartNamer extends Module {
             return;
         }
 
-        // Anchor column
         int minCol = allMaps.stream().mapToInt(s -> s.col).min().orElse(0);
         int offset = startIndex.get() == StartIndex.ONE ? 1 : 0;
 
@@ -233,7 +230,10 @@ public class MapartNamer extends Module {
         for (MapSlotInfo info : allMaps) {
             int rawX = info.col - minCol;
             info.x = rawX + offset;
-            if (info.x > mapWidth.get()) { info.skip = true; continue; }
+            if (info.x > mapWidth.get()) {
+                info.skip = true;
+                continue;
+            }
 
             int currentY = baseY.get() + info.row + offset;
             String expectedCoord = coordinateFormat.get()
@@ -254,9 +254,9 @@ public class MapartNamer extends Module {
             return;
         }
 
-        // Sort top to bottom, left to right
         mapSlots.sort(Comparator.comparingInt((MapSlotInfo s) -> s.row).thenComparingInt(s -> s.col));
 
+        info("Found " + mapSlots.size() + " map(s). Starting rename sequence.");
         ticks = renameDelay.get();
         state = State.HandleMaps;
         currentMap = null;
@@ -265,9 +265,21 @@ public class MapartNamer extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
+        if (mc.player == null || mc.world == null) return;
+
+        // The screen itself is the reliable trigger. This avoids depending on
+        // InventoryS2CPacket timing, which was preventing the module from ever
+        // reaching HandleMaps.
+        if (state == State.AwaitScreen) {
+            if (mc.currentScreen instanceof AnvilScreen) {
+                collectMapsAndStart();
+            }
+            return;
+        }
+
         if (state != State.HandleMaps) return;
 
-        // If the anvil screen is gone, abort and wait for next anvil
+        // If the anvil screen is gone, abort current step and wait for next anvil
         if (isNotAnvilScreen()) {
             state = State.AwaitInteract;
             currentMap = null;
@@ -375,8 +387,13 @@ public class MapartNamer extends Module {
     }
 
     private void clickSlot(int slot, int button, SlotActionType action) {
-        IClientPlayerInteractionManager cim = (IClientPlayerInteractionManager) mc.interactionManager;
-        cim.clickSlot(mc.player.currentScreenHandler.syncId, slot, button, action, mc.player);
+        mc.interactionManager.clickSlot(
+            mc.player.currentScreenHandler.syncId,
+            slot,
+            button,
+            action,
+            mc.player
+        );
     }
 
     private int getNextBatchStartY() {

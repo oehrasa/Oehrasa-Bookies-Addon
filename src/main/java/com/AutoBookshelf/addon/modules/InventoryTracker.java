@@ -6,12 +6,14 @@ import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.network.OtherClientPlayerEntity;
+import net.minecraft.component.DataComponentTypes;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.player.PlayerInventory;
@@ -46,6 +48,13 @@ public class InventoryTracker extends Module {
         .onChanged(v -> {
             if (!v) renderPreviews.clear();
         })
+        .build()
+    );
+
+    private final Setting<Boolean> showShulkerContents = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-container-contents")
+        .description("Also displays the contents of shulker boxes (or other containers) in the tracked grid, if the server sends that data.")
+        .defaultValue(false)
         .build()
     );
 
@@ -92,6 +101,11 @@ public class InventoryTracker extends Module {
         .defaultValue(new SettingColor(255, 255, 255, 70))
         .build()
     );
+
+    // Reused scratch array for pulling container contents out of a held shulker box,
+    // Each slot is copied into the display list
+    // immediately after being filled, before this array is reused for the next stack.
+    private static final ItemStack[] CONTAINER_PREVIEW = new ItemStack[27];
 
     public InventoryTracker() {
         super(Addon.CATEGORY, "Inventory-Tracker",
@@ -235,7 +249,10 @@ public class InventoryTracker extends Module {
     private void buildRenderPreview(UUID uuid, PlayerEntity player, TrackedInventory tracked) {
         if (!render.get()) return;
 
-        List<ItemStack> stacks = tracked.items;
+        List<ItemStack> stacks = showShulkerContents.get()
+            ? expandContainerContents(tracked.items)
+            : tracked.items;
+
         if (stacks.isEmpty()) {
             renderPreviews.remove(uuid);
             return;
@@ -261,6 +278,30 @@ public class InventoryTracker extends Module {
         float itemScale = size / 16.0f;
 
         renderPreviews.put(uuid, new PreviewData(player, nameText, w, h, stacks, perRow, itemScale));
+    }
+
+    // Pulls contents out of any held container item (shulker boxes, etc.) using the same
+    // Utils.hasItems / Utils.getItemsInContainerItem path BetterTooltips uses for its own
+    // container preview. Falls back to just the box itself when the server hasn't sent the
+    // container data (Utils.hasItems reports false in that case, so nothing is appended).
+    private List<ItemStack> expandContainerContents(List<ItemStack> source) {
+        List<ItemStack> expanded = new ArrayList<>(source.size());
+
+        for (ItemStack stack : source) {
+            expanded.add(stack);
+
+            if (Utils.hasItems(stack)) {
+                Utils.getItemsInContainerItem(stack, CONTAINER_PREVIEW);
+
+                for (ItemStack content : CONTAINER_PREVIEW) {
+                    if (content != null && !content.isEmpty()) {
+                        expanded.add(content.copy());
+                    }
+                }
+            }
+        }
+
+        return expanded;
     }
 
     @EventHandler
@@ -339,7 +380,7 @@ public class InventoryTracker extends Module {
             Iterator<ItemStack> it = items.iterator();
             while (it.hasNext()) {
                 ItemStack existing = it.next();
-                if (ItemStack.areItemsAndComponentsEqual(existing, newStack)) {
+                if (itemsEqualIgnoringDurability(existing, newStack)) {
                     it.remove();
                     timeMap.removeLong(existing);
                 }
@@ -354,6 +395,20 @@ public class InventoryTracker extends Module {
                     timeMap.removeLong(removed);
                 }
             }
+        }
+
+        // Same item identity (item type + all other components) while ignoring the damage
+        // component, so a tool losing durability updates its existing entry instead of
+        // being logged as a brand-new duplicate.
+        private static boolean itemsEqualIgnoringDurability(ItemStack a, ItemStack b) {
+            if (a.isEmpty() || b.isEmpty()) return a.isEmpty() && b.isEmpty();
+            if (!ItemStack.areItemsEqual(a, b)) return false;
+
+            ItemStack strippedA = a.copy();
+            ItemStack strippedB = b.copy();
+            strippedA.remove(DataComponentTypes.DAMAGE);
+            strippedB.remove(DataComponentTypes.DAMAGE);
+            return ItemStack.areItemsAndComponentsEqual(strippedA, strippedB);
         }
 
         private void prune() {

@@ -1,4 +1,4 @@
-package com.AutoBookshelf.addon.modules; // Adjust package to your addon
+package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -17,8 +17,7 @@ import net.minecraft.screen.slot.SlotActionType;
 import java.util.ArrayList;
 import java.util.List;
 
-public class
-ThrowEmptyShulkers extends Module {
+public class ThrowEmptyShulkers extends Module {
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgFilter  = settings.createGroup("Filter");
@@ -55,7 +54,7 @@ ThrowEmptyShulkers extends Module {
         .build()
     );
 
-    // Rotation mode (silent = client‑side only, normal = sends packets)
+    // Rotation mode (silent = client-side only, normal = sends packets)
     private final Setting<RotationMode> rotationMode = sgThrow.add(new EnumSetting.Builder<RotationMode>()
         .name("rotation-mode")
         .description("Normal: sends rotation packets (server sees you turn). Silent: client‑side only (no packets).")
@@ -142,6 +141,7 @@ ThrowEmptyShulkers extends Module {
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.interactionManager == null) return;
+        if (mc.player.currentScreenHandler != mc.player.playerScreenHandler) return;
 
         if (throwAtOnce.get()) {
             tickBatchMode();
@@ -288,9 +288,11 @@ ThrowEmptyShulkers extends Module {
 
     private void executeDrop(int invSlot) {
         if (mc.player == null || mc.player.currentScreenHandler == null) return;
+        if (mc.player.currentScreenHandler != mc.player.playerScreenHandler) return;
+
         int networkSlot = (invSlot < 9) ? 36 + invSlot : invSlot;
         mc.interactionManager.clickSlot(
-            mc.player.currentScreenHandler.syncId,
+            mc.player.playerScreenHandler.syncId,
             networkSlot,
             1,
             SlotActionType.THROW,

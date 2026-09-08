@@ -22,6 +22,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 
@@ -36,7 +38,21 @@ public class ChestTrackerDataV2 {
     private File backupFile;
     private File tempFile;
     private long lastSaveTime = 0;
-    private int saveFailures = 0;
+    private volatile int saveFailures = 0;
+
+    // Guards the actual on-disk write (temp -> backup -> move). Separate from
+    // `lock` above on purpose: `lock` protects the in-memory container map,
+    // this protects the filesystem. saveData() can be triggered from three
+    // places: the debounced background executor, the "Save Data" button, and
+    // world-leave. and without this, two of them landing at once could
+    // interleave writes to the same temp file.
+    private final Object fileWriteLock = new Object();
+
+    private final AtomicInteger pendingContainerSaves = new AtomicInteger(0);
+
+    // Bumped on every mutation so consumers (e.g. the browser screen) can
+    // cheaply detect "did anything change" without diffing the map.
+    private final AtomicLong dataVersion = new AtomicLong(0);
 
     private static final long SAVE_DEBOUNCE_MS = 2000;
     private final ScheduledExecutorService saveExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -95,6 +111,8 @@ public class ChestTrackerDataV2 {
             lock.writeLock().unlock();
         }
         markDirty();
+        pendingContainerSaves.incrementAndGet();
+        dataVersion.incrementAndGet();
     }
 
     public TrackedContainer getContainer(BlockPos pos, String dimension) {
@@ -169,9 +187,34 @@ public class ChestTrackerDataV2 {
             lock.writeLock().unlock();
         }
         markDirty();
+        dataVersion.incrementAndGet();
+    }
+
+    public int getPendingSaveCount() {
+        return pendingContainerSaves.get();
+    }
+
+    public long getDataVersion() {
+        return dataVersion.get();
+    }
+
+    public int getSaveFailures() {
+        return saveFailures;
     }
 
     public void saveData() {
+        JsonObject root;
+        try {
+            root = buildSnapshotJson();
+        } catch (Exception e) {
+            saveFailures++;
+            LOGGER.error("Failed to build save snapshot (attempt {})", saveFailures, e);
+            return;
+        }
+        writeJsonToFile(root);
+    }
+
+    private JsonObject buildSnapshotJson() {
         lock.readLock().lock();
         try {
             JsonObject root = new JsonObject();
@@ -186,23 +229,39 @@ public class ChestTrackerDataV2 {
                 dimensions.add(dimEntry.getKey(), dimArray);
             }
             root.add("dimensions", dimensions);
-            try (Writer writer = new OutputStreamWriter(new FileOutputStream(tempFile), StandardCharsets.UTF_8)) {
-                GSON.toJson(root, writer);
-            }
-            if (dataFile.exists() && dataFile.length() > 0) {
-                Files.copy(dataFile.toPath(), backupFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-            }
-            Files.move(tempFile.toPath(), dataFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-            lastSaveTime = System.currentTimeMillis();
-            saveFailures = 0;
-        } catch (Exception e) {
-            saveFailures++;
-            LOGGER.error("Failed to save data (attempt {})", saveFailures, e);
-            if (saveFailures > 3) {
-                LOGGER.error("Multiple save failures, data may be lost!");
-            }
+            return root;
         } finally {
             lock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Writes a previously-built snapshot to disk. Synchronized on
+     * fileWriteLock (not the data lock) so this can run on the background
+     * save-executor thread and, separately, on the main thread (manual
+     * "Save Data" button, world-leave) without two saves stomping on the
+     * same temp file if they overlap.
+     */
+    private void writeJsonToFile(JsonObject root) {
+        synchronized (fileWriteLock) {
+            try {
+                try (Writer writer = new OutputStreamWriter(new FileOutputStream(tempFile), StandardCharsets.UTF_8)) {
+                    GSON.toJson(root, writer);
+                }
+                if (dataFile.exists() && dataFile.length() > 0) {
+                    Files.copy(dataFile.toPath(), backupFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                }
+                Files.move(tempFile.toPath(), dataFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                lastSaveTime = System.currentTimeMillis();
+                saveFailures = 0;
+                pendingContainerSaves.set(0);
+            } catch (Exception e) {
+                saveFailures++;
+                LOGGER.error("Failed to save data (attempt {})", saveFailures, e);
+                if (saveFailures > 3) {
+                    LOGGER.error("Multiple save failures, data may be lost!");
+                }
+            }
         }
     }
 
@@ -212,16 +271,19 @@ public class ChestTrackerDataV2 {
             containers.clear();
             if (loadFromFile(dataFile)) {
                 LOGGER.info("Loaded data from main file");
+                dataVersion.incrementAndGet();
                 return;
             }
             if (loadFromFile(backupFile)) {
                 LOGGER.warn("Main file corrupted, loaded from backup");
+                dataVersion.incrementAndGet();
                 saveData();
                 return;
             }
             File oldFile = new File(MeteorClient.FOLDER, "ChestTracker/tracked_containers.json");
             if (oldFile.exists() && loadFromFile(oldFile)) {
                 LOGGER.info("Migrated data from old format");
+                dataVersion.incrementAndGet();
                 saveData();
                 return;
             }
@@ -273,6 +335,7 @@ public class ChestTrackerDataV2 {
             lock.writeLock().unlock();
         }
         markDirty();
+        dataVersion.incrementAndGet();
     }
 
     Map<String, Map<BlockPos, TrackedContainer>> getContainers() {

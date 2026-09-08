@@ -14,6 +14,10 @@ public final class AsmrAudioEngine {
     public enum State {IDLE, RESOLVING, PLAYING, FINISHED, ERROR}
 
     private static final AudioFormat PCM_FORMAT = new AudioFormat(44100f, 16, 2, true, false);
+    private static final int LINE_BUFFER_BYTES =
+        (int) (PCM_FORMAT.getFrameSize() * PCM_FORMAT.getFrameRate() * 0.5);
+    private static final int PREBUFFER_BYTES =
+        (int) (PCM_FORMAT.getFrameSize() * PCM_FORMAT.getFrameRate() * 0.25);
 
     private static volatile Thread worker;
     private static volatile Process ytProc;
@@ -273,9 +277,8 @@ public final class AsmrAudioEngine {
             ffProc = localFf;
 
             SourceDataLine out = AudioSystem.getSourceDataLine(PCM_FORMAT);
-            out.open(PCM_FORMAT);
+            out.open(PCM_FORMAT, LINE_BUFFER_BYTES);
             applyGain(out, configuredVolume);
-            out.start();
 
             if (myGen != generation.get()) {
                 try {
@@ -287,23 +290,28 @@ public final class AsmrAudioEngine {
             }
 
             line = out;
-            if (paused) {
-                try {
-                    out.stop();
-                } catch (Exception ignored) {
-                }
-            }
 
             InputStream src = localFf.getInputStream();
             byte[] buf = new byte[8192];
+            long prebuffered = 0L;
+            boolean started = false;
             while (!stopFlag.get() && myGen == generation.get()) {
                 int n = src.read(buf);
                 if (n < 0) break;
                 if (n > 0) {
                     out.write(buf, 0, n);
                     bytesPlayed += n;
+
+                    if (!started) {
+                        prebuffered += n;
+                        if (prebuffered >= PREBUFFER_BYTES) {
+                            started = true;
+                            if (!paused) out.start();
+                        }
+                    }
                 }
             }
+            if (!started && bytesPlayed > 0L && !paused) out.start(); // short track, never hit threshold
             if (!stopFlag.get() && myGen == generation.get()) out.drain();
             try {
                 out.stop();

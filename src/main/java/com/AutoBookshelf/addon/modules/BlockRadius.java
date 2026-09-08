@@ -300,6 +300,7 @@ public class BlockRadius extends Module {
         .description("Scale of the world-space Warden labels.")
         .defaultValue(1.2)
         .min(0.7)
+        .max(10.0)
         .sliderRange(0.7, 10.0)
         .visible(showWardens::get)
         .build()
@@ -447,6 +448,9 @@ public class BlockRadius extends Module {
     private final List<LivingEntity> wardens = new ArrayList<>();
     private final Map<Integer, Integer> lastAnger = new HashMap<>();
     private final Map<Integer, Long> attackExpiry = new HashMap<>();
+    private final Map<Integer, Long> angerTrendExpiry = new HashMap<>();
+    private final Map<Integer, Boolean> angerTrendUp = new HashMap<>();
+    private static final long ANGER_TREND_HOLD_TICKS = 30L; // ~1.5s
 
     /**
      * Reused mutable pos to avoid allocating a new BlockPos for every block checked.
@@ -467,6 +471,8 @@ public class BlockRadius extends Module {
         wardens.clear();
         lastAnger.clear();
         attackExpiry.clear();
+        angerTrendExpiry.clear();
+        angerTrendUp.clear();
     }
 
     @Override
@@ -479,6 +485,8 @@ public class BlockRadius extends Module {
         wardens.clear();
         lastAnger.clear();
         attackExpiry.clear();
+        angerTrendExpiry.clear();
+        angerTrendUp.clear();
     }
 
     @EventHandler
@@ -520,7 +528,8 @@ public class BlockRadius extends Module {
             if (!cullOverlapping.get()) continue;
             for (RangeBox other : beaconBoxes) {
                 if (box == other) continue;
-                if (other.level > box.level && other.contains(box)) {
+                if ((other.level > box.level || (other.level == box.level && other.hashCode() > box.hashCode()))
+                    && other.contains(box)) {
                     box.render = false;
                     break;
                 }
@@ -749,6 +758,8 @@ public class BlockRadius extends Module {
         if (!showWardens.get()) {
             lastAnger.clear();
             attackExpiry.clear();
+            angerTrendExpiry.clear();
+            angerTrendUp.clear();
             return;
         }
 
@@ -765,6 +776,8 @@ public class BlockRadius extends Module {
         // Drop tracking state for wardens that despawned/died between scans.
         lastAnger.keySet().removeIf(id -> !seen.contains(id));
         attackExpiry.keySet().removeIf(id -> !seen.contains(id));
+        angerTrendExpiry.keySet().removeIf(id -> !seen.contains(id));
+        angerTrendUp.keySet().removeIf(id -> !seen.contains(id));
     }
 
     @EventHandler
@@ -864,16 +877,29 @@ public class BlockRadius extends Module {
         boolean drawFill = drawShape && fillWardenShapes.get();
 
         for (LivingEntity w : wardens) {
-            try {
-                if (!(w instanceof WardenEntity warden)) continue;
+            if (!(w instanceof WardenEntity warden)) continue;
 
+            int anger = warden.getAnger();
+            Integer prev = lastAnger.get(w.getId());
+            lastAnger.put(w.getId(), anger);
+            long nowTick = warden.age;
+
+            if (showAngerTrend.get()) {
+                try {
+                    // EntityUtils has no lerped-box helper; interpolate manually.
+                    Vec3d lerpedPos = w.getLerpedPos(event.tickDelta);
+                    Box lerpedForTrend = w.getBoundingBox().offset(lerpedPos.subtract(w.getEntityPos()));
+                    renderAngerTrend(event, w.getId(), anger, prev, nowTick, lerpedForTrend);
+                } catch (Throwable t) {
+                    // isolated: a trend-render failure must never block the rest of this warden's rendering
+                }
+            }
+
+            try {
                 // EntityUtils has no lerped-box helper; interpolate manually.
                 Vec3d lerpedPos = w.getLerpedPos(event.tickDelta);
                 Box lerped = w.getBoundingBox().offset(lerpedPos.subtract(w.getEntityPos()));
 
-                int anger = warden.getAnger();
-                Integer prev = lastAnger.get(w.getId());
-                lastAnger.put(w.getId(), anger);
                 Angriness angriness = Angriness.getForAnger(anger);
 
                 WardenState state = classifyWarden(warden, anger, angriness);
@@ -883,7 +909,6 @@ public class BlockRadius extends Module {
                 boolean attackAnim = warden.attackingAnimationState.isRunning();
                 boolean imminent = sonicCharge || attackAnim;
 
-                long nowTick = warden.age;
                 if (imminent)
                     attackExpiry.put(w.getId(), nowTick + 100L);
                 long expiry = attackExpiry.getOrDefault(w.getId(), 0L);
@@ -989,16 +1014,6 @@ public class BlockRadius extends Module {
                         -lineSpacing * line, event.tickDelta);
                     line += 1;
                 }
-
-                if (showAngerTrend.get() && prev != null) {
-                    int delta = anger - prev;
-                    if (delta != 0) {
-                        Vec3d top = lerped.getCenter().add(0, lerped.getLengthY() / 2.0, 0);
-                        Vec3d to = top.add(0, delta > 0 ? 0.6 : -0.6, 0);
-                        SettingColor col = delta > 0 ? wardenSearchingColor.get() : wardenCalmColor.get();
-                        event.renderer.line(top.x, top.y, top.z, to.x, to.y, to.z, col);
-                    }
-                }
             } catch (Throwable t) {
                 // ignore per-entity errors
             }
@@ -1039,6 +1054,32 @@ public class BlockRadius extends Module {
 
         return new WardenState(color, label, locked, sniffing, digging, emerging,
             lockedOnYou, lockedOnOther, hasTarget);
+    }
+
+    private void renderAngerTrend(Render3DEvent event, int id, int anger, Integer prev,
+                                  long nowTick, Box lerped) {
+        if (prev != null) {
+            int delta = anger - prev;
+            if (delta != 0) {
+                angerTrendUp.put(id, delta > 0);
+                angerTrendExpiry.put(id, nowTick + ANGER_TREND_HOLD_TICKS);
+            }
+        }
+        Long trendExpiry = angerTrendExpiry.get(id);
+        if (trendExpiry == null || nowTick > trendExpiry) return;
+
+        boolean up = angerTrendUp.getOrDefault(id, true);
+        SettingColor col = up ? wardenSearchingColor.get() : wardenCalmColor.get();
+
+        Vec3d base = lerped.getCenter().add(0, lerped.getLengthY() / 2.0 + 0.1, 0);
+        Vec3d tip = base.add(0, up ? 1.0 : -1.0, 0);
+        event.renderer.line(base.x, base.y, base.z, tip.x, tip.y, tip.z, col);
+
+        double arm = 0.25, armY = up ? -arm : arm;
+        Vec3d armA = tip.add(-arm, armY, 0);
+        Vec3d armB = tip.add(arm, armY, 0);
+        event.renderer.line(tip.x, tip.y, tip.z, armA.x, armA.y, armA.z, col);
+        event.renderer.line(tip.x, tip.y, tip.z, armB.x, armB.y, armB.z, col);
     }
 
     private void drawWorldLabel(MatrixStack matrices, String text, double x,

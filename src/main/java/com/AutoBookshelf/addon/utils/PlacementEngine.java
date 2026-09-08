@@ -108,14 +108,6 @@ public class PlacementEngine {
             }
         }
 
-        if (!airPlace) {
-            for (BlockPos pos : cands) {
-                if (Vec3d.ofCenter(pos).squaredDistanceTo(playerPos) > rangeSq) continue;
-                if (pos.getY() != pp.getY()) continue;
-                if (canPlaceAt(pos, failedPositions)) return pos;
-            }
-        }
-
         return null;
     }
 
@@ -162,6 +154,7 @@ public class PlacementEngine {
 
     public boolean validSolidPos(BlockPos pos) {
         return isReplaceableOrAir(pos)
+            && isReplaceableOrAir(pos.up())
             && mc.world.getBlockState(pos.down()).isSolidBlock(mc.world, pos.down());
     }
 

@@ -1,8 +1,14 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.mixin.accessor.AbstractSignEditScreenAccessor;
+import com.AutoBookshelf.addon.modules.remote.BookEntry;
+import com.AutoBookshelf.addon.modules.remote.RemoteBookSelectScreen;
+import com.AutoBookshelf.addon.modules.remote.RemoteLibrary;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import meteordevelopment.meteorclient.MeteorClient;
+import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.widgets.WWidget;
@@ -10,13 +16,17 @@ import meteordevelopment.meteorclient.gui.widgets.containers.WHorizontalList;
 import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.misc.Keybind;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.block.entity.SignBlockEntity;
+import net.minecraft.client.gui.screen.ingame.AbstractSignEditScreen;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.WrittenBookContentComponent;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.BookUpdateC2SPacket;
+import net.minecraft.network.packet.c2s.play.UpdateSignC2SPacket;
 import net.minecraft.text.RawFilteredPair;
 import net.minecraft.text.StringVisitable;
 import net.minecraft.text.Text;
@@ -28,12 +38,19 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * Imports .txt files into signed books, either from a local folder/file,
+ * or by browsing Ashurbanipal public GitHub-Pages
+ */
 public class BookImporter extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgRemote = settings.createGroup("Remote Library");
     private final SettingGroup sgResume = settings.createGroup("Resume");
+    private final SettingGroup sgSign = settings.createGroup("Group Sign (Remote Mode)");
 
     private final Setting<String> importFolder = sgGeneral.add(new StringSetting.Builder()
         .name("import-folder")
@@ -53,7 +70,7 @@ public class BookImporter extends Module {
 
     private final Setting<Boolean> deleteAfterImport = sgGeneral.add(new BoolSetting.Builder()
         .name("delete-after-import")
-        .description("Delete .txt files after importing.")
+        .description("Delete .txt files after importing. Ignored for remote-library imports.")
         .defaultValue(false)
         .build()
     );
@@ -64,6 +81,26 @@ public class BookImporter extends Module {
         .defaultValue(60)
         .min(0)
         .max(100)
+        .build()
+    );
+
+    private final Setting<String> manifestUrl = sgRemote.add(new StringSetting.Builder()
+        .name("manifest-url")
+        .description("URL to index.json on GitHub Page.")
+        .defaultValue("https://oehrasa.github.io/Ashurbanipal/index.json")
+        .build()
+    );
+
+    public enum ImportSource {
+        LocalFolder,
+        RemoteLibrary
+    }
+
+    private final Setting<ImportSource> importSource = sgGeneral.add(new EnumSetting.Builder<ImportSource>()
+        .name("import-source")
+        .description("Which source to pull from when the module is activated.")
+        .defaultValue(ImportSource.LocalFolder)
+        .onChanged(v -> cancelActiveImport())
         .build()
     );
 
@@ -122,11 +159,30 @@ public class BookImporter extends Module {
         .build()
     );
 
+    // Group-sign settings (story-mode fill of the manifest's "group" title)
+    private final Setting<Boolean> writeGroupSign = sgSign.add(new BoolSetting.Builder()
+        .name("write-group-sign")
+        .description("After a remote book finishes importing, fill a sign you place with its 'group' title.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> signPacketDelay = sgSign.add(new IntSetting.Builder()
+        .name("sign-packet-delay")
+        .description("Ticks to delay before sending each sign update packet.")
+        .defaultValue(20)
+        .min(0)
+        .max(200)
+        .visible(writeGroupSign::get)
+        .build()
+    );
+
     // Page constraints
     private static final int MAX_PAGE_CHARS = 1024;
     private static final int MAX_PAGE_WIDTH = 114;
     private static final int MAX_PAGE_HEIGHT = 128;
     private static final String LINE_SEPARATOR = "\n";
+    private static final int MAX_SIGN_LINE_WIDTH = 90;
 
     // State
     private boolean isImporting = false;
@@ -145,22 +201,50 @@ public class BookImporter extends Module {
     private ImportTask pendingNextTask = null;
     private int pendingFileIndex = -1;
 
-    // Progress persistence (store completed file and part keys)
+    // Progress persistence (store completed source and part keys)
     private static final String PROGRESS_FILE = "AutoBookshelf/import_progress.json";
-    private final Set<String> completedParts = new HashSet<>();  // keys = "fileName|partNumber"
+    private final Set<String> completedParts = new HashSet<>();  // keys = "sourceName|partNumber"
     private final Gson gson = new GsonBuilder().setPrettyPrinting().create();
 
+    // Group-sign story-mode state
+    private final Deque<String> pendingSignGroups = new ArrayDeque<>();
+    private final List<String> currentSignWords = new ArrayList<>();
+    private int signWordIndex = 0;
+    private final ArrayDeque<UpdateSignC2SPacket> signPacketQueue = new ArrayDeque<>();
+    private int signPacketTimer = 0;
+
     private static class ImportTask {
-        File file;
+        File file;          // null for remote tasks
+        BookEntry entry;    // null for local tasks
+        String sourceName;  // file.getName() locally, entry.file remotely
         String baseTitle;
+        String group;       // null for local tasks; manifest "group" for remote tasks
         List<String> allPages;
         int totalParts;
 
-        ImportTask(File file, String baseTitle, List<String> allPages, int totalParts) {
-            this.file = file;
-            this.baseTitle = baseTitle;
-            this.allPages = allPages;
-            this.totalParts = totalParts;
+        static ImportTask local(File file, String baseTitle, List<String> allPages, int totalParts) {
+            ImportTask t = new ImportTask();
+            t.file = file;
+            t.sourceName = file.getName();
+            t.baseTitle = baseTitle;
+            t.allPages = allPages;
+            t.totalParts = totalParts;
+            return t;
+        }
+
+        static ImportTask remote(BookEntry entry, String baseTitle, List<String> allPages, int totalParts) {
+            ImportTask t = new ImportTask();
+            t.entry = entry;
+            t.sourceName = entry.file;
+            t.baseTitle = baseTitle;
+            t.group = entry.group;
+            t.allPages = allPages;
+            t.totalParts = totalParts;
+            return t;
+        }
+
+        boolean isRemote() {
+            return entry != null;
         }
     }
 
@@ -168,11 +252,34 @@ public class BookImporter extends Module {
         super(Addon.CATEGORY, "Book-Import", "Automatically imports text files into signed books.");
     }
 
+    private enum PendingSource {NONE, REMOTE}
+
+    private PendingSource pendingSource = PendingSource.NONE;
+
     @Override
     public void onActivate() {
         if (mc.player == null || mc.world == null) {
             error("Cannot activate module while not in a world.");
             toggle();
+            return;
+        }
+
+        if (pendingSource == PendingSource.REMOTE) {
+            // tasks already populated by onRemoteSelectionConfirmed(). cant scan local here.
+            pendingSource = PendingSource.NONE;
+            if (tasks.isEmpty()) {
+                sendMessage("No remote books were queued.");
+                toggle();
+                return;
+            }
+            beginImport();
+            return;
+        }
+
+        if (importSource.get() == ImportSource.RemoteLibrary) {
+            // Can't produce tasks synchronously (manifest fetch + download are async)
+            toggle();
+            openRemoteBrowser();
             return;
         }
 
@@ -188,6 +295,96 @@ public class BookImporter extends Module {
             return;
         }
 
+        beginImport();
+    }
+
+    private void openRemoteBrowser() {
+        sendMessage("Fetching remote library manifest...");
+
+        CompletableFuture
+            .supplyAsync(() -> {
+                try {
+                    return RemoteLibrary.fetchManifest(manifestUrl.get());
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            })
+            .whenComplete((entries, throwable) -> mc.execute(() -> {
+                if (throwable != null) {
+                    error("Failed to load remote manifest: " + throwable.getCause());
+                    return;
+                }
+                if (entries.isEmpty()) {
+                    sendMessage("Remote manifest is empty.");
+                    return;
+                }
+
+                mc.setScreen(new RemoteBookSelectScreen(entries, this::onRemoteSelectionConfirmed));
+            }));
+    }
+
+    private void onRemoteSelectionConfirmed(List<BookEntry> selected) {
+        if (mc.player == null || mc.world == null) {
+            error("Cannot start import while not in a world.");
+            return;
+        }
+
+        sendMessage("Downloading " + selected.size() + " book(s)...");
+
+        CompletableFuture
+            .supplyAsync(() -> {
+                Map<BookEntry, List<String>> fetched = new LinkedHashMap<>();
+                for (BookEntry entry : selected) {
+                    try {
+                        fetched.put(entry, RemoteLibrary.fetchLines(entry.url));
+                    } catch (Exception e) {
+                        mc.execute(() -> error("Failed to download " + entry.file + ": " + e.getMessage()));
+                    }
+                }
+                return fetched;
+            })
+            .whenComplete((fetched, throwable) -> mc.execute(() -> {
+                if (throwable != null) {
+                    error("Download failed: " + throwable.getCause());
+                    return;
+                }
+
+                List<ImportTask> queued = new ArrayList<>();
+                for (Map.Entry<BookEntry, List<String>> e : fetched.entrySet()) {
+                    BookEntry entry = e.getKey();
+                    List<String> pages = convertLinesToPages(e.getValue());
+                    if (pages.isEmpty()) continue;
+
+                    String baseTitle = entry.title != null ? entry.title : entry.file;
+                    if (baseTitle.length() > 32) baseTitle = baseTitle.substring(0, 32);
+
+                    int parts = (int) Math.ceil((double) pages.size() / pagesPerBook.get());
+                    queued.add(ImportTask.remote(entry, baseTitle, pages, parts));
+                }
+
+                if (queued.isEmpty()) {
+                    sendMessage("Nothing downloaded successfully, cancelling.");
+                    return;
+                }
+
+                loadProgress();
+                tasks.clear();
+                tasks.addAll(queued);
+                for (ImportTask t : queued) {
+                    sendMessage("Queued: " + t.sourceName + " (" + t.allPages.size() + " pages, " + t.totalParts + " part(s))");
+                }
+
+                if (!isActive()) {
+                    pendingSource = PendingSource.REMOTE;
+                    toggle();
+                } else {
+                    beginImport();
+                }
+            }));
+    }
+
+    // Shared start-up logic (resume position, progress lookup) for both local and remote task lists.
+    private void beginImport() {
         int startIndex = startFromFileIndex.get() - 1;
         int startPart = startFromPart.get();
 
@@ -206,19 +403,19 @@ public class BookImporter extends Module {
             for (int i = 0; i < tasks.size(); i++) {
                 ImportTask task = tasks.get(i);
                 for (int part = 1; part <= task.totalParts; part++) {
-                    String key = task.file.getName() + "|" + part;
+                    String key = task.sourceName + "|" + part;
                     if (!completedParts.contains(key)) {
                         startIndex = i;
                         startPart = part;
                         foundIncomplete = true;
-                        sendMessage("§aResuming from incomplete: " + task.file.getName() + " part " + part + "/" + task.totalParts);
+                        sendMessage("§aResuming from incomplete: " + task.sourceName + " part " + part + "/" + task.totalParts);
                         break;
                     }
                 }
                 if (foundIncomplete) break;
             }
             if (!foundIncomplete) {
-                sendMessage("§eAll files appear to be fully imported. To re‑import, delete progress or files.");
+                sendMessage("§eAll files appear to be fully imported. To re-import, delete progress or files.");
                 toggle();
                 return;
             }
@@ -251,7 +448,7 @@ public class BookImporter extends Module {
         allPages = currentTask.allPages;
 
         sendMessage("Found " + tasks.size() + " file(s) to import");
-        sendMessage("Starting with: " + currentTask.file.getName() + " part " + currentPart + "/" + totalParts);
+        sendMessage("Starting with: " + currentTask.sourceName + " part " + currentPart + "/" + totalParts);
 
         if (userOverride) {
             mc.execute(() -> {
@@ -266,10 +463,16 @@ public class BookImporter extends Module {
     public void onDeactivate() {
         isImporting = false;
         waitingForConfirm = false;
+        pendingSource = PendingSource.NONE;
         tasks.clear();
         currentTask = null;
         tickDelay = 0;
         saveProgress();
+
+        if ((!pendingSignGroups.isEmpty() || !currentSignWords.isEmpty() || !signPacketQueue.isEmpty())
+            && Utils.canUpdate()) {
+            MeteorClient.EVENT_BUS.subscribe(this);
+        }
     }
 
     private void saveProgress() {
@@ -344,7 +547,7 @@ public class BookImporter extends Module {
                 String baseTitle = file.getName().replace(".txt", "");
                 if (baseTitle.length() > 32) baseTitle = baseTitle.substring(0, 32);
                 int totalParts = (int) Math.ceil((double) pages.size() / pagesPerBook.get());
-                tasks.add(new ImportTask(file, baseTitle, pages, totalParts));
+                tasks.add(ImportTask.local(file, baseTitle, pages, totalParts));
                 sendMessage("Queued: " + file.getName() + " (" + pages.size() + " pages, " + totalParts + " part(s))");
             } catch (IOException e) {
                 sendMessage("§cFailed to read file.");
@@ -401,13 +604,21 @@ public class BookImporter extends Module {
                 String baseTitle = file.getName().replace(".txt", "");
                 if (baseTitle.length() > 32) baseTitle = baseTitle.substring(0, 32);
                 int totalParts = (int) Math.ceil((double) pages.size() / pagesPerBook.get());
-                tasks.add(new ImportTask(file, baseTitle, pages, totalParts));
+                tasks.add(ImportTask.local(file, baseTitle, pages, totalParts));
                 sendMessage("Queued: " + file.getName() + " (" + pages.size() + " pages, " + totalParts + " part(s))");
             } catch (IOException e) {
                 error("Failed to read file: " + file.getName());
             }
         }
         return true;
+    }
+
+    private void cancelActiveImport() {
+        if (isActive()) {
+            sendMessage("§eCancelling current import to switch source...");
+            toggle(); // synchronously runs onDeactivate(): clears tasks, resets isImporting/currentTask, saves progress
+        }
+        pendingSource = PendingSource.NONE;
     }
 
     @Override
@@ -424,17 +635,28 @@ public class BookImporter extends Module {
                 false
             );
             if (path != null) {
+                cancelActiveImport();
                 selectedFilePath.set(path);
                 useSelectedFile.set(true);
+                importSource.set(ImportSource.LocalFolder);
                 info("Selected file: " + path);
             }
         };
 
-        WButton clearBtn = row.add(theme.button("Clear Selection")).widget();
+        WButton clearBtn = row.add(theme.button("ManFile Clear")).widget();
         clearBtn.action = () -> {
+            cancelActiveImport();
             selectedFilePath.set("");
             useSelectedFile.set(false);
+            importSource.set(ImportSource.LocalFolder);
             info("Cleared manual file selection.");
+        };
+
+        WButton browseRemoteBtn = row.add(theme.button("Browse Remote Library")).widget();
+        browseRemoteBtn.action = () -> {
+            cancelActiveImport();
+            importSource.set(ImportSource.RemoteLibrary);
+            openRemoteBrowser();
         };
 
         WButton resetBtn = row.add(theme.button("Reset Progress")).widget();
@@ -448,6 +670,16 @@ public class BookImporter extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
+        if (!signPacketQueue.isEmpty()) {
+            signPacketTimer++;
+            if (signPacketTimer >= signPacketDelay.get() && mc.getNetworkHandler() != null) {
+                signPacketTimer = 0;
+                mc.getNetworkHandler().getConnection().send(signPacketQueue.removeFirst(), null);
+            }
+        } else if (!isActive() && pendingSignGroups.isEmpty() && currentSignWords.isEmpty()) {
+            MeteorClient.EVENT_BUS.unsubscribe(this);
+        }
+
         if (!isImporting) return;
         if (mc.player == null || mc.world == null) {
             isImporting = false;
@@ -471,16 +703,21 @@ public class BookImporter extends Module {
         if (currentPart > totalParts) {
             // Current file finished then mark all its parts as completed
             for (int i = 1; i <= totalParts; i++) {
-                completedParts.add(currentTask.file.getName() + "|" + i);
+                completedParts.add(currentTask.sourceName + "|" + i);
             }
             saveProgress();
 
-            if (deleteAfterImport.get() && currentTask != null && currentTask.file != null) {
+            // Queue this book's manifest "group" title for the next sign the player places.
+            if (writeGroupSign.get() && currentTask.isRemote() && currentTask.group != null && !currentTask.group.isBlank()) {
+                pendingSignGroups.addLast(currentTask.group);
+            }
+
+            if (deleteAfterImport.get() && !currentTask.isRemote() && currentTask.file != null) {
                 try {
                     Files.delete(currentTask.file.toPath());
-                    sendMessage("Deleted: " + currentTask.file.getName());
+                    sendMessage("Deleted: " + currentTask.sourceName);
                 } catch (IOException e) {
-                    error("Failed to delete: " + currentTask.file.getName());
+                    error("Failed to delete: " + currentTask.sourceName);
                 }
             }
 
@@ -492,8 +729,8 @@ public class BookImporter extends Module {
 
             ImportTask nextTask = tasks.get(nextIndex);
             if (requireConfirmNextFile.get()) {
-                sendMessage("§6=== File completed: " + currentTask.file.getName() + " ===");
-                sendMessage("§eNext file: " + nextTask.file.getName() + " (" + nextTask.totalParts + " parts)");
+                sendMessage("§6=== File completed: " + currentTask.sourceName + " ===");
+                sendMessage("§eNext file: " + nextTask.sourceName + " (" + nextTask.totalParts + " parts)");
                 sendMessage("§aPress the confirm key (" + confirmKey.get().toString() + ") to continue.");
                 waitingForConfirm = true;
                 pendingNextTask = nextTask;
@@ -506,7 +743,7 @@ public class BookImporter extends Module {
                 totalParts = currentTask.totalParts;
                 allPages = currentTask.allPages;
                 tickDelay = 20;
-                sendMessage("Moving to next file: " + currentTask.file.getName());
+                sendMessage("Moving to next file: " + currentTask.sourceName);
                 sendMessage("Part 1/" + totalParts + " ready for " + currentTask.baseTitle);
                 saveProgress();
             }
@@ -525,7 +762,7 @@ public class BookImporter extends Module {
         totalBooksCreated++;
 
         // Mark this part as completed
-        completedParts.add(currentTask.file.getName() + "|" + currentPart);
+        completedParts.add(currentTask.sourceName + "|" + currentPart);
         saveProgress();
 
         currentPart++;
@@ -535,6 +772,57 @@ public class BookImporter extends Module {
         if (currentPart <= totalParts) {
             sendMessage("Part " + currentPart + "/" + totalParts + " ready for " + currentTask.baseTitle);
         }
+    }
+
+    @EventHandler
+    private void onSignScreenOpened(OpenScreenEvent event) {
+        if (!writeGroupSign.get()) return;
+        if (!(event.screen instanceof AbstractSignEditScreen editScreen)) return;
+        if (!refillCurrentSignWords()) return;
+
+        SignBlockEntity sign = ((AbstractSignEditScreenAccessor) editScreen).getBlockEntity();
+        if (sign == null) return;
+
+        event.cancel();
+        String[] lines = getNextGroupSignLines();
+        if (signPacketQueue.isEmpty()) signPacketTimer = 0;
+        signPacketQueue.addLast(new UpdateSignC2SPacket(sign.getPos(), true, lines[0], lines[1], lines[2], lines[3]));
+    }
+
+    private boolean refillCurrentSignWords() {
+        if (!currentSignWords.isEmpty()) return true;
+        if (pendingSignGroups.isEmpty()) return false;
+        String group = pendingSignGroups.pollFirst();
+        for (String w : group.trim().split("\\s+")) {
+            if (!w.isEmpty()) currentSignWords.add(w);
+        }
+        signWordIndex = 0;
+        return !currentSignWords.isEmpty();
+    }
+
+    private String[] getNextGroupSignLines() {
+        String[] lines = new String[4];
+        for (int n = 0; n < 4; n++) {
+            StringBuilder line = new StringBuilder();
+            while (signWordIndex < currentSignWords.size()) {
+                String word = currentSignWords.get(signWordIndex);
+                String candidate = line.isEmpty() ? word : line + " " + word;
+                if (mc.textRenderer.getWidth(candidate) > MAX_SIGN_LINE_WIDTH) {
+                    if (line.isEmpty()) {
+                        line.append(mc.textRenderer.trimToWidth(word, MAX_SIGN_LINE_WIDTH));
+                        signWordIndex++;
+                    }
+                    break;
+                }
+                line = new StringBuilder(candidate);
+                signWordIndex++;
+            }
+            lines[n] = line.toString();
+        }
+        // Always start fresh on the next sign.
+        currentSignWords.clear();
+        signWordIndex = 0;
+        return lines;
     }
 
     private void applyNextFile() {
@@ -547,7 +835,7 @@ public class BookImporter extends Module {
             allPages = currentTask.allPages;
             pendingNextTask = null;
             pendingFileIndex = -1;
-            sendMessage("Moving to next file: " + currentTask.file.getName());
+            sendMessage("Moving to next file: " + currentTask.sourceName);
             sendMessage("Part 1/" + totalParts + " ready for " + currentTask.baseTitle);
             saveProgress();
         }
