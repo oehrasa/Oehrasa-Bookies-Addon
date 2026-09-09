@@ -31,7 +31,7 @@ Tested successfully with these mods.
 
 > [!IMPORTANT]
 >
-> AnarchyMod is not compatible with the addon. **(Its Already Integrated)**
+> AnarchyMod is **NOT** compatible with the addon. **(Its free home is already Integrated)**
 >
 > client_maps is not compatible with ev-mod vice versa.
 
@@ -99,7 +99,7 @@ Tested successfully with these mods.
 <details>
 <summary><b>Display of the addon</b> (in-game)</summary>
 <h1 align="left">
-  <img src="https://github.com/user-attachments/assets/e9ea86fe-51a5-4d68-89ed-3e37be999ebf" alt="Header Image" style="width:70%; max-width:600px;"/>
+  <img src="https://github.com/user-attachments/assets/a7c42328-e553-496f-930e-ffdec541314f" alt="Header Image" style="width:70%; max-width:600px;"/>
 </h1>
 </details>
 
@@ -155,7 +155,7 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 <summary><b>Book-Import</b> - Automatically imports text files into signed books</summary>
 
 1. Enable the module
-2. Put the .txt file into folder : `\minecraft\AutoBookshelf\books` or use the Remote Source
+2. Put the .txt file into folder : `\minecraft\AutoBookshelf\books` or use the [Remote Source](https://github.com/oehrasa/Ashurbanipal)
 3. _Recommend to use alongside Bookshelf-Filler module_
 4. Press set key in the module settings to continue to next file
 > I post the Python code [here](https://github.com/oehrasa/Auto-Written-Book)
@@ -218,6 +218,7 @@ List of addons I used as reference(skid? mwhehe), You should check them out it's
 - **[Trouser](https://github.com/etianl/Trouser-Streak)** - PortalPatternFinder
 - **[PathSeeker](https://github.com/FaxHack/PathSeeker)** - InventoryInfo
 - **[MeteorPlusPlus](https://github.com/zychen027/MeteorPlusPlusAddon)** - PacketEat
+- **[MeteorEnemies](https://github.com/crosby-moe/MeteorEnemies)** - Enemy tab
 - **[6Bees](https://github.com/Powie69/6Bees)** - Hidden map id's tooltip, Base system, 6bees-data
 
 ## Contributing
