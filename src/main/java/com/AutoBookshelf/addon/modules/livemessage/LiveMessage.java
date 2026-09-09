@@ -457,7 +457,7 @@ public class LiveMessage extends Module {
             command = command.substring(1);
         }
 
-        return command.isEmpty() ? "ignorehard" : command;
+        return command.isEmpty() ? "ignore" : command;
     }
 
     public void closeFocusedWindow() {

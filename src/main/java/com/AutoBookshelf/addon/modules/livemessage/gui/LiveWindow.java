@@ -48,7 +48,9 @@ public class LiveWindow {
         this.x = (int) (Math.random() * (LivemessageGui.screenWidth - this.w));
         this.y = (int) (Math.random() * (LivemessageGui.screenHeight - this.h));
         this.fontRenderer = this.mc.textRenderer;
-        this.primaryColor = GuiUtil.getWindowColor(this.mc.player.getUuid());
+        this.primaryColor = this.mc.player != null
+            ? GuiUtil.getWindowColor(this.mc.player.getUuid())
+            : GuiUtil.getSingleRGB(128);
         if (LivemessageGui.liveWindows.size() > 0) {
             LivemessageGui.liveWindows.get(LivemessageGui.liveWindows.size() - 1).deactivateWindow();
         }
@@ -116,8 +118,10 @@ public class LiveWindow {
             && mouseY > this.y + 3
             && mouseY < this.y + 14
             && LivemessageGui.liveWindows.size() > 1) {
-            LivemessageGui.liveWindows.get(LivemessageGui.liveWindows.size() - 2).activateWindow();
             LivemessageGui.liveWindows.removeIf(it -> it == this);
+            if (!LivemessageGui.liveWindows.isEmpty()) {
+                LivemessageGui.liveWindows.get(LivemessageGui.liveWindows.size() - 1).activateWindow();
+            }
         }
 
         if (mouseX > this.x && mouseX < this.x + this.w && mouseY > this.y && mouseY < this.y + 20) {

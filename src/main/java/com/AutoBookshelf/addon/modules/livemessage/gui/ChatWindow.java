@@ -144,7 +144,7 @@ public class ChatWindow extends LiveWindow {
                     btn.iconColor = -1;
                 }
             } else if (btn.id == 2) {
-                btn.iconActive = this.chatSettings.customColor > 0;
+                btn.iconActive = this.chatSettings.customColor != 0;
             }
         }
     }
@@ -214,7 +214,7 @@ public class ChatWindow extends LiveWindow {
     }
 
     public void loadWindowColor() {
-        if (this.chatSettings.customColor > 0) {
+        if (this.chatSettings.customColor != 0) {
             this.primaryColor = this.chatSettings.customColor;
             LiveMessage.LOG.info("Loaded custom window color for {} = 0x{}", this.liveProfile.username, Integer.toHexString(this.primaryColor).toUpperCase());
         } else {
@@ -251,7 +251,8 @@ public class ChatWindow extends LiveWindow {
 
         for (int i = startIndex; i < allLines.size(); i++) {
             try {
-                this.chatHistory.add(gson.fromJson(allLines.get(i), ChatWindow.ChatMessage.class));
+                ChatWindow.ChatMessage parsed = gson.fromJson(allLines.get(i), ChatWindow.ChatMessage.class);
+                if (parsed != null && parsed.message != null) this.chatHistory.add(parsed);
             } catch (Exception e) {
                 LiveMessage.logError("Failed to parse chat message from history file for UUID: {}", this.liveProfile.uuid, e);
             }
@@ -471,7 +472,7 @@ public class ChatWindow extends LiveWindow {
         this.markAsRead();
         if (keyCode == 257 || keyCode == 335) {
             String s = this.inputField.getText().trim();
-            if (!s.isEmpty()) {
+            if (!s.isEmpty() && this.mc.player != null) {
                 if (LivemessageUtil.checkOnlineStatus(this.liveProfile.uuid) && !WhisperRateLimiter.isOnCooldown()) {
                     this.suppressEchoUntil = System.currentTimeMillis() + 3000L;
                     WhisperRateLimiter.markSelfInitiated(this.liveProfile.username, s);

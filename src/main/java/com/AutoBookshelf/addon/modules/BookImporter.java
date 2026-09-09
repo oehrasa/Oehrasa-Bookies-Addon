@@ -200,6 +200,7 @@ public class BookImporter extends Module {
     private boolean waitingForConfirm = false;
     private ImportTask pendingNextTask = null;
     private int pendingFileIndex = -1;
+    private boolean manuallySubscribed = false;
 
     // Progress persistence (store completed source and part keys)
     private static final String PROGRESS_FILE = "AutoBookshelf/import_progress.json";
@@ -258,6 +259,11 @@ public class BookImporter extends Module {
 
     @Override
     public void onActivate() {
+        if (manuallySubscribed) {
+            MeteorClient.EVENT_BUS.unsubscribe(this);
+            manuallySubscribed = false;
+        }
+
         if (mc.player == null || mc.world == null) {
             error("Cannot activate module while not in a world.");
             toggle();
@@ -472,6 +478,7 @@ public class BookImporter extends Module {
         if ((!pendingSignGroups.isEmpty() || !currentSignWords.isEmpty() || !signPacketQueue.isEmpty())
             && Utils.canUpdate()) {
             MeteorClient.EVENT_BUS.subscribe(this);
+            manuallySubscribed = true;
         }
     }
 
@@ -678,6 +685,7 @@ public class BookImporter extends Module {
             }
         } else if (!isActive() && pendingSignGroups.isEmpty() && currentSignWords.isEmpty()) {
             MeteorClient.EVENT_BUS.unsubscribe(this);
+            manuallySubscribed = false;
         }
 
         if (!isImporting) return;

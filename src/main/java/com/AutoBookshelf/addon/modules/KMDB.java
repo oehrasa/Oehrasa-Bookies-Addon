@@ -552,14 +552,15 @@ public class KMDB extends Module {
         Direction facing = mc.player.getHorizontalFacing();
         BlockPos preferredFoot = mc.player.getBlockPos().offset(facing, placementDistance.get());
 
-        if (skipIfOccupied.get() && !mc.world.getBlockState(preferredFoot).isAir()) {
-            warning("Foot position is already occupied, golem may already exist.");
-            return;
-        }
-
         BlockPos foot = findClearFootPosition(copperGolemFootprint(), placementSearchRadius.get());
         if (foot == null) {
             error("Not enough clear space for copper golem nearby.");
+            return;
+        }
+
+        if (skipIfOccupied.get() && foot.equals(preferredFoot)
+            && !mc.world.getBlockState(preferredFoot).isAir()) {
+            warning("Foot position is already occupied, golem may already exist.");
             return;
         }
 

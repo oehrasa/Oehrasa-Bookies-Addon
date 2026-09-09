@@ -214,7 +214,7 @@ public class AutoLoader extends Module {
     private final Setting<Integer> placeRange = sgPlacement.add(new IntSetting.Builder()
         .name("place-range")
         .description("Maximum search distance at which the container may be placed.")
-        .defaultValue(5)
+        .defaultValue(2)
         .min(1)
         .sliderMax(5)
         .build()

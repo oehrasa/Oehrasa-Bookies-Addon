@@ -61,6 +61,8 @@ public class PlacementEngine {
                 }
             }
         }
+
+        cands.removeIf(pos -> !isWithinWorldHeight(pos));
         // Closest candidates first; ties keep their original (front-biased) order.
         cands.sort(Comparator.comparingDouble(pos -> Vec3d.ofCenter(pos).squaredDistanceTo(playerPos)));
 
@@ -142,6 +144,10 @@ public class PlacementEngine {
         Box playerBox = mc.player.getBoundingBox();
         Box blockBox = new Box(pos);
         return playerBox.intersects(blockBox);
+    }
+
+    private boolean isWithinWorldHeight(BlockPos pos) {
+        return !mc.world.isOutOfHeightLimit(pos);
     }
 
     public boolean canPlaceAt(BlockPos pos, List<BlockPos> failedPositions) {

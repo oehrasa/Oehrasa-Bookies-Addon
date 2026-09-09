@@ -144,7 +144,8 @@ public class EnemyManager extends System<EnemyManager> implements Iterable<Enemy
 
         Collections.sort(enemies);
 
-        MeteorExecutor.execute(() -> enemies.forEach(Enemy::updateInfo));
+        List<Enemy> snapshot = new ArrayList<>(enemies);
+        MeteorExecutor.execute(() -> snapshot.forEach(Enemy::updateInfo));
 
         return this;
     }

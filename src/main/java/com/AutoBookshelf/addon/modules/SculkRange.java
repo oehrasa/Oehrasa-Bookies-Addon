@@ -315,6 +315,7 @@ public class SculkRange extends Module {
 
     @Override
     public void onActivate() {
+        if (mc.world == null) return;
         sensors.clear();
         scanAllChunks();
     }
@@ -342,7 +343,7 @@ public class SculkRange extends Module {
     }
 
     private void rescanAll() {
-        if (!isActive()) return;
+        if (!isActive() || mc.world == null) return;
         sensors.clear();
         scanAllChunks();
     }
@@ -468,7 +469,7 @@ public class SculkRange extends Module {
         boolean trackShrieker = showShriekers.get();
         boolean advanced = advancedView.get();
         w.submit(() -> {
-            if (!isActive()) return;
+            if (!isActive() || mc.world == null) return;
             Set<SensorData> found = new HashSet<>();
             AtomicReferenceArray<WorldChunk> chunks = mc.world.getChunkManager().chunks.chunks;
             for (int i = 0; i < chunks.length(); i++) {

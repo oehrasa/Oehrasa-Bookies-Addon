@@ -230,7 +230,7 @@ public class MapartNamer extends Module {
         for (MapSlotInfo info : allMaps) {
             int rawX = info.col - minCol;
             info.x = rawX + offset;
-            if (info.x > mapWidth.get()) {
+            if (info.x >= mapWidth.get() + offset) {
                 info.skip = true;
                 continue;
             }

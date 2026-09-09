@@ -66,11 +66,13 @@ public class GuiUtil {
             File settingsFile = LivemessageUtil.LIVEMESSAGE_FOLDER.resolve("mainwindow.json").toFile();
             if (settingsFile.exists()) {
                 Gson gson = new Gson();
-                JsonObject json = gson.fromJson(new FileReader(settingsFile), JsonObject.class);
-                if (json.has("customColor")) {
-                    int mainWindowColor = json.get("customColor").getAsInt();
-                    if (mainWindowColor > 0) {
-                        return mainWindowColor;
+                try (FileReader reader = new FileReader(settingsFile)) {
+                    JsonObject json = gson.fromJson(reader, JsonObject.class);
+                    if (json != null && json.has("customColor")) {
+                        int mainWindowColor = json.get("customColor").getAsInt();
+                        if (mainWindowColor > 0) {
+                            return mainWindowColor;
+                        }
                     }
                 }
             }

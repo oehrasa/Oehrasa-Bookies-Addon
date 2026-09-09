@@ -6,6 +6,11 @@ import com.google.gson.Gson;
 import net.minecraft.client.MinecraftClient;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -21,6 +26,26 @@ public class QueueUtil {
 
     private static Object lockFor(UUID uuid) {
         return LOCKS.computeIfAbsent(uuid, k -> new Object());
+    }
+
+    private static void writeAtomic(File file, List<String> lines) throws IOException {
+        Path target = file.toPath();
+        Path tmp = Files.createTempFile(target.getParent(), file.getName(), ".tmp");
+        try {
+            try (BufferedWriter writer = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
+                for (String l : lines) {
+                    writer.write(l);
+                    writer.write("\n");
+                }
+            }
+            try {
+                Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) { // ADDED: fallback for filesystems without atomic rename support
+                Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(tmp); // avoid leaking the temp file if move/write fails
+        }
     }
 
     public static Map<UUID, List<ChatWindow.ChatMessage>> allQueued() {
@@ -119,7 +144,8 @@ public class QueueUtil {
 
                     boolean isPending = msg != null && msg.pending;
                     boolean matches = isPending && (matchText == null
-                        || (!matchedOnce && msg.message != null && msg.message.toLowerCase().contains(matchText.toLowerCase())));
+                        || (!matchedOnce && msg.message != null
+                        && msg.message.toLowerCase(Locale.ROOT).contains(matchText.toLowerCase(Locale.ROOT))));
 
                     if (matches) {
                         removed++;
@@ -134,8 +160,8 @@ public class QueueUtil {
             }
 
             if (removed > 0) {
-                try (FileWriter writer = new FileWriter(file, false)) {
-                    for (String l : keep) writer.write(l + "\n");
+                try {
+                    writeAtomic(file, keep);
                 } catch (IOException e) {
                     throw new RuntimeException("Failed to rewrite queue file for " + uuid, e);
                 }
@@ -188,8 +214,8 @@ public class QueueUtil {
 
             if (popped == null) return null;
 
-            try (FileWriter writer = new FileWriter(file, false)) {
-                for (String l : rewritten) writer.write(l + "\n");
+            try {
+                writeAtomic(file, rewritten);
             } catch (IOException e) {
                 throw new RuntimeException("Failed to rewrite queue file for " + uuid, e);
             }

@@ -22,6 +22,7 @@ public class RemoteBookSelectScreen extends WindowScreen {
     private final List<BookEntry> allEntries;
     private final Consumer<List<BookEntry>> onConfirm;
     private final Map<BookEntry, WCheckbox> checkboxes = new LinkedHashMap<>();
+    private final List<BookEntry> visible = new ArrayList<>();
 
     private WVerticalList listContainer;
     private WTextBox search;
@@ -45,7 +46,10 @@ public class RemoteBookSelectScreen extends WindowScreen {
 
         WButton selectAllBtn = footer.add(theme.button("Select All Visible")).widget();
         selectAllBtn.action = () -> {
-            for (WCheckbox cb : checkboxes.values()) cb.checked = true;
+            for (BookEntry entry : visible) {
+                WCheckbox cb = checkboxes.get(entry);
+                if (cb != null) cb.checked = true;
+            }
         };
 
         WButton importBtn = footer.add(theme.button("Import Selected")).widget();
@@ -66,6 +70,7 @@ public class RemoteBookSelectScreen extends WindowScreen {
 
     private void refreshList(String filterRaw) {
         listContainer.clear();
+        visible.clear(); // reset tracked-visible set for this filter pass
         String filter = filterRaw == null ? "" : filterRaw.toLowerCase(Locale.ROOT);
 
         Map<String, List<BookEntry>> byGroup = new LinkedHashMap<>();
@@ -81,6 +86,7 @@ public class RemoteBookSelectScreen extends WindowScreen {
                 nullToEmpty(entry.author)
             ).toLowerCase(Locale.ROOT);
             if (!filter.isEmpty() && !haystack.contains(filter)) continue;
+            visible.add(entry); // this entry passed the filter, so it's currently rendered
             byGroup.computeIfAbsent(entry.group == null || entry.group.isEmpty() ? "Ungrouped" : entry.group,
                 g -> new ArrayList<>()).add(entry);
         }

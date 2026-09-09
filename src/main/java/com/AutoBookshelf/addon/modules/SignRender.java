@@ -300,9 +300,6 @@ public class SignRender extends Module {
                 sign.updateScreenPosition(this.tempVec);
                 sign.scale = 1.0;
                 sign.color = new Color((Color) this.textColor.get());
-                if (!sign.onScreen && (Boolean) this.cullOffScreen.get()) {
-                    iterator.remove();
-                }
             }
         }
     }

@@ -335,7 +335,6 @@ public class AutoSex extends Module {
     private boolean isFollowing = false;
     private LivingEntity targetEntity;   // can be PlayerEntity or Mob
     private String targetName;           // for display
-    private int iPublic;
     private boolean pressed = false;
     private boolean alternate = true;
     private boolean wasCrouching = false;
@@ -721,17 +720,8 @@ public class AutoSex extends Module {
             }
 
             // Dirty talk
-            if (isInPosition && dirtyTalk.get() && message.get() && targetEntity instanceof PlayerEntity && !messages.get().isEmpty()) {
+            if (isInPosition && dirtyTalk.get() && message.get() && targetEntity instanceof PlayerEntity) {
                 if (timer <= 0) {
-                    int i;
-                    if (random.get()) {
-                        i = Utils.random(0, messages.get().size());
-                    } else {
-                        if (messageI >= messages.get().size()) messageI = 0;
-                        i = messageI++;
-                    }
-
-                    iPublic = i;
                     followMsg();
                     timer = delay.get();
                 } else {

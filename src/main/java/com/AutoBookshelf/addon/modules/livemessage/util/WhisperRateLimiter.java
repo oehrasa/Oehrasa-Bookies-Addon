@@ -2,9 +2,11 @@ package com.AutoBookshelf.addon.modules.livemessage.util;
 
 import com.AutoBookshelf.addon.modules.livemessage.LiveMessage;
 
+import java.util.Deque;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 
 /**
  * Tracks a single global "last whisper sent" timestamp so the client leaves a grace
@@ -15,8 +17,9 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class WhisperRateLimiter {
     private static volatile long lastSentAt = 0L;
 
-    private static final Map<String, SentRecord> RECENT_SELF_SENDS = new ConcurrentHashMap<>();
-    private static final long SELF_SEND_DEDUPE_MS = 15_000L; // comfortably longer than any realistic echo latency
+    private static final Map<String, Deque<SentRecord>> RECENT_SELF_SENDS = new ConcurrentHashMap<>(); // CHANGED
+    private static final long SELF_SEND_DEDUPE_MS = 15_000L;
+    private static final int MAX_RECORDS_PER_USER = 8; // ADDED — bounds memory; old entries also age out via SELF_SEND_DEDUPE_MS
 
     private record SentRecord(String message, long at) {
     }
@@ -46,7 +49,10 @@ public final class WhisperRateLimiter {
      */
     public static void markSelfInitiated(String username, String message) {
         if (username == null || message == null) return;
-        RECENT_SELF_SENDS.put(username.toLowerCase(Locale.ROOT), new SentRecord(message, System.currentTimeMillis()));
+        Deque<SentRecord> records = RECENT_SELF_SENDS.computeIfAbsent(
+            username.toLowerCase(Locale.ROOT), k -> new ConcurrentLinkedDeque<>());
+        records.addFirst(new SentRecord(message, System.currentTimeMillis()));
+        while (records.size() > MAX_RECORDS_PER_USER) records.pollLast(); // CHANGED: bound the per-user backlog
     }
 
     /**
@@ -59,9 +65,15 @@ public final class WhisperRateLimiter {
      */
     public static boolean isRecentSelfSend(String username, String message) {
         if (username == null || message == null) return false;
-        SentRecord record = RECENT_SELF_SENDS.get(username.toLowerCase(Locale.ROOT));
-        return record != null
-            && record.message().equals(message)
-            && System.currentTimeMillis() - record.at() < SELF_SEND_DEDUPE_MS;
+        Deque<SentRecord> records = RECENT_SELF_SENDS.get(username.toLowerCase(Locale.ROOT));
+        if (records == null) return false;
+
+        long now = System.currentTimeMillis();
+        for (SentRecord record : records) { // CHANGED: scan instead of single-record lookup
+            if (record.message().equals(message) && now - record.at() < SELF_SEND_DEDUPE_MS) {
+                return true;
+            }
+        }
+        return false;
     }
 }

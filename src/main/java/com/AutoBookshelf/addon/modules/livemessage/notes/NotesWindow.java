@@ -124,6 +124,7 @@ public class NotesWindow extends LiveWindow {
         this.pushUndo();
         this.notes.removeIf(n -> n.checked);
         NotesUtil.save(this.notes);
+        this.scrollPosition = MathHelper.clamp(this.scrollPosition, 0, this.getMaxScroll());
     }
 
     private void selectAll() {
@@ -276,7 +277,7 @@ public class NotesWindow extends LiveWindow {
 
         int listHeight = this.getListHeight();
         if (this.mouseInRect(5, this.listY, this.w - 10, listHeight, mouseX, mouseY)) {
-            int row = this.scrollPosition + (mouseY - this.y - this.listY) / this.rowHeight;
+            int row = this.scrollPosition + (mouseY - this.y - this.listY - 2) / this.rowHeight;
             if (row >= 0 && row < this.notes.size()) {
                 NoteEntry note = this.notes.get(row);
                 boolean checkboxHit = mouseX - this.x >= 8 && mouseX - this.x <= 16;

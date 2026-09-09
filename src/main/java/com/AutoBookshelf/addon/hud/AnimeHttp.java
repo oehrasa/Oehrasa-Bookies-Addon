@@ -3,7 +3,9 @@ package com.AutoBookshelf.addon.hud;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 
-import java.io.*;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -22,9 +24,11 @@ public final class AnimeHttp {
     public record Response(int statusCode, String statusMessage, String body) {
     }
 
+    private static final long MAX_TEXT_BYTES = 2L * 1024 * 1024;   // 2 MB
+    private static final long MAX_BINARY_BYTES = 16L * 1024 * 1024; // 16 MB
+
     private static HttpURLConnection open(String urlString) throws IOException {
         HttpURLConnection conn = (HttpURLConnection) URI.create(urlString).toURL().openConnection();
-        SSLHelper.configure(conn);
 
         conn.setRequestProperty("accept",
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8");
@@ -56,16 +60,30 @@ public final class AnimeHttp {
             int statusCode = conn.getResponseCode();
             String statusMessage = conn.getResponseMessage();
 
-            StringBuilder body = new StringBuilder();
+            long declaredLength = conn.getContentLengthLong();
+            if (declaredLength > MAX_TEXT_BYTES) {
+                throw new IOException("Content-Length " + declaredLength + " exceeds text limit " + MAX_TEXT_BYTES);
+            }
+
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
             InputStream stream = (statusCode >= 200 && statusCode < 300) ? conn.getInputStream() : conn.getErrorStream();
             if (stream != null) {
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) body.append(line);
+                try (InputStream in = stream) {
+                    byte[] data = new byte[8192];
+                    int nRead;
+                    long total = 0;
+                    while ((nRead = in.read(data)) != -1) {
+                        total += nRead;
+                        if (total > MAX_TEXT_BYTES) {
+                            throw new IOException("Response exceeded max text size of " + MAX_TEXT_BYTES + " bytes");
+                        }
+                        buffer.write(data, 0, nRead);
+                    }
                 }
             }
 
-            return new Response(statusCode, statusMessage, body.toString());
+            String body = buffer.toString(StandardCharsets.UTF_8);
+            return new Response(statusCode, statusMessage, body);
         } finally {
             conn.disconnect();
         }
@@ -81,11 +99,25 @@ public final class AnimeHttp {
 
     public static byte[] getBytes(String urlString) throws IOException {
         HttpURLConnection conn = open(urlString);
-        try (InputStream in = conn.getInputStream(); ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
-            byte[] data = new byte[16384];
-            int nRead;
-            while ((nRead = in.read(data, 0, data.length)) != -1) buffer.write(data, 0, nRead);
-            return buffer.toByteArray();
+        try {
+            long declaredLength = conn.getContentLengthLong();
+            if (declaredLength > MAX_BINARY_BYTES) {
+                throw new IOException("Content-Length " + declaredLength + " exceeds binary limit " + MAX_BINARY_BYTES);
+            }
+
+            try (InputStream in = conn.getInputStream(); ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
+                byte[] data = new byte[16384];
+                int nRead;
+                long total = 0;
+                while ((nRead = in.read(data, 0, data.length)) != -1) {
+                    total += nRead;
+                    if (total > MAX_BINARY_BYTES) {
+                        throw new IOException("Response exceeded max binary size of " + MAX_BINARY_BYTES + " bytes");
+                    }
+                    buffer.write(data, 0, nRead);
+                }
+                return buffer.toByteArray();
+            }
         } finally {
             conn.disconnect();
         }

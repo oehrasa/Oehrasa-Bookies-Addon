@@ -168,8 +168,12 @@ public class ShulkBookRestock extends Module {
             int candidate = findSlotNeedingRestock();
             if (candidate != -1) {
                 slotToRestock = candidate;
-                pendingRestock = true;
                 timer = restockDelay.get();
+                if (timer <= 0) {
+                    performRestock();
+                } else {
+                    pendingRestock = true;
+                }
             }
         }
     }

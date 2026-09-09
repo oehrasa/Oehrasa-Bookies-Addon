@@ -301,6 +301,10 @@ public class HomesList extends Module {
         if (MeteorClient.mc.player == null || entry == null) return;
         newName = newName == null ? "" : newName.trim();
         if (newName.isEmpty()) return;
+        if (newName.matches(".*\\s.*")) {
+            info("Home names cannot contain spaces.");
+            return;
+        }
 
         String command = renameCommandFormat.get()
             .replace("{oldName}", entry.serverHome == null ? "" : entry.serverHome)
@@ -772,7 +776,11 @@ public class HomesList extends Module {
                 newEntry.autoAdded = home != null && home.autoAdded;
                 newEntry.favorite = home != null && home.favorite;
                 if (home == null) module.addHome(newEntry);
-                else module.updateHome(index, newEntry);
+                else {
+                    int current = module.getHomes().indexOf(home);
+                    if (current >= 0) module.updateHome(current, newEntry);
+                    else module.addHome(newEntry);
+                }
                 if (parent != null) {
                     parent.rebuildTable();
                     MeteorClient.mc.setScreen(parent);
@@ -796,6 +804,7 @@ public class HomesList extends Module {
 
                     module.renameHome(home, newName);
                     serverHomeSetting.set(newName);
+                    displayName.set(home.displayName);
                     renameBox.set("");
 
                     if (parent != null) parent.rebuildTable();

@@ -73,9 +73,11 @@ public class LivemessageGui extends Screen {
         File[] listOfFiles = folder.listFiles();
         if (listOfFiles != null) {
             for (File file : listOfFiles) {
-                if (file.isFile()) {
-                    UUID uuid = UUID.fromString(file.getName().substring(0, 36));
-                    chats.add(uuid);
+                if (file.isFile() && file.getName().endsWith(".jsonl") && file.getName().length() >= 36) {
+                    try {
+                        chats.add(UUID.fromString(file.getName().substring(0, 36)));
+                    } catch (IllegalArgumentException ignored) {
+                    }
                 }
             }
         }
@@ -334,7 +336,8 @@ public class LivemessageGui extends Screen {
         long timestamp = System.currentTimeMillis();
         for (LiveWindow liveWindow : liveWindows) {
             if (liveWindow instanceof ChatWindow chatWindow
-                && (uuid.equals(chatWindow.liveProfile.uuid) || username.equalsIgnoreCase(chatWindow.liveProfile.username))) {
+                && ((uuid != null && uuid.equals(chatWindow.liveProfile.uuid))
+                || username.equalsIgnoreCase(chatWindow.liveProfile.username))) {
                 chatWindow.appendMessageIfNew(message, sentByMe, timestamp);
                 break;
             }

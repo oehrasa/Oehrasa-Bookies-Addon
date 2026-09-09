@@ -159,11 +159,10 @@ public class LivemessageUtil {
     }
 
     public static LivemessageUtil.ChatSettings getChatSettings(UUID uuid) {
-        try {
-            Gson gson = new Gson();
-            JsonReader reader = new JsonReader(new FileReader(SETTINGS_FOLDER.resolve(uuid.toString() + ".json").toFile()));
-            return gson.fromJson(reader, ChatSettings.class);
-        } catch (Exception var3) {
+        try (JsonReader reader = new JsonReader(new FileReader(SETTINGS_FOLDER.resolve(uuid.toString() + ".json").toFile()))) {
+            ChatSettings settings = new Gson().fromJson(reader, ChatSettings.class);
+            return settings != null ? settings : new LivemessageUtil.ChatSettings();
+        } catch (Exception e) {
             return new LivemessageUtil.ChatSettings();
         }
     }

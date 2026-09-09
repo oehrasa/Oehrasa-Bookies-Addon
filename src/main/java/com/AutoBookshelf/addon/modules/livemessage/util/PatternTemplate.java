@@ -5,6 +5,7 @@ import java.util.regex.Pattern;
 public final class PatternTemplate {
     private static final String USERNAME_MARKER = "\u0000PLAYER\u0000";
     private static final String USERNAME_REGEX = "([^:\\[\\]\\s]{3,16})";
+    private static final String USERNAME_REGEX_NONCAPTURING = "(?:[^:\\[\\]\\s]{3,16})";
     private static final String RANK_PREFIX = "(?:<[^>]+> )?";
 
     private PatternTemplate() {
@@ -33,10 +34,16 @@ public final class PatternTemplate {
             regex.append(RANK_PREFIX);
         }
 
+        boolean usernameCaptured = false;
         for (int i = 0; i < parts.length; i++) {
             regex.append(Pattern.quote(parts[i]));
             if (i < parts.length - 1) {
-                regex.append(USERNAME_REGEX);
+                if (!usernameCaptured) {
+                    regex.append(USERNAME_REGEX);
+                    usernameCaptured = true;
+                } else {
+                    regex.append(USERNAME_REGEX_NONCAPTURING);
+                }
             }
         }
 

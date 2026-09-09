@@ -85,6 +85,7 @@ public class TrajectoryPlus extends Module {
         .description("How many steps to simulate projectiles. Zero for no limit.")
         .defaultValue(500)
         .sliderMax(5000)
+        .max(MAX_SIMULATION_STEPS_HARD_CAP)
         .build()
     );
 
@@ -92,6 +93,16 @@ public class TrajectoryPlus extends Module {
         .name("render-trail-ahead")
         .description("Renders the predicted path ahead of a projectile.")
         .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> aheadTrailLength = sgTrail.add(new IntSetting.Builder()
+        .name("ahead-trail-length")
+        .description("Maximum number of predicted-path points to render ahead. Simulation still runs its full length for collision accuracy; this only limits how much of the path gets drawn.")
+        .defaultValue(100)
+        .min(1)
+        .sliderMax(500)
+        .visible(renderTrailAhead::get)
         .build()
     );
 
@@ -130,8 +141,8 @@ public class TrajectoryPlus extends Module {
 
     private final Setting<SettingColor> existingProjectileColor = sgTrail.add(new ColorSetting.Builder()
         .name("existing-projectile-color")
-        .description("Color used for already fired projectiles - both their predicted path and breadcrumb trail.")
-        .defaultValue(new SettingColor(0, 200, 200, 150))
+        .description("Color used for already fired projectiles, both their predicted path and breadcrumb trail.")
+        .defaultValue(new SettingColor(0, 200, 34, 150))
         .visible(firedProjectiles::get)
         .build()
     );
@@ -230,6 +241,7 @@ public class TrajectoryPlus extends Module {
 
     private static final double MULTISHOT_OFFSET = Math.toRadians(10); // accurate-ish offset of crossbow multishot in radians (10°)
     private static final double MIN_THREAT_SPEED_SQ = 0.0025;
+    private static final int MAX_SIMULATION_STEPS_HARD_CAP = 5000;
 
     private static final ProjectileEntitySimulator.MotionData FIREBALL_MOTION =
         new ProjectileEntitySimulator.MotionData(0f, 0, 0.0, 0.95f, 0.95f, null);
@@ -314,7 +326,16 @@ public class TrajectoryPlus extends Module {
 
     private void updateBreadcrumb(Entity entity) {
         List<Vector3d> trail = firedTrails.computeIfAbsent(entity.getUuid(), k -> new ArrayList<>());
-        trail.add(new Vector3d(entity.getX(), entity.getY(), entity.getZ()));
+
+        double x = entity.getX(), y = entity.getY(), z = entity.getZ();
+        if (!trail.isEmpty()) {
+            Vector3d last = trail.get(trail.size() - 1);
+            // Position only changes once per game tick; onRender fires once per frame,
+            // so skip re-recording the same tick's position across repeated frames.
+            if (last.x == x && last.y == y && last.z == z) return;
+        }
+
+        trail.add(new Vector3d(x, y, z));
 
         int maxTrail = trailLength.get();
         while (trail.size() > maxTrail) trail.remove(0);
@@ -332,9 +353,13 @@ public class TrajectoryPlus extends Module {
 
     private static final double SHULKER_GRAVITY = 0.0;
     private static final double SHULKER_DRAG = 0.99;
+    private static final int SHULKER_MAX_SIMULATION_TICKS = 200;
 
     private void renderShulkerBulletPrediction(Render3DEvent event, Entity shulkerBullet, SettingColor color) {
-        int maxTicks = simulationSteps.get() > 0 ? simulationSteps.get() : 500;
+        int maxTicks = Math.min(
+            simulationSteps.get() > 0 ? simulationSteps.get() : 500,
+            SHULKER_MAX_SIMULATION_TICKS
+        );
 
         List<Vec3d> points = new ArrayList<>();
         Vec3d currentPos = shulkerBullet.getEntityPos();
@@ -344,11 +369,13 @@ public class TrajectoryPlus extends Module {
         BlockPos hitBlockPos = null;
         Entity hitEntity = null;
 
+        List<LivingEntity> candidates = getNearbyLivingEntities(currentPos, currentVel, shulkerBullet);
+
         for (int i = 0; i < maxTicks; i++) {
             currentVel = currentVel.subtract(0, SHULKER_GRAVITY, 0).multiply(SHULKER_DRAG);
             Vec3d nextPos = currentPos.add(currentVel);
 
-            EntityHitResult entityHit = findEntityHit(currentPos, nextPos, shulkerBullet);
+            EntityHitResult entityHit = findEntityHit(currentPos, nextPos, candidates);
             if (entityHit != null) {
                 points.add(entityHit.getPos());
                 hitEntity = entityHit.getEntity();
@@ -372,7 +399,8 @@ public class TrajectoryPlus extends Module {
         SettingColor pathColor = (hitEntity != null && renderEntityHighlight.get()) ? entityHighlightColor.get() : color;
 
         if (renderTrailAhead.get()) {
-            for (int i = 0; i < points.size() - 1; i++) {
+            int maxIndex = Math.min(points.size() - 1, aheadTrailLength.get());
+            for (int i = 0; i < maxIndex; i++) {
                 Vec3d a = points.get(i), b = points.get(i + 1);
                 event.renderer.line(a.x, a.y, a.z, b.x, b.y, b.z, pathColor);
             }
@@ -389,17 +417,37 @@ public class TrajectoryPlus extends Module {
         }
     }
 
-    private EntityHitResult findEntityHit(Vec3d start, Vec3d end, Entity ignoreEntity) {
-        for (Entity e : mc.world.getEntities()) {
-            if (e == mc.player || e == ignoreEntity) continue;
-            if (!(e instanceof LivingEntity)) continue;
+    private List<LivingEntity> getNearbyLivingEntities(Vec3d origin, Vec3d initialVelocity, Entity ignoreEntity) {
+        double maxDistance = initialVelocity.length() / (1.0 - SHULKER_DRAG) + 1.0;
+        Box searchBox = new Box(origin, origin).expand(maxDistance);
 
+        List<LivingEntity> result = new ArrayList<>();
+        for (Entity e : mc.world.getEntities()) {
+            if (e == ignoreEntity) continue;
+            if (!(e instanceof LivingEntity living)) continue;
+            if (!searchBox.intersects(e.getBoundingBox())) continue;
+            result.add(living);
+        }
+        return result;
+    }
+
+    private EntityHitResult findEntityHit(Vec3d start, Vec3d end, List<LivingEntity> candidates) {
+        EntityHitResult nearest = null;
+        double nearestDistSq = Double.MAX_VALUE;
+
+        for (LivingEntity e : candidates) {
             Box box = e.getBoundingBox().expand(0.3);
             var hit = box.raycast(start, end);
-            if (hit.isPresent()) return new EntityHitResult(e, hit.get());
+            if (hit.isEmpty()) continue;
+
+            double distSq = start.squaredDistanceTo(hit.get());
+            if (distSq < nearestDistSq) {
+                nearestDistSq = distSq;
+                nearest = new EntityHitResult(e, hit.get());
+            }
         }
 
-        return null;
+        return nearest;
     }
 
     private void pruneBreadcrumbs() {
@@ -471,8 +519,11 @@ public class TrajectoryPlus extends Module {
         public Path calculate() {
             addPoint();
 
-            for (int i = 0; i < (simulationSteps.get() > 0 ? simulationSteps.get() : Integer.MAX_VALUE); i++) {
-                SimulationStep result = simulator.tick();
+            int maxSteps = simulationSteps.get() > 0
+                ? Math.min(simulationSteps.get(), MAX_SIMULATION_STEPS_HARD_CAP)
+                : MAX_SIMULATION_STEPS_HARD_CAP;
+            for (int i = 0; i < maxSteps; i++) {
+                SimulationStep result = simulator.tick(); // ADDED — this was missing
 
                 processHitResults(result);
                 if (result.shouldStop) break;
@@ -551,7 +602,8 @@ public class TrajectoryPlus extends Module {
         public void render(Render3DEvent event, SettingColor color) {
             // Render "ahead" trail
             if (renderTrailAhead.get()) {
-                for (int i = start; i < points.size(); i++) {
+                int maxIndex = Math.min(points.size(), start + TrajectoryPlus.this.aheadTrailLength.get());
+                for (int i = start; i < maxIndex; i++) { // was `i < points.size()`
                     Vector3d point = points.get(i);
 
                     if (lastPoint != null) {
