@@ -1,6 +1,8 @@
 package com.AutoBookshelf.addon.modules;
+//1.21.11 yarn mapping
 
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.DistanceUtil;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -19,7 +21,6 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
-
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -140,7 +141,7 @@ public class MURADAESA extends Module {
     private final ConcurrentLinkedDeque<RecentEvent> recentEvents = new ConcurrentLinkedDeque<>();
 
     public MURADAESA() {
-        super(Addon.CATEGORY, "MURAD-AESA",
+        super(Addon.CATEGORY2, "MURAD-AESA",
             "Detects likely player activity outside 128 blocks by scoring world-change packet patterns.");
     }
 
@@ -332,7 +333,7 @@ public class MURADAESA extends Module {
             if (now - event.timeMs > BURST_WINDOW_MS)
                 continue;
 
-            if (Vec3.atCenterOf(event.pos).distanceToSqr(center) <= BURST_RADIUS_SQ)
+            if (DistanceUtil.distanceSq(Vec3.atCenterOf(event.pos), center) <= BURST_RADIUS_SQ)
                 nearbyRecent++;
 
             if (nearbyRecent >= BURST_THRESHOLD)
@@ -359,8 +360,9 @@ public class MURADAESA extends Module {
 
         if (chatAlerts.get() && now - ping.lastAlertMs >= 300L) {
             Vec3 center = Vec3.atCenterOf(ping.pos);
-            int distanceBlocks = (int) Math.round(Math.sqrt(
-                center.distanceToSqr(mc.player.getX(), mc.player.getY(), mc.player.getZ())));
+            int distanceBlocks = (int) Math.round(
+                DistanceUtil.distance(center, mc.player.position())
+            );
             String rangeSuffix = onlyBeyondPlayerEspRange.get()
                 ? String.format(" (%db away, outside %.0fb).", distanceBlocks, PLAYER_ESP_LIMIT_BLOCKS)
                 : String.format(" (%db away).", distanceBlocks);
@@ -465,7 +467,7 @@ public class MURADAESA extends Module {
             return false;
 
         Vec3 center = Vec3.atCenterOf(pos);
-        return mc.player.position().distanceToSqr(center) > PLAYER_ESP_LIMIT_SQ;
+        return DistanceUtil.distanceSq(mc.player.position(), center) > PLAYER_ESP_LIMIT_SQ;
     }
 
     private boolean isInAllowedRange(BlockPos pos) {
@@ -497,7 +499,7 @@ public class MURADAESA extends Module {
             if (player == null || player == mc.player || player.isRemoved())
                 continue;
 
-            if (player.position().distanceToSqr(center) <= CONFIRM_PLAYER_RADIUS_SQ)
+            if (DistanceUtil.distanceSq(player.position(), center) <= CONFIRM_PLAYER_RADIUS_SQ)
                 return true;
         }
 

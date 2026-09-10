@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
+import meteordevelopment.meteorclient.events.entity.player.ItemUseCrosshairTargetEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.pathing.PathManagers;
@@ -11,6 +12,7 @@ import meteordevelopment.meteorclient.systems.modules.combat.AnchorAura;
 import meteordevelopment.meteorclient.systems.modules.combat.BedAura;
 import meteordevelopment.meteorclient.systems.modules.combat.CrystalAura;
 import meteordevelopment.meteorclient.systems.modules.combat.KillAura;
+import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.SlotUtils;
 import meteordevelopment.orbit.EventHandler;
@@ -21,6 +23,7 @@ import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import java.util.ArrayList;
 import java.util.List;
@@ -148,18 +151,40 @@ public class PacketEat extends Module {
         .build()
     );
 
+    private final Setting<Boolean> preventAlwaysEatSpam = sgAutoEat.add(new BoolSetting.Builder()
+        .name("prevent-always-eat-spam")
+        .description("Adds extra cooldown after eating a food that can always be eaten regardless of hunger.")
+        .defaultValue(true)
+        .visible(autoEat::get)
+        .build()
+    );
+
+    private final Setting<Integer> alwaysEatCooldown = sgAutoEat.add(new IntSetting.Builder()
+        .name("always-eat-cooldown")
+        .description("Extra ticks to wait after eating a hunger-independent food before eating can trigger again.")
+        .defaultValue(40)
+        .range(0, 600)
+        .sliderRange(0, 200)
+        .visible(() -> autoEat.get() && preventAlwaysEatSpam.get())
+        .build()
+    );
+
     // Active auto-eat cycle tracking
     private boolean autoEating = false;
     private int eatTicks = 0;
-    private int eatDuration = 0; // set per-cycle: HOTBAR_EAT_TICKS or OFFHAND_EAT_TICKS
+    private int eatDuration = 0;
     private int postEatCooldown = 0;
 
     private int eatSlot = -1;
     private int prevSlot = -1;
 
     private int eatStackCountAtStart = -1;
+    private boolean eatFoodAlwaysEat = false;
 
-    // Aura/baritone pause state
+    // tracks which method this cycle used, so the crosshair override
+    // only applies when we actually went through the screen-open fallback.
+    private boolean eatingViaScreenClick = false;
+
     private final List<Class<? extends Module>> wasAura = new ArrayList<>();
     private boolean wasBaritone = false;
 
@@ -195,6 +220,14 @@ public class PacketEat extends Module {
         }
     }
 
+    // Scoped: only intercepts crosshair targeting when this cycle actually
+    // needed the screen-open workaround. The direct-packet path (no screen)
+    // never touches this event.
+    @EventHandler
+    private void onItemUseCrosshairTarget(ItemUseCrosshairTargetEvent event) {
+        if (autoEating && eatingViaScreenClick) event.target = null;
+    }
+
     @EventHandler
     private void onPacketSend(PacketEvent.Send event) {
         var player = mc.player;
@@ -215,14 +248,16 @@ public class PacketEat extends Module {
         if (autoEating) {
             if (eatStackCountAtStart != -1 && getStackCount(player, eatSlot) < eatStackCountAtStart) {
                 stopAutoEating();
-                postEatCooldown = cooldownTicks.get();
+                postEatCooldown = computeCooldown();
                 return;
             }
 
             eatTicks++;
 
-            // de-sync spam during the active window
-            if (deSync.get() && eatSlot != -1) {
+            // De-sync spam is only meaningful on the direct-packet path. If we're
+            // going through the screen-open fallback, a raw resend here doesn't
+            // reflect real input state the way Utils.rightClick() does, so skip it.
+            if (deSync.get() && eatSlot != -1 && !eatingViaScreenClick) {
                 InteractionHand hand = eatSlot == SlotUtils.OFFHAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
                 player.connection.send(
                     new ServerboundUseItemPacket(hand, 0, player.getYRot(), player.getXRot())
@@ -236,7 +271,7 @@ public class PacketEat extends Module {
 
             if (readyToStop || timedOut) {
                 stopAutoEating();
-                postEatCooldown = cooldownTicks.get();
+                postEatCooldown = computeCooldown();
             }
             return;
         }
@@ -276,6 +311,9 @@ public class PacketEat extends Module {
             PathManagers.get().pause();
         }
 
+        FoodProperties food = getFoodComponent(player, eatSlot);
+        eatFoodAlwaysEat = food != null && food.canAlwaysEat();
+
         if (eatSlot == SlotUtils.OFFHAND) {
             // Offhand: item stays equipped; noRelease + packet intercept carry the rest.
             eatDuration = OFFHAND_EAT_TICKS;
@@ -291,11 +329,20 @@ public class PacketEat extends Module {
         // per-tick guard in handleAutoEat can detect the moment it drops.
         eatStackCountAtStart = getStackCount(player, eatSlot);
 
-        // Send the initial use-item packet to begin eating
-        InteractionHand hand = eatSlot == SlotUtils.OFFHAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
-        player.connection.send(
-            new ServerboundUseItemPacket(hand, 0, player.getYRot(), player.getXRot())
-        );
+        // Decide method once per cycle, based on actual screen state right now.
+        eatingViaScreenClick = mc.screen != null;
+
+        if (eatingViaScreenClick) {
+            // Screen-open fallback: goes through the real input/raycast pipeline,
+            // which is why the crosshair override above is needed for this branch.
+            Utils.rightClick();
+        } else {
+            // Default, efficient path: raw packet, no raycast/crosshair involvement.
+            InteractionHand hand = eatSlot == SlotUtils.OFFHAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
+            player.connection.send(
+                new ServerboundUseItemPacket(hand, 0, player.getYRot(), player.getXRot())
+            );
+        }
 
         autoEating = true;
         eatTicks = 0;
@@ -314,6 +361,7 @@ public class PacketEat extends Module {
         eatDuration = 0;
         autoEating = false;
         eatStackCountAtStart = -1;
+        eatingViaScreenClick = false;
 
         // Resume auras
         if (pauseAuras.get()) {
@@ -332,27 +380,42 @@ public class PacketEat extends Module {
         }
     }
 
-    /**
-     * Reads the current stack count for the given slot (hotbar index or SlotUtils.OFFHAND).
-     * For whether the server has consumed an item, since isUsingItem()/getItemUseTimeLeft()
-     * Can lag or briefly desync relative to the actual inventory state.
-     */
+    private int computeCooldown() {
+        int cooldown = cooldownTicks.get();
+        if (eatFoodAlwaysEat && preventAlwaysEatSpam.get()) {
+            cooldown = Math.max(cooldown, alwaysEatCooldown.get());
+        }
+        return cooldown;
+    }
+
     private int getStackCount(LocalPlayer player, int slot) {
         return slot == SlotUtils.OFFHAND
             ? player.getOffhandItem().getCount()
             : player.getInventory().getItem(slot).getCount();
     }
 
+    private FoodProperties getFoodComponent(LocalPlayer player, int slot) {
+        ItemStack stack = slot == SlotUtils.OFFHAND
+            ? player.getOffhandItem()
+            : player.getInventory().getItem(slot);
+        return stack.get(DataComponents.FOOD);
+    }
+
     private int findSlot(LocalPlayer player) {
+        boolean hungerNotFull = player.getFoodData().needsFood();
+
         int bestSlot = -1;
         int bestNutrition = -1;
 
         // Hotbar (slots 0-8)
         for (int i = 0; i < 9; i++) {
-            Item item = player.getInventory().getItem(i).getItem();
+            ItemStack stack = player.getInventory().getItem(i);
+            Item item = stack.getItem();
             FoodProperties food = item.components().get(DataComponents.FOOD);
             if (food == null) continue;
             if (blacklist.get().contains(item)) continue;
+            if (!hungerNotFull && !food.canAlwaysEat()) continue;
+
             if (food.nutrition() > bestNutrition) {
                 bestSlot = i;
                 bestNutrition = food.nutrition();
@@ -362,7 +425,9 @@ public class PacketEat extends Module {
         // Offhand
         Item offItem = player.getOffhandItem().getItem();
         FoodProperties offFood = offItem.components().get(DataComponents.FOOD);
-        if (offFood != null && !blacklist.get().contains(offItem) && offFood.nutrition() > bestNutrition) {
+        if (offFood != null && !blacklist.get().contains(offItem)
+            && (hungerNotFull || offFood.canAlwaysEat())
+            && offFood.nutrition() > bestNutrition) {
             bestSlot = SlotUtils.OFFHAND;
         }
 

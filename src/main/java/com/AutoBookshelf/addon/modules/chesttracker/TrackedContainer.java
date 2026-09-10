@@ -43,13 +43,11 @@ public class TrackedContainer {
         int index = 0;
         for (ItemStack stack : stacks) {
             if (stack != null && !stack.isEmpty()) {
-                String itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
-                items.put(itemId, items.getOrDefault(itemId, 0) + stack.getCount());
                 itemStacks.add(stack.copy());
 
-                // Compute dominant item for shulker boxes
+                // Compute dominant item for shulker boxes (used as the icon for
+                // this slot in the browser UI)
                 String dominantId = getDominantShulkerItemId(stack);
-
                 if (dominantId != null) {
                     dominantItems.put(index, dominantId);
                 }
@@ -58,7 +56,51 @@ public class TrackedContainer {
             }
             index++;
         }
+
+        // Flatten top-level items AND anything nested inside tracked shulker
+        // boxes into a single searchable id -> count map.
+        items.putAll(computeItemCounts(stacks));
+
         this.lastUpdated = System.currentTimeMillis();
+    }
+
+    /**
+     * Builds an id -> count map from a slot list, unpacking any shulker box
+     * stacks so their contents are counted alongside top-level items. Static
+     * so it can be reused by hasSameContents() to compare a fresh snapshot
+     * against what's already stored without mutating this container.
+     */
+    public static Map<String, Integer> computeItemCounts(List<ItemStack> stacks) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (ItemStack stack : stacks) {
+            if (stack == null || stack.isEmpty()) continue;
+            String itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+            counts.merge(itemId, stack.getCount(), Integer::sum);
+            addShulkerContents(stack, counts);
+        }
+        return counts;
+    }
+
+    private static void addShulkerContents(ItemStack stack, Map<String, Integer> counts) {
+        if (!(stack.getItem() instanceof BlockItem bi && bi.getBlock() instanceof ShulkerBoxBlock)) return;
+        ItemContainerContents container = stack.get(DataComponents.CONTAINER);
+        if (container == null) return;
+        container.nonEmptyItemCopyStream().forEach(inner -> {
+            Item innerItem = inner.typeHolder().value();
+            String innerId = BuiltInRegistries.ITEM.getKey(innerItem).toString();
+            counts.merge(innerId, inner.count(), Integer::sum);
+            addShulkerContents(inner, counts);
+        });
+    }
+
+    /**
+     * True if a fresh slot snapshot would produce the exact same flattened
+     * item counts already stored on this container. Used to skip redundant
+     * re-tracking (and the on-screen "Tracked ..." message) when a player
+     * just re-opens a container whose contents haven't actually changed.
+     */
+    public boolean hasSameContents(List<ItemStack> newStacks) {
+        return this.items.equals(computeItemCounts(newStacks));
     }
 
     public boolean containsItem(String itemId) { return items.containsKey(itemId); }

@@ -61,6 +61,8 @@ public class PlacementEngine {
                 }
             }
         }
+
+        cands.removeIf(pos -> !isWithinWorldHeight(pos));
         // Closest candidates first; ties keep their original (front-biased) order.
         cands.sort(Comparator.comparingDouble(pos -> Vec3.atCenterOf(pos).distanceToSqr(playerPos)));
 
@@ -108,14 +110,6 @@ public class PlacementEngine {
             }
         }
 
-        if (!airPlace) {
-            for (BlockPos pos : cands) {
-                if (Vec3.atCenterOf(pos).distanceToSqr(playerPos) > rangeSq) continue;
-                if (pos.getY() != pp.getY()) continue;
-                if (canPlaceAt(pos, failedPositions)) return pos;
-            }
-        }
-
         return null;
     }
 
@@ -152,6 +146,10 @@ public class PlacementEngine {
         return playerBox.intersects(blockBox);
     }
 
+    private boolean isWithinWorldHeight(BlockPos pos) {
+        return !mc.level.isOutsideBuildHeight(pos);
+    }
+
     public boolean canPlaceAt(BlockPos pos, List<BlockPos> failedPositions) {
         return isReplaceableOrAir(pos) && !intersectsPlayer(pos) && !failedPositions.contains(pos);
     }
@@ -162,6 +160,7 @@ public class PlacementEngine {
 
     public boolean validSolidPos(BlockPos pos) {
         return isReplaceableOrAir(pos)
+            && isReplaceableOrAir(pos.above())
             && mc.level.getBlockState(pos.below()).isRedstoneConductor(mc.level, pos.below());
     }
 

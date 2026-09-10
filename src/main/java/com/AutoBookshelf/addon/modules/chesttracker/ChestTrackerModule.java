@@ -48,6 +48,7 @@ public class ChestTrackerModule extends Module {
     private final SettingGroup sgRender = settings.createGroup("Render");
     private final SettingGroup sgLabels = settings.createGroup("Labels");
     private final SettingGroup sgFilter = settings.createGroup("Filter");
+    private final SettingGroup sgDisplay = settings.createGroup("Display");
     private final SettingGroup sgAdvanced = settings.createGroup("Advanced");
 
     private final Setting<Keybind> browserKey = sgGeneral.add(new KeybindSetting.Builder()
@@ -238,6 +239,24 @@ public class ChestTrackerModule extends Module {
         .build()
     );
 
+    private final Setting<Boolean> showOnScreen = sgDisplay.add(new BoolSetting.Builder()
+        .name("show-on-screen")
+        .description("Show a brief on-screen message when containers are tracked or saved.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Integer> onScreenDuration = sgDisplay.add(new IntSetting.Builder()
+        .name("on-screen-duration")
+        .description("How long (in ticks) the on-screen status message stays visible.")
+        .defaultValue(40)
+        .min(10)
+        .max(200)
+        .sliderRange(10, 200)
+        .visible(showOnScreen::get)
+        .build()
+    );
+
     private final Setting<Boolean> debugMode = sgAdvanced.add(new BoolSetting.Builder()
         .name("debug")
         .description("Show debug messages in chat.")
@@ -263,6 +282,14 @@ public class ChestTrackerModule extends Module {
     private static final int AWAITING_TIMEOUT = 40;
     private final Map<BlockPos, Integer> blockedContainers = new HashMap<>();
     private static final int BLOCKED_COOLDOWN_TICKS = 100;
+
+    // On-screen status message state (tracked/saved feedback), driven by
+    // setDisplayText() and rendered in onRender2D().
+    private String displayText = "";
+    private int displayTimer = 0;
+    // Last pending-save count we observed, so we only fire a "fully saved"
+    // message on the transition down to 0 rather than every tick.
+    private int lastKnownPendingSaves = 0;
 
     public ChestTrackerModule() {
         super(Addon.CATEGORY, "Chest-Tracker", "Track items in containers.");
@@ -297,6 +324,9 @@ public class ChestTrackerModule extends Module {
         shouldAutoClose = false;
         ticksUntilClose = 0;
         blockedContainers.clear();
+        displayText = "";
+        displayTimer = 0;
+        lastKnownPendingSaves = 0;
     }
 
     private BlockPos getCanonicalChestPos(BlockPos pos) {
@@ -304,7 +334,7 @@ public class ChestTrackerModule extends Module {
         BlockState state = mc.level.getBlockState(pos);
         Block block = state.getBlock();
 
-        // Only double chests need normalisation
+        // Only double chests need normalization
         if (!(block instanceof ChestBlock || block instanceof TrappedChestBlock)) return pos;
         if (!state.hasProperty(ChestBlock.TYPE)) return pos;
         ChestType chestType = state.getValue(ChestBlock.TYPE);
@@ -340,6 +370,22 @@ public class ChestTrackerModule extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
+        // Count down the on-screen status message.
+        if (displayTimer > 0 && !isInContainerScreen()) {
+            displayTimer--;
+        }
+
+        // Detect the background save catching up to 0 pending containers so we
+        // can show a "fully saved" confirmation. This is just two int reads/
+        // compares per tick
+        int pendingSaves = data.getPendingSaveCount();
+        if (pendingSaves != lastKnownPendingSaves) {
+            if (pendingSaves == 0 && lastKnownPendingSaves > 0) {
+                setDisplayText("§aAll containers saved");
+            }
+            lastKnownPendingSaves = pendingSaves;
+        }
+
         // Cooldown management
         if (!blockedContainers.isEmpty()) {
             Iterator<Map.Entry<BlockPos, Integer>> it = blockedContainers.entrySet().iterator();
@@ -543,6 +589,16 @@ public class ChestTrackerModule extends Module {
     @EventHandler
     private void onRender2D(Render2DEvent event) {
         if (mc.player == null || mc.level == null) return;
+
+        // Live on-screen status message (tracked/saved feedback). Independent
+        // of the item-label rendering below so it shows even when search
+        // labels are off / nothing is being searched for.
+        if (displayTimer > 0 && showOnScreen.get() && !displayText.isEmpty()) {
+            GuiGraphicsExtractor statusContext = event.graphics;
+            int screenWidth = mc.getWindow().getGuiScaledWidth();
+            statusContext.centeredText(mc.font, displayText, screenWidth / 2, 4, 0xFFFFFF);
+        }
+
         if (!renderLabels.get()) return;
         if (currentSearchItem == null) return;
 
@@ -677,8 +733,26 @@ public class ChestTrackerModule extends Module {
         for (ItemStack stack : snapshot) {
             if (!stack.isEmpty()) items.add(stack);
         }
-        data.trackContainer(trackPos, getCurrentDimension(), getContainerType(trackPos), items);
-        if (debugMode.get()) info("Tracked " + getContainerType(trackPos) + " at " + trackPos.toShortString() + " (" + items.size() + " items)");
+
+        String currentDim = getCurrentDimension();
+        String containerType = getContainerType(trackPos);
+
+        // Skip re-tracking
+        TrackedContainer existing = data.getContainer(trackPos, currentDim);
+        boolean unchanged = existing != null && existing.hasSameContents(items);
+
+        if (!unchanged) {
+            data.trackContainer(trackPos, currentDim, containerType, items);
+
+            // Live counter of containers queued for the next background flush
+            int pending = data.getPendingSaveCount();
+            lastKnownPendingSaves = pending;
+            setDisplayText("§eTracked " + containerType + " §7(" + pending + (pending == 1 ? " pending)" : " pending)"));
+
+            if (debugMode.get()) info("Tracked " + containerType + " at " + trackPos.toShortString() + " (" + items.size() + " items)");
+        } else if (debugMode.get()) {
+            info("Skipped re-tracking " + containerType + " at " + trackPos.toShortString() + " - contents unchanged");
+        }
 
         if (wasAutoOpened) {
             int closeDelay = autoOpenCloseDelay.get();
@@ -777,6 +851,25 @@ public class ChestTrackerModule extends Module {
         return showDistance.get();
     }
 
+    /**
+     * Pushes a short-lived message to the on-screen status line (top-center,
+     * next to the item labels). Respects the "show-on-screen" setting so it's
+     * a no-op when the player has turned the display off.
+     */
+    private void setDisplayText(String text) {
+        if (showOnScreen.get()) {
+            this.displayText = text;
+            this.displayTimer = onScreenDuration.get();
+            // Also echo to the action bar. This goes through vanilla's own
+            // overlay message system rather than our custom draw call, so
+            // it's a reliable way to confirm the message is actually firing
+            // even if the custom HUD text is hard to spot.
+            if (mc.player != null) {
+                mc.player.sendOverlayMessage(Component.literal(text));
+            }
+        }
+    }
+
     @Override
     public WWidget getWidget(GuiTheme theme) {
         WTable table = theme.table();
@@ -797,7 +890,21 @@ public class ChestTrackerModule extends Module {
         table.row();
 
         WButton saveData = table.add(theme.button("Save Data")).expandX().widget();
-        saveData.action = () -> data.saveData();
+        saveData.action = () -> {
+            // saveData() doesn't return a value, so we check the failure
+            // counter before/after to know whether this particular save
+            // actually landed on disk, and surface that to the player
+            // instead of pretending it silently always works.
+            int failuresBefore = data.getSaveFailures();
+            data.saveData();
+            if (data.getSaveFailures() > failuresBefore) {
+                setDisplayText("§cFailed to save data - check logs");
+                if (debugMode.get()) warning("Manual save failed");
+            } else {
+                setDisplayText("§aSaved " + data.getTotalContainerCount() + " containers");
+                if (debugMode.get()) info("Manually saved " + data.getTotalContainerCount() + " containers");
+            }
+        };
         table.row();
 
         WButton clearAll = table.add(theme.button("Clear All Data")).expandX().widget();

@@ -3,15 +3,16 @@
   "package": "com.AutoBookshelf.addon.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "BlockedServersMixin",
-    "ClientPlayerInteractionManagerMixin",
+    "BetterTabMixin",
     "DrawContextMixin",
     "HandledScreenMixin",
     "InGameHudMixin",
     "InventoryScreenMixin",
     "MixinHandledScreen",
     "PlayerInventoryAccessor",
-    "ServerListMixin"
+    "PlayerUtilsMixin",
+    "TntEntityRendererMixin",
+    "accessor.AbstractSignEditScreenAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

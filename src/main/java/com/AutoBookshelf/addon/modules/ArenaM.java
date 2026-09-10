@@ -1,13 +1,15 @@
 package com.AutoBookshelf.addon.modules;
-// V2
+// V3
 
 import com.AutoBookshelf.addon.Addon;
-import com.AutoBookshelf.addon.utils.ProjectilePhysics;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.entity.simulator.ProjectileEntitySimulator;
+import meteordevelopment.meteorclient.utils.entity.simulator.SimulationStep;
+import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import meteordevelopment.meteorclient.utils.player.FindItemResult;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
@@ -31,13 +33,14 @@ import net.minecraft.world.phys.Vec3;
 
 import java.util.*;
 
-/**
- * Arena M "Active Protection System".
- * Every tick the module scans for hostile projectiles heading towards the player,
- * predicts their real flight path (real gravity/drag applied via ProjectilePhysics,
- * the same physics utility TrajectoryPlus uses and, if one is considered dangerous enough,
- * rotates towards a calculated intercept point and throws a wind charge to neutralize it)
- */
+/// Arena M "Active Protection System".
+/// Every tick the module scans for hostile projectiles heading towards the player,
+/// predicts their real flight path via Meteor's own ProjectileEntitySimulator
+/// (same simulator Trajectories.java uses, real block/entity collision, piercing,
+/// deflection, and no-gravity handling included)
+/// if one is considered dangerous
+/// enough, rotates towards a calculated intercept point and throws a wind charge to
+/// neutralize it.
 public class ArenaM extends Module {
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -134,6 +137,13 @@ public class ArenaM extends Module {
         .build()
     );
 
+    private final Setting<Boolean> logStats = sgGeneral.add(new BoolSetting.Builder()
+        .name("log-stats")
+        .description("Logs interception accuracy to chat after every resolved throw (hit or miss), split by quick-swap vs normal mode.")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<Boolean> debugRender = sgRender.add(new BoolSetting.Builder()
         .name("debug-render")
         .description("Renders the predicted threat path and the calculated intercept path.")
@@ -215,8 +225,22 @@ public class ArenaM extends Module {
     private AABB confirmedHitBox;
     private int confirmedHitTimer = 0;
 
-    private double averageSpawnLatencyTicks = 1.0; // seeded conservatively until measured
+    // Latency estimates, split by throw mode since quick-swap and normal
+    // swap almost certainly have different real spawn delays.
+    private double avgLatencyNormal = 1.0;    // seeded conservatively until measured
+    private double avgLatencyQuickSwap = 1.0;
+    private int minLatencyNormal = Integer.MAX_VALUE, maxLatencyNormal = Integer.MIN_VALUE;
+    private int minLatencyQuickSwap = Integer.MAX_VALUE, maxLatencyQuickSwap = Integer.MIN_VALUE;
+    private boolean trackedUsedQuickSwap;
     private int ticksWaitedForSpawn = 0;
+
+    // Accuracy stats. Deliberately not reset in resetState()
+    private int attemptsNormal = 0, hitsNormal = 0;
+    private int attemptsQuickSwap = 0, hitsQuickSwap = 0;
+
+    private final Set<Integer> neutralizedThreatIds = new HashSet<>();
+    private int trackedThreatEntityId;
+    private boolean trackedCountsForStats;
 
     public ArenaM() {
         super(Addon.CATEGORY, "Arena-M", "Throws wind charges to intercept incoming projectiles mid-air.");
@@ -355,15 +379,18 @@ public class ArenaM extends Module {
     }
 
     private Vec3[] simulateThreatPath(Entity entity) {
-        ProjectilePhysics.Result result = ProjectilePhysics.simulate(
-            entity, entity.position(), entity.getDeltaMovement(), DETECTION_TICKS
-        );
+        ProjectileEntitySimulator simulator = new ProjectileEntitySimulator();
+        if (!simulator.set(entity)) return null;
 
-        List<Vec3> simulated = result.path();
         Vec3[] path = new Vec3[DETECTION_TICKS + 1];
-        for (int i = 0; i < simulated.size() && i < path.length; i++) {
-            path[i] = simulated.get(i);
+        path[0] = new Vec3(simulator.pos.x, simulator.pos.y, simulator.pos.z);
+
+        for (int i = 1; i <= DETECTION_TICKS; i++) {
+            SimulationStep step = simulator.tick();
+            path[i] = new Vec3(simulator.pos.x, simulator.pos.y, simulator.pos.z);
+            if (step.shouldStop) break;
         }
+
         return path;
     }
 
@@ -423,7 +450,8 @@ public class ArenaM extends Module {
     }
 
     private int getEffectiveLatencyTicks() {
-        return (int) Math.round(Math.max(0, Math.min(averageSpawnLatencyTicks, MAX_LEAD - 1)));
+        double avg = quickSwap.get() ? avgLatencyQuickSwap : avgLatencyNormal;
+        return (int) Math.round(Math.max(0, Math.min(avg, MAX_LEAD - 1)));
     }
 
     private AABB windBoxAt(Vec3 pos) {
@@ -486,10 +514,18 @@ public class ArenaM extends Module {
             if (e instanceof WindCharge) preThrowChargeIds.add(e.getId());
         }
         trackedThreatEntity = threatEntity;
+        trackedThreatEntityId = threatEntity.getId();
+        trackedCountsForStats = !neutralizedThreatIds.contains(trackedThreatEntityId);
+        trackedUsedQuickSwap = quickSwap.get();
         awaitingChargeSpawn = true;
         spawnSearchTimer = CHARGE_SPAWN_SEARCH_TICKS;
         ticksWaitedForSpawn = 0;
         trackedCharge = null;
+
+        if (trackedCountsForStats) {
+            if (trackedUsedQuickSwap) attemptsQuickSwap++;
+            else attemptsNormal++;
+        }
     }
 
     private void updateChargeTracking() {
@@ -507,13 +543,27 @@ public class ArenaM extends Module {
                 trackedCharge = e;
                 awaitingChargeSpawn = false;
                 trackTimer = CHARGE_TRACK_TIMEOUT_TICKS;
-                // EMA update: nudge the running latency estimate towards this real sample.
-                averageSpawnLatencyTicks += (ticksWaitedForSpawn - averageSpawnLatencyTicks) * LATENCY_SMOOTHING_ALPHA;
+
+                // EMA update: nudge the mode-specific running latency estimate towards this real sample.
+                if (trackedUsedQuickSwap) {
+                    avgLatencyQuickSwap += (ticksWaitedForSpawn - avgLatencyQuickSwap) * LATENCY_SMOOTHING_ALPHA;
+                    minLatencyQuickSwap = Math.min(minLatencyQuickSwap, ticksWaitedForSpawn);
+                    maxLatencyQuickSwap = Math.max(maxLatencyQuickSwap, ticksWaitedForSpawn);
+                } else {
+                    avgLatencyNormal += (ticksWaitedForSpawn - avgLatencyNormal) * LATENCY_SMOOTHING_ALPHA;
+                    minLatencyNormal = Math.min(minLatencyNormal, ticksWaitedForSpawn);
+                    maxLatencyNormal = Math.max(maxLatencyNormal, ticksWaitedForSpawn);
+                }
                 break;
             }
-            // Gave up without finding it; charge likely never spawned (e.g. throw failed).
-            // Don't feed a non-sample into the average.
-            if (spawnSearchTimer <= 0) awaitingChargeSpawn = false;
+
+            // Gave up without finding it; charge likely never spawned (throw failed).
+            // Don't feed a non-sample into the average, but it still counts against accuracy.
+            if (spawnSearchTimer <= 0) {
+                awaitingChargeSpawn = false;
+                logResolution(false);
+                trackedThreatEntity = null;
+            }
             preThrowChargeIds.clear();
             return;
         }
@@ -521,6 +571,7 @@ public class ArenaM extends Module {
         if (trackedCharge == null || trackedThreatEntity == null) return;
 
         if (trackedCharge.isRemoved() || trackedThreatEntity.isRemoved() || --trackTimer <= 0) {
+            logResolution(false);
             trackedCharge = null;
             trackedThreatEntity = null;
             return;
@@ -529,9 +580,47 @@ public class ArenaM extends Module {
         if (trackedCharge.getBoundingBox().intersects(trackedThreatEntity.getBoundingBox())) {
             confirmedHitBox = trackedCharge.getBoundingBox();
             confirmedHitTimer = CONFIRMED_HIT_DISPLAY_TICKS;
+            logResolution(true);
             trackedCharge = null;
             trackedThreatEntity = null;
         }
+    }
+
+    private void logResolution(boolean hit) {
+        if (hit) neutralizedThreatIds.add(trackedThreatEntityId);
+
+        // Mop-up throw against an already-neutralized target
+        // just not a data point about prediction accuracy. Don't log or count it.
+        if (!trackedCountsForStats) return;
+
+        if (hit) {
+            if (trackedUsedQuickSwap) hitsQuickSwap++;
+            else hitsNormal++;
+        }
+
+        if (!logStats.get()) return;
+
+        ChatUtils.info(String.format(
+            "[Arena-M] %s (%s) Normal: %d/%d (%.0f pct) lat avg=%.2f [%d-%d] | QuickSwap: %d/%d (%.0f pct) lat avg=%.2f [%d-%d]",
+            hit ? "HIT" : "MISS",
+            trackedUsedQuickSwap ? "quick-swap" : "normal",
+            hitsNormal, attemptsNormal, pct(hitsNormal, attemptsNormal), avgLatencyNormal,
+            safeMin(minLatencyNormal), safeMax(maxLatencyNormal),
+            hitsQuickSwap, attemptsQuickSwap, pct(hitsQuickSwap, attemptsQuickSwap), avgLatencyQuickSwap,
+            safeMin(minLatencyQuickSwap), safeMax(maxLatencyQuickSwap)
+        ));
+    }
+
+    private double pct(int hits, int attempts) {
+        return attempts == 0 ? 0.0 : (100.0 * hits / attempts);
+    }
+
+    private int safeMin(int v) {
+        return v == Integer.MAX_VALUE ? 0 : v;
+    }
+
+    private int safeMax(int v) {
+        return v == Integer.MIN_VALUE ? 0 : v;
     }
 
     @EventHandler

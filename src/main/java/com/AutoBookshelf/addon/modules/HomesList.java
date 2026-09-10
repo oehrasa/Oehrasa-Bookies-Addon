@@ -80,6 +80,20 @@ public class HomesList extends Module {
         .build()
     );
 
+    private final Setting<String> renameCommandFormat = sgGeneral.add(new StringSetting.Builder()
+        .name("rename-command")
+        .description("Command sent when you use the Rename button. {oldName} is the current server name, {name} is the new name you typed.")
+        .defaultValue("homerename {oldName} {name}")
+        .build()
+    );
+
+    private final Setting<String> deleteCommandFormat = sgGeneral.add(new StringSetting.Builder()
+        .name("delete-command")
+        .description("Command sent when you confirm the Delete Home button. {name} is replaced with the home's server name.")
+        .defaultValue("delhome {name}")
+        .build()
+    );
+
     public final Setting<Keybind> quickSelectKey = sgQuickSelect.add(new KeybindSetting.Builder()
         .name("quick-select-key")
         .description("Hold to open the screen. Scroll to select then release to TP to highlighted home.")
@@ -130,6 +144,7 @@ public class HomesList extends Module {
         .registerTypeAdapter(HomeEntry.class, new HomeEntryAdapter())
         .create();
     private File saveFile;
+    private final Object homesLock = new Object();
     private List<HomeEntry> homes = new ArrayList<>();
     private boolean waitingForServerHomes = false;
 
@@ -167,21 +182,41 @@ public class HomesList extends Module {
     }
 
     private void load() {
-        if (!saveFile.exists()) return;
-        try (Reader reader = new FileReader(saveFile)) {
-            Type listType = new TypeToken<List<HomeEntry>>() {
-            }.getType();
-            homes = GSON.fromJson(reader, listType);
-            if (homes == null) homes = new ArrayList<>();
-        } catch (IOException e) {
-            homes = new ArrayList<>();
+        synchronized (homesLock) {
+            if (!saveFile.exists()) return;
+            try (Reader reader = new FileReader(saveFile)) {
+                Type listType = new TypeToken<List<HomeEntry>>() {
+                }.getType();
+                List<HomeEntry> loaded = GSON.fromJson(reader, listType);
+                homes = loaded != null ? loaded : new ArrayList<>();
+            } catch (Exception e) {
+                // back up the corrupt file instead of silently discarding it
+                File corrupt = new File(saveFile.getParentFile(), saveFile.getName() + ".corrupt-" + System.currentTimeMillis());
+                saveFile.renameTo(corrupt);
+                homes = new ArrayList<>();
+                e.printStackTrace();
+            }
         }
     }
 
     public void save() {
-        try (Writer writer = new FileWriter(saveFile)) {
-            GSON.toJson(homes, writer);
-        } catch (IOException ignored) {
+        synchronized (homesLock) {
+            File tmp = new File(saveFile.getParentFile(), saveFile.getName() + ".tmp");
+            try (Writer writer = new FileWriter(tmp)) {
+                GSON.toJson(homes, writer);
+            } catch (Exception e) {
+                e.printStackTrace();
+                return; // don't touch the real file if the write failed
+            }
+            if (!tmp.renameTo(saveFile)) {
+                // fallback for platforms where atomic rename over existing file fails
+                try {
+                    java.nio.file.Files.move(tmp.toPath(), saveFile.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
         }
     }
 
@@ -277,6 +312,40 @@ public class HomesList extends Module {
         if (MeteorClient.mc.player == null) return;
         MeteorClient.mc.player.connection.sendCommand("home " + homeName);
         if (debugMode.get()) info("Teleport to " + homeName);
+    }
+
+    public void renameHome(HomeEntry entry, String newName) {
+        if (MeteorClient.mc.player == null || entry == null) return;
+        newName = newName == null ? "" : newName.trim();
+        if (newName.isEmpty()) return;
+
+        String command = renameCommandFormat.get()
+            .replace("{oldName}", entry.originalName == null ? "" : entry.originalName)
+            .replace("{name}", newName);
+        MeteorClient.mc.player.connection.sendCommand(command);
+
+        if (entry.displayName == null || entry.displayName.equals(entry.originalName)) {
+            entry.displayName = newName;
+        }
+        entry.originalName = newName;
+        sortHomes();
+        save();
+
+        if (debugMode.get()) info("Renamed home to " + newName);
+    }
+
+    public void deleteHome(HomeEntry entry) {
+        if (MeteorClient.mc.player == null || entry == null) return;
+
+        if (entry.originalName != null && !entry.originalName.isEmpty()) {
+            String command = deleteCommandFormat.get().replace("{name}", entry.originalName);
+            MeteorClient.mc.player.connection.sendCommand(command);
+        }
+
+        homes.remove(entry);
+        save();
+
+        if (debugMode.get()) info("Deleted home " + entry.originalName);
     }
 
     /**
@@ -746,6 +815,74 @@ public class HomesList extends Module {
 
             WButton cancel = actions.add(theme.button("Cancel")).expandX().widget();
             cancel.action = () -> MeteorClient.mc.setScreen(parent != null ? parent : null);
+
+            // Rename and delete only apply to a home that already exists on the server.
+            if (home != null) {
+                add(theme.horizontalSeparator()).expandX();
+
+                WHorizontalList renameRow = add(theme.horizontalList()).expandX().widget();
+                renameRow.add(theme.label("Rename to: "));
+                WTextBox renameBox = renameRow.add(theme.textBox("", "New name...")).expandX().widget();
+                WButton renameButton = renameRow.add(theme.button("Rename")).widget();
+                renameButton.action = () -> {
+                    String newName = renameBox.get().trim();
+                    if (newName.isEmpty()) return;
+
+                    module.renameHome(home, newName);
+                    originalName.set(newName);
+                    renameBox.set("");
+
+                    if (parent != null) parent.rebuildTable();
+                };
+
+                WHorizontalList deleteRow = add(theme.horizontalList()).expandX().widget();
+                WButton deleteButton = deleteRow.add(theme.button("Delete Home")).expandX().widget();
+                deleteButton.action = () -> MeteorClient.mc.setScreen(new ConfirmDeleteScreen(
+                    theme,
+                    home.displayName,
+                    () -> {
+                        module.deleteHome(home);
+                        if (parent != null) {
+                            parent.rebuildTable();
+                            MeteorClient.mc.setScreen(parent);
+                        } else MeteorClient.mc.setScreen(null);
+                    },
+                    () -> MeteorClient.mc.setScreen(EditHomeScreen.this)
+                ));
+            }
+        }
+    }
+
+    // Small yes/no popup shown before a home is actually deleted
+    private static class ConfirmDeleteScreen extends WindowScreen {
+        private final Runnable onConfirm;
+        private final Runnable onCancel;
+        private final String homeDisplayName;
+
+        protected ConfirmDeleteScreen(GuiTheme theme, String homeDisplayName, Runnable onConfirm, Runnable onCancel) {
+            super(theme, "Delete Home?");
+            this.onConfirm = onConfirm;
+            this.onCancel = onCancel;
+            this.homeDisplayName = homeDisplayName;
+        }
+
+        @Override
+        public void initWidgets() {
+            add(theme.label("Are you sure you want to delete \"" + homeDisplayName + "\"?")).expandX();
+            add(theme.horizontalSeparator()).expandX();
+
+            WHorizontalList row = add(theme.horizontalList()).expandX().widget();
+
+            WButton confirm = row.add(theme.button("Delete")).expandX().widget();
+            confirm.action = () -> onConfirm.run();
+
+            WButton cancel = row.add(theme.button("Cancel")).expandX().widget();
+            cancel.action = () -> onCancel.run();
+        }
+
+        @Override
+        public boolean shouldCloseOnEsc() {
+            return false;
         }
     }
 }

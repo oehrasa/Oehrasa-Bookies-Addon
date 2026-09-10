@@ -15,12 +15,17 @@ import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
+import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
+import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.CollisionContext;
-
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -28,6 +33,8 @@ import java.util.List;
 public class KMDB extends Module {
 
     public enum BuildMode {Wither, IronGolem, SnowGolem, CopperGolem}
+
+    private static final Direction[] AXIS_DIRECTIONS = {Direction.EAST, Direction.NORTH};
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgWither = settings.createGroup("Wither Settings");
@@ -47,6 +54,24 @@ public class KMDB extends Module {
         .defaultValue(3)
         .min(2)
         .max(6)
+        .visible(() -> buildMode.get() != BuildMode.Wither)
+        .build()
+    );
+
+    private final Setting<Integer> placementSearchRadius = sgPlacement.add(new IntSetting.Builder()
+        .name("search-radius")
+        .description("How far to search around the preferred spot for a clear location if it's obstructed.")
+        .defaultValue(2)
+        .min(0)
+        .max(5)
+        .visible(() -> buildMode.get() != BuildMode.Wither)
+        .build()
+    );
+
+    private final Setting<Boolean> airPlace = sgPlacement.add(new BoolSetting.Builder()
+        .name("air-place")
+        .description("Use packet-based airplace to place structure blocks with nothing to click against - removes the need for solid ground beneath the base, and avoids the floating/detached-base gap that can happen without it.")
+        .defaultValue(false)
         .visible(() -> buildMode.get() != BuildMode.Wither)
         .build()
     );
@@ -183,7 +208,7 @@ public class KMDB extends Module {
             case SnowGolem -> buildSnowGolem();
             case CopperGolem -> buildCopperGolem();
         }
-        // Toggle off instantly for instant builders
+        // Toggle off instantly for non Wither modes
         if (buildMode.get() != BuildMode.Wither) toggle();
     }
 
@@ -208,9 +233,11 @@ public class KMDB extends Module {
             for (int x = -hRadius; x <= hRadius; x++) {
                 for (int z = -hRadius; z <= hRadius; z++) {
                     BlockPos pos = playerPos.offset(x, y, z);
-                    Direction dir = Direction.fromYRot(Rotations.getYaw(pos)).getOpposite();
-                    if (isValidWitherSpawn(pos, dir)) {
-                        candidates.add(new Wither().set(pos, dir));
+                    for (Direction axisDir : AXIS_DIRECTIONS) {
+                        if (isValidWitherSpawn(pos, axisDir)) {
+                            candidates.add(new Wither().set(pos, axisDir));
+                            break; // this spot works on one axis, no need to test the other
+                        }
                     }
                 }
             }
@@ -221,12 +248,12 @@ public class KMDB extends Module {
         return candidates.get(0);
     }
 
-    private boolean isValidWitherSpawn(BlockPos blockPos, Direction direction) {
+    private boolean isValidWitherSpawn(BlockPos blockPos, Direction axisDirection) {
         if (blockPos.getY() > 252) return false;
 
         int widthX = 0, widthZ = 0;
-        if (direction == Direction.EAST || direction == Direction.WEST) widthZ = 1;
-        else widthX = 1;
+        if (axisDirection == Direction.EAST || axisDirection == Direction.WEST) widthX = 1;
+        else widthZ = 1;
 
         BlockPos.MutableBlockPos bp = new BlockPos.MutableBlockPos();
         for (int x = blockPos.getX() - widthX; x <= blockPos.getX() + widthX; x++) {
@@ -235,12 +262,73 @@ public class KMDB extends Module {
                     bp.set(x, y, z);
                     BlockState state = mc.level.getBlockState(bp);
                     if (!state.canBeReplaced()) return false;
-                    if (!mc.level.isUnobstructed(Blocks.STONE.defaultBlockState(), bp, CollisionContext.empty()))
-                        return false;
+                    if (!mc.level.isUnobstructed(Blocks.STONE.defaultBlockState(), bp, CollisionContext.empty())) return false;
                 }
             }
         }
         return true;
+    }
+
+    private BlockPos findClearFootPosition(List<int[]> relativeOffsets, int searchRadius) {
+        Direction facing = mc.player.getDirection();
+        BlockPos preferred = mc.player.blockPosition().relative(facing, placementDistance.get());
+
+        List<BlockPos> candidates = new ArrayList<>();
+        for (int x = -searchRadius; x <= searchRadius; x++) {
+            for (int y = -1; y <= 1; y++) {
+                for (int z = -searchRadius; z <= searchRadius; z++) {
+                    BlockPos pos = preferred.offset(x, y, z);
+
+                    if (!airPlace.get()) {
+                        BlockState belowState = mc.level.getBlockState(pos.below());
+                        if (belowState.isAir() || belowState.canBeReplaced()) continue;
+                    }
+
+                    boolean clear = true;
+                    for (int[] rel : relativeOffsets) {
+                        BlockPos check = pos.offset(rel[0], rel[1], rel[2]);
+                        BlockState state = mc.level.getBlockState(check);
+                        // canPlace() checks entity collisions
+                        if (!state.isAir() || !mc.level.isUnobstructed(Blocks.STONE.defaultBlockState(), check, CollisionContext.empty())) {
+                            clear = false;
+                            break;
+                        }
+                    }
+                    if (clear) candidates.add(pos);
+                }
+            }
+        }
+
+        if (candidates.isEmpty()) return null;
+        candidates.sort(Comparator.comparingDouble(PlayerUtils::distanceTo));
+        return candidates.get(0);
+    }
+
+    private List<int[]> ironGolemFootprint(Direction.Axis axis) {
+        int dx = axis == Direction.Axis.X ? 1 : 0;
+        int dz = axis == Direction.Axis.Z ? 1 : 0;
+        return List.of(
+            new int[]{0, 0, 0},
+            new int[]{0, 1, 0},
+            new int[]{-dx, 1, -dz},
+            new int[]{dx, 1, dz},
+            new int[]{0, 2, 0}
+        );
+    }
+
+    private List<int[]> snowGolemFootprint() {
+        return List.of(
+            new int[]{0, 0, 0},
+            new int[]{0, 1, 0},
+            new int[]{0, 2, 0}
+        );
+    }
+
+    private List<int[]> copperGolemFootprint() {
+        return List.of(
+            new int[]{0, 0, 0},
+            new int[]{0, 1, 0}
+        );
     }
 
     @EventHandler
@@ -269,26 +357,68 @@ public class KMDB extends Module {
             case IronGolem -> {
                 Direction facing = mc.player.getDirection();
                 Direction.Axis axis = facing.getAxis();
-                BlockPos foot = mc.player.blockPosition().relative(facing, placementDistance.get());
+                BlockPos foot = findClearFootPosition(ironGolemFootprint(axis), placementSearchRadius.get());
+                if (foot != null) {
+                    int dx = axis == Direction.Axis.X ? 1 : 0;
+                    int dz = axis == Direction.Axis.Z ? 1 : 0;
 
-                event.renderer.box(foot, golemColor.get(), golemColor.get(), shapeMode.get(), 0);
-                event.renderer.box(foot.above(), golemColor.get(), golemColor.get(), shapeMode.get(), 0);
-                event.renderer.box(foot.above().relative(axis, -1), golemColor.get(), golemColor.get(), shapeMode.get(), 0);
-                event.renderer.box(foot.above().relative(axis, 1), golemColor.get(), golemColor.get(), shapeMode.get(), 0);
-                event.renderer.box(foot.above(2), golemColor.get(), golemColor.get(), shapeMode.get(), 0);
+                    event.renderer.box(foot, golemColor.get(), golemColor.get(), shapeMode.get(), 0);
+                    event.renderer.box(foot.above(), golemColor.get(), golemColor.get(), shapeMode.get(), 0);
+                    event.renderer.box(foot.offset(-dx, 1, -dz), golemColor.get(), golemColor.get(), shapeMode.get(), 0);
+                    event.renderer.box(foot.offset(dx, 1, dz), golemColor.get(), golemColor.get(), shapeMode.get(), 0);
+                    event.renderer.box(foot.above(2), golemColor.get(), golemColor.get(), shapeMode.get(), 0);
+                }
             }
             case SnowGolem -> {
-                BlockPos base = mc.player.blockPosition().relative(mc.player.getDirection(), placementDistance.get());
-                event.renderer.box(base, golemColor.get(), golemColor.get(), shapeMode.get(), 0);
-                event.renderer.box(base.above(), golemColor.get(), golemColor.get(), shapeMode.get(), 0);
-                event.renderer.box(base.above(2), golemColor.get(), golemColor.get(), shapeMode.get(), 0);
+                BlockPos base = findClearFootPosition(snowGolemFootprint(), placementSearchRadius.get());
+                if (base != null) {
+                    event.renderer.box(base, golemColor.get(), golemColor.get(), shapeMode.get(), 0);
+                    event.renderer.box(base.above(), golemColor.get(), golemColor.get(), shapeMode.get(), 0);
+                    event.renderer.box(base.above(2), golemColor.get(), golemColor.get(), shapeMode.get(), 0);
+                }
             }
             case CopperGolem -> {
-                BlockPos foot = mc.player.blockPosition().relative(mc.player.getDirection(), placementDistance.get());
-                event.renderer.box(foot, golemColor.get(), golemColor.get(), shapeMode.get(), 0);
-                event.renderer.box(foot.above(), golemColor.get(), golemColor.get(), shapeMode.get(), 0);
+                BlockPos foot = findClearFootPosition(copperGolemFootprint(), placementSearchRadius.get());
+                if (foot != null) {
+                    event.renderer.box(foot, golemColor.get(), golemColor.get(), shapeMode.get(), 0);         // copper base
+                    event.renderer.box(foot.above(), golemColor.get(), golemColor.get(), shapeMode.get(), 0);    // pumpkin
+                }
             }
         }
+    }
+
+    private void place(BlockPos pos, FindItemResult item) {
+        if (airPlace.get()) {
+            airPlaceBlock(pos, item);
+        } else {
+            BlockUtils.place(pos, item, 0, false);
+        }
+    }
+
+    private void airPlaceBlock(BlockPos pos, FindItemResult item) {
+        if (!item.found()) return;
+
+        int previousSlot = mc.player.getInventory().getSelectedSlot();
+        mc.player.getInventory().setSelectedSlot(item.slot());
+        mc.player.connection.send(new ServerboundSetCarriedItemPacket(item.slot()));
+
+        BlockHitResult bhr = new BlockHitResult(Vec3.atCenterOf(pos), Direction.UP, pos, false);
+        int currentRevision = mc.player.containerMenu.getStateId();
+
+        mc.player.connection.send(new ServerboundPlayerActionPacket(
+            ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
+
+        mc.player.connection.send(new ServerboundUseItemOnPacket(
+            InteractionHand.OFF_HAND, bhr, currentRevision));
+
+        // Swap back
+        mc.player.connection.send(new ServerboundPlayerActionPacket(
+            ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
+
+        mc.player.swing(InteractionHand.MAIN_HAND);
+
+        mc.player.getInventory().setSelectedSlot(previousSlot);
+        mc.player.connection.send(new ServerboundSetCarriedItemPacket(previousSlot));
     }
 
     private void renderSkullBox(Render3DEvent event, BlockPos pos) {
@@ -365,25 +495,12 @@ public class KMDB extends Module {
     private void buildIronGolem() {
         Direction facing = mc.player.getDirection();
         Direction.Axis axis = facing.getAxis();
+        int dx = axis == Direction.Axis.X ? 1 : 0;
+        int dz = axis == Direction.Axis.Z ? 1 : 0;
 
-        BlockPos foot = mc.player.blockPosition().relative(facing, placementDistance.get());
-        BlockPos[] ironPositions = {
-            foot,
-            foot.above(),
-            foot.above().relative(axis, -1),
-            foot.above().relative(axis, 1)
-        };
-        BlockPos pumpkinPos = foot.above(2);
-
-        // Clearance check
-        for (BlockPos pos : ironPositions) {
-            if (!mc.level.getBlockState(pos).isAir()) {
-                error("Not enough clear space for an iron golem.");
-                return;
-            }
-        }
-        if (!mc.level.getBlockState(pumpkinPos).isAir()) {
-            error("Not enough clear space for the pumpkin.");
+        BlockPos foot = findClearFootPosition(ironGolemFootprint(axis), placementSearchRadius.get());
+        if (foot == null) {
+            error("Not enough clear space for an iron golem nearby.");
             return;
         }
 
@@ -392,27 +509,24 @@ public class KMDB extends Module {
             error("No iron blocks in hotbar.");
             return;
         }
-
-        FindItemResult pumpkin = findPumpkinInHotbar();
+        FindItemResult pumpkin = InvUtils.findInHotbar(Items.CARVED_PUMPKIN);
         if (!pumpkin.found()) {
-            error("No carved pumpkin or jack o' lantern in hotbar.");
+            error("No carved pumpkin in hotbar.");
             return;
         }
 
-        for (BlockPos pos : ironPositions) {
-            BlockUtils.place(pos, iron, 0, false);
-        }
-        BlockUtils.place(pumpkinPos, pumpkin, 0, false);
-
+        place(foot, iron);
+        place(foot.above(), iron);
+        place(foot.offset(-dx, 1, -dz), iron);
+        place(foot.offset(dx, 1, dz), iron);
+        place(foot.above(2), pumpkin);
         info("Iron golem built.");
     }
 
     private void buildSnowGolem() {
-        Direction facing = mc.player.getDirection();
-        BlockPos base = mc.player.blockPosition().relative(facing, placementDistance.get());
-
-        if (!mc.level.getBlockState(base).isAir() || !mc.level.getBlockState(base.above()).isAir() || !mc.level.getBlockState(base.above(2)).isAir()) {
-            error("Not enough clear space for a snow golem.");
+        BlockPos base = findClearFootPosition(snowGolemFootprint(), placementSearchRadius.get());
+        if (base == null) {
+            error("Not enough clear space for a snow golem nearby.");
             return;
         }
 
@@ -421,32 +535,31 @@ public class KMDB extends Module {
             error("No snow blocks in hotbar.");
             return;
         }
-
-        FindItemResult pumpkin = findPumpkinInHotbar();
+        FindItemResult pumpkin = InvUtils.findInHotbar(Items.CARVED_PUMPKIN);
         if (!pumpkin.found()) {
-            error("No carved pumpkin or jack‑o‑lantern in hotbar.");
+            error("No carved pumpkin in hotbar.");
             return;
         }
 
-        BlockUtils.place(base, snow, 0, false);
-        BlockUtils.place(base.above(), snow, 0, false);
-        BlockUtils.place(base.above(2), pumpkin, 0, false);
+        place(base, snow);
+        place(base.above(), snow);
+        place(base.above(2), pumpkin);
         info("Snow golem built.");
     }
 
     private void buildCopperGolem() {
         Direction facing = mc.player.getDirection();
-        BlockPos foot = mc.player.blockPosition().relative(facing, placementDistance.get());
-        BlockPos above = foot.above();
+        BlockPos preferredFoot = mc.player.blockPosition().relative(facing, placementDistance.get());
 
-        // Skip if foot already occupied
-        if (skipIfOccupied.get() && !mc.level.getBlockState(foot).isAir()) {
-            warning("Feet position is already occupied.");
+        BlockPos foot = findClearFootPosition(copperGolemFootprint(), placementSearchRadius.get());
+        if (foot == null) {
+            error("Not enough clear space for copper golem nearby.");
             return;
         }
 
-        if (!mc.level.getBlockState(foot).isAir() || !mc.level.getBlockState(above).isAir()) {
-            error("Not enough clear space for copper golem.");
+        if (skipIfOccupied.get() && foot.equals(preferredFoot)
+            && !mc.level.getBlockState(preferredFoot).isAir()) {
+            warning("Foot position is already occupied, golem may already exist.");
             return;
         }
 
@@ -455,22 +568,14 @@ public class KMDB extends Module {
             error("No copper block in hotbar.");
             return;
         }
-
         FindItemResult pumpkin = InvUtils.findInHotbar(pumpkinType.get());
         if (!pumpkin.found()) {
             error("No suitable pumpkin in hotbar.");
             return;
         }
 
-        BlockUtils.place(foot, copper, 0, false);
-        BlockUtils.place(above, pumpkin, 0, false);
-
+        place(foot, copper);
+        place(foot.above(), pumpkin);
         info("Copper golem built.");
-    }
-
-    private FindItemResult findPumpkinInHotbar() {
-        FindItemResult result = InvUtils.findInHotbar(Items.CARVED_PUMPKIN);
-        if (!result.found()) result = InvUtils.findInHotbar(Items.JACK_O_LANTERN);
-        return result;
     }
 }

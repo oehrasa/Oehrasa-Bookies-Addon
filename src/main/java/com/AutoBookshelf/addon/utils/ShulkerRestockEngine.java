@@ -21,17 +21,23 @@ import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
-
 import java.util.ArrayList;
 import java.util.List;
 
 public class ShulkerRestockEngine {
 
     public enum Stage {
-        IDLE, FIND_SHULKER, PLACE_SHULKER, OPEN_SHULKER, RESTOCK,
-        CLOSE_AND_BREAK, WAIT_MANUAL_CLOSE
+        IDLE, FIND_SHULKER,
+        PLACE_SHULKER, WAIT_FOR_PLACEMENT,
+        OPEN_SHULKER, WAIT_FOR_OPEN,
+        RESTOCK,
+        CLOSE_SHULKER, START_BREAK, WAIT_FOR_BREAK,
+        WAIT_MANUAL_CLOSE
     }
 
+    /**
+     * Per-attempt settings, gathered by the caller from its own module settings.
+     */
     public record RestockConfig(
         int placeRange,
         boolean airPlace,
@@ -39,7 +45,7 @@ public class ShulkerRestockEngine {
         boolean breakAfterFill,
         boolean autoTake,
         boolean rotate,
-        int shulkerHotbarSlot,
+        int shulkerHotbarSlot, // 1-9, display
         List<Item> protectedItems,
         List<BlockPos> excludedPositions
     ) {
@@ -50,6 +56,16 @@ public class ShulkerRestockEngine {
 
         void onFinished(boolean success);
     }
+
+    // Bounded wait times for each confirmation state, in client ticks. These
+    // exist because sending a packet is not confirmation that the server
+    // acted on it - every WAIT_FOR_* state polls the actual world/UI state
+    // each tick instead of just assuming success after a fixed delay.
+    private static final int PLACEMENT_TIMEOUT_TICKS = 20;
+    private static final int OPEN_TIMEOUT_TICKS = 20;
+    private static final int BREAK_TIMEOUT_TICKS = 200;
+    private static final int MAX_PLACEMENT_ATTEMPTS = 5;
+    private static final int MAX_OPEN_ATTEMPTS = 3;
 
     private final Minecraft mc;
     private final PlacementEngine placementEngine;
@@ -64,6 +80,9 @@ public class ShulkerRestockEngine {
 
     private BlockPos placedShulkerPos;
     private int delayTicks;
+    private int stateTicks;
+    private int placementAttempts;
+    private int openAttempts;
     private int keepFree;
     private boolean pickaxeEquipped;
     private int preBreakSlot = -1;
@@ -71,6 +90,10 @@ public class ShulkerRestockEngine {
     private String lastFailReason = "";
     private boolean shulkerFullyEmptied = false;
 
+    /**
+     * Positions where placement was attempted but never materialized, so
+     * PlacementEngine can skip them on retry within the same attempt.
+     */
     private final List<BlockPos> failedPositions = new ArrayList<>();
 
     public ShulkerRestockEngine(Minecraft mc, PlacementEngine placementEngine, RestockCallback callback) {
@@ -91,6 +114,9 @@ public class ShulkerRestockEngine {
         originalSelectedSlot = -1;
         placedShulkerPos = null;
         delayTicks = 0;
+        stateTicks = 0;
+        placementAttempts = 0;
+        openAttempts = 0;
         keepFree = 0;
         pickaxeEquipped = false;
         preBreakSlot = -1;
@@ -98,6 +124,13 @@ public class ShulkerRestockEngine {
         failedPositions.clear();
     }
 
+    /**
+     * True if, on the most recently completed attempt, every stack of the target
+     * item was taken out of the shulker before it was broken. False means the
+     * box was broken (or left placed) while still holding leftover contents -
+     * callers that break-after-fill should treat that dropped box as worth
+     * chasing down, unlike a fully-emptied one.
+     */
     public boolean wasShulkerFullyEmptied() {
         return shulkerFullyEmptied;
     }
@@ -106,6 +139,9 @@ public class ShulkerRestockEngine {
         restoreOriginalSlot();
     }
 
+    /**
+     * Begin restocking targetItem from a shulker box somewhere in the player's inventory.
+     */
     public void start(Item targetItem, RestockConfig config) {
         this.currentTargetItem = targetItem;
         this.config = config;
@@ -114,9 +150,14 @@ public class ShulkerRestockEngine {
         this.failedPositions.clear();
         this.lastFailItem = "";
         this.lastFailReason = "";
+        this.placementAttempts = 0;
+        this.openAttempts = 0;
         this.stage = Stage.FIND_SHULKER;
     }
 
+    /**
+     * Drive the state machine one tick. Returns true while still working.
+     */
     public boolean tick() {
         if (mc.player == null || mc.level == null) return isActive();
         if (delayTicks > 0) {
@@ -127,11 +168,15 @@ public class ShulkerRestockEngine {
         switch (stage) {
             case FIND_SHULKER -> selectShulker();
             case PLACE_SHULKER -> placeShulker();
+            case WAIT_FOR_PLACEMENT -> waitForPlacement();
             case OPEN_SHULKER -> openShulker();
+            case WAIT_FOR_OPEN -> waitForOpen();
             case RESTOCK -> doRestock();
-            case CLOSE_AND_BREAK -> closeAndBreak();
+            case CLOSE_SHULKER -> closeShulker();
+            case START_BREAK -> startBreak();
+            case WAIT_FOR_BREAK -> waitForBreak();
             case WAIT_MANUAL_CLOSE -> {
-                if (!(mc.screen instanceof AbstractContainerScreen)) stage = Stage.CLOSE_AND_BREAK;
+                if (!(mc.screen instanceof AbstractContainerScreen)) stage = Stage.CLOSE_SHULKER;
             }
             case IDLE -> {
             }
@@ -210,6 +255,9 @@ public class ShulkerRestockEngine {
         placedShulkerPos = placePos;
         Vec3 hitVec = Vec3.atCenterOf(placePos);
 
+        // Placement is always top-face: we click Direction.UP on placePos.down()
+        // (or, in air-place mode, simulate that same click via the offhand-swap
+        // trick). There is no side-face placement path.
         if (config.airPlace()) {
             BlockHitResult hit = new BlockHitResult(hitVec, Direction.UP, placePos, false);
             int revision = mc.player.containerMenu.getStateId();
@@ -246,12 +294,38 @@ public class ShulkerRestockEngine {
             }
         }
 
-        delayTicks = 4;
-        stage = Stage.OPEN_SHULKER;
+        // Sending the interaction packet is not confirmation the server placed
+        // anything - WAIT_FOR_PLACEMENT polls the real world state for the
+        // shulker before we ever try to open it.
+        stateTicks = 0;
+        stage = Stage.WAIT_FOR_PLACEMENT;
+    }
+
+    private void waitForPlacement() {
+        if (mc.level.getBlockState(placedShulkerPos).getBlock() instanceof ShulkerBoxBlock) {
+            stateTicks = 0;
+            stage = Stage.OPEN_SHULKER;
+            return;
+        }
+
+        stateTicks++;
+        if (stateTicks < PLACEMENT_TIMEOUT_TICKS) return;
+
+        // Timed out - the world never showed a shulker at this position.
+        // Record it as failed so the next candidate search skips it, and try
+        // again from scratch rather than waiting forever.
+        failedPositions.add(placedShulkerPos);
+        placementAttempts++;
+        if (placementAttempts >= MAX_PLACEMENT_ATTEMPTS) {
+            abort("Couldn't confirm shulker placement after " + MAX_PLACEMENT_ATTEMPTS + " attempts. Resetting.");
+            return;
+        }
+        stateTicks = 0;
+        stage = Stage.PLACE_SHULKER;
     }
 
     private int resolveHotbarSlot() {
-        int preferred = config.shulkerHotbarSlot() - 1;
+        int preferred = config.shulkerHotbarSlot() - 1; // convert 1-9 display to 0-8 index
 
         if (!isProtected(mc.player.getInventory().getItem(preferred))) {
             return preferred;
@@ -264,7 +338,7 @@ public class ShulkerRestockEngine {
             }
         }
 
-        return -1;
+        return -1; // all hotbar slots are protected
     }
 
     private boolean isProtected(ItemStack stack) {
@@ -278,43 +352,61 @@ public class ShulkerRestockEngine {
             return;
         }
 
-        if (mc.screen instanceof AbstractContainerScreen) {
-            if (!config.autoTake()) {
-                stage = Stage.WAIT_MANUAL_CLOSE;
-                return;
-            }
-            stage = Stage.RESTOCK;
-            delayTicks = 5;
-            return;
-        }
-
-        if (!(mc.level.getBlockState(placedShulkerPos).getBlock() instanceof ShulkerBoxBlock)) {
-            delayTicks = 2;
-            return;
-        }
-
         double reach = (double) config.placeRange();
         if (mc.player.distanceToSqr(Vec3.atCenterOf(placedShulkerPos)) > reach * reach) {
             abort("Shulker is too far to open. Resetting.");
             return;
         }
 
+        // WAIT_FOR_PLACEMENT already confirmed a shulker sits here, so we can
+        // go straight to interacting with it.
         BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf(placedShulkerPos), Direction.UP, placedShulkerPos, false);
         mc.player.connection.send(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND, hit, 0));
         mc.player.swing(InteractionHand.MAIN_HAND);
-        delayTicks = 4;
+
+        stateTicks = 0;
+        stage = Stage.WAIT_FOR_OPEN;
+    }
+
+    private void waitForOpen() {
+        if (mc.screen instanceof AbstractContainerScreen) {
+            stateTicks = 0;
+            openAttempts = 0;
+            stage = config.autoTake() ? Stage.RESTOCK : Stage.WAIT_MANUAL_CLOSE;
+            return;
+        }
+
+        if (!(mc.level.getBlockState(placedShulkerPos).getBlock() instanceof ShulkerBoxBlock)) {
+            // The block itself vanished (broken, exploded, replaced by
+            // someone/something else) while we were waiting on the GUI.
+            abort("Shulker disappeared before it could be opened.");
+            return;
+        }
+
+        stateTicks++;
+        if (stateTicks < OPEN_TIMEOUT_TICKS) return;
+
+        openAttempts++;
+        if (openAttempts >= MAX_OPEN_ATTEMPTS) {
+            abort("Couldn't open the shulker after " + MAX_OPEN_ATTEMPTS + " attempts. Resetting.");
+            return;
+        }
+        stateTicks = 0;
+        stage = Stage.OPEN_SHULKER;
     }
 
     private void doRestock() {
         if (!(mc.screen instanceof AbstractContainerScreen<?> screen)) {
-            stage = Stage.CLOSE_AND_BREAK;
+            // GUI closed on its own (e.g. server-side kick from the container);
+            // fall through to the close/break flow, which handles a
+            // already-closed screen cleanly.
+            stage = Stage.CLOSE_SHULKER;
             return;
         }
 
         if (countEmptyPlayerSlots() <= keepFree) {
             mc.player.closeContainer();
-            delayTicks = 2;
-            stage = Stage.CLOSE_AND_BREAK;
+            stage = Stage.CLOSE_SHULKER;
             return;
         }
 
@@ -327,6 +419,12 @@ public class ShulkerRestockEngine {
             }
         }
 
+        // Any target-item slot in the shulker still holding a stack after the loop
+        // above means we stopped short of fully emptying it (either genuinely out
+        // of inventory room, or - previously - due to the miscounted early exit).
+        // Record that so the caller can tell a "fully emptied" success apart from
+        // a "still has contents" one and decide whether to bother chasing down
+        // the dropped box after it's broken.
         shulkerFullyEmptied = true;
         for (int i = 0; i < 27; i++) {
             if (handler.getSlot(i).getItem().getItem() == currentTargetItem) {
@@ -336,8 +434,7 @@ public class ShulkerRestockEngine {
         }
 
         mc.player.closeContainer();
-        delayTicks = 2;
-        stage = Stage.CLOSE_AND_BREAK;
+        stage = Stage.CLOSE_SHULKER;
     }
 
     private int countEmptyPlayerSlots() {
@@ -356,6 +453,10 @@ public class ShulkerRestockEngine {
         }
     }
 
+    /**
+     * Restores whatever the player had selected before start() ran (their platform
+     * material, most likely). Runs after restorePickaxeSlot()
+     */
     private void restoreOriginalSlot() {
         if (originalSelectedSlot >= 0 && originalSelectedSlot <= 8) {
             mc.player.getInventory().setSelectedSlot(originalSelectedSlot);
@@ -363,17 +464,23 @@ public class ShulkerRestockEngine {
         }
     }
 
-    private void closeAndBreak() {
-        if (mc.screen != null) {
+    private void closeShulker() {
+        if (mc.screen instanceof AbstractContainerScreen) {
             mc.player.closeContainer();
-            delayTicks = 2;
+            delayTicks = 2; // brief client-side settle before we re-check currentScreen
             return;
         }
         if (!config.breakAfterFill()) {
             succeed();
             return;
         }
+        stateTicks = 0;
+        stage = Stage.START_BREAK;
+    }
+
+    private void startBreak() {
         if (mc.level.getBlockState(placedShulkerPos).isAir()) {
+            // Already gone somehow (e.g. something else broke it) - nothing to do.
             succeed();
             return;
         }
@@ -389,17 +496,31 @@ public class ShulkerRestockEngine {
             if (pickSlot != -1) {
                 preBreakSlot = mc.player.getInventory().getSelectedSlot();
                 mc.player.getInventory().setSelectedSlot(pickSlot);
+                mc.player.connection.send(new ServerboundSetCarriedItemPacket(pickSlot));
                 pickaxeEquipped = true;
             }
         }
 
+        stateTicks = 0;
+        stage = Stage.WAIT_FOR_BREAK;
+    }
+
+    private void waitForBreak() {
+        if (mc.level.getBlockState(placedShulkerPos).isAir()) {
+            succeed();
+            return;
+        }
+
+        // Sending another breaking-progress tick is not confirmation of
+        // anything either - we keep polling the block state above every tick,
+        // and only give up once BREAK_TIMEOUT_TICKS is exceeded, instead of
+        // looping on this indefinitely (e.g. because no pickaxe was found).
         mc.gameMode.continueDestroyBlock(placedShulkerPos, Direction.UP);
         mc.player.swing(InteractionHand.MAIN_HAND);
 
-        if (mc.level.getBlockState(placedShulkerPos).isAir()) {
-            succeed();
-        } else {
-            delayTicks = 2;
+        stateTicks++;
+        if (stateTicks >= BREAK_TIMEOUT_TICKS) {
+            abort("Couldn't break the shulker box at " + placedShulkerPos + " within the time limit.");
         }
     }
 
@@ -417,6 +538,10 @@ public class ShulkerRestockEngine {
 
     private void abort(String message) {
         if (message != null) callback.onInfo(message);
+        // A break attempt may have been in progress (pickaxe already swapped
+        // in) when the abort was triggered - restore it before the original
+        // slot, same ordering succeed() uses.
+        restorePickaxeSlot();
         restoreOriginalSlot();
         reset();
         callback.onFinished(false);

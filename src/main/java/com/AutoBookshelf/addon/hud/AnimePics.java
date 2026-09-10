@@ -16,7 +16,6 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.hud.HudElement;
 import meteordevelopment.meteorclient.systems.hud.HudElementInfo;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
-import meteordevelopment.meteorclient.utils.network.Http;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.Identifier;
@@ -32,7 +31,10 @@ import javax.imageio.metadata.IIOMetadataNode;
 import javax.imageio.stream.ImageInputStream;
 import java.awt.*;
 import java.awt.image.BufferedImage;
-import java.io.*;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.IOException;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -50,7 +52,7 @@ public class AnimePics extends HudElement {
     public static final HudElementInfo<AnimePics> INFO = new HudElementInfo<>(
         Addon.HUD_GROUP,
         "Anime-Pics",
-        "Displays random Anime pictures/GIF from Nekos.life or WaifuIM or Safebooru or even Custom.",
+        "Displays random Anime pictures/GIF from Nekos.life, WaifuIM, Safebooru, Yande.re, Konachan, PurrBot or a Local Folder.",
         AnimePics::create
     );
 
@@ -65,6 +67,10 @@ public class AnimePics extends HudElement {
     private byte[] currentRawBytes = null;
     private String currentImageName = null;
 
+    // Metadata for the currently-loaded image, populated by whichever fetch*() resolved the URL.
+    // Null for sources that don't return metadata (NekosLife/Safebooru/LocalFolder currently don't populate it).
+    private volatile ImageMetadata lastMetadata = null;
+
     // Persistent GPU texture. Recreated only when the pixel dimensions actually change; otherwise every
     // frame swap (GIF animation or a same-size static image) reuses it via copyFrom()+upload() so no
     // repeated GL texture allocation.
@@ -77,10 +83,15 @@ public class AnimePics extends HudElement {
     private int gifFrameIndex = 0;
     private int gifElapsedMs = 0;
 
+    // Debounced live-refresh: typing into a tag field schedules a refresh a short delay after the
+    // last keystroke instead of firing a request per character.
+    private int liveRefreshDebounceTicks = -1; // -1 = no pending refresh
+    private static final int DEBOUNCE_TICKS = 12; // ~600ms at 20 ticks/sec after the last change
+
     // Settings
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
-    public enum Source { NekosLife, WaifuIM, Safebooru, LocalFolder }
+    public enum Source {NekosLife, WaifuIM, Safebooru, YandeRE, Konachan, PurrBot, LocalFolder}
 
     public enum NekosTag {
         neko, waifu, fox_girl, hug, kiss, meow, gecg,
@@ -93,6 +104,18 @@ public class AnimePics extends HudElement {
         mori_calliope, kamisato_ayaka
     }
 
+    public enum BooruRating {
+        Explicit("rating:e"), Questionable("rating:q"), Safe("rating:s");
+
+        public final String param;
+
+        BooruRating(String param) {
+            this.param = param;
+        }
+    }
+
+    public enum PurrBotTag {fuck, blowjob, cum, anal, pussylick, solo, yaoi, yuri, neko}
+
     private static final List<String> NEKOS_CYCLE_LIST = List.of(
         "neko", "waifu", "fox_girl", "hug", "kiss", "meow", "lizard", "goose", "gecg",
         "avatar", "feed", "cuddle", "woof", "smug", "tickle", "slap", "pat", "wallpaper"
@@ -102,6 +125,10 @@ public class AnimePics extends HudElement {
         "waifu", "ero", "ecchi", "oppai", "hentai", "milf", "uniform", "ass", "maid",
         "selfies", "paizuri", "oral", "genshin impact", "raiden shogun", "marin kitagawa",
         "mori calliope", "kamisato ayaka"
+    );
+
+    private static final List<String> PURR_CYCLE_LIST = List.of(
+        "fuck", "blowjob", "cum", "anal", "pussylick", "solo", "yaoi", "yuri", "neko"
     );
 
     private final Setting<Source> source = sgGeneral.add(new EnumSetting.Builder<Source>()
@@ -135,10 +162,28 @@ public class AnimePics extends HudElement {
 
     private int nekosCycleIndex = 0;
 
+    private final Setting<Boolean> waifuUseCustomTag = sgGeneral.add(new BoolSetting.Builder()
+        .name("waifu-use-custom-tag")
+        .description("Type a custom tag instead of using the predefined dropdown below.")
+        .visible(() -> source.get() == Source.WaifuIM)
+        .defaultValue(false)
+        .onChanged(v -> refreshNow())
+        .build()
+    );
+
+    private final Setting<String> waifuCustomTag = sgGeneral.add(new StringSetting.Builder()
+        .name("waifu-custom-tag")
+        .description("Custom WaifuIM tag keyword(s).")
+        .visible(() -> source.get() == Source.WaifuIM && waifuUseCustomTag.get())
+        .defaultValue("")
+        .onChanged(v -> scheduleLiveRefresh())
+        .build()
+    );
+
     private final Setting<WaifimTag> waifuTag = sgGeneral.add(new EnumSetting.Builder<WaifimTag>()
         .name("waifu-tag")
-        .description("Image category for WaifuIM.")
-        .visible(() -> source.get() == Source.WaifuIM)
+        .description("Predefined image category for WaifuIM.")
+        .visible(() -> source.get() == Source.WaifuIM && !waifuUseCustomTag.get())
         .defaultValue(WaifimTag.waifu)
         .onChanged(v -> refreshNow())
         .build()
@@ -146,8 +191,8 @@ public class AnimePics extends HudElement {
 
     private final Setting<Boolean> cycleWaifu = sgGeneral.add(new BoolSetting.Builder()
         .name("cycle-waifu")
-        .description("Cycle through WaifuIM tags on each refresh.")
-        .visible(() -> source.get() == Source.WaifuIM)
+        .description("Cycle through WaifuIM tags on each refresh. Ignored while a custom tag is set.")
+        .visible(() -> source.get() == Source.WaifuIM && !waifuUseCustomTag.get())
         .defaultValue(true)
         .build()
     );
@@ -157,10 +202,85 @@ public class AnimePics extends HudElement {
         .description("Tag for Safebooru images.")
         .visible(() -> source.get() == Source.Safebooru)
         .defaultValue("yuri")
+        .onChanged(v -> scheduleLiveRefresh())
         .build()
     );
 
     private int waifuCycleIndex = 0;
+
+    // Yande.re
+    private final Setting<String> yandeTags = sgGeneral.add(new StringSetting.Builder()
+        .name("yande-tags")
+        .description("Search tags for Yande.re (space or comma separated). Leave blank for random.")
+        .visible(() -> source.get() == Source.YandeRE)
+        .defaultValue("")
+        .onChanged(v -> scheduleLiveRefresh())
+        .build()
+    );
+
+    private final Setting<BooruRating> yandeRating = sgGeneral.add(new EnumSetting.Builder<BooruRating>()
+        .name("yande-rating")
+        .description("Rating filter for Yande.re.")
+        .visible(() -> source.get() == Source.YandeRE)
+        .defaultValue(BooruRating.Safe)
+        .onChanged(v -> refreshNow())
+        .build()
+    );
+
+    private final Setting<Boolean> yandeRandomPage = sgGeneral.add(new BoolSetting.Builder()
+        .name("yande-random-page")
+        .description("Pull from a random results page instead of only the first page.")
+        .visible(() -> source.get() == Source.YandeRE)
+        .defaultValue(true)
+        .build()
+    );
+
+    // Konachan
+    private final Setting<String> konachanTags = sgGeneral.add(new StringSetting.Builder()
+        .name("konachan-tags")
+        .description("Search tags for Konachan (space or comma separated). Leave blank for random.")
+        .visible(() -> source.get() == Source.Konachan)
+        .defaultValue("")
+        .onChanged(v -> scheduleLiveRefresh())
+        .build()
+    );
+
+    private final Setting<BooruRating> konachanRating = sgGeneral.add(new EnumSetting.Builder<BooruRating>()
+        .name("konachan-rating")
+        .description("Rating filter for Konachan.")
+        .visible(() -> source.get() == Source.Konachan)
+        .defaultValue(BooruRating.Safe)
+        .onChanged(v -> refreshNow())
+        .build()
+    );
+
+    private final Setting<Boolean> konachanRandomPage = sgGeneral.add(new BoolSetting.Builder()
+        .name("konachan-random-page")
+        .description("Pull from a random results page instead of only the first page.")
+        .visible(() -> source.get() == Source.Konachan)
+        .defaultValue(true)
+        .build()
+    );
+
+    // PurrBot
+    private final Setting<PurrBotTag> purrTag = sgGeneral.add(new EnumSetting.Builder<PurrBotTag>()
+        .name("purr-tag")
+        .description("GIF category for PurrBot.")
+        .visible(() -> source.get() == Source.PurrBot)
+        .defaultValue(PurrBotTag.neko)
+        .onChanged(v -> refreshNow())
+        .build()
+    );
+
+    private final Setting<Boolean> cyclePurr = sgGeneral.add(new BoolSetting.Builder()
+        .name("cycle-purr")
+        .description("Cycle through PurrBot categories on each refresh.")
+        .visible(() -> source.get() == Source.PurrBot)
+        .defaultValue(true)
+        .build()
+    );
+
+    private int purrCycleIndex = 0;
 
     private final Setting<Double> imgWidth = sgGeneral.add(new DoubleSetting.Builder()
         .name("width")
@@ -259,6 +379,7 @@ public class AnimePics extends HudElement {
         saveFilters.rewind();
 
         MeteorClient.EVENT_BUS.subscribe(this);
+        updateSize();
     }
 
     @Override
@@ -316,9 +437,14 @@ public class AnimePics extends HudElement {
 
     // Forces next load to use the currently selected fixed category
     public void refreshNow() {
+        liveRefreshDebounceTicks = -1; // an explicit refresh supersedes any pending debounced one
         manualRefresh = true;
         empty = true;
         ticks = 0; // next scheduled refresh is a full refreshRate ticks after this action
+    }
+
+    private void scheduleLiveRefresh() {
+        liveRefreshDebounceTicks = DEBOUNCE_TICKS;
     }
 
     private void saveImage() {
@@ -389,12 +515,16 @@ public class AnimePics extends HudElement {
 
     @EventHandler
     public void onTick(TickEvent.Post event) {
+        if (mc.level == null) return;
+        if (liveRefreshDebounceTicks >= 0) {
+            liveRefreshDebounceTicks--;
+            if (liveRefreshDebounceTicks < 0) refreshNow();
+        }
+
         if (mc.options.hideGui) return;
 
         boolean menuOpen = mc.screen != null;
         if (menuOpen && !animateInMenus.get()) return;
-
-        if (mc.level == null) return;
 
         // Advance GIF animation at tick resolution (20Hz ceiling) rather than every render call, so
         // animation speed is decoupled from FPS.
@@ -454,6 +584,11 @@ public class AnimePics extends HudElement {
             case NekosLife -> fetchNekosLife(forceFixed);
             case WaifuIM -> fetchWaifuIM(forceFixed);
             case Safebooru -> fetchSafebooru();
+            case YandeRE -> fetchMoebooruSource("https://yande.re/post.json", yandeTags.get(), yandeRating.get(),
+                yandeRandomPage.get(), "Yande.re", "https://yande.re/post/show/");
+            case Konachan -> fetchMoebooruSource("https://konachan.com/post.json", konachanTags.get(), konachanRating.get(),
+                konachanRandomPage.get(), "Konachan", "https://konachan.com/post/show/");
+            case PurrBot -> fetchPurrBot(forceFixed);
             case LocalFolder -> "local://" + (localFolderPath.get());
         };
     }
@@ -468,8 +603,8 @@ public class AnimePics extends HudElement {
         }
         String apiUrl = "https://nekos.life/api/v2/img/" + category;
         try {
-            JsonObject response = Http.get(apiUrl).sendJson(JsonObject.class);
-            if (response == null) return null;
+            MeteorClient.LOG.info("[AnimePics] Requesting: " + apiUrl);
+            JsonObject response = AnimeHttp.getJson(apiUrl).getAsJsonObject();
             return response.get("url").getAsString();
         } catch (Exception e) {
             MeteorClient.LOG.error("[AnimePics] Nekos.life Error: " + e.getMessage());
@@ -479,7 +614,9 @@ public class AnimePics extends HudElement {
 
     private String fetchWaifuIM(boolean forceFixed) {
         String tag;
-        if (!forceFixed && cycleWaifu.get()) {
+        if (waifuUseCustomTag.get() && !waifuCustomTag.get().isBlank()) {
+            tag = waifuCustomTag.get().trim();
+        } else if (!forceFixed && cycleWaifu.get()) {
             tag = WAIFU_CYCLE_LIST.get(waifuCycleIndex);
             waifuCycleIndex = (waifuCycleIndex + 1) % WAIFU_CYCLE_LIST.size();
         } else {
@@ -489,13 +626,26 @@ public class AnimePics extends HudElement {
             + URLEncoder.encode(tag, StandardCharsets.UTF_8)
             + "&IsNsfw=All&PageSize=20";
         try {
-            JsonObject response = Http.get(apiUrl)
-                .header("Accept", "application/json")
-                .sendJson(JsonObject.class);
-            if (response == null) return null;
+            MeteorClient.LOG.info("[AnimePics] Requesting: " + apiUrl);
+            JsonObject response = AnimeHttp.getJson(apiUrl).getAsJsonObject();
             JsonArray items = response.getAsJsonArray("items");
             if (items.isEmpty()) return null;
             JsonObject image = items.get(new Random().nextInt(items.size())).getAsJsonObject();
+
+            ImageMetadata meta = new ImageMetadata(image.get("url").getAsString(), "WaifuIM");
+            if (image.has("source") && !image.get("source").isJsonNull()) meta.sourceOrigin = image.get("source").getAsString();
+            if (image.has("width")) meta.width = image.get("width").getAsInt();
+            if (image.has("height")) meta.height = image.get("height").getAsInt();
+            if (image.has("tags") && image.get("tags").isJsonArray()) {
+                List<String> tagNames = new ArrayList<>();
+                for (JsonElement t : image.getAsJsonArray("tags")) {
+                    JsonObject tObj = t.getAsJsonObject();
+                    if (tObj.has("name")) tagNames.add(tObj.get("name").getAsString());
+                }
+                meta.tags = tagNames;
+            }
+            lastMetadata = meta;
+
             return image.get("url").getAsString();
         } catch (Exception e) {
             MeteorClient.LOG.error("[AnimePics] WaifuIM Error: " + e.getMessage());
@@ -513,7 +663,8 @@ public class AnimePics extends HudElement {
                 + "&limit=10"
                 + "&pid=" + pid;
 
-            JsonElement result = Http.get(apiUrl).sendJson(JsonElement.class);
+            MeteorClient.LOG.info("[AnimePics] Requesting: " + apiUrl);
+            JsonElement result = AnimeHttp.getJson(apiUrl);
             if (!(result instanceof JsonArray array) || array.isEmpty()) return null;
 
             JsonObject post = array.get(new Random().nextInt(array.size())).getAsJsonObject();
@@ -528,6 +679,112 @@ public class AnimePics extends HudElement {
             return null;
         } catch (Exception e) {
             MeteorClient.LOG.error("[AnimePics] Safebooru Error: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private static String buildTagQuery(String userTags, String ratingParam) {
+        List<String> parts = new ArrayList<>();
+        if (ratingParam != null && !ratingParam.isEmpty()) parts.add(ratingParam);
+        if (userTags != null) {
+            String trimmed = userTags.trim();
+            if (!trimmed.isEmpty()) {
+                for (String token : trimmed.split("[,\\s]+")) {
+                    if (!token.isEmpty()) parts.add(URLEncoder.encode(token, StandardCharsets.UTF_8));
+                }
+            }
+        }
+        return String.join("+", parts);
+    }
+
+    /**
+     * Fetches one random post from a Moebooru-style (Yande.re/Konachan) JSON endpoint.
+     */
+    private JsonObject fetchMoebooruPost(String baseUrl, String tagQuery, int page) {
+        String url = baseUrl + "?limit=50&page=" + page + (tagQuery.isEmpty() ? "" : "&tags=" + tagQuery);
+        try {
+            MeteorClient.LOG.info("[AnimePics] Requesting: " + url);
+            JsonElement root = AnimeHttp.getJson(url);
+            if (!root.isJsonArray()) return null;
+            JsonArray posts = root.getAsJsonArray();
+            if (posts.isEmpty()) return null;
+            return posts.get(new Random().nextInt(posts.size())).getAsJsonObject();
+        } catch (Exception e) {
+            MeteorClient.LOG.error("[AnimePics] Moebooru fetch error (" + baseUrl + "): " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Shared fetch path for Yande.re and Konachan. Includes smart fallback: if a random high
+     * page comes back empty for a niche tag combination, retries page 1 before giving up so a
+     * valid search still reliably returns a result.
+     */
+    private String fetchMoebooruSource(String baseUrl, String tags, BooruRating rating, boolean randomPage,
+                                       String siteName, String postBaseUrl) {
+        String tagQuery = buildTagQuery(tags, rating.param);
+        int page = randomPage ? (new Random().nextInt(35) + 1) : 1;
+
+        JsonObject post = fetchMoebooruPost(baseUrl, tagQuery, page);
+        if (post == null && page != 1) {
+            post = fetchMoebooruPost(baseUrl, tagQuery, 1);
+        }
+        if (post == null) return null;
+
+        String imgUrl = (post.has("sample_url") && !post.get("sample_url").isJsonNull()) ? post.get("sample_url").getAsString()
+            : (post.has("file_url") && !post.get("file_url").isJsonNull()) ? post.get("file_url").getAsString()
+              : null;
+        if (imgUrl == null) return null;
+
+        ImageMetadata meta = new ImageMetadata(imgUrl, siteName);
+        populateMoebooruMetadata(meta, post, postBaseUrl);
+        lastMetadata = meta;
+
+        return imgUrl;
+    }
+
+    private static void populateMoebooruMetadata(ImageMetadata meta, JsonObject post, String postBaseUrl) {
+        if (post.has("id")) meta.postUrl = postBaseUrl + post.get("id").getAsString();
+        if (post.has("author")) meta.author = post.get("author").getAsString();
+        if (post.has("source") && !post.get("source").isJsonNull()) meta.sourceOrigin = post.get("source").getAsString();
+        if (post.has("rating")) meta.rating = parseRating(post.get("rating").getAsString());
+        if (post.has("width")) meta.width = post.get("width").getAsInt();
+        if (post.has("height")) meta.height = post.get("height").getAsInt();
+        if (post.has("tags")) meta.tags = Arrays.asList(post.get("tags").getAsString().split("\\s+"));
+    }
+
+    private static String parseRating(String r) {
+        if (r == null) return "Unknown";
+        if (r.equalsIgnoreCase("e") || r.equalsIgnoreCase("explicit")) return "Explicit";
+        if (r.equalsIgnoreCase("q") || r.equalsIgnoreCase("questionable")) return "Questionable";
+        if (r.equalsIgnoreCase("s") || r.equalsIgnoreCase("safe")) return "Safe";
+        return r;
+    }
+
+    private String fetchPurrBot(boolean forceFixed) {
+        String tag;
+        if (!forceFixed && cyclePurr.get()) {
+            tag = PURR_CYCLE_LIST.get(purrCycleIndex);
+            purrCycleIndex = (purrCycleIndex + 1) % PURR_CYCLE_LIST.size();
+        } else {
+            tag = purrTag.get().name();
+        }
+
+        String url = "https://api.purrbot.site/v2/img/nsfw/" + tag + "/gif";
+        try {
+            MeteorClient.LOG.info("[AnimePics] Requesting: " + url);
+            JsonObject resObj = AnimeHttp.getJson(url).getAsJsonObject();
+            if (!resObj.has("link") || resObj.get("link").isJsonNull()) return null;
+            String gifUrl = resObj.get("link").getAsString();
+
+            ImageMetadata meta = new ImageMetadata(gifUrl, "PurrBot.site");
+            meta.rating = "Explicit";
+            meta.tags = List.of(tag, "nsfw_gif");
+            lastMetadata = meta;
+
+            return gifUrl;
+        } catch (Exception e) {
+            MeteorClient.LOG.error("[AnimePics] PurrBot Error: " + e.getMessage());
             return null;
         }
     }
@@ -565,6 +822,7 @@ public class AnimePics extends HudElement {
             try {
                 boolean useFixed = manualRefresh;
                 manualRefresh = false;
+                lastMetadata = null; // cleared up front; fetch*() repopulates it on success
 
                 String url = fetchImageUrl(useFixed);
                 if (url == null) {
@@ -583,9 +841,7 @@ public class AnimePics extends HudElement {
                     imageName = file.getName();
                 } else {
                     MeteorClient.LOG.info("[AnimePics] Image URL: " + url);
-                    try (InputStream stream = Http.get(url).sendInputStream()) {
-                        rawBytes = stream.readAllBytes();
-                    }
+                    rawBytes = AnimeHttp.getBytes(url);
                     imageName = deriveFileName(url);
                 }
 
@@ -630,6 +886,9 @@ public class AnimePics extends HudElement {
     }
 
     private void handleGif(byte[] rawBytes) throws IOException {
+        // Never decode above what's actually going to be rendered.
+        int decodeCap = (int) Math.max(imgWidth.get(), imgHeight.get());
+
         if (!animateGifs.get()) {
             BufferedImage first = ImageIO.read(new ByteArrayInputStream(rawBytes)); // ImageIO reads only frame 0 for GIFs
             if (first == null) throw new IOException("Could not read GIF");
@@ -645,7 +904,7 @@ public class AnimePics extends HudElement {
             return;
         }
 
-        List<DecodedFrame> decoded = decodeGif(rawBytes, maxGifFrames.get());
+        List<DecodedFrame> decoded = decodeGif(rawBytes, maxGifFrames.get(), decodeCap);
         if (decoded.isEmpty()) throw new IOException("GIF had no readable frames");
 
         List<NativeImage> frames = new ArrayList<>(decoded.size());
@@ -678,7 +937,7 @@ public class AnimePics extends HudElement {
         gifDelaysMs = null;
     }
 
-    private static List<DecodedFrame> decodeGif(byte[] gifBytes, int maxFrames) throws IOException {
+    private static List<DecodedFrame> decodeGif(byte[] gifBytes, int maxFrames, int decodeCap) throws IOException {
         List<DecodedFrame> frames = new ArrayList<>();
         Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName("gif");
         if (!readers.hasNext()) throw new IOException("No GIF reader available");
@@ -687,7 +946,14 @@ public class AnimePics extends HudElement {
         try (ImageInputStream iis = ImageIO.createImageInputStream(new ByteArrayInputStream(gifBytes))) {
             reader.setInput(iis, false);
             int frameCount = reader.getNumImages(true);
-            int limit = Math.min(frameCount, maxFrames);
+
+            // For long/high-fps GIFs, skip every other source frame so the full loop is still
+            // covered (at lower temporal resolution) instead of decoding only the first maxFrames
+            // frames and cutting off partway through. The index limit is scaled by `step` so the
+            // walked range actually extends to cover more of the GIF, not just fewer frames of
+            // the same range.
+            int step = (frameCount > 80 && maxFrames <= 60) ? 2 : 1;
+            int limit = Math.min(frameCount, maxFrames * step);
 
             // Logical screen size
             int screenW = -1, screenH = -1;
@@ -704,7 +970,7 @@ public class AnimePics extends HudElement {
             BufferedImage canvas = null;
             BufferedImage restoreSnapshot = null;
 
-            for (int i = 0; i < limit; i++) {
+            for (int i = 0; i < limit; i += step) {
                 BufferedImage frame = reader.read(i);
                 IIOMetadata metadata = reader.getImageMetadata(i);
                 IIOMetadataNode root = (IIOMetadataNode) metadata.getAsTree("javax_imageio_gif_image_1.0");
@@ -739,7 +1005,9 @@ public class AnimePics extends HudElement {
                 g.drawImage(frame, fx, fy, null);
                 g.dispose();
 
-                frames.add(new DecodedFrame(copyImage(canvas), Math.max(delayCs * 10, 20)));
+                BufferedImage snapshot = copyImage(canvas);
+                BufferedImage optimized = decodeCap > 0 ? downscaleIfNeeded(snapshot, decodeCap) : snapshot;
+                frames.add(new DecodedFrame(optimized, Math.max(delayCs * 10 * step, 20)));
 
                 switch (disposal) {
                     case "restoreToBackgroundColor" -> {
@@ -785,6 +1053,27 @@ public class AnimePics extends HudElement {
         g.drawImage(src, 0, 0, null);
         g.dispose();
         return copy;
+    }
+
+    /**
+     * Downscales an image to fit within maxDim x maxDim, preserving aspect ratio. No-op if already smaller.
+     */
+    private static BufferedImage downscaleIfNeeded(BufferedImage src, int maxDim) {
+        int w = src.getWidth();
+        int h = src.getHeight();
+        if (w <= maxDim && h <= maxDim) return src;
+
+        double scale = Math.min((double) maxDim / w, (double) maxDim / h);
+        int targetW = Math.max(1, (int) (w * scale));
+        int targetH = Math.max(1, (int) (h * scale));
+
+        BufferedImage scaled = new BufferedImage(targetW, targetH, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g2 = scaled.createGraphics();
+        g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g2.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_SPEED);
+        g2.drawImage(src, 0, 0, targetW, targetH, null);
+        g2.dispose();
+        return scaled;
     }
 
     private static byte[] bufferedImageToPng(BufferedImage img) throws IOException {

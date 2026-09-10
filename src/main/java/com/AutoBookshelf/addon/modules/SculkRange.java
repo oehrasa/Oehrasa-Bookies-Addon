@@ -2,14 +2,18 @@ package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
 import meteordevelopment.meteorclient.events.world.ChunkDataEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
+import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.misc.Keybind;
+import meteordevelopment.meteorclient.utils.render.NametagUtils;
+import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
@@ -17,10 +21,12 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.*;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.SculkSensorPhase;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Vector3d;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.HashSet;
@@ -34,8 +40,10 @@ public class SculkRange extends Module {
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRender = settings.createGroup("Render");
+    private final SettingGroup sgExperimental = settings.createGroup("Experimental");
 
-    private static final double SENSOR_RANGE = 16.0;
+    private static final double CALIBRATED_RANGE = 16.0;
+    private static final double NORMAL_RANGE = 8.0;
     private static final Direction[] DIRECTIONS = Direction.values();
 
     private final Setting<Integer> renderDistance = sgGeneral.add(new IntSetting.Builder()
@@ -60,9 +68,34 @@ public class SculkRange extends Module {
         .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_V))
         .build());
 
+    private final Setting<Boolean> showNormalSculk = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-normal-sculk-sensors")
+        .description("Also track and render range for regular (non calibrated) sculk sensors, 8-block radius.")
+        .defaultValue(true)
+        .onChanged(v -> rescanAll())
+        .build());
+
+    private final Setting<Boolean> showShriekers = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-sculk-shriekers")
+        .description("Track and render a listening-range sphere around sculk shriekers.")
+        .defaultValue(true)
+        .onChanged(v -> rescanAll())
+        .build());
+
+    private final Setting<Integer> shriekerRange = sgGeneral.add(new IntSetting.Builder()
+        .name("shrieker-range")
+        .description("Radius to render around sculk shriekers. Defaults to the 8-block radius sculk shriekers listen at.")
+        .defaultValue(8)
+        .min(1)
+        .max(32)
+        .sliderRange(1, 32)
+        .visible(showShriekers::get)
+        .onChanged(v -> rebuildAllSpheres())
+        .build());
+
     private final Setting<Boolean> advancedView = sgGeneral.add(new BoolSetting.Builder()
         .name("advanced-view")
-        .description("Colour sensors based on whether they have redstone output or a shrieker in range.")
+        .description("Colour sculk sensors based on whether they have redstone output or a shrieker in range.")
         .defaultValue(false)
         .build());
 
@@ -116,9 +149,23 @@ public class SculkRange extends Module {
         .build());
 
     private final Setting<SettingColor> sphereColor = sgRender.add(new ColorSetting.Builder()
-        .name("sphere-color")
-        .description("Default sphere colour.")
+        .name("calibrated-color")
+        .description("Sphere colour for calibrated sculk sensors.")
         .defaultValue(new SettingColor(0, 255, 255, 200))
+        .build());
+
+    private final Setting<SettingColor> normalSculkColor = sgRender.add(new ColorSetting.Builder()
+        .name("normal-sculk-color")
+        .description("Sphere colour for regular sculk sensors.")
+        .defaultValue(new SettingColor(150, 255, 150, 200))
+        .visible(showNormalSculk::get)
+        .build());
+
+    private final Setting<SettingColor> shriekerRangeColor = sgRender.add(new ColorSetting.Builder()
+        .name("shrieker-range-color")
+        .description("Sphere colour for sculk shrieker listening range.")
+        .defaultValue(new SettingColor(255, 80, 200, 200))
+        .visible(showShriekers::get)
         .build());
 
     private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
@@ -134,8 +181,8 @@ public class SculkRange extends Module {
         .visible(advancedView::get)
         .build());
 
-    private final Setting<SettingColor> shriekerColor = sgRender.add(new ColorSetting.Builder()
-        .name("shrieker-color")
+    private final Setting<SettingColor> shriekerNearColor = sgRender.add(new ColorSetting.Builder()
+        .name("shrieker-near-color")
         .description("Colour for sensors with a shrieker in range (advanced-view).")
         .defaultValue(new SettingColor(255, 165, 0, 200))
         .visible(advancedView::get)
@@ -153,13 +200,66 @@ public class SculkRange extends Module {
         .defaultValue(new SettingColor(255, 255, 255, 150))
         .build());
 
+    private final Setting<Boolean> showActivationPower = sgExperimental.add(new BoolSetting.Builder()
+        .name("show-activation-power")
+        .description("When a sensor activates, show its synced power/signal-strength value above it. Calibrated sensors also show their exact triggering frequency.")
+        .defaultValue(false)
+        .build());
+
+    private final Setting<Double> vibrationTextScale = sgExperimental.add(new DoubleSetting.Builder()
+        .name("power-text-scale")
+        .description("How big the power/frequency text should be.")
+        .defaultValue(1.25)
+        .min(0.5)
+        .sliderMax(4)
+        .visible(showActivationPower::get)
+        .build());
+
+    private final Setting<SettingColor> vibrationTextColor = sgExperimental.add(new ColorSetting.Builder()
+        .name("power-text-color")
+        .description("Colour of the power text.")
+        .defaultValue(new SettingColor(255, 255, 255, 255))
+        .visible(showActivationPower::get)
+        .build());
+
+    private final Setting<SettingColor> frequencyTextColor = sgExperimental.add(new ColorSetting.Builder()
+        .name("frequency-text-color")
+        .description("Colour of a calibrated sensor's exact triggering-frequency label.")
+        .defaultValue(new SettingColor(255, 220, 100, 255))
+        .visible(showActivationPower::get)
+        .build());
+
+    private static final String[] VIBRATION_LABELS = {
+        "?",
+        "Movement",             // 1: step, swim, flap
+        "Landing/Splash",       // 2: projectile land, hit ground, splash
+        "Item/Instrument",      // 3: item interact finish, projectile shoot, instrument play
+        "Entity Action",        // 4: entity action, elytra glide, unequip
+        "Dismount/Equip",       // 5: entity dismount, equip
+        "Interact/Mount",       // 6: entity interact, shear, entity mount
+        "Combat",               // 7: entity damage
+        "Eat/Drink",            // 8: drink, eat
+        "Block Close",          // 9: container close, block close/deactivate/detach
+        "Block Open",           // 10: container open, block open/activate/attach, prime fuse, note block
+        "Block Change",         // 11: block change
+        "Block Destroy",        // 12: block destroy, fluid pickup
+        "Block Place",          // 13: block place, fluid place
+        "Entity Place/Teleport",// 14: entity place, lightning strike, teleport
+        "Death/Explosion"       // 15: entity die, explode
+    };
+
     private final Set<SensorData> sensors = new HashSet<>();
     private final Set<BlockPos> manualSensors = new HashSet<>();
     private volatile ExecutorService workerThread;
     private boolean selectKeyWasDown;
 
-    private static final class SensorData {
+    private enum SensorType {
+        CALIBRATED, NORMAL, SHRIEKER
+    }
+
+    private final class SensorData {
         final BlockPos pos;
+        final SensorType type;
         boolean hasRedstoneOutput;
         boolean hasShriekerInRange;
         // Raw shell voxels (gradation-filtered hollow sphere).
@@ -167,10 +267,19 @@ public class SculkRange extends Module {
         // Shell voxels after culling interior blocks; this is what the renderer iterates.
         Set<BlockPos> exposedBlocks = new HashSet<>();
 
-        SensorData(BlockPos pos, boolean hasRedstoneOutput, boolean hasShriekerInRange) {
+        SensorData(BlockPos pos, SensorType type, boolean hasRedstoneOutput, boolean hasShriekerInRange) {
             this.pos = pos;
+            this.type = type;
             this.hasRedstoneOutput = hasRedstoneOutput;
             this.hasShriekerInRange = hasShriekerInRange;
+        }
+
+        double range() {
+            return switch (type) {
+                case CALIBRATED -> CALIBRATED_RANGE;
+                case NORMAL -> NORMAL_RANGE;
+                case SHRIEKER -> shriekerRange.get();
+            };
         }
 
         @Override
@@ -202,11 +311,12 @@ public class SculkRange extends Module {
     }
 
     public SculkRange() {
-        super(Addon.CATEGORY2, "Sculk-Range", "Shows the detection range of calibrated sculk sensors.");
+        super(Addon.CATEGORY2, "Sculk-Range", "Shows the detection range of normal or calibrated sculk sensors  and shriekers.");
     }
 
     @Override
     public void onActivate() {
+        if (mc.level == null) return;
         sensors.clear();
         scanAllChunks();
     }
@@ -233,6 +343,12 @@ public class SculkRange extends Module {
         workerThread = null;
     }
 
+    private void rescanAll() {
+        if (!isActive() || mc.level == null) return;
+        sensors.clear();
+        scanAllChunks();
+    }
+
     @EventHandler
     private void onGameJoined(GameJoinedEvent event) {
         if (!isActive()) return;
@@ -246,7 +362,7 @@ public class SculkRange extends Module {
         boolean down = selectKey.get().isPressed();
         if (down && !selectKeyWasDown && mc.hitResult instanceof BlockHitResult hit) {
             BlockPos pos = hit.getBlockPos();
-            if (mc.level.getBlockState(pos).getBlock() == Blocks.CALIBRATED_SCULK_SENSOR) {
+            if (typeOf(mc.level.getBlockState(pos).getBlock()) != null) {
                 if (manualSensors.remove(pos)) info("Removed sensor at " + pos.toShortString());
                 else {
                     manualSensors.add(pos.immutable());
@@ -262,16 +378,19 @@ public class SculkRange extends Module {
         if (!isActive()) return;
         ExecutorService w = getWorker();
         if (w.isShutdown()) return;
+        boolean trackNormal = showNormalSculk.get();
+        boolean trackShrieker = showShriekers.get();
+        boolean advanced = advancedView.get();
         w.submit(() -> {
             Set<SensorData> found = new HashSet<>();
-            scanChunkForSensors(event.chunk(), found);
+            scanChunkForSensors(event.chunk(), found, trackNormal, trackShrieker, advanced);
             if (found.isEmpty()) return;
             mc.execute(() -> {
                 if (!isActive()) return;
                 boolean changed = false;
                 for (SensorData s : found) {
-                    if (sensors.add(s)) { // skips position duplicates
-                        s.sphereBlocks = generateSphere(s.pos);
+                    if (sensors.add(s)) {
+                        s.sphereBlocks = generateSphere(s.pos, s.range());
                         changed = true;
                     }
                 }
@@ -280,31 +399,53 @@ public class SculkRange extends Module {
         });
     }
 
+    // Returns the SensorType this block corresponds to
+    private SensorType typeOf(Block block) {
+        return typeOf(block, showNormalSculk.get(), showShriekers.get());
+    }
+
+    private SensorType typeOf(Block block, boolean trackNormal, boolean trackShrieker) {
+        if (block == Blocks.CALIBRATED_SCULK_SENSOR) return SensorType.CALIBRATED;
+        if (block == Blocks.SCULK_SENSOR) return trackNormal ? SensorType.NORMAL : null;
+        if (block == Blocks.SCULK_SHRIEKER) return trackShrieker ? SensorType.SHRIEKER : null;
+        return null;
+    }
+
     @EventHandler
     private void onBlockUpdate(BlockUpdateEvent event) {
         if (!isActive()) return;
         BlockPos pos = event.pos;
-        boolean wasSensor = event.oldState.getBlock() == Blocks.CALIBRATED_SCULK_SENSOR;
-        boolean isSensor = event.newState.getBlock() == Blocks.CALIBRATED_SCULK_SENSOR;
 
-        if (wasSensor && !isSensor) {
+        SensorType wasType = typeOf(event.oldState.getBlock());
+        SensorType isType = typeOf(event.newState.getBlock());
+
+        if (wasType != null && isType == null) {
             sensors.removeIf(s -> s.pos.equals(pos));
             rebuildAllExposedBlocks();
-        } else if (!wasSensor && isSensor) {
-            SensorData s = makeSensor(pos);
+        } else if (wasType == null && isType != null) {
+            SensorData s = makeSensor(pos, isType);
             if (sensors.add(s)) {
-                s.sphereBlocks = generateSphere(s.pos);
+                s.sphereBlocks = generateSphere(s.pos, s.range());
                 rebuildAllExposedBlocks();
             }
-        } else if (isSensor && advancedView.get()) {
-            // Block-state is changed, but it is still a sensor. refresh advanced properties only.
-            sensors.stream().filter(s -> s.pos.equals(pos)).findFirst().ifPresent(s -> {
-                s.hasRedstoneOutput = hasRedstoneOutput(mc.level, pos);
-                s.hasShriekerInRange = hasShriekerInRange(mc.level, pos);
-            });
+        } else if (wasType != null && isType != null && wasType != isType) {
+            // Sensor swapped type in place
+            sensors.removeIf(s -> s.pos.equals(pos));
+            SensorData s = makeSensor(pos, isType);
+            if (sensors.add(s)) s.sphereBlocks = generateSphere(s.pos, s.range());
+            rebuildAllExposedBlocks();
+        } else if (isType != null && isType != SensorType.SHRIEKER) {
+            // Same sensor type, block-state just changed (redstone neighbour, phase transition, etc).
+            for (SensorData s : sensors) {
+                if (!s.pos.equals(pos)) continue;
+                if (advancedView.get()) {
+                    s.hasRedstoneOutput = hasRedstoneOutput(mc.level, pos);
+                    s.hasShriekerInRange = hasShriekerInRange(mc.level, pos);
+                }
+                break;
+            }
         }
 
-        // Refresh nearby sensors when a shrieker or redstone component changes.
         if (advancedView.get()) {
             boolean relevant = event.oldState.getBlock() instanceof SculkShriekerBlock
                 || event.newState.getBlock() instanceof SculkShriekerBlock
@@ -314,47 +455,62 @@ public class SculkRange extends Module {
         }
     }
 
+    /**
+     * Maps a calibrated sculk sensor's power value directly to the vanilla note-block
+     * frequency it corresponds to.
+     */
+    private String exactFrequencyLabel(int power) {
+        return (power >= 1 && power < VIBRATION_LABELS.length) ? VIBRATION_LABELS[power] : null;
+    }
+
     private void scanAllChunks() {
         ExecutorService w = getWorker();
         if (w.isShutdown()) return;
+        boolean trackNormal = showNormalSculk.get();
+        boolean trackShrieker = showShriekers.get();
+        boolean advanced = advancedView.get();
         w.submit(() -> {
-            if (!isActive()) return;
+            if (!isActive() || mc.level == null) return;
             Set<SensorData> found = new HashSet<>();
             AtomicReferenceArray<LevelChunk> chunks = mc.level.getChunkSource().storage.chunks;
             for (int i = 0; i < chunks.length(); i++) {
                 LevelChunk c = chunks.get(i);
                 if (c != null && !c.isEmpty()) {
                     if (!isActive()) return;
-                    scanChunkForSensors(c, found);
+                    scanChunkForSensors(c, found, trackNormal, trackShrieker, advanced);
                 }
             }
             mc.execute(() -> {
                 if (!isActive()) return;
                 sensors.clear();
                 sensors.addAll(found);
-                for (SensorData s : sensors) s.sphereBlocks = generateSphere(s.pos);
+                for (SensorData s : sensors) s.sphereBlocks = generateSphere(s.pos, s.range());
                 rebuildAllExposedBlocks();
             });
         });
     }
 
-    private void scanChunkForSensors(ChunkAccess chunk, Set<SensorData> out) {
+    private SensorData makeSensor(BlockPos pos, SensorType type) {
+        return makeSensor(pos, type, advancedView.get());
+    }
+
+    private SensorData makeSensor(BlockPos pos, SensorType type, boolean advanced) {
+        pos = pos.immutable();
+        boolean hasOut = type != SensorType.SHRIEKER && advanced && hasRedstoneOutput(mc.level, pos);
+        boolean hasShrieker = type != SensorType.SHRIEKER && advanced && hasShriekerInRange(mc.level, pos);
+        return new SensorData(pos, type, hasOut, hasShrieker);
+    }
+
+    private void scanChunkForSensors(ChunkAccess chunk, Set<SensorData> out, boolean trackNormal, boolean trackShrieker, boolean advanced) {
         int x0 = chunk.getPos().getMinBlockX(), z0 = chunk.getPos().getMinBlockZ();
         int y0 = chunk.getMinY(), y1 = y0 + chunk.getHeight();
         for (int x = x0; x <= x0 + 15; x++)
             for (int z = z0; z <= z0 + 15; z++)
                 for (int y = y0; y <= y1; y++) {
                     BlockPos p = new BlockPos(x, y, z);
-                    if (mc.level.getBlockState(p).getBlock() == Blocks.CALIBRATED_SCULK_SENSOR)
-                        out.add(makeSensor(p));
+                    SensorType type = typeOf(mc.level.getBlockState(p).getBlock(), trackNormal, trackShrieker);
+                    if (type != null) out.add(makeSensor(p, type, advanced));
                 }
-    }
-
-    private SensorData makeSensor(BlockPos pos) {
-        pos = pos.immutable();
-        boolean hasOut = advancedView.get() && hasRedstoneOutput(mc.level, pos);
-        boolean hasShrieker = advancedView.get() && hasShriekerInRange(mc.level, pos);
-        return new SensorData(pos, hasOut, hasShrieker);
     }
 
     /**
@@ -362,7 +518,7 @@ public class SculkRange extends Module {
      */
     private void rebuildAllSpheres() {
         if (sensors.isEmpty()) return;
-        for (SensorData s : sensors) s.sphereBlocks = generateSphere(s.pos);
+        for (SensorData s : sensors) s.sphereBlocks = generateSphere(s.pos, s.range());
         rebuildAllExposedBlocks();
     }
 
@@ -389,13 +545,13 @@ public class SculkRange extends Module {
     }
 
     /**
-     * Hollow Euclidean sphere shell centred at the center with the configured thickness.
+     * Hollow Euclidean sphere shell centred at the center with the configured thickness, for the given radius.
      */
-    private Set<BlockPos> generateSphere(BlockPos center) {
+    private Set<BlockPos> generateSphere(BlockPos center, double range) {
         int t = gradation.get();
-        int ceil = (int) Math.ceil(SENSOR_RANGE);
-        double outerSq = SENSOR_RANGE * SENSOR_RANGE;
-        double innerSq = Math.max(0.0, (SENSOR_RANGE - t) * (SENSOR_RANGE - t));
+        int ceil = (int) Math.ceil(range);
+        double outerSq = range * range;
+        double innerSq = Math.max(0.0, (range - t) * (range - t));
         Set<BlockPos> out = new HashSet<>();
         for (int x = -ceil; x <= ceil; x++)
             for (int y = -ceil; y <= ceil; y++)
@@ -407,8 +563,9 @@ public class SculkRange extends Module {
     }
 
     private void updateAdvancedNear(BlockPos changed) {
-        double rangeSq = SENSOR_RANGE * SENSOR_RANGE;
+        double rangeSq = CALIBRATED_RANGE * CALIBRATED_RANGE;
         for (SensorData s : sensors) {
+            if (s.type == SensorType.SHRIEKER) continue;
             if (s.pos.distSqr(changed) <= rangeSq) {
                 s.hasRedstoneOutput = hasRedstoneOutput(mc.level, s.pos);
                 s.hasShriekerInRange = hasShriekerInRange(mc.level, s.pos);
@@ -467,7 +624,7 @@ public class SculkRange extends Module {
 
         for (SensorData sensor : sensors) {
             if (manualMode.get() && !manualSensors.contains(sensor.pos)) continue;
-            if (onlyRenderImpactful.get() && advancedView.get()
+            if (onlyRenderImpactful.get() && sensor.type != SensorType.SHRIEKER && advancedView.get()
                 && !sensor.hasRedstoneOutput && !sensor.hasShriekerInRange) continue;
             if (playerPos.distanceTo(Vec3.atCenterOf(sensor.pos)) > maxDist) continue;
 
@@ -491,12 +648,14 @@ public class SculkRange extends Module {
     }
 
     private SettingColor resolveColor(SensorData sensor) {
+        if (sensor.type == SensorType.SHRIEKER) return shriekerRangeColor.get();
+        if (sensor.type == SensorType.NORMAL && !advancedView.get()) return normalSculkColor.get();
         if (!advancedView.get()) return sphereColor.get();
         if (sensor.hasRedstoneOutput && sensor.hasShriekerInRange)
-            return System.currentTimeMillis() / 500 % 2 == 0 ? redstoneColor.get() : shriekerColor.get();
+            return System.currentTimeMillis() / 500 % 2 == 0 ? redstoneColor.get() : shriekerNearColor.get();
         if (sensor.hasRedstoneOutput) return redstoneColor.get();
-        if (sensor.hasShriekerInRange) return shriekerColor.get();
-        return sphereColor.get();
+        if (sensor.hasShriekerInRange) return shriekerNearColor.get();
+        return sensor.type == SensorType.NORMAL ? normalSculkColor.get() : sphereColor.get();
     }
 
     private boolean passesOcclusion(BlockPos pos, OcclusionMode mode, Vec3 eye) {
@@ -519,5 +678,50 @@ public class SculkRange extends Module {
             if (tx * dir.getStepX() + ty * dir.getStepY() + tz * dir.getStepZ() > 0) return true;
         }
         return false;
+    }
+
+    @EventHandler
+    private void onRender2D(Render2DEvent event) {
+        if (!showActivationPower.get() || mc.level == null || mc.player == null) return;
+
+        for (SensorData sensor : sensors) {
+            if (sensor.type == SensorType.SHRIEKER) continue;
+
+            BlockState state = mc.level.getBlockState(sensor.pos);
+            if (!(state.getBlock() instanceof SculkSensorBlock)) continue;
+            if (state.getValue(SculkSensorBlock.PHASE) != SculkSensorPhase.ACTIVE) continue;
+
+            int power = state.getValue(SculkSensorBlock.POWER);
+            String powerText = "Power " + power;
+
+            // Calibrated sensors output the triggering event's vanilla note-block
+            // frequency as their power, independent of distance — this is exact,
+            // not a guess. Normal sensors only encode distance in power, so there's
+            // nothing meaningful to show beyond the power value itself.
+            String freqText = sensor.type == SensorType.CALIBRATED ? exactFrequencyLabel(power) : null;
+
+            Vector3d vec3 = new Vector3d(sensor.pos.getX() + 0.5, sensor.pos.getY() + 1.3, sensor.pos.getZ() + 0.5);
+            if (NametagUtils.to2D(vec3, vibrationTextScale.get())) {
+                NametagUtils.begin(vec3, event.graphics);
+                TextRenderer.get().begin(1, false, true);
+
+                double powerWidth = TextRenderer.get().getWidth(powerText);
+                double lineHeight = TextRenderer.get().getHeight();
+
+                Color powerColor = vibrationTextColor.get();
+                if (freqText != null) {
+                    // Two lines: power above, exact frequency below, small gap between them.
+                    TextRenderer.get().render(powerText, -powerWidth / 2, -lineHeight - 1, powerColor, true);
+
+                    double freqWidth = TextRenderer.get().getWidth(freqText);
+                    TextRenderer.get().render(freqText, -freqWidth / 2, 1, frequencyTextColor.get(), true);
+                } else {
+                    TextRenderer.get().render(powerText, -powerWidth / 2, -lineHeight / 2, powerColor, true);
+                }
+
+                TextRenderer.get().end();
+                NametagUtils.end(event.graphics);
+            }
+        }
     }
 }

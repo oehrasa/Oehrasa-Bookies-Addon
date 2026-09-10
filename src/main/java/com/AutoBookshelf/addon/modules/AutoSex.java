@@ -36,6 +36,15 @@ public class AutoSex extends Module {
         Automatic
     }
 
+    public enum DirtyTalkType {
+        Submissive,
+        Dominant,
+        Female,
+        NeutralSubmissive,
+        NeutralDominant,
+        Custom
+    }
+
     public enum ApproachMode {
         Direct("Direct : Go straight to target"),
         Behind("Behind : Stand behind target"),
@@ -253,6 +262,22 @@ public class AutoSex extends Module {
         .build()
     );
 
+    private final Setting<DirtyTalkType> dirtyTalkType = sgSex.add(new EnumSetting.Builder<DirtyTalkType>()
+        .name("dirty-talk-type")
+        .description("Which dirty talk message set to use.")
+        .defaultValue(DirtyTalkType.Custom)
+        .visible(() -> message.get() && dirtyTalk.get())
+        .build()
+    );
+
+    private final Setting<String> targetPronoun = sgSex.add(new StringSetting.Builder()
+        .name("target-pronoun")
+        .description("Pronoun to use for the target in dirty talk messages (him, her, them).")
+        .defaultValue("them")
+        .visible(() -> message.get() && dirtyTalk.get())
+        .build()
+    );
+
     private final Setting<Boolean> dm = sgSex.add(new BoolSetting.Builder()
         .name("private-msg")
         .description("Sends a private chat msg to the person.")
@@ -309,7 +334,6 @@ public class AutoSex extends Module {
     private boolean isFollowing = false;
     private LivingEntity targetEntity;   // can be PlayerEntity or Mob
     private String targetName;           // for display
-    private int iPublic;
     private boolean pressed = false;
     private boolean alternate = true;
     private boolean wasCrouching = false;
@@ -321,6 +345,92 @@ public class AutoSex extends Module {
     private int positionStableTimer = 0;
     private Vec3 lastTargetPosVec = null;
     private int pathCooldown = 0;
+
+    private static final String[] SUBMISSIVE = {
+        "fuck me harder daddy",
+        "deeper! daddy deeper!",
+        "Fuck yes your so big!",
+        "I love your cock (enemy)!",
+        "Do not stop fucking my ass before i cum!",
+        "Oh your so hard for me",
+        "Want to widen my ass up (enemy)?",
+        "I love you daddy",
+        "Make my bussy pop",
+        "(enemy) loves my bussy so much",
+        "i made (enemy) cum so hard with my tight bussy",
+        "Your cock is so big and juicy daddy!",
+        "Please fuck me as hard as you can",
+        "im (enemy)'s personal femboy cumdupster!",
+        "Please shoot your hot load deep inside me daddy!",
+        "I love how (enemy)'s dick feels inside of me!",
+        "(enemy) gets so hard when he sees my ass!",
+        "(enemy) really loves fucking my ass really hard!",
+        "why wont u say the last message"
+    };
+
+    private static final String[] DOMINANT = {
+        "Be a good boy for daddy",
+        "I love pounding your ass (enemy)!",
+        "Give your bussy to daddy!",
+        "I love how you drip pre-cum while i fuck your ass (enemy)",
+        "Slurp up and down my cock like a good boy",
+        "Come and jump on daddy's cock (enemy)",
+        "I love how you look at me while you suck me off (enemy)",
+        "(enemy) looks so cute when i fuck him",
+        "(enemy)'s bussy is so incredibly tight!",
+        "(enemy) takes dick like the good boy he is",
+        "I love how you shake your ass on my dick",
+        "(enemy) moans so cutely when i fuck his ass",
+        "(enemy) is the best cum dumpster there is!",
+        "(enemy) is always horny and ready for his daddy's dick",
+        "My dick gets rock hard every time i see (enemy)",
+        "why wont u say the last message"
+    };
+
+    private static final String[] FEMALE = {
+        "Fuck me harder daddy",
+        "I love your pussy (enemy)!",
+        "You're so wet for me (enemy)",
+        "Ride my cock like a good girl",
+        "I want to fill you up (enemy)",
+        "Your moans are so hot (enemy)",
+        "(enemy) is such a good slut for me",
+        "(enemy) loves it when I spank her ass",
+        "You like that, you little whore?",
+        "Beg for my cum (enemy)",
+        "I'm going to ruin your tight little pussy",
+        "Suck my cock like a good girl (enemy)",
+        "You're my personal cum dumpster (enemy)",
+        "Look at you dripping for me already",
+        "Your body was made for my cock (enemy)",
+        "why wont u say the last message"
+    };
+
+    private static final String[] NEUTRAL_SUBMISSIVE = {
+        "Fuck me harder (enemy), I need (objectPronoun) inside me!",
+        "I love the way (objectPronoun) feels in my ass, (enemy)!",
+        "Please don't stop, (enemy). I'm all yours!",
+        "I want to choke on (possessive) cock, daddy!",
+        "Make me your little cum dumpster, (enemy)!",
+        "(possessive) moans are so cute when I touch (objectPronoun)!",
+        "I'm so wet for you, (enemy). Use (objectPronoun) however you want!",
+        "Please ruin my bussy, (enemy). I need (objectPronoun)!",
+        "You make (objectPronoun) so hard, (enemy)!",
+        "I'll do anything for (objectPronoun), (enemy)!"
+    };
+
+    private static final String[] NEUTRAL_DOMINANT = {
+        "Be a good little pet for me, (enemy).",
+        "I'm going to pound (possessive) ass until (subjectPronoun) begs!",
+        "Get on your knees and worship (objectPronoun), (enemy)!",
+        "You look so cute when I make (objectPronoun) moan, (enemy)!",
+        "I own you now, (enemy). You're (possessive) little toy!",
+        "Take it all, (enemy). Don't you dare cum until I say so!",
+        "(possessive) body is mine to use, (enemy)!",
+        "Beg for it, (enemy). Tell me how much you want (objectPronoun)!",
+        "I'm going to fill (objectPronoun) up, (enemy)!",
+        "You're nothing but a hole for me, (enemy). Now be a good slut!"
+    };
 
     public AutoSex() {
         super(Addon.CATEGORY, "Auto-Sex", "Tries to have sex with the player or mob in freaky ways.");
@@ -608,18 +718,9 @@ public class AutoSex extends Module {
                 baritone.getPathingBehavior().cancelEverything();
             }
 
-            // Dirty talk only for players
-            if (isInPosition && dirtyTalk.get() && message.get() && targetEntity instanceof Player && !messages.get().isEmpty()) {
+            // Dirty talk
+            if (isInPosition && dirtyTalk.get() && message.get() && targetEntity instanceof Player) {
                 if (timer <= 0) {
-                    int i;
-                    if (random.get()) {
-                        i = Utils.random(0, messages.get().size());
-                    } else {
-                        if (messageI >= messages.get().size()) messageI = 0;
-                        i = messageI++;
-                    }
-
-                    iPublic = i;
                     followMsg();
                     timer = delay.get();
                 } else {
@@ -719,6 +820,42 @@ public class AutoSex extends Module {
         info("§aStopped following.");
     }
 
+    private String subjectFormOf(String pronoun) {
+        return switch (pronoun.toLowerCase()) {
+            case "he", "him", "his" -> "he";
+            case "she", "her" -> "she";
+            case "they", "them", "their" -> "they";
+            default -> pronoun;
+        };
+    }
+
+    private String possessiveOf(String pronoun) {
+        return switch (pronoun.toLowerCase()) {
+            case "he", "him", "his" -> "his";
+            case "she", "her" -> "her";
+            case "they", "them", "their" -> "their";
+            default -> pronoun + "'s";   // fallback for custom pronouns
+        };
+    }
+
+    private String objectFormOf(String pronoun) {
+        return switch (pronoun.toLowerCase()) {
+            case "he", "him", "his" -> "him";
+            case "she", "her" -> "her";
+            case "they", "them", "their" -> "them";
+            default -> pronoun;
+        };
+    }
+
+    private String reflexiveOf(String pronoun) {
+        return switch (pronoun.toLowerCase()) {
+            case "he", "him", "his" -> "himself";
+            case "she", "her" -> "herself";
+            case "they", "them", "their" -> "themselves";
+            default -> pronoun + "self";
+        };
+    }
+
     public void startMsg() {
         if (dirtyTalk.get()) {
             if (dm.get()) ChatUtils.sendPlayerMsg("/msg " + targetName + " Come here bby lets have sex uwu");
@@ -730,8 +867,63 @@ public class AutoSex extends Module {
     }
 
     public void followMsg() {
-        if (dm.get()) ChatUtils.sendPlayerMsg("/msg " + targetName + " " + messages.get().get(iPublic).replace("(enemy)", targetName));
-        if (pm.get()) ChatUtils.sendPlayerMsg(messages.get().get(iPublic).replace("(enemy)", targetName));
+        String msg = null;
+
+        switch (dirtyTalkType.get()) {
+            case Submissive -> {
+                if (SUBMISSIVE.length == 0) return;
+                int i = random.get() ? Utils.random(0, SUBMISSIVE.length) : (messageI % SUBMISSIVE.length);
+                msg = SUBMISSIVE[i];
+                messageI++;
+            }
+            case Dominant -> {
+                if (DOMINANT.length == 0) return;
+                int i = random.get() ? Utils.random(0, DOMINANT.length) : (messageI % DOMINANT.length);
+                msg = DOMINANT[i];
+                messageI++;
+            }
+            case Female -> {
+                if (FEMALE.length == 0) return;
+                int i = random.get() ? Utils.random(0, FEMALE.length) : (messageI % FEMALE.length);
+                msg = FEMALE[i];
+                messageI++;
+            }
+            case NeutralSubmissive -> {
+                if (NEUTRAL_SUBMISSIVE.length == 0) return;
+                int i = random.get() ? Utils.random(0, NEUTRAL_SUBMISSIVE.length) : (messageI % NEUTRAL_SUBMISSIVE.length);
+                msg = NEUTRAL_SUBMISSIVE[i];
+                messageI++;
+            }
+            case NeutralDominant -> {
+                if (NEUTRAL_DOMINANT.length == 0) return;
+                int i = random.get() ? Utils.random(0, NEUTRAL_DOMINANT.length) : (messageI % NEUTRAL_DOMINANT.length);
+                msg = NEUTRAL_DOMINANT[i];
+                messageI++;
+            }
+            case Custom -> {
+                if (messages.get().isEmpty()) return;
+                int i;
+                if (random.get()) {
+                    i = Utils.random(0, messages.get().size());
+                } else {
+                    if (messageI >= messages.get().size()) messageI = 0;
+                    i = messageI++;
+                }
+                msg = messages.get().get(i);
+            }
+        }
+
+        if (msg == null) return;
+
+        msg = msg
+            .replace("(enemy)", targetName)
+            .replace("(subjectPronoun)", subjectFormOf(targetPronoun.get()))
+            .replace("(objectPronoun)", objectFormOf(targetPronoun.get()))
+            .replace("(possessive)", possessiveOf(targetPronoun.get()))
+            .replace("(reflexive)", reflexiveOf(targetPronoun.get()));
+
+        if (dm.get()) ChatUtils.sendPlayerMsg("/msg " + targetName + " " + msg);
+        if (pm.get()) ChatUtils.sendPlayerMsg(msg);
     }
 
     public void endMsg() {

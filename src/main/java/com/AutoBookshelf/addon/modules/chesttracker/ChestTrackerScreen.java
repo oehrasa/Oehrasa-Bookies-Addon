@@ -49,6 +49,10 @@ public class ChestTrackerScreen extends Screen {
     private Map<Item, Double> distanceCache = new HashMap<>();
     private List<TrackedContainer> dimensionContainers = new ArrayList<>();
 
+    private long lastSeenDataVersion = -1;
+    private long lastRefreshTime = 0;
+    private static final long REFRESH_THROTTLE_MS = 300;
+
     public ChestTrackerScreen(ChestTrackerModule module) {
         super(Component.literal("Chest Tracker"));
         this.module = module;
@@ -96,6 +100,24 @@ public class ChestTrackerScreen extends Screen {
             .build();
         this.addRenderableWidget(sortButton);
 
+        loadItems();
+        filterItems();
+        lastSeenDataVersion = data.getDataVersion();
+    }
+
+    private void refreshIfDataChanged() {
+        long now = System.currentTimeMillis();
+        if (now - lastRefreshTime < REFRESH_THROTTLE_MS) return;
+
+        long currentVersion = data.getDataVersion();
+        if (currentVersion != lastSeenDataVersion) {
+            lastSeenDataVersion = currentVersion;
+            lastRefreshTime = now;
+            refreshItems();
+        }
+    }
+
+    private void refreshItems() {
         loadItems();
         filterItems();
     }
@@ -199,11 +221,9 @@ public class ChestTrackerScreen extends Screen {
         return Math.sqrt(playerPos.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5));
     }
 
-    // Was: @Override public void render(GuiGraphics context, int mouseX, int mouseY, float delta)
-    // Screen#render is now final (see references/Screen.java) — this is the overridable
-    // content hook it delegates to. Background is handled separately via extractBackground.
     @Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        refreshIfDataChanged();
         updateCachedBounds();
         context.fill(0, 0, this.width, this.height, 0xF0000000);
         int panelWidth = (ITEMS_PER_ROW * ITEM_SIZE) + 20;
@@ -230,7 +250,7 @@ public class ChestTrackerScreen extends Screen {
             8,
             0xFFFFFF
         );
-        searchField.extractRenderState(context, mouseX, mouseY, delta);
+        searchField.extractWidgetRenderState(context, mouseX, mouseY, delta);
         clearSearchButton.visible = !searchQuery.isEmpty();
         clearSearchButton.active = !searchQuery.isEmpty();
         renderItemGrid(context, mouseX, mouseY);
@@ -239,7 +259,6 @@ public class ChestTrackerScreen extends Screen {
         renderTooltip(context, mouseX, mouseY);
     }
 
-    // Was: @Override public void renderBackground(GuiGraphics context, int mouseX, int mouseY, float delta)
     @Override
     public void extractBackground(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
     }
@@ -283,7 +302,8 @@ public class ChestTrackerScreen extends Screen {
         context.disableScissor();
         String itemCountText;
         if (searchQuery.isEmpty()) {
-            itemCountText = String.format("§e%d §7unique items tracked", filteredItems.size());
+            itemCountText = String.format("§e%d §7unique items tracked §8(§7%d total across all dimensions§8)",
+                filteredItems.size(), data.getTotalContainerCount());
         } else {
             itemCountText = String.format("§e%d §7items found (filtered from §e%d§7 total)", filteredItems.size(), allItems.size());
         }

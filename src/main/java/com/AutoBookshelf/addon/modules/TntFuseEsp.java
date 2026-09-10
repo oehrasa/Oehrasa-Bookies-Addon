@@ -1,19 +1,11 @@
 package com.AutoBookshelf.addon.modules;
 
-import org.joml.Vector3d;
-
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.renderer.text.TextRenderer;
-import meteordevelopment.meteorclient.settings.BoolSetting;
-import meteordevelopment.meteorclient.settings.ColorSetting;
-import meteordevelopment.meteorclient.settings.DoubleSetting;
-import meteordevelopment.meteorclient.settings.EnumSetting;
-import meteordevelopment.meteorclient.settings.IntSetting;
-import meteordevelopment.meteorclient.settings.Setting;
-import meteordevelopment.meteorclient.settings.SettingGroup;
+import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.render.NametagUtils;
@@ -22,6 +14,7 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.item.PrimedTnt;
+import org.joml.Vector3d;
 
 /**
  * made by cqb13
@@ -40,6 +33,12 @@ public class TntFuseEsp extends Module {
     public final Setting<Boolean> showTntFuse = sgGeneral.add(new BoolSetting.Builder()
         .name("tnt-fuse-indicator")
         .description("Draw a box around lit tnt with the color indicating fuse time.")
+        .defaultValue(false)
+        .build());
+
+    public final Setting<Boolean> hideTntFlashing = sgGeneral.add(new BoolSetting.Builder()
+        .name("hide-tnt-flashing")
+        .description("Hides the flashing of lit tnt.")
         .defaultValue(false)
         .build());
 
@@ -127,6 +126,10 @@ public class TntFuseEsp extends Module {
 
     public TntFuseEsp() {
         super(Addon.CATEGORY2, "Tnt-Fuse-Esp", "Shows the fuse time of lit tnt.");
+    }
+
+    public boolean shouldHideFlashing() {
+        return hideTntFlashing.get();
     }
 
     @EventHandler

@@ -23,23 +23,22 @@
 Tested successfully with these mods.
 <font color="turquoise">Switch the branch repo if You want to see the other version config</font>
 
-- baritone-meteor-1.21.11.jar **(API Required!)**
-- meteor-client-1.21.11-65.jar **(Required!)**
-- BepHax-Final.jar (Optional)
-- client_maps-1.3.2.jar (Recommended for Mapart-Namer module)
-- map-in-slot-3.4.1.jar (Recommended for Mapart-Namer module)
+- baritone-meteor-26.1.jar **(API Required!)**
+- meteor-client-26.1.2-22.jar **(Required!)**
+- client_maps-1.3.2+26.1.jar (Recommended for Mapart-Namer module)
+- map-in-slot-3.5.0.jar (Recommended for Mapart-Namer module)
 
 > [!IMPORTANT]
 >
-> AnarchyMod is not compatible with the addon. **(Its Already Integrated)**
+> AnarchyMod is **NOT** compatible with the addon. **(Its free home is already Integrated)**
 >
 > client_maps is not compatible with ev-mod vice versa.
 
 ## Features
 
-**47 modules**, **6 commands**, **9 HUD elements**, and **9 mixin**
+**49 modules**, **8 commands**, **10 HUD elements**, **9 mixin**, and **18 Utils**
 
-## Modules (47 total)
+## Modules (49 total)
 <details>
 <summary><b>Modules</b> (Bookies modules)</summary>
 
@@ -55,7 +54,7 @@ Tested successfully with these mods.
 10. **Auto-Take-Off** - Automatically starts elytra flight when on ground, in lava, or falling
 11. **Auto-Sex** - Tries to have sex with the player or mob in freaky ways
 12. **B36-Peacemaker** - Created this to make peace. Named after Convair B-36 Peacemaker
-13. **Block-Radius** - Renders the range of powered beacons, lightning rods, and active conduits
+13. **Block-Radius** - Renders the range of powered beacons, lightning rods, active conduits, linked creakings, and Warden ESP
 14. **Better-BoatFly** - Transforms your boat into a plane
 15. **BLU-27/B-Napalm** - I love the smell of Napalm in the morning, Commit some trolling against the Vietnamese
 16. **Bookshelf-Filler** - oeh Yuri romcom bookshelves restocker
@@ -72,34 +71,38 @@ Tested successfully with these mods.
 27. **Inventory-Info** - SHoiGu!! GEraShimov!!!
 28. **InventoryTracker** - Tracks and shows the equipment/slot history of other players in render distance (use .invsee to open screen)
 29. **KMDB** - Builds Wither, Iron Golem, Snow Golem, or Copper Golem automatically
-30. **MURADAESA** - Detects likely player activity outside 128 blocks by scoring world-change packet patterns
-31. **Minecart-Placer** - Places any minecarts on any rails in range
-32. **Map-Grid** - Highlights map grid boundaries around the player
-33. **Mapart-Namer** - Auto‑names maps based on inventory slot layout
-34. **Mats-Refill** - Automatically restocks materials from shulker boxes
-35. **Mob-Owner** - Shows entity owner by saving into cache
-36. **PacketEat** - Allows you to eat without interrupting other actions
-37. **Platform** - Build a platform at a given y-level once in range
-38. **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
-39. **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in
+30. **LiveMessage** - Advanced DM management system with GUI
+31. **MURADAESA** - Detects likely player activity outside 128 blocks by scoring world-change packet patterns
+32. **Minecart-Placer** - Places any minecarts on any rails in range
+33. **Map-Grid** - Highlights map grid boundaries around the player
+34. **Mapart-Namer** - Auto‑names maps based on inventory slot layout
+35. **Mats-Refill** - Automatically restocks materials from shulker boxes
+36. **Mob-Owner** - Shows entity owner by saving into cache
+37. **PacketEat** - Allows you to eat without interrupting other actions
+38. **Platform** - Build a platform within a selected area at a given y-level
+39. **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
+40. **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in
     1.13+ chunks
-40. **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
-41. **Sculk-Range** - Shows the detection range of calibrated sculk sensors.
-42. **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
-43. **Tnt-Fuse-Esp** - Shows the fuse time of lit tnt
-44. **Trajectory-Plus** - Smooth projectile prediction and tracking
-45. **Tsundere-Furry** - Transforms outgoing chat messages into animal sounds, tsundere, or both :>
-46. **Unwax-Aura** - Automatically removes wax from waxed copper blocks
-47. **Yuri-Asmr** - Streams a random ASMR search result through yt-dlp + ffmpeg with integrated HUD
+41. **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
+42. **Sculk-Range** - Shows the detection range of normal or calibrated sculk sensors and shriekers
+43. **SignRender** - Renders sign text through walls with advanced clustering
+44. **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
+45. **Tnt-Fuse-Esp** - Shows the fuse time of lit tnt
+46. **Trajectory-Plus** - Smooth projectile prediction and tracking
+47. **Tsundere-Furry** - Transforms outgoing chat messages into animal sounds, tsundere, or both :>
+48. **Unwax-Aura** - Automatically removes wax from waxed copper blocks
+49. **Yuri-Asmr** - Streams a random ASMR search result through yt-dlp + ffmpeg with integrated HUD
 
 </details>
 
 <details>
-<summary><b>Display</b> (in-game)</summary>
-https://github.com/user-attachments/assets/effb0d4a-7b45-4a17-a928-ec849490df9a
+<summary><b>Display of the addon</b> (in-game)</summary>
+<h1 align="left">
+  <img src="https://github.com/user-attachments/assets/a7c42328-e553-496f-930e-ffdec541314f" alt="Header Image" style="width:70%; max-width:600px;"/>
+</h1>
 </details>
 
-## HUD Elements (9)
+## HUD Elements (10)
 
 - **Anime-Pics** - Displays random Anime pictures/GIF ( Cheers >< )
 - **Asmr-Radio** - Shows the currently playing ASMR track
@@ -110,15 +113,18 @@ https://github.com/user-attachments/assets/effb0d4a-7b45-4a17-a928-ec849490df9a
 - **NeboM** - The radar system claims to be able to detect 5th generation aircraft (Loud Incorrect Buzzer noise)
 - **Online-Friends** - Displays online friends from your friend list
 - **Teleport-Timer** - Shows a countdown bar on pending teleportation
+- **Weather** - Simple weather info display
 
-## Commands (6)
+## Commands (8)
 | Command          | Description                                                                |
 |------------------|----------------------------------------------------------------------------|
 | `.assowner`      | Assign a cracked account name as the owner of the entity you're looking at |
 | `.book`          | Shows book information from your held item                                 |
 | `.booktranslate` | Translates the held written book into another language                     |
+| `.enemy`         | Manage friends marked as enemies                                           |
 | `.ifpeek`        | Shows book information from an item frame                                  |
 | `.invsee`        | Opens a simulated screen of tracked InventoryTracker module                |
+| `.queue`         | Manage queued (offline-pending) DM messages                                |
 | `.shelf`         | Extracts a book from a chiseled bookshelf slot, reads it, and puts it back |
 
 ## TUTORIALS
@@ -148,7 +154,7 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 <summary><b>Book-Import</b> - Automatically imports text files into signed books</summary>
 
 1. Enable the module
-2. Put the .txt file into folder : `\minecraft\AutoBookshelf\books`
+2. Put the .txt file into folder : `\minecraft\AutoBookshelf\books` or use the [Remote Source](https://github.com/oehrasa/Ashurbanipal)
 3. _Recommend to use alongside Bookshelf-Filler module_
 4. Press set key in the module settings to continue to next file
 > I post the Python code [here](https://github.com/oehrasa/Auto-Written-Book)
@@ -211,6 +217,8 @@ List of addons I used as reference(skid? mwhehe), You should check them out it's
 - **[Trouser](https://github.com/etianl/Trouser-Streak)** - PortalPatternFinder
 - **[PathSeeker](https://github.com/FaxHack/PathSeeker)** - InventoryInfo
 - **[MeteorPlusPlus](https://github.com/zychen027/MeteorPlusPlusAddon)** - PacketEat
+- **[MeteorEnemies](https://github.com/crosby-moe/MeteorEnemies)** - Enemy tab
+- **[6Bees](https://github.com/Powie69/6Bees)** - Hidden map id's tooltip, Base system, 6bees-data
 
 ## Contributing
 
@@ -222,7 +230,7 @@ Open an [issue](https://github.com/oehrasa/Oehrasa-Bookies-Addon/issues) or subm
 
 >## Disclaimer
 >Designed for anarchy servers like 6b6t.org. Use responsibly.
-> 
+>
 >Ask a question or make a discussions with me on discord : oeh4233
 
 <h1 align="center">
