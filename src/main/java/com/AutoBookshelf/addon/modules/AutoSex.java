@@ -506,7 +506,7 @@ public class AutoSex extends Module {
     @EventHandler
     private void onMouseButton(MouseClickEvent event) {
         if (targetMode.get() == Mode.MiddleClick) {
-            if (event.action == KeyAction.Press && event.button() == GLFW_MOUSE_BUTTON_MIDDLE && mc.screen == null && mc.crosshairPickEntity != null && mc.crosshairPickEntity instanceof LivingEntity living) {
+            if (event.action == KeyAction.Press && event.button() == GLFW_MOUSE_BUTTON_MIDDLE && mc.gui.screen() == null && mc.crosshairPickEntity != null && mc.crosshairPickEntity instanceof LivingEntity living) {
                 if (!isEntityAllowed(living)) {
                     if (living instanceof Player) {
                         if (friendFilter.get() == FriendFilter.ONLY_FRIENDS) error("§cThat player is not your friend!");
@@ -566,7 +566,7 @@ public class AutoSex extends Module {
                 pressed = false;
             }
 
-            if (keybind.get().isPressed() && !pressed && alternate && mc.screen == null && mc.crosshairPickEntity != null && mc.crosshairPickEntity instanceof LivingEntity living) {
+            if (keybind.get().isPressed() && !pressed && alternate && mc.gui.screen() == null && mc.crosshairPickEntity != null && mc.crosshairPickEntity instanceof LivingEntity living) {
                 if (!isEntityAllowed(living)) {
                     if (living instanceof Player) {
                         if (friendFilter.get() == FriendFilter.ONLY_FRIENDS) error("§cThat player is not your friend!");

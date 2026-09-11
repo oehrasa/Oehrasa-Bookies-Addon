@@ -23,9 +23,9 @@
 Tested successfully with these mods.
 <font color="turquoise">Switch the branch repo if You want to see the other version config</font>
 
-- baritone-meteor-26.1.jar **(API Required!)**
-- meteor-client-26.1.2-22.jar **(Required!)**
-- client_maps-1.3.2+26.1.jar (Recommended for Mapart-Namer module)
+- baritone-meteor-26.2.jar **(or any API Required!)**
+- meteor-client-26.2-20.jar **(Required!)**
+- client_maps-1.3.3.jar (Recommended for Mapart-Namer module)
 - map-in-slot-3.5.0.jar (Recommended for Mapart-Namer module)
 
 > [!IMPORTANT]

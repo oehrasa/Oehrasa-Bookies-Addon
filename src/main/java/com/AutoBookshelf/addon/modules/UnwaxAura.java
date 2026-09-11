@@ -18,10 +18,15 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.WeatheringCopper;
+import net.minecraft.world.level.block.WeatheringCopperCollection;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
-import java.util.*;
+
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 public class UnwaxAura extends Module {
     public enum CopperFilter {
@@ -44,41 +49,30 @@ public class UnwaxAura extends Module {
         @Override public String toString() { return title; }
     }
 
-    private static final Set<Block> WAXED_COPPER_BLOCKS = Set.of(
-        Blocks.WAXED_COPPER_BLOCK, Blocks.WAXED_EXPOSED_COPPER, Blocks.WAXED_WEATHERED_COPPER, Blocks.WAXED_OXIDIZED_COPPER,
-        Blocks.WAXED_CUT_COPPER, Blocks.WAXED_EXPOSED_CUT_COPPER, Blocks.WAXED_WEATHERED_CUT_COPPER, Blocks.WAXED_OXIDIZED_CUT_COPPER,
-        Blocks.WAXED_CUT_COPPER_STAIRS, Blocks.WAXED_EXPOSED_CUT_COPPER_STAIRS, Blocks.WAXED_WEATHERED_CUT_COPPER_STAIRS, Blocks.WAXED_OXIDIZED_CUT_COPPER_STAIRS,
-        Blocks.WAXED_CUT_COPPER_SLAB, Blocks.WAXED_EXPOSED_CUT_COPPER_SLAB, Blocks.WAXED_WEATHERED_CUT_COPPER_SLAB, Blocks.WAXED_OXIDIZED_CUT_COPPER_SLAB,
-        Blocks.WAXED_CHISELED_COPPER, Blocks.WAXED_EXPOSED_CHISELED_COPPER, Blocks.WAXED_WEATHERED_CHISELED_COPPER, Blocks.WAXED_OXIDIZED_CHISELED_COPPER,
-        Blocks.WAXED_COPPER_DOOR, Blocks.WAXED_EXPOSED_COPPER_DOOR, Blocks.WAXED_WEATHERED_COPPER_DOOR, Blocks.WAXED_OXIDIZED_COPPER_DOOR,
-        Blocks.WAXED_COPPER_TRAPDOOR, Blocks.WAXED_EXPOSED_COPPER_TRAPDOOR, Blocks.WAXED_WEATHERED_COPPER_TRAPDOOR, Blocks.WAXED_OXIDIZED_COPPER_TRAPDOOR,
-        Blocks.WAXED_COPPER_GRATE, Blocks.WAXED_EXPOSED_COPPER_GRATE, Blocks.WAXED_WEATHERED_COPPER_GRATE, Blocks.WAXED_OXIDIZED_COPPER_GRATE,
-        Blocks.WAXED_COPPER_BULB, Blocks.WAXED_EXPOSED_COPPER_BULB, Blocks.WAXED_WEATHERED_COPPER_BULB, Blocks.WAXED_OXIDIZED_COPPER_BULB
+    private static final List<WeatheringCopperCollection<Block>> COPPER_FAMILIES = List.of(
+        Blocks.COPPER_BLOCK, Blocks.CUT_COPPER, Blocks.CUT_COPPER_STAIRS, Blocks.CUT_COPPER_SLAB,
+        Blocks.CHISELED_COPPER, Blocks.COPPER_DOOR, Blocks.COPPER_TRAPDOOR, Blocks.COPPER_GRATE, Blocks.COPPER_BULB
     );
 
-    private static final Set<Block> OXIDIZED_WAXED = Set.of(
-        Blocks.WAXED_OXIDIZED_COPPER, Blocks.WAXED_OXIDIZED_CUT_COPPER, Blocks.WAXED_OXIDIZED_CUT_COPPER_STAIRS,
-        Blocks.WAXED_OXIDIZED_CUT_COPPER_SLAB, Blocks.WAXED_OXIDIZED_CHISELED_COPPER, Blocks.WAXED_OXIDIZED_COPPER_DOOR,
-        Blocks.WAXED_OXIDIZED_COPPER_TRAPDOOR, Blocks.WAXED_OXIDIZED_COPPER_GRATE, Blocks.WAXED_OXIDIZED_COPPER_BULB
-    );
+    private static Set<Block> waxedBlocks(WeatheringCopper.WeatherState... states) {
+        Set<Block> set = new HashSet<>();
+        for (WeatheringCopperCollection<Block> family : COPPER_FAMILIES) {
+            for (WeatheringCopper.WeatherState state : states) {
+                set.add(family.waxed().pick(state));
+            }
+        }
+        return Set.copyOf(set);
+    }
 
-    private static final Set<Block> WEATHERED_WAXED = Set.of(
-        Blocks.WAXED_WEATHERED_COPPER, Blocks.WAXED_WEATHERED_CUT_COPPER, Blocks.WAXED_WEATHERED_CUT_COPPER_STAIRS,
-        Blocks.WAXED_WEATHERED_CUT_COPPER_SLAB, Blocks.WAXED_WEATHERED_CHISELED_COPPER, Blocks.WAXED_WEATHERED_COPPER_DOOR,
-        Blocks.WAXED_WEATHERED_COPPER_TRAPDOOR, Blocks.WAXED_WEATHERED_COPPER_GRATE, Blocks.WAXED_WEATHERED_COPPER_BULB
-    );
-
-    private static final Set<Block> EXPOSED_WAXED = Set.of(
-        Blocks.WAXED_EXPOSED_COPPER, Blocks.WAXED_EXPOSED_CUT_COPPER, Blocks.WAXED_EXPOSED_CUT_COPPER_STAIRS,
-        Blocks.WAXED_EXPOSED_CUT_COPPER_SLAB, Blocks.WAXED_EXPOSED_CHISELED_COPPER, Blocks.WAXED_EXPOSED_COPPER_DOOR,
-        Blocks.WAXED_EXPOSED_COPPER_TRAPDOOR, Blocks.WAXED_EXPOSED_COPPER_GRATE, Blocks.WAXED_EXPOSED_COPPER_BULB
-    );
-
-    private static final Set<Block> UNAFFECTED_WAXED = Set.of(
-        Blocks.WAXED_COPPER_BLOCK, Blocks.WAXED_CUT_COPPER, Blocks.WAXED_CUT_COPPER_STAIRS,
-        Blocks.WAXED_CUT_COPPER_SLAB, Blocks.WAXED_CHISELED_COPPER, Blocks.WAXED_COPPER_DOOR,
-        Blocks.WAXED_COPPER_TRAPDOOR, Blocks.WAXED_COPPER_GRATE, Blocks.WAXED_COPPER_BULB
-    );
+    private static Set<Block> unwaxedBlocks(WeatheringCopper.WeatherState... states) {
+        Set<Block> set = new HashSet<>();
+        for (WeatheringCopperCollection<Block> family : COPPER_FAMILIES) {
+            for (WeatheringCopper.WeatherState state : states) {
+                set.add(family.weathering().pick(state));
+            }
+        }
+        return Set.copyOf(set);
+    }
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgFilter = settings.createGroup("Filter");
@@ -206,6 +200,13 @@ public class UnwaxAura extends Module {
     private int originalSlot = -1;
     private boolean lookingForUnwaxed = false;
 
+    private static final Set<Block> WAXED_COPPER_BLOCKS = waxedBlocks(WeatheringCopper.WeatherState.values());
+    private static final Set<Block> OXIDIZED_WAXED = waxedBlocks(WeatheringCopper.WeatherState.OXIDIZED);
+    private static final Set<Block> WEATHERED_WAXED = waxedBlocks(WeatheringCopper.WeatherState.WEATHERED);
+    private static final Set<Block> EXPOSED_WAXED = waxedBlocks(WeatheringCopper.WeatherState.EXPOSED);
+    private static final Set<Block> UNAFFECTED_WAXED = waxedBlocks(WeatheringCopper.WeatherState.UNAFFECTED);
+    private static final Set<Block> UNWAXED_COPPER_BLOCKS = unwaxedBlocks(WeatheringCopper.WeatherState.values());
+
     public UnwaxAura() {
         super(Addon.CATEGORY2, "Unwax-Aura", "Automatically removes wax from copper blocks and optionally breaks them.");
     }
@@ -242,24 +243,13 @@ public class UnwaxAura extends Module {
     }
 
     private boolean isUnwaxedCopper(BlockState state) {
-        Block block = state.getBlock();
-        return !WAXED_COPPER_BLOCKS.contains(block) && (
-            block == Blocks.COPPER_BLOCK || block == Blocks.EXPOSED_COPPER || block == Blocks.WEATHERED_COPPER || block == Blocks.OXIDIZED_COPPER ||
-                block == Blocks.CUT_COPPER || block == Blocks.EXPOSED_CUT_COPPER || block == Blocks.WEATHERED_CUT_COPPER || block == Blocks.OXIDIZED_CUT_COPPER ||
-                block == Blocks.CUT_COPPER_STAIRS || block == Blocks.EXPOSED_CUT_COPPER_STAIRS || block == Blocks.WEATHERED_CUT_COPPER_STAIRS || block == Blocks.OXIDIZED_CUT_COPPER_STAIRS ||
-                block == Blocks.CUT_COPPER_SLAB || block == Blocks.EXPOSED_CUT_COPPER_SLAB || block == Blocks.WEATHERED_CUT_COPPER_SLAB || block == Blocks.OXIDIZED_CUT_COPPER_SLAB ||
-                block == Blocks.CHISELED_COPPER || block == Blocks.EXPOSED_CHISELED_COPPER || block == Blocks.WEATHERED_CHISELED_COPPER || block == Blocks.OXIDIZED_CHISELED_COPPER ||
-                block == Blocks.COPPER_DOOR || block == Blocks.EXPOSED_COPPER_DOOR || block == Blocks.WEATHERED_COPPER_DOOR || block == Blocks.OXIDIZED_COPPER_DOOR ||
-                block == Blocks.COPPER_TRAPDOOR || block == Blocks.EXPOSED_COPPER_TRAPDOOR || block == Blocks.WEATHERED_COPPER_TRAPDOOR || block == Blocks.OXIDIZED_COPPER_TRAPDOOR ||
-                block == Blocks.COPPER_GRATE || block == Blocks.EXPOSED_COPPER_GRATE || block == Blocks.WEATHERED_COPPER_GRATE || block == Blocks.OXIDIZED_COPPER_GRATE ||
-                block == Blocks.COPPER_BULB || block == Blocks.EXPOSED_COPPER_BULB || block == Blocks.WEATHERED_COPPER_BULB || block == Blocks.OXIDIZED_COPPER_BULB
-        );
+        return UNWAXED_COPPER_BLOCKS.contains(state.getBlock());
     }
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.gameMode == null) return;
-        if (mc.screen != null) return;
+        if (mc.gui.screen() != null) return;
 
         if (rotTimer > 0) {
             if (currentTarget != null && rotate.get()) {

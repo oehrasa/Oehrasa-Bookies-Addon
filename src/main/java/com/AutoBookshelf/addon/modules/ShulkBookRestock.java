@@ -133,7 +133,7 @@ public class ShulkBookRestock extends Module {
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.player.getInventory() == null) return;
 
-        if (mc.screen != null) {
+        if (mc.gui.screen() != null) {
             // GUI open: don't track or restock. Remember that it was open so the
             // tick it closes on can resync instead of comparing across the gap.
             wasScreenOpen = true;

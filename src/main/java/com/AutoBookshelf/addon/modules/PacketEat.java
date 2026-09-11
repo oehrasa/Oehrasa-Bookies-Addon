@@ -330,7 +330,7 @@ public class PacketEat extends Module {
         eatStackCountAtStart = getStackCount(player, eatSlot);
 
         // Decide method once per cycle, based on actual screen state right now.
-        eatingViaScreenClick = mc.screen != null;
+        eatingViaScreenClick = mc.gui.screen() != null;
 
         if (eatingViaScreenClick) {
             // Screen-open fallback: goes through the real input/raycast pipeline,

@@ -14,7 +14,10 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.SubmitNodeStorage;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Style;
+import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Pose;
@@ -355,16 +358,13 @@ public class BlockRadius extends Module {
     );
 
     private static final int[][] FRAME_OFFSETS = buildFrameOffsets();
-    private static final Set<Block> LIGHTNING_ROD_VARIANTS = Set.of(
-        Blocks.LIGHTNING_ROD,
-        Blocks.EXPOSED_LIGHTNING_ROD,
-        Blocks.WEATHERED_LIGHTNING_ROD,
-        Blocks.OXIDIZED_LIGHTNING_ROD,
-        Blocks.WAXED_LIGHTNING_ROD,
-        Blocks.WAXED_EXPOSED_LIGHTNING_ROD,
-        Blocks.WAXED_WEATHERED_LIGHTNING_ROD,
-        Blocks.WAXED_OXIDIZED_LIGHTNING_ROD
-    );
+    private static final Set<Block> LIGHTNING_ROD_VARIANTS = buildLightningRodVariants();
+
+    private static Set<Block> buildLightningRodVariants() {
+        Set<Block> variants = new HashSet<>();
+        Blocks.LIGHTNING_ROD.forEach(variants::add);
+        return variants;
+    }
 
     // Hue step between successive creaking colours; the golden angle maximizes hue
     // separation for any number of mobs without needing a fixed palette.
@@ -784,7 +784,7 @@ public class BlockRadius extends Module {
     private void onRender(Render3DEvent event) {
         if (mc.player == null || mc.level == null) return;
 
-        Vec3 cam = mc.gameRenderer.getMainCamera().position();
+        Vec3 cam = mc.gameRenderer.mainCamera().position();
         double maxDistSq = maxRenderDistance.get() * maxRenderDistance.get();
 
         // Beacons
@@ -1086,7 +1086,7 @@ public class BlockRadius extends Module {
                                 double y, double z, SettingColor color, float scale, float offsetPx,
                                 float tickDelta) {
         matrices.pushPose();
-        Vec3 cam = mc.gameRenderer.getMainCamera().position();
+        Vec3 cam = mc.gameRenderer.mainCamera().position();
         matrices.translate(x - cam.x, y - cam.y, z - cam.z);
         Entity camEntity = mc.getCameraEntity();
         if (camEntity != null) {
@@ -1108,9 +1108,20 @@ public class BlockRadius extends Module {
         int baseAlpha = (argb >>> 24) & 0xFF;
         int bg = (int) (0.25F * baseAlpha) << 24;
 
-        tr.drawInBatch(text, -w, 0, argb, false, matrices.last().pose(),
-            mc.renderBuffers().bufferSource(),
-            Font.DisplayMode.SEE_THROUGH, bg, 0xF000F0);
+        SubmitNodeStorage collector = new SubmitNodeStorage();
+        collector.submitText(
+            matrices,
+            -w, 0,
+            FormattedCharSequence.forward(text, Style.EMPTY),
+            false,
+            Font.DisplayMode.SEE_THROUGH,
+            0xF000F0,
+            argb,
+            bg,
+            0 // outlineColor: "off"
+        );
+        mc.gameRenderer.featureRenderDispatcher().renderAllFeatures(collector);
+
         matrices.popPose();
     }
 

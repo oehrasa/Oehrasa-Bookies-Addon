@@ -521,9 +521,9 @@ public class AnimePics extends HudElement {
             if (liveRefreshDebounceTicks < 0) refreshNow();
         }
 
-        if (mc.options.hideGui) return;
+        if (mc.gui.hud.isHidden()) return;
 
-        boolean menuOpen = mc.screen != null;
+        boolean menuOpen = mc.gui.screen() != null;
         if (menuOpen && !animateInMenus.get()) return;
 
         // Advance GIF animation at tick resolution (20Hz ceiling) rather than every render call, so

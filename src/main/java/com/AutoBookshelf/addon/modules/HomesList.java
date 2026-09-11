@@ -1,5 +1,5 @@
 package com.AutoBookshelf.addon.modules;
-//26.1.2 mojmap
+//26.2 mojmap
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.JoinPayload;
 import com.google.gson.*;
@@ -56,11 +56,11 @@ public class HomesList extends Module {
         .description("Opens the homes list GUI. Press again to close.")
         .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_H))
         .action(() -> {
-            if (MeteorClient.mc.screen instanceof HomesScreen ||
-                MeteorClient.mc.screen instanceof EditHomeScreen) {
-                MeteorClient.mc.setScreen(null);
-            } else if (MeteorClient.mc.screen == null) {
-                MeteorClient.mc.setScreen(new HomesScreen(GuiThemes.get(), this));
+            if (MeteorClient.mc.gui.screen() instanceof HomesScreen ||
+                MeteorClient.mc.gui.screen() instanceof EditHomeScreen) {
+                MeteorClient.mc.gui.setScreen(null);
+            } else if (MeteorClient.mc.gui.screen() == null) {
+                MeteorClient.mc.gui.setScreen(new HomesScreen(GuiThemes.get(), this));
             }
         })
         .build()
@@ -379,7 +379,7 @@ public class HomesList extends Module {
 
         boolean keyPressed = quickSelectKey.get().isPressed();
 
-        if (keyPressed && quickScreen == null && !quickForceClosed && MeteorClient.mc.screen == null) {
+        if (keyPressed && quickScreen == null && !quickForceClosed && MeteorClient.mc.gui.screen() == null) {
             List<HomeEntry> fullList = getHomes();
             if (!fullList.isEmpty()) {
                 int limit = Math.min(maxQuickSelectItems.get(), fullList.size());
@@ -389,7 +389,7 @@ public class HomesList extends Module {
                 quickScreen = new QuickSelectScreen(this, quickHomes, -1,
                     (int) MeteorClient.mc.mouseHandler.xpos(), (int) MeteorClient.mc.mouseHandler.ypos(),
                     quickSelectColumns.get());
-                MeteorClient.mc.setScreen(quickScreen);
+                MeteorClient.mc.gui.setScreen(quickScreen);
             }
         } else if (!keyPressed && quickScreen != null) {
             closeQuickScreen(true);
@@ -403,7 +403,7 @@ public class HomesList extends Module {
     private void closeQuickScreen(boolean doTeleport) {
         if (quickScreen == null) return;
         quickSelectedIndex = quickScreen.getSelectedIndex();
-        MeteorClient.mc.setScreen(null);
+        MeteorClient.mc.gui.setScreen(null);
         quickScreen = null;
 
         if (doTeleport && !quickCancelled && quickSelectedIndex >= 0 && quickSelectedIndex < quickHomes.size()) {
@@ -701,7 +701,7 @@ public class HomesList extends Module {
             refresh.action = module::refreshFromServer;
 
             WButton addNew = row.add(theme.button("Add home")).expandX().widget();
-            addNew.action = () -> MeteorClient.mc.setScreen(new EditHomeScreen(theme, module, null, -1, this));
+            addNew.action = () -> MeteorClient.mc.gui.setScreen(new EditHomeScreen(theme, module, null, -1, this));
         }
 
         void rebuildTable() {
@@ -739,7 +739,7 @@ public class HomesList extends Module {
                 teleport.action = () -> module.teleportTo(home.originalName);
 
                 WButton edit = table.add(theme.button(GuiRenderer.EDIT)).widget();
-                edit.action = () -> MeteorClient.mc.setScreen(
+                edit.action = () -> MeteorClient.mc.gui.setScreen(
                     new EditHomeScreen(theme, module, home, module.homes.indexOf(home), this));
 
                 WMinus delete = table.add(theme.minus()).widget();
@@ -809,12 +809,12 @@ public class HomesList extends Module {
                 else module.updateHome(index, newEntry);
                 if (parent != null) {
                     parent.rebuildTable();
-                    MeteorClient.mc.setScreen(parent);
-                } else MeteorClient.mc.setScreen(null);
+                    MeteorClient.mc.gui.setScreen(parent);
+                } else MeteorClient.mc.gui.setScreen(null);
             };
 
             WButton cancel = actions.add(theme.button("Cancel")).expandX().widget();
-            cancel.action = () -> MeteorClient.mc.setScreen(parent != null ? parent : null);
+            cancel.action = () -> MeteorClient.mc.gui.setScreen(parent != null ? parent : null);
 
             // Rename and delete only apply to a home that already exists on the server.
             if (home != null) {
@@ -837,17 +837,17 @@ public class HomesList extends Module {
 
                 WHorizontalList deleteRow = add(theme.horizontalList()).expandX().widget();
                 WButton deleteButton = deleteRow.add(theme.button("Delete Home")).expandX().widget();
-                deleteButton.action = () -> MeteorClient.mc.setScreen(new ConfirmDeleteScreen(
+                deleteButton.action = () -> MeteorClient.mc.gui.setScreen(new ConfirmDeleteScreen(
                     theme,
                     home.displayName,
                     () -> {
                         module.deleteHome(home);
                         if (parent != null) {
                             parent.rebuildTable();
-                            MeteorClient.mc.setScreen(parent);
-                        } else MeteorClient.mc.setScreen(null);
+                            MeteorClient.mc.gui.setScreen(parent);
+                        } else MeteorClient.mc.gui.setScreen(null);
                     },
-                    () -> MeteorClient.mc.setScreen(EditHomeScreen.this)
+                    () -> MeteorClient.mc.gui.setScreen(EditHomeScreen.this)
                 ));
             }
         }

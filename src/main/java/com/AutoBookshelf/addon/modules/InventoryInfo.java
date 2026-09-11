@@ -1,5 +1,5 @@
 package com.AutoBookshelf.addon.modules;
-//26.1.2 mojmap
+//26.2 mojmap
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.events.ScreenRenderEvent;
 import com.AutoBookshelf.addon.utils.ShulkerInfo;
@@ -118,16 +118,15 @@ public class InventoryInfo extends Module {
     //TODO
     // Make proper component display.
     // Add profile target, litematica Material list feature.
-    // Whisper/info panel.
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (!(mc.screen instanceof AbstractContainerScreen<?>) || mc.player.tickCount % 4 != 0) return;
-        if (inventoryOnly.get() && !(mc.screen instanceof InventoryScreen)) {
+        if (!(mc.gui.screen() instanceof AbstractContainerScreen<?>) || mc.player.tickCount % 4 != 0) return;
+        if (inventoryOnly.get() && !(mc.gui.screen() instanceof InventoryScreen)) {
             info.clear();
             return;
         }
-        refresh((AbstractContainerScreen<?>) mc.screen);
+        refresh((AbstractContainerScreen<?>) mc.gui.screen());
     }
 
     @EventHandler

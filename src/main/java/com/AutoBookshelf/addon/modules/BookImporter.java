@@ -325,7 +325,7 @@ public class BookImporter extends Module {
                     return;
                 }
 
-                mc.setScreen(new RemoteBookSelectScreen(entries, this::onRemoteSelectionConfirmed));
+                mc.gui.setScreen(new RemoteBookSelectScreen(entries, this::onRemoteSelectionConfirmed));
             }));
     }
 

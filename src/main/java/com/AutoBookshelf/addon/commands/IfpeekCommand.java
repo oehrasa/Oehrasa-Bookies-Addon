@@ -355,7 +355,7 @@ public class IfpeekCommand extends Command {
         // immediately calls setScreen(null) to close itself, believing the message sent normally
         mc.execute(() -> {
             BookViewScreen screen = new BookViewScreen(BookViewScreen.BookAccess.fromItem(item));
-            mc.setScreen(screen);
+            mc.gui.setScreen(screen);
 
             if (targetIndex == 0) return;
             screen.setPage(targetIndex);

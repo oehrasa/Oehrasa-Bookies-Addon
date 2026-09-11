@@ -16,6 +16,7 @@ import meteordevelopment.meteorclient.utils.network.MeteorExecutor;
 import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.TamableAnimal;
 import net.minecraft.world.entity.player.Player;
@@ -251,7 +252,7 @@ public class MobOwner extends Module {
                 }
 
                 if (name != null) {
-                    renderNametag(name, color);
+                    renderNametag(event.graphics, name, color);
                 }
             }
         }
@@ -317,10 +318,10 @@ public class MobOwner extends Module {
         return "Retrieving";
     }
 
-    private void renderNametag(String name, Color color) {
+    private void renderNametag(GuiGraphicsExtractor graphics, String name, Color color) {
         TextRenderer text = TextRenderer.get();
         NametagUtils.begin(pos);
-        text.beginBig();
+        text.beginBig(graphics);
 
         double w = text.getWidth(name);
         double h = text.getHeight();

@@ -703,7 +703,7 @@ public class SculkRange extends Module {
             Vector3d vec3 = new Vector3d(sensor.pos.getX() + 0.5, sensor.pos.getY() + 1.3, sensor.pos.getZ() + 0.5);
             if (NametagUtils.to2D(vec3, vibrationTextScale.get())) {
                 NametagUtils.begin(vec3, event.graphics);
-                TextRenderer.get().begin(1, false, true);
+                TextRenderer.get().begin(event.graphics, 1, false, true);
 
                 double powerWidth = TextRenderer.get().getWidth(powerText);
                 double lineHeight = TextRenderer.get().getHeight();

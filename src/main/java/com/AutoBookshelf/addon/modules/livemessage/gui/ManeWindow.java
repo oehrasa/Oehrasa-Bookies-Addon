@@ -12,7 +12,6 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.mojang.authlib.GameProfile;
 import meteordevelopment.meteorclient.systems.friends.Friends;
-import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.EditBox;
@@ -47,23 +46,23 @@ public class ManeWindow extends LiveWindow {
     final int buddyListY = titlebarHeight + 44;
     final int footer = 13;
     private static int mainWindowColor = 0;
-    private static final ChatFormatting[] MINECRAFT_COLORS = new ChatFormatting[]{
-        ChatFormatting.BLACK,
-        ChatFormatting.DARK_BLUE,
-        ChatFormatting.DARK_GREEN,
-        ChatFormatting.DARK_AQUA,
-        ChatFormatting.DARK_RED,
-        ChatFormatting.DARK_PURPLE,
-        ChatFormatting.GOLD,
-        ChatFormatting.GRAY,
-        ChatFormatting.DARK_GRAY,
-        ChatFormatting.BLUE,
-        ChatFormatting.GREEN,
-        ChatFormatting.AQUA,
-        ChatFormatting.RED,
-        ChatFormatting.LIGHT_PURPLE,
-        ChatFormatting.YELLOW,
-        ChatFormatting.WHITE
+    private static final int[] MINECRAFT_COLOR_VALUES = new int[]{
+        0xFF000000, // BLACK
+        0xFF0000AA, // DARK_BLUE
+        0xFF00AA00, // DARK_GREEN
+        0xFF00AAAA, // DARK_AQUA
+        0xFFAA0000, // DARK_RED
+        0xFFAA00AA, // DARK_PURPLE
+        0xFFFFAA00, // GOLD
+        0xFFAAAAAA, // GRAY
+        0xFF555555, // DARK_GRAY
+        0xFF5555FF, // BLUE
+        0xFF55FF55, // GREEN
+        0xFF55FFFF, // AQUA
+        0xFFFF5555, // RED
+        0xFFFF55FF, // LIGHT_PURPLE
+        0xFFFFFF55, // YELLOW
+        0xFFFFFFFF  // WHITE
     };
     private static final Identifier NOTE_ICON = Identifier.fromNamespaceAndPath("livemessage", "note.png");
     private static int lastBuddyListSize = 0;
@@ -126,27 +125,22 @@ public class ManeWindow extends LiveWindow {
 
     public void toggleMainWindowColor() {
         int currentIndex = -1;
-        if (mainWindowColor == 0) {
-            currentIndex = -1;
-        } else {
-            for (int i = 0; i < MINECRAFT_COLORS.length; i++) {
-                if (MINECRAFT_COLORS[i].isColor() && MINECRAFT_COLORS[i].getColor() != null) {
-                    int colorValue = MINECRAFT_COLORS[i].getColor() | 0xFF000000;
-                    if (mainWindowColor == colorValue) {
-                        currentIndex = i;
-                        break;
-                    }
+        if (mainWindowColor != 0) {
+            for (int i = 0; i < MINECRAFT_COLOR_VALUES.length; i++) {
+                if (mainWindowColor == MINECRAFT_COLOR_VALUES[i]) {
+                    currentIndex = i;
+                    break;
                 }
             }
         }
 
-        currentIndex = (currentIndex + 1) % (MINECRAFT_COLORS.length + 1);
-        if (currentIndex == MINECRAFT_COLORS.length) {
+        currentIndex = (currentIndex + 1) % (MINECRAFT_COLOR_VALUES.length + 1);
+        if (currentIndex == MINECRAFT_COLOR_VALUES.length) {
             mainWindowColor = 0;
             this.primaryColor = GuiUtil.getWindowColor(this.mc.player.getUUID());
             LiveMessage.LOG.info("Main window color reset to default (0x{})", Integer.toHexString(this.primaryColor).toUpperCase());
-        } else if (MINECRAFT_COLORS[currentIndex].isColor() && MINECRAFT_COLORS[currentIndex].getColor() != null) {
-            mainWindowColor = MINECRAFT_COLORS[currentIndex].getColor() | 0xFF000000;
+        } else {
+            mainWindowColor = MINECRAFT_COLOR_VALUES[currentIndex];
             this.primaryColor = mainWindowColor;
             LiveMessage.LOG.info("Main window color changed to: 0x{} (index {})", Integer.toHexString(mainWindowColor).toUpperCase(), currentIndex);
         }

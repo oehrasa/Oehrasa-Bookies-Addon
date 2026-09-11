@@ -14,6 +14,7 @@ import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -217,6 +218,7 @@ public class SignRender extends Module {
     private int updateTicker = 0;
     private int globalCycleIndex = 0;
     private long lastGlobalCycleTime = 0L;
+    private GuiGraphicsExtractor graphics;
 
     public SignRender() {
         super(Addon.CATEGORY2, "Sign-Render", "Renders sign text through walls with advanced clustering.");
@@ -225,6 +227,7 @@ public class SignRender extends Module {
     @EventHandler
     private void onRender2D(Render2DEvent event) {
         if (this.mc.level != null && this.mc.player != null) {
+            this.graphics = event.graphics;
             this.updateTicker++;
             boolean fullUpdate = !(Boolean) this.cacheSignText.get() || this.updateTicker >= (Integer) this.updateInterval.get();
             if (fullUpdate) {
@@ -400,7 +403,7 @@ public class SignRender extends Module {
             if (currentSign.onScreen) {
                 this.renderSignAtPosition(currentSign, textRenderer, currentSign.screenX, currentSign.screenY);
                 if ((Boolean) this.showClusterCount.get() && this.allSigns.size() > 1) {
-                    textRenderer.begin(currentSign.scale, false, true);
+                    textRenderer.begin(this.graphics, currentSign.scale, false, true);
                     double lineHeight = textRenderer.getHeight();
                     textRenderer.end();
                     double signHeight = this.multilineDisplay.get() && !currentSign.lines.isEmpty() ? currentSign.lines.size() * lineHeight + 8.0 : lineHeight + 8.0;
@@ -432,7 +435,7 @@ public class SignRender extends Module {
 
             this.renderSignAtPosition(sign, textRenderer, baseX, baseY + offsetY);
             rendered.add(sign);
-            textRenderer.begin(sign.scale, false, true);
+            textRenderer.begin(this.graphics, sign.scale, false, true);
             double lineHeight = textRenderer.getHeight();
             textRenderer.end();
             double signHeight = this.multilineDisplay.get() && !sign.lines.isEmpty() ? sign.lines.size() * lineHeight + 8.0 : lineHeight + 8.0;
@@ -452,7 +455,7 @@ public class SignRender extends Module {
             this.renderSignAtPosition(currentSign, textRenderer, cluster.centerX, cluster.centerY);
             rendered.addAll(cluster.signs);
             if ((Boolean) this.showClusterCount.get() && cluster.signs.size() > 1) {
-                textRenderer.begin(currentSign.scale, false, true);
+                textRenderer.begin(this.graphics, currentSign.scale, false, true);
                 double lineHeight = textRenderer.getHeight();
                 textRenderer.end();
                 double signHeight = this.multilineDisplay.get() && !currentSign.lines.isEmpty() ? currentSign.lines.size() * lineHeight + 8.0 : lineHeight + 8.0;
@@ -469,7 +472,7 @@ public class SignRender extends Module {
         this.renderSignAtPosition(primary, textRenderer, cluster.centerX, cluster.centerY);
         rendered.addAll(cluster.signs);
         if (cluster.signs.size() > 1) {
-            textRenderer.begin(primary.scale, false, true);
+            textRenderer.begin(this.graphics, primary.scale, false, true);
             double lineHeight = textRenderer.getHeight();
             textRenderer.end();
             double signHeight = this.multilineDisplay.get() && !primary.lines.isEmpty() ? primary.lines.size() * lineHeight + 8.0 : lineHeight + 8.0;
@@ -514,7 +517,7 @@ public class SignRender extends Module {
     }
 
     private void renderMultilineSign(SignRender.SignRenderData sign, TextRenderer textRenderer, double centerX, double centerY) {
-        textRenderer.begin(sign.scale, false, true);
+        textRenderer.begin(this.graphics, sign.scale, false, true);
         double lineHeight = textRenderer.getHeight();
         List<Double> lineWidths = new ArrayList<>();
         double maxWidth = 0.0;
@@ -544,8 +547,7 @@ public class SignRender extends Module {
             Renderer2D.COLOR.render();
         }
 
-        textRenderer.begin(sign.scale, false, true);
-
+        textRenderer.begin(this.graphics, sign.scale, false, true);
         for (int i = 0; i < sign.lines.size(); i++) {
             String line = sign.lines.get(i);
             if (!line.isEmpty()) {
@@ -564,7 +566,7 @@ public class SignRender extends Module {
     }
 
     private void renderTextAtScreenPos(String text, double screenX, double screenY, double scale, Color color, TextRenderer textRenderer) {
-        textRenderer.begin(scale, false, true);
+        textRenderer.begin(this.graphics, scale, false, true);
         double textWidth = textRenderer.getWidth(text);
         double textHeight = textRenderer.getHeight();
         double bgPadding = 4.0;
@@ -585,7 +587,7 @@ public class SignRender extends Module {
             Renderer2D.COLOR.render();
         }
 
-        textRenderer.begin(scale, false, true);
+        textRenderer.begin(this.graphics, scale, false, true);
         textRenderer.render(text, elementLeft + bgPadding, elementTop + bgPadding, color);
         textRenderer.end();
     }

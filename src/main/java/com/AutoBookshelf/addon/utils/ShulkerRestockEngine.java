@@ -176,7 +176,7 @@ public class ShulkerRestockEngine {
             case START_BREAK -> startBreak();
             case WAIT_FOR_BREAK -> waitForBreak();
             case WAIT_MANUAL_CLOSE -> {
-                if (!(mc.screen instanceof AbstractContainerScreen)) stage = Stage.CLOSE_SHULKER;
+                if (!(mc.gui.screen() instanceof AbstractContainerScreen)) stage = Stage.CLOSE_SHULKER;
             }
             case IDLE -> {
             }
@@ -210,7 +210,7 @@ public class ShulkerRestockEngine {
     }
 
     private void placeShulker() {
-        if (mc.screen instanceof AbstractContainerScreen) {
+        if (mc.gui.screen() instanceof AbstractContainerScreen) {
             mc.player.closeContainer();
             delayTicks = 3;
             return;
@@ -369,7 +369,7 @@ public class ShulkerRestockEngine {
     }
 
     private void waitForOpen() {
-        if (mc.screen instanceof AbstractContainerScreen) {
+        if (mc.gui.screen() instanceof AbstractContainerScreen) {
             stateTicks = 0;
             openAttempts = 0;
             stage = config.autoTake() ? Stage.RESTOCK : Stage.WAIT_MANUAL_CLOSE;
@@ -396,7 +396,7 @@ public class ShulkerRestockEngine {
     }
 
     private void doRestock() {
-        if (!(mc.screen instanceof AbstractContainerScreen<?> screen)) {
+        if (!(mc.gui.screen() instanceof AbstractContainerScreen<?> screen)) {
             // GUI closed on its own (e.g. server-side kick from the container);
             // fall through to the close/break flow, which handles a
             // already-closed screen cleanly.
@@ -465,7 +465,7 @@ public class ShulkerRestockEngine {
     }
 
     private void closeShulker() {
-        if (mc.screen instanceof AbstractContainerScreen) {
+        if (mc.gui.screen() instanceof AbstractContainerScreen) {
             mc.player.closeContainer();
             delayTicks = 2; // brief client-side settle before we re-check currentScreen
             return;

@@ -56,8 +56,8 @@ public class ChestTrackerModule extends Module {
         .description("Open container browser GUI.")
         .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_Y))
         .action(() -> {
-            if (mc.screen == null) {
-                mc.setScreen(new ChestTrackerScreen(this));
+            if (mc.gui.screen() == null) {
+                mc.gui.setScreen(new ChestTrackerScreen(this));
             }
         })
         .build()
@@ -821,7 +821,7 @@ public class ChestTrackerModule extends Module {
     }
 
     private boolean isInContainerScreen() {
-        if (mc.screen == null) return false;
+        if (mc.gui.screen() == null) return false;
         if (mc.player == null) return false;
         return mc.player.containerMenu != mc.player.inventoryMenu;
     }
@@ -875,7 +875,7 @@ public class ChestTrackerModule extends Module {
         WTable table = theme.table();
 
         WButton openBrowser = table.add(theme.button("Open Browser (" + browserKey.get() + ")")).expandX().widget();
-        openBrowser.action = () -> mc.setScreen(new ChestTrackerScreen(this));
+        openBrowser.action = () -> mc.gui.setScreen(new ChestTrackerScreen(this));
         table.row();
 
         WButton searchHeld = table.add(theme.button("Search Held Item")).expandX().widget();

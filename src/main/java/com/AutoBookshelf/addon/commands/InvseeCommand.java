@@ -75,7 +75,7 @@ public class InvseeCommand extends Command {
                 }
 
                 Player finalTarget = target;
-                mc.execute(() -> mc.setScreen(new InventoryTrackerScreen(finalTarget, tracked)));
+                mc.execute(() -> mc.gui.setScreen(new InventoryTrackerScreen(finalTarget, tracked)));
                 return SINGLE_SUCCESS;
             })
         );

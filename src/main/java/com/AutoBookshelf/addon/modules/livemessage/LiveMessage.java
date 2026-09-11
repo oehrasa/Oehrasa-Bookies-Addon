@@ -352,7 +352,7 @@ public class LiveMessage extends Module {
         if ((Boolean) this.openOnChatKey.get()) {
             if (event.screen instanceof ChatScreen) {
                 event.cancel();
-                this.mc.setScreen(new LivemessageGui());
+                this.mc.gui.setScreen(new LivemessageGui());
             }
         }
     }
@@ -461,7 +461,7 @@ public class LiveMessage extends Module {
     }
 
     public void closeFocusedWindow() {
-        if (this.mc.screen instanceof LivemessageGui gui) {
+        if (this.mc.gui.screen() instanceof LivemessageGui gui) {
             if (LivemessageGui.liveWindows.isEmpty()) return;
 
             LiveWindow top = LivemessageGui.liveWindows.get(LivemessageGui.liveWindows.size() - 1);
@@ -476,9 +476,9 @@ public class LiveMessage extends Module {
     }
 
     public void openGui() {
-        if (this.mc.screen == null) {
-            this.mc.setScreen(new LivemessageGui());
-        } else if (this.mc.screen instanceof LivemessageGui gui) {
+        if (this.mc.gui.screen() == null) {
+            this.mc.gui.setScreen(new LivemessageGui());
+        } else if (this.mc.gui.screen() instanceof LivemessageGui gui) {
             boolean anyFieldFocused = false;
 
             for (LiveWindow window : LivemessageGui.liveWindows) {

@@ -1,10 +1,9 @@
 package com.AutoBookshelf.addon.modules;
 
-import baritone.api.BaritoneAPI;
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.entity.player.ItemUseCrosshairTargetEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.pathing.BaritoneUtils;
+import meteordevelopment.meteorclient.pathing.PathManagers;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
@@ -195,7 +194,7 @@ public class AutoPot extends Module {
         }
         // Resume Baritone
         if (pauseBaritone.get() && wasBaritone) {
-            BaritoneAPI.getProvider().getPrimaryBaritone().getCommandManager().execute("resume");
+            PathManagers.get().resume();
         }
 
         if (autoToggle.get()) {
@@ -286,11 +285,9 @@ public class AutoPot extends Module {
             }
         }
         wasBaritone = false;
-        if (BaritoneUtils.IS_AVAILABLE) {
-            if (pauseBaritone.get() && BaritoneAPI.getProvider().getPrimaryBaritone().getPathingBehavior().isPathing()) {
-                wasBaritone = true;
-                BaritoneAPI.getProvider().getPrimaryBaritone().getCommandManager().execute("pause");
-            }
+        if (pauseBaritone.get() && PathManagers.get().isPathing()) {
+            wasBaritone = true;
+            PathManagers.get().pause();
         }
     }
 

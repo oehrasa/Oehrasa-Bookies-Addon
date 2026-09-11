@@ -22,6 +22,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.WeatheringCopper;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -125,7 +126,7 @@ public class KMDB extends Module {
     private final Setting<Item> copperBlock = sgCopper.add(new ItemSetting.Builder()
         .name("copper-block")
         .description("The copper block variant to use for the base.")
-        .defaultValue(Items.COPPER_BLOCK)
+        .defaultValue(Blocks.COPPER_BLOCK.weathering().pick(WeatheringCopper.WeatherState.UNAFFECTED).asItem())
         .visible(() -> buildMode.get() == BuildMode.CopperGolem)
         .build()
     );

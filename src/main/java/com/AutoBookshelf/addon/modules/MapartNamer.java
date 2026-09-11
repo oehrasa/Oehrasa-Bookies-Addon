@@ -155,7 +155,7 @@ public class MapartNamer extends Module {
         mapStep = -1;
 
         // If the anvil screen is already open, skip the "await interact" step
-        if (mc.screen instanceof AnvilScreen) {
+        if (mc.gui.screen() instanceof AnvilScreen) {
             state = State.AwaitScreen;
             info("Anvil screen already open, waiting for screen detection…");
         } else {
@@ -177,7 +177,7 @@ public class MapartNamer extends Module {
 
     // Return everything else except anvil screen
     private boolean isNotAnvilScreen() {
-        return !(mc.screen instanceof AnvilScreen);
+        return !(mc.gui.screen() instanceof AnvilScreen);
     }
 
     @EventHandler
@@ -199,7 +199,7 @@ public class MapartNamer extends Module {
     }
 
     private void collectMapsAndStart() {
-        if (mc.player == null || !(mc.screen instanceof AnvilScreen)) return;
+        if (mc.player == null || !(mc.gui.screen() instanceof AnvilScreen)) return;
 
         List<MapSlotInfo> allMaps = new ArrayList<>();
         for (int invSlot = 0; invSlot < 36; invSlot++) {
@@ -272,7 +272,7 @@ public class MapartNamer extends Module {
         // InventoryS2CPacket timing, which was preventing the module from ever
         // reaching HandleMaps.
         if (state == State.AwaitScreen) {
-            if (mc.screen instanceof AnvilScreen) {
+            if (mc.gui.screen() instanceof AnvilScreen) {
                 collectMapsAndStart();
             }
             return;
@@ -316,7 +316,7 @@ public class MapartNamer extends Module {
                     currentMap = null;
                     mapStep = -1;
                     state = State.AwaitInteract;
-                    if (mc.screen != null) mc.player.closeContainer();
+                    if (mc.gui.screen() != null) mc.player.closeContainer();
                     return;
                 }
 
@@ -378,7 +378,7 @@ public class MapartNamer extends Module {
                         info("Batch finished. Next Y-offset = " + (nextBaseY + off));
                         baseY.set(nextBaseY);
                     }
-                    if (mc.screen != null) mc.player.closeContainer();
+                    if (mc.gui.screen() != null) mc.player.closeContainer();
                     state = State.AwaitInteract;
                 } else {
                     ticks = renameDelay.get();

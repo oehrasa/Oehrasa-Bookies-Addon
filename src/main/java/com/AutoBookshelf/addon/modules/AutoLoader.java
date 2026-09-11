@@ -282,7 +282,7 @@ public class AutoLoader extends Module {
         if (mc.player == null || mc.level == null) return;
         if (event.action != KeyAction.Press) return;
         if (event.button() != GLFW.GLFW_MOUSE_BUTTON_RIGHT) return;
-        if (!(mc.screen instanceof AbstractContainerScreen<?> screen)) return;
+        if (!(mc.gui.screen() instanceof AbstractContainerScreen<?> screen)) return;
 
         Slot focusedSlot = ((AbstractContainerScreenAccessor) screen).meteor$getHoveredSlot();
         if (focusedSlot == null || focusedSlot.container != mc.player.getInventory()) return;
@@ -327,7 +327,7 @@ public class AutoLoader extends Module {
             case PLACE_SECOND_ECHEST -> doPlaceSecond();
             case OPEN -> doOpen();
             case WAIT_CLOSE -> {
-                if (!(mc.screen instanceof AbstractContainerScreen)) {
+                if (!(mc.gui.screen() instanceof AbstractContainerScreen)) {
                     if (breakAfterUse.get()) stage = Stage.BREAK;
                     else finish();
                 }
@@ -338,7 +338,7 @@ public class AutoLoader extends Module {
     }
 
     private void doSetup() {
-        if (mc.screen instanceof AbstractContainerScreen) {
+        if (mc.gui.screen() instanceof AbstractContainerScreen) {
             mc.player.closeContainer();
             delayTicks = 5;
             return;
@@ -428,7 +428,7 @@ public class AutoLoader extends Module {
      * Places the first container and locks the rotation so the second chest matches its facing.
      */
     private void doPlace() {
-        if (mc.screen instanceof AbstractContainerScreen) {
+        if (mc.gui.screen() instanceof AbstractContainerScreen) {
             mc.player.closeContainer();
             delayTicks = 3;
             return;
@@ -489,7 +489,7 @@ public class AutoLoader extends Module {
     private int secondPlacementWaitTicks = 0;
 
     private void doPlaceSecond() {
-        if (mc.screen instanceof AbstractContainerScreen) {
+        if (mc.gui.screen() instanceof AbstractContainerScreen) {
             mc.player.closeContainer();
             delayTicks = 3;
             return;
@@ -590,7 +590,7 @@ public class AutoLoader extends Module {
             return;
         }
 
-        if (mc.screen instanceof AbstractContainerScreen) {
+        if (mc.gui.screen() instanceof AbstractContainerScreen) {
             openAttempts = 0;
             stage = Stage.WAIT_CLOSE;
             return;
@@ -660,7 +660,7 @@ public class AutoLoader extends Module {
     }
 
     private void doBreak(boolean isSecond) {
-        if (mc.screen != null) {
+        if (mc.gui.screen() != null) {
             mc.player.closeContainer();
             delayTicks = 2;
             return;

@@ -1,4 +1,4 @@
-//26.1.2 Mojmap
+//26.2 Mojmap
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
