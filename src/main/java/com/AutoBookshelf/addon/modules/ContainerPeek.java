@@ -15,7 +15,9 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.*;
 import net.minecraft.block.enums.ChestType;
+import net.minecraft.client.gl.RenderPipelines;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.tooltip.TooltipBackgroundRenderer;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.ContainerComponent;
 import net.minecraft.entity.Entity;
@@ -41,7 +43,33 @@ import java.util.List;
 import java.util.Map;
 
 public class ContainerPeek extends Module {
+    private static final int SLOT_SIZE = 18;
+    private static final Identifier SLOT_TEXTURE = Identifier.ofVanilla("container/slot");
+
+    public enum PeekStyle {
+        Panel("Panel"),
+        Container("Container");
+
+        private final String title;
+
+        PeekStyle(String title) {
+            this.title = title;
+        }
+
+        @Override
+        public String toString() {
+            return title;
+        }
+    }
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+
+    private final Setting<PeekStyle> style = sgGeneral.add(new EnumSetting.Builder<PeekStyle>()
+        .name("style")
+        .description("How the preview is rendered. Panel = custom panel, Container = minecraft container GUI look.")
+        .defaultValue(PeekStyle.Panel)
+        .build()
+    );
 
     private final Setting<Integer> maxDistance = sgGeneral.add(new IntSetting.Builder()
         .name("max-distance")
@@ -118,6 +146,7 @@ public class ContainerPeek extends Module {
     private String lastEntityType;
 
     private boolean lastShulkerIconSetting = shulkerIconPreview.get();
+    private PeekStyle lastStyle = style.get();
 
     private PreviewData currentPreview = null;
 
@@ -136,7 +165,8 @@ public class ContainerPeek extends Module {
         List<ItemStack> stacks,
         int itemsPerRow,
         float itemScale,
-        Map<Integer, Item> dominantItems
+        Map<Integer, Item> dominantItems,
+        PeekStyle style
     ) {}
 
     public ContainerPeek() {
@@ -186,6 +216,9 @@ public class ContainerPeek extends Module {
         boolean shulkerSettingChanged = shulkerIconPreview.get() != lastShulkerIconSetting;
         if (shulkerSettingChanged) lastShulkerIconSetting = shulkerIconPreview.get();
 
+        boolean styleChanged = style.get() != lastStyle;
+        if (styleChanged) lastStyle = style.get();
+
         // Block containers
         if (mc.crosshairTarget != null && mc.crosshairTarget.getType() == HitResult.Type.BLOCK) {
             lastEntity = null;
@@ -195,7 +228,7 @@ public class ContainerPeek extends Module {
             BlockHitResult hit = (BlockHitResult) mc.crosshairTarget;
             BlockPos pos = hit.getBlockPos();
             BlockPos canonicalPos = getCanonicalChestPos(pos);
-            if (pos.equals(lastTargetedPos) && !shulkerSettingChanged) return;
+            if (pos.equals(lastTargetedPos) && !shulkerSettingChanged && !styleChanged) return;
             lastTargetedPos = pos;
 
             double dist = Math.sqrt(mc.player.squaredDistanceTo(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5));
@@ -231,7 +264,7 @@ public class ContainerPeek extends Module {
         // Entity item frame
         if (mc.crosshairTarget != null && mc.crosshairTarget instanceof EntityHitResult entityHit) {
             Entity entity = entityHit.getEntity();
-            if (entity == lastEntity && !shulkerSettingChanged) return;
+            if (entity == lastEntity && !shulkerSettingChanged && !styleChanged) return;
 
             lastEntity = entity;
             lastEntityItems = null;
@@ -352,15 +385,22 @@ public class ContainerPeek extends Module {
                               Map<Integer, Item> dominantMap) {
         int itemsPerRow = maxItemsPerRow.get();
         int total = stacks.size();
-        int iconSizeVal = iconSize.get();
         int pad = 2;
 
         // Wrap to the grid this specific container actually draws,
         int rows = Math.max(1, (int) Math.ceil((double) total / itemsPerRow));
         int cols = Math.min(Math.max(total, 1), itemsPerRow);
 
-        int gridWidth = cols * iconSizeVal + (cols + 1) * pad;
-        int gridHeight = rows * iconSizeVal + (rows + 1) * pad;
+        int gridWidth;
+        int gridHeight;
+        if (style.get() == PeekStyle.Container) {
+            gridWidth = cols * SLOT_SIZE + (cols + 1) * pad;
+            gridHeight = rows * SLOT_SIZE + (rows + 1) * pad;
+        } else {
+            int iconSizeVal = iconSize.get();
+            gridWidth = cols * iconSizeVal + (cols + 1) * pad;
+            gridHeight = rows * iconSizeVal + (rows + 1) * pad;
+        }
 
         Text titleText = Text.literal(title);
         Text posText = Text.literal(String.format("%d, %d, %d", pos.getX(), pos.getY(), pos.getZ()));
@@ -380,10 +420,94 @@ public class ContainerPeek extends Module {
         int w = Math.max(gridWidth, textWidth + pad * 2);
         int h = gridHeight + (10 * textLines); // exact: no leftover slack vs the draw loop below
 
-        float itemScale = iconSizeVal / 16.0f;
+        float itemScale = iconSize.get() / 16.0f;
 
         currentPreview = new PreviewData(pos, titleText, posText, w, h, stacks,
-            itemsPerRow, itemScale, dominantMap);
+            itemsPerRow, itemScale, dominantMap, style.get());
+    }
+
+    private void renderContainerStyle(DrawContext context, PreviewData preview, Vector3d vec) {
+        // Same positioning pipeline as the Panel style: to2D output lives in
+        // physical-pixel (unscaled projection) space on the Render2DEvent context.
+        double guiScaleX = (double) mc.getWindow().getScaledWidth() / mc.getWindow().getWidth();
+        double guiScaleY = (double) mc.getWindow().getScaledHeight() / mc.getWindow().getHeight();
+
+        int screenX = (int) (vec.x * guiScaleX);
+        int screenY = (int) (vec.y * guiScaleY);
+
+        int panelX = screenX - preview.panelWidth / 2;
+        int panelY = screenY - preview.panelHeight - 20;
+
+        if (panelX < 0) panelX = 0;
+        if (panelY < 0) panelY = 0;
+        if (panelX + preview.panelWidth > mc.getWindow().getScaledWidth())
+            panelX = mc.getWindow().getScaledWidth() - preview.panelWidth;
+        if (panelY + preview.panelHeight > mc.getWindow().getScaledHeight())
+            panelY = mc.getWindow().getScaledHeight() - preview.panelHeight;
+
+        int pad = 2;
+
+        // Plain fill first so the panel is always visible even if the vanilla
+        // tooltip background can't be drawn in this context.
+        context.fill(panelX, panelY, panelX + preview.panelWidth, panelY + preview.panelHeight, backgroundColor.get().getPacked());
+
+        try {
+            TooltipBackgroundRenderer.render(context, panelX, panelY, preview.panelWidth, preview.panelHeight, null);
+        } catch (RuntimeException ignored) {
+        }
+
+        int textY = panelY + pad;
+
+        if (showType.get()) {
+            context.drawTextWithShadow(mc.textRenderer, preview.titleText, panelX + pad, textY, 0xFFFFFFFF);
+            textY += 10;
+        }
+        if (showPosition.get()) {
+            context.drawTextWithShadow(mc.textRenderer, preview.posText, panelX + pad, textY, 0xFFCCCCCC);
+            textY += 10;
+        }
+
+        ContainerPeek.IS_RENDERING.set(true);
+
+        int itemStartX = panelX + pad;
+        int itemStartY = textY + pad;
+
+        for (int i = 0; i < preview.stacks.size(); i++) {
+            int col = i % preview.itemsPerRow;
+            int row = i / preview.itemsPerRow;
+            int x = itemStartX + col * (SLOT_SIZE + pad);
+            int y = itemStartY + row * (SLOT_SIZE + pad);
+
+            drawSlotBackground(context, x, y);
+
+            ItemStack stack = preview.stacks.get(i);
+            if (!stack.isEmpty()) {
+                RenderUtils.drawItem(context, stack, x + 1, y + 1, 1.0f, true, null, false);
+            }
+
+            Item dominant = preview.dominantItems.get(i);
+            if (dominant != null) {
+                int border = 1;
+                int overlaySize = SLOT_SIZE - 2 * border;
+                float overlayScale = overlaySize / 16.0f;
+                RenderUtils.drawItem(context, new ItemStack(dominant), x + border, y + border, overlayScale, false, null, false);
+            }
+        }
+
+        ContainerPeek.IS_RENDERING.set(false);
+    }
+
+    private void drawSlotBackground(DrawContext context, int x, int y) {
+        try {
+            context.drawGuiTexture(RenderPipelines.GUI_TEXTURED, SLOT_TEXTURE, x, y, SLOT_SIZE, SLOT_SIZE);
+        } catch (RuntimeException e) {
+            // Fall back to the bevelled grey slot rendering used by the tracker screens.
+            context.fill(x, y, x + SLOT_SIZE, y + SLOT_SIZE, 0xFF8B8B8B);
+            context.fill(x, y, x + SLOT_SIZE - 1, y + 1, 0xFFFFFFFF);
+            context.fill(x, y, x + 1, y + SLOT_SIZE - 1, 0xFFFFFFFF);
+            context.fill(x + SLOT_SIZE - 1, y + 1, x + SLOT_SIZE, y + SLOT_SIZE, 0xFF565656);
+            context.fill(x + 1, y + SLOT_SIZE - 1, x + SLOT_SIZE, y + SLOT_SIZE, 0xFF565656);
+        }
     }
 
     @EventHandler
@@ -397,8 +521,13 @@ public class ContainerPeek extends Module {
         Vector3d vec = new Vector3d(preview.pos.getX() + 0.5, preview.pos.getY() + 0.5, preview.pos.getZ() + 0.5);
         if (!NametagUtils.to2D(vec, 1.0)) return;
 
+        if (preview.style == PeekStyle.Container) {
+            renderContainerStyle(context, preview, vec);
+            return;
+        }
+
         // Convert to2D's output into scaled-GUI space. Computed live every frame,
-        // so it self corrects regardless of your GUI scale setting (Auto/1/2/3/etc).
+        // so itself corrects regardless of your GUI scale setting (Auto/1/2/3/etc).
         double guiScaleX = (double) mc.getWindow().getScaledWidth() / mc.getWindow().getWidth();
         double guiScaleY = (double) mc.getWindow().getScaledHeight() / mc.getWindow().getHeight();
 

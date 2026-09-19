@@ -1,5 +1,6 @@
 package com.AutoBookshelf.addon.modules.livemessage.gui;
 
+import com.AutoBookshelf.addon.modules.livemessage.LiveMessage;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gl.RenderPipelines;
@@ -33,6 +34,8 @@ public class LiveWindow {
     public boolean clicked = false;
     public boolean dragging = false;
     public boolean resizing = false;
+    public boolean resizingRight = false;
+    public boolean resizingBottom = false;
     public boolean closeButton = true;
     public int primaryColor = 0;
     public TextRenderer fontRenderer;
@@ -42,6 +45,8 @@ public class LiveWindow {
     protected List<LiveWindow.LiveButton> liveButtons = new ArrayList<>();
     protected KeyInput lastKeyInput;
     protected CharInput lastCharInput;
+
+    private static final int EDGE_GRAB_SIZE = 6; // pixels of hitbox on each side of the actual edge
 
     public LiveWindow() {
         this.mc = MinecraftClient.getInstance();
@@ -73,6 +78,8 @@ public class LiveWindow {
     public void mouseReleased(int mouseX, int mouseY, int state) {
         this.dragging = false;
         this.resizing = false;
+        this.resizingRight = false;
+        this.resizingBottom = false;
         this.clicked = false;
     }
 
@@ -124,16 +131,26 @@ public class LiveWindow {
             }
         }
 
-        if (mouseX > this.x && mouseX < this.x + this.w && mouseY > this.y && mouseY < this.y + 20) {
+        boolean onRightEdge = mouseX > this.x + this.w - EDGE_GRAB_SIZE && mouseX < this.x + this.w + EDGE_GRAB_SIZE;
+        boolean onBottomEdge = mouseY > this.y + this.h - EDGE_GRAB_SIZE && mouseY < this.y + this.h + EDGE_GRAB_SIZE;
+        boolean inWindowYForResize = mouseY > this.y + titlebarHeight && mouseY < this.y + this.h + EDGE_GRAB_SIZE;
+        boolean inWindowXForResize = mouseX > this.x - EDGE_GRAB_SIZE && mouseX < this.x + this.w + EDGE_GRAB_SIZE;
+
+        boolean grabRight = onRightEdge && inWindowYForResize;
+        boolean grabBottom = onBottomEdge && inWindowXForResize;
+
+        if (grabRight || grabBottom) {
+            this.dragging = false;
+            this.resizing = true;
+            this.resizingRight = grabRight;
+            this.resizingBottom = grabBottom;
+            this.dragX = mouseX - this.x - this.w;
+            this.dragY = mouseY - this.y - this.h;
+        } else if (mouseX > this.x && mouseX < this.x + this.w && mouseY > this.y && mouseY < this.y + 20) {
             this.dragging = true;
             this.resizing = false;
             this.dragX = mouseX - this.x;
             this.dragY = mouseY - this.y;
-        } else if (mouseX > this.x + this.w - 7 && mouseX < this.x + this.w + 3 && mouseY > this.y + this.h - 7 && mouseY < this.y + this.h + 3) {
-            this.dragging = false;
-            this.resizing = true;
-            this.dragX = mouseX - this.x - this.w;
-            this.dragY = mouseY - this.y - this.h;
         }
     }
 
@@ -150,8 +167,12 @@ public class LiveWindow {
                 this.x = Math.max(0, (int) mouseX - this.dragX);
                 this.y = Math.max(0, (int) mouseY - this.dragY);
             } else if (this.resizing) {
-                this.w = MathHelper.clamp((int) mouseX - this.dragX - this.x, this.minw, this.maxw);
-                this.h = MathHelper.clamp((int) mouseY - this.dragY - this.y, this.minh, this.maxh);
+                if (this.resizingRight) {
+                    this.w = MathHelper.clamp((int) mouseX - this.dragX - this.x, this.minw, this.maxw);
+                }
+                if (this.resizingBottom) {
+                    this.h = MathHelper.clamp((int) mouseY - this.dragY - this.y, this.minh, this.maxh);
+                }
             }
         }
     }
@@ -198,8 +219,11 @@ public class LiveWindow {
         }
 
         context.getMatrices().translate(this.x, this.y);
-        int bgColor = GuiUtil.getRGB(32, 32, 32);
+        LiveMessage module = LiveMessage.INSTANCE;
+        int alpha = module != null ? module.windowBackgroundAlpha.get() : 255;
+        int bgColor = GuiUtil.getRGBA(32, 32, 32, alpha);
         int fgColor = this.active ? this.primaryColor : GuiUtil.getRGB(128, 128, 128);
+        fgColor = GuiUtil.getRGBA((fgColor >> 16) & 0xFF, (fgColor >> 8) & 0xFF, fgColor & 0xFF, alpha);
         this.drawWindow(context, bgColor, fgColor);
         context.getMatrices().translate(-this.x, -this.y);
     }
@@ -207,8 +231,13 @@ public class LiveWindow {
     public void drawTextFields(DrawContext context) {
     }
 
+    /**
+     * Draws the window frame: outline, titlebar strip, title, close button and
+     * resize grip. Intentionally does NOT fill the body rectangle - subclasses
+     * paint their own interior backing (with their own opacity) so that inner
+     * panels can be transparent to the game independently of the window itself.
+     */
     public void drawWindow(DrawContext context, int bgColor, int fgColor) {
-        GuiUtil.drawRect(context, 0, 0, this.w, this.h, bgColor);
         this.drawRectOutline(context, 0, 0, this.w, this.h, fgColor);
         GuiUtil.drawRect(context, 0, 0, this.w, titlebarHeight, fgColor);
         this.drawText(context, this.title, 5, 5, 16777215, false);

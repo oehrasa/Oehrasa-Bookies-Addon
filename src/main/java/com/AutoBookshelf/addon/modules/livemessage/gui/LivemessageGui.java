@@ -121,9 +121,7 @@ public class LivemessageGui extends Screen {
 
         for (LiveWindow window : liveWindows) {
             if (window instanceof ChatWindow chatWindow) {
-                if (chatWindow.inputField != null) {
-                    chatWindow.inputField.setFocused(false);
-                }
+                chatWindow.inputFocused = false;
             } else if (window instanceof ManeWindow) {
                 if (ManeWindow.searchField != null) {
                     ManeWindow.searchField.setFocused(false);
@@ -152,9 +150,7 @@ public class LivemessageGui extends Screen {
             liveWindows.add(lastActiveChatWindow);
             lastActiveChatWindow.activateWindow();
             if (lastActiveChatWindow instanceof ChatWindow chatWindow) {
-                if (chatWindow.inputField != null) {
-                    chatWindow.inputField.setFocused(true);
-                }
+                chatWindow.inputFocused = true;
             } else if (lastActiveChatWindow instanceof NotesWindow notesWindow && notesWindow.inputField != null) {
                 notesWindow.inputField.setFocused(true);
             }
@@ -444,11 +440,7 @@ public class LivemessageGui extends Screen {
 
     private TextFieldWidget getFocusedTextField() {
         for (LiveWindow window : liveWindows) {
-            if (window instanceof ChatWindow chatWindow) {
-                if (chatWindow.inputField != null && chatWindow.inputField.isFocused()) {
-                    return chatWindow.inputField;
-                }
-            } else if (window instanceof ManeWindow) {
+            if (window instanceof ManeWindow) {
                 if (ManeWindow.searchField != null && ManeWindow.searchField.isFocused()) {
                     return ManeWindow.searchField;
                 }
@@ -461,6 +453,14 @@ public class LivemessageGui extends Screen {
     }
 
     public boolean isAnyTextFieldFocused() {
-        return this.getFocusedTextField() != null;
+        if (this.getFocusedTextField() != null) {
+            return true;
+        }
+        for (LiveWindow window : liveWindows) {
+            if (window instanceof ChatWindow chatWindow && chatWindow.inputFocused) {
+                return true;
+            }
+        }
+        return false;
     }
 }

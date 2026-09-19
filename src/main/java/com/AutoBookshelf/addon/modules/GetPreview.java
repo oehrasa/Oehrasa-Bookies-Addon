@@ -8,6 +8,7 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.block.ShulkerBoxBlock;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.render.MapRenderState;
 import net.minecraft.component.DataComponentTypes;
@@ -15,10 +16,7 @@ import net.minecraft.component.type.BundleContentsComponent;
 import net.minecraft.component.type.ContainerComponent;
 import net.minecraft.component.type.MapIdComponent;
 import net.minecraft.component.type.WrittenBookContentComponent;
-import net.minecraft.item.FilledMapItem;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
+import net.minecraft.item.*;
 import net.minecraft.item.map.MapState;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
@@ -65,6 +63,20 @@ public class GetPreview extends Module {
     public final Setting<Boolean> previewShulkers = sgGeneral.add(new BoolSetting.Builder()
         .name("preview-shulkers")
         .description("Also show a preview icon on shulker boxes.")
+        .defaultValue(true)
+        .build()
+    );
+
+    public final Setting<Boolean> capacityBar = sgGeneral.add(new BoolSetting.Builder()
+        .name("capacity-bar")
+        .description("Draw a bar on shulker boxes showing how full they are, like vanilla bundles.")
+        .defaultValue(true)
+        .build()
+    );
+
+    public final Setting<Boolean> bookCapacityBar = sgGeneral.add(new BoolSetting.Builder()
+        .name("book-capacity-bar")
+        .description("Draw a bar on written books showing page fill (out of 100).")
         .defaultValue(true)
         .build()
     );
@@ -160,6 +172,14 @@ public class GetPreview extends Module {
         if (isRenderingPreview) return;
         if (stack.isEmpty()) return;
 
+        if (capacityBar.get() && isShulkerItem(stack)) {
+            drawCapacityBar(context, x, y, stack);
+        }
+
+        if (bookCapacityBar.get() && stack.contains(DataComponentTypes.WRITTEN_BOOK_CONTENT)) {
+            drawBookCapacityBar(context, x, y, stack);
+        }
+
         if (previewShulkers.get() && isInsideContainerPeekRender()) {
             if (!stack.contains(DataComponentTypes.BUNDLE_CONTENTS) &&
                 !stack.contains(DataComponentTypes.WRITTEN_BOOK_CONTENT)) {
@@ -219,6 +239,73 @@ public class GetPreview extends Module {
 
         if (debug.get()) info("No container data for: " + stack.getItem().getName().getString());
         return false;
+    }
+
+    private boolean isShulkerItem(ItemStack stack) {
+        return stack.getItem() instanceof BlockItem bi && bi.getBlock() instanceof ShulkerBoxBlock;
+    }
+
+    /**
+     * Draws a fullness bar on a shulker box item using the exact vanilla bundle
+     * item-bar geometry: background at (x+2, y+13) to (x+15, y+15) and a 1px
+     * fill line at y+14. Color is orange when mostly empty, yellow when near
+     * full, and green when completely full.
+     */
+    private void drawCapacityBar(DrawContext context, int x, int y, ItemStack stack) {
+        ContainerComponent container = stack.get(DataComponentTypes.CONTAINER);
+        if (container == null) return;
+
+        double maxItems = 27L * 64;
+        double filled = 0;
+        for (ItemStack s : container.iterateNonEmpty()) {
+            filled += (double) s.getCount() * 64.0 / Math.max(1, s.getMaxCount());
+        }
+        float capacity = (float) Math.min(1.0, filled / maxItems);
+
+        int barWidth = 13;
+        int barX = x + 2;
+        int barY = y + 13;
+
+        // Black background (13 wide, 2 tall matches vanilla bundle bar)
+        context.fill(barX, barY, barX + barWidth, barY + 2, 0xFF000000);
+
+        // Colored fill (1 tall, up to 13 wide)
+        int fill = Math.round(capacity * barWidth);
+        if (fill > 0) {
+            int color;
+            if (capacity >= 1.0F) {
+                color = 0xFF2ECC40; // green = completely full
+            } else if (capacity >= 0.9F) {
+                color = 0xFFFFFF54; // yellow = near full
+            } else {
+                color = 0xFFFF7087; // orange/red = mid or empty
+            }
+            context.fill(barX, barY, barX + fill, barY + 1, color);
+        }
+    }
+
+    /**
+     * Draws a page-fill bar on written books: pages / 100, using the same
+     * vanilla item-bar geometry (x+2, y+13) with a parchment/gold color.
+     */
+    private void drawBookCapacityBar(DrawContext context, int x, int y, ItemStack stack) {
+        WrittenBookContentComponent book = stack.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+        if (book == null) return;
+
+        int pages = book.pages().size();
+        float capacity = Math.min(1.0F, pages / 100.0F);
+
+        int barWidth = 13;
+        int barX = x + 2;
+        int barY = y + 13;
+
+        context.fill(barX, barY, barX + barWidth, barY + 2, 0xFF000000);
+
+        int fill = Math.round(capacity * barWidth);
+        if (fill > 0) {
+            int color = capacity >= 1.0F ? 0xFFFFFF54 : 0xFFBFA755;
+            context.fill(barX, barY, barX + fill, barY + 1, color);
+        }
     }
 
     private void renderBookOverlay(DrawContext context, int x, int y, ItemStack stack) {

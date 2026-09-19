@@ -10,6 +10,7 @@ import net.minecraft.entity.player.PlayerEntity;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
@@ -17,6 +18,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(value = PlayerUtils.class, remap = false)
 public class PlayerUtilsMixin {
     // Used only if no module has wired a colour via EnemyColorManager yet.
+    @Unique
     private static final Color DEFAULT_ENEMY_COLOR = new Color(255, 85, 85);
 
     @Shadow

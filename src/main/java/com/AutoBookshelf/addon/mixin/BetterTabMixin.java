@@ -11,6 +11,7 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.text.Text;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
@@ -18,6 +19,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(value = BetterTab.class, remap = false)
 public class BetterTabMixin {
     // Used only if no module has wired a colour via EnemyColorManager yet.
+    @Unique
     private static final Color DEFAULT_ENEMY_COLOR = new Color(255, 85, 85);
 
     @Inject(

@@ -12,18 +12,13 @@ import meteordevelopment.meteorclient.systems.friends.Friend;
 import meteordevelopment.meteorclient.systems.friends.Friends;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.PlayerSkinDrawer;
-import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.network.PlayerListEntry;
-import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Util;
 import net.minecraft.util.math.MathHelper;
 import org.lwjgl.glfw.GLFW;
 
-import java.io.BufferedReader;
-import java.io.FileReader;
-import java.io.FileWriter;
-import java.io.IOException;
+import java.io.*;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -31,30 +26,59 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class ChatWindow extends LiveWindow {
+    private static final Gson GSON = new Gson();
+    private static final DateFormat DATE_FORMAT = new SimpleDateFormat("MMMM dd, yyyy");
+    private static final DateFormat TIME_FORMAT = new SimpleDateFormat("<HH:mm> ");
+
+    // How close two (sentByMe, message) entries' timestamps have to be treated as
+    // the same logical message rather than two separate ones. Kept in sync with the old
+    // containsMessage() tolerance so syncHistoryFromFile()/appendMessageIfNew() agree on
+    // what counts as a duplicate.
+    private static final long DUPLICATE_WINDOW_MS = 5000L;
+
     boolean valid;
     public LiveProfileCache.LiveProfile liveProfile;
     String msgString;
+    int maxLineLength;
     int scrollBarHeight = 50;
     int chatScrollPosition = 0;
     boolean scrolling = false;
     public boolean chatScrolledToBottom = true;
-    public TextFieldWidget inputField;
+    public MultilineInputBox inputBox = new MultilineInputBox();
+    public boolean inputFocused = true;
     public LivemessageUtil.ChatSettings chatSettings;
     final int chatBoxY = titlebarHeight + 44;
     final int chatBoxX = 5;
     private static final int CHAT_INNER_PADDING = 5;
-    private static final int CHAT_INPUT_RESERVE = 23;
     private static final int MESSAGE_LINE_HEIGHT = 12;
+    private static final int INPUT_LINE_HEIGHT = 11;
+    private static final int INPUT_VERTICAL_PADDING = 4; // 2px top + 2px bottom inside the input box
+    private static final int INPUT_TOP_MARGIN = 1;        // gap between chat box and input box
+    private static final int INPUT_BOTTOM_MARGIN = 5;      // gap between input box and window bottom edge
+    private static final int MAX_VISIBLE_INPUT_LINES = 4;
+    private static final int TRIM_INTERVAL = 20;           // rewrite the history file every N saved messages, not every single one
+    private boolean inputDragging = false;
+    private int savesSinceTrim = 0;
     List<ChatWindow.ChatMessage> chatHistory = new ArrayList<>();
     List<ChatWindow.ChatMessage> pendingMessages = new ArrayList<>();
     List<ChatWindow.ClickableLink> clickableLinks = new ArrayList<>();
     List<ChatWindow.ClickableChatLine> clickableChatLines = new ArrayList<>();
+    private int historyVersion = 0;
+    private int renderedCacheVersion = Integer.MIN_VALUE;
+    private int renderedCacheWidth = -1;
+    private String renderedCacheDay = "";
+    private List<ChatWindow.RenderedLine> renderedLinesCache = new ArrayList<>();
     private String pendingUrl = null;
     private long pendingUrlExpireAt = 0L;
     private String copyFeedbackText = null;
     private long copyFeedbackExpireAt = 0L;
     private int copyFeedbackX = 0;
     private int copyFeedbackY = 0;
+    // Total on-disk message count for this conversation, refreshed lazily (see countMessagesOnDisk).
+    private long totalMessagesOnDisk = -1;
+    private long totalMessagesCountedVersion = Long.MIN_VALUE;
+    private long totalMessagesCountedAtMs = 0L;
+    private static final long DISK_COUNT_REFRESH_MS = 2000L;
     // Set right before any sendChatCommand()
     private long suppressEchoUntil = 0L;
     LiveSkinUtil liveSkinUtil;
@@ -90,6 +114,7 @@ public class ChatWindow extends LiveWindow {
         } else {
             this.valid = true;
             this.minw = 280;
+            this.minh = 150;
             this.w = LiveMessage.INSTANCE.defaultChatWidth.get();
             this.h = LiveMessage.INSTANCE.defaultChatHeight.get();
             this.x = Math.min(this.x, Math.max(0, LivemessageGui.screenWidth - this.w));
@@ -101,13 +126,11 @@ public class ChatWindow extends LiveWindow {
             this.initButtons();
             this.liveSkinUtil = LiveSkinUtil.get(liveProfile.uuid);
             this.msgString = "/" + LiveMessage.INSTANCE.getPmCommand() + " " + liveProfile.username + " ";
-            this.inputField = new TextFieldWidget(this.mc.textRenderer, 9, this.h - 16, this.w - 18, 12, Text.literal(""));
-            this.inputField.setMaxLength(256 - this.msgString.length());
-            this.inputField.setDrawsBackground(false);
-            this.inputField.setFocused(true);
-            this.inputField.setText("");
-            this.inputField.setEditableColor(-1);
-            this.inputField.setUneditableColor(-8355712);
+            // Each individual queued/sent line still has to fit in one whisper command packet.
+            this.maxLineLength = Math.max(1, 256 - this.msgString.length());
+            this.inputBox.setMaxTotalLength(this.maxLineLength * 8); // room for several queued lines
+            this.inputBox.setMaxVisibleSegments(MAX_VISIBLE_INPUT_LINES);
+            this.inputFocused = true;
             this.scrollToBottom();
             this.animateInStart = System.currentTimeMillis();
         }
@@ -235,7 +258,6 @@ public class ChatWindow extends LiveWindow {
             LivemessageUtil.trimHistory(this.liveProfile.uuid, LiveMessage.INSTANCE.maxHistoryLines.get());
         }
 
-        Gson gson = new Gson();
         List<String> allLines = new ArrayList<>();
 
         String line;
@@ -251,7 +273,7 @@ public class ChatWindow extends LiveWindow {
 
         for (int i = startIndex; i < allLines.size(); i++) {
             try {
-                ChatWindow.ChatMessage parsed = gson.fromJson(allLines.get(i), ChatWindow.ChatMessage.class);
+                ChatWindow.ChatMessage parsed = GSON.fromJson(allLines.get(i), ChatWindow.ChatMessage.class);
                 if (parsed != null && parsed.message != null) this.chatHistory.add(parsed);
             } catch (Exception e) {
                 LiveMessage.logError("Failed to parse chat message from history file for UUID: {}", this.liveProfile.uuid, e);
@@ -263,19 +285,25 @@ public class ChatWindow extends LiveWindow {
                 this.pendingMessages.add(msg);
             }
         }
+
+        this.historyVersion++;
     }
 
     public void saveChatMessage(ChatWindow.ChatMessage message) {
-        Gson gson = new Gson();
-
         try (FileWriter writer = new FileWriter(LivemessageUtil.MESSAGES_FOLDER.resolve(this.liveProfile.uuid.toString() + ".jsonl").toFile(), true)) {
-            writer.write(gson.toJson(message) + "\n");
+            writer.write(GSON.toJson(message) + "\n");
         } catch (IOException e) {
             LiveMessage.logError("Failed to save chat message to history file for UUID: {}", this.liveProfile.uuid, e);
         }
 
+        // trimHistory rewrites the whole file, so we throttle it instead of doing it on every
+        // single message; the file only ever grows by TRIM_INTERVAL lines beyond the cap between trims.
         if (LiveMessage.INSTANCE != null) {
-            LivemessageUtil.trimHistory(this.liveProfile.uuid, LiveMessage.INSTANCE.maxHistoryLines.get());
+            this.savesSinceTrim++;
+            if (this.savesSinceTrim >= TRIM_INTERVAL) {
+                LivemessageUtil.trimHistory(this.liveProfile.uuid, LiveMessage.INSTANCE.maxHistoryLines.get());
+                this.savesSinceTrim = 0;
+            }
         }
     }
 
@@ -285,8 +313,9 @@ public class ChatWindow extends LiveWindow {
         this.chatHistory.add(chatMessage);
         this.saveChatMessage(chatMessage);
         LivemessageGui.recordRecentLog(this.liveProfile.uuid, message, sentByMe);
+        this.historyVersion++;
         this.clampScrollPosition();
-        if (wasAtBottom) {
+        if (wasAtBottom || sentByMe) {
             this.scrollToBottom();
         }
 
@@ -300,15 +329,13 @@ public class ChatWindow extends LiveWindow {
         ChatWindow.ChatMessage queued = new ChatWindow.ChatMessage(message, true, System.currentTimeMillis(), this.mc.player.getUuid());
         queued.pending = true;
 
-        boolean wasAtBottom = this.isAtBottom();
         this.chatHistory.add(queued);
         this.saveChatMessage(queued);
         this.pendingMessages.add(queued);
         LivemessageGui.recordRecentLog(this.liveProfile.uuid, message, true);
+        this.historyVersion++;
         this.clampScrollPosition();
-        if (wasAtBottom) {
-            this.scrollToBottom();
-        }
+        this.scrollToBottom();
     }
 
     // Sends at most one queued message per call, suppressed by the global whisper cooldown.
@@ -344,6 +371,8 @@ public class ChatWindow extends LiveWindow {
                 break;
             }
         }
+
+        this.historyVersion++;
     }
 
     private static boolean matchesPopped(ChatWindow.ChatMessage m, ChatWindow.ChatMessage popped) {
@@ -362,6 +391,7 @@ public class ChatWindow extends LiveWindow {
 
         boolean wasAtBottom = this.isAtBottom();
         this.chatHistory.add(new ChatWindow.ChatMessage(message, sentByMe, timestamp));
+        this.historyVersion++;
         this.clampScrollPosition();
         if (wasAtBottom) {
             this.scrollToBottom();
@@ -372,7 +402,7 @@ public class ChatWindow extends LiveWindow {
         for (ChatWindow.ChatMessage existing : this.chatHistory) {
             if (existing.sentByMe == sentByMe
                 && existing.message.equals(message)
-                && Math.abs(existing.timestamp - timestamp) < 5000L) {
+                && Math.abs(existing.timestamp - timestamp) < DUPLICATE_WINDOW_MS) {
                 return true;
             }
         }
@@ -381,49 +411,63 @@ public class ChatWindow extends LiveWindow {
     }
 
     public void clampScrollPosition() {
-        if (this.chatHistory.isEmpty()) {
-            this.chatScrollPosition = 0;
-            return;
-        }
-
-        if (this.chatScrollPosition >= this.chatHistory.size()) {
-            this.scrollToBottom();
-            return;
-        }
-
-        int maxScroll = this.getMaxScrollPosition();
-        if (this.chatScrollPosition > maxScroll) {
-            this.chatScrollPosition = maxScroll;
-        }
+        this.chatScrollPosition = MathHelper.clamp(this.chatScrollPosition, 0, this.getMaxScrollPosition());
     }
 
     public void syncHistoryFromFile() {
-        this.loadMessagesFromFile(this.liveProfile.uuid);
+        Map<String, List<Long>> existingByText = this.buildMessageIndex();
+        this.loadMessagesFromFile(this.liveProfile.uuid, existingByText);
         UUID offlineUuid = UUID.nameUUIDFromBytes(
             ("OfflinePlayer:" + this.liveProfile.username.toLowerCase(Locale.ROOT)).getBytes()
         );
         if (!offlineUuid.equals(this.liveProfile.uuid)) {
-            this.loadMessagesFromFile(offlineUuid);
+            this.loadMessagesFromFile(offlineUuid, existingByText);
         }
 
         this.chatHistory.sort((a, b) -> Long.compare(a.timestamp, b.timestamp));
+        this.historyVersion++;
         this.clampScrollPosition();
     }
 
-    private void loadMessagesFromFile(UUID uuid) {
-        Gson gson = new Gson();
+    private Map<String, List<Long>> buildMessageIndex() {
+        Map<String, List<Long>> index = new HashMap<>(this.chatHistory.size() * 2);
+        for (ChatWindow.ChatMessage m : this.chatHistory) {
+            index.computeIfAbsent(textKey(m.sentByMe, m.message), k -> new ArrayList<>()).add(m.timestamp);
+        }
+        return index;
+    }
 
+    private static String textKey(boolean sentByMe, String message) {
+        return sentByMe + "|" + message;
+    }
+
+    private static boolean withinDuplicateWindow(List<Long> timestamps, long timestamp) {
+        for (long existing : timestamps) {
+            if (Math.abs(existing - timestamp) < DUPLICATE_WINDOW_MS) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void loadMessagesFromFile(UUID uuid, Map<String, List<Long>> existingByText) {
         try (BufferedReader reader = new BufferedReader(
             new FileReader(LivemessageUtil.MESSAGES_FOLDER.resolve(uuid.toString() + ".jsonl").toFile())
         )) {
             String line;
             while ((line = reader.readLine()) != null) {
                 try {
-                    ChatWindow.ChatMessage loaded = gson.fromJson(line, ChatWindow.ChatMessage.class);
-                    if (loaded != null && loaded.message != null && !this.containsMessage(loaded.message, loaded.sentByMe, loaded.timestamp)) {
-                        this.chatHistory.add(loaded);
-                        if (loaded.pending) {
-                            this.pendingMessages.add(loaded);
+                    ChatWindow.ChatMessage loaded = GSON.fromJson(line, ChatWindow.ChatMessage.class);
+                    if (loaded != null && loaded.message != null) {
+                        String key = textKey(loaded.sentByMe, loaded.message);
+                        List<Long> bucket = existingByText.computeIfAbsent(key, k -> new ArrayList<>());
+                        if (!withinDuplicateWindow(bucket, loaded.timestamp)) {
+                            bucket.add(loaded.timestamp);
+                            this.chatHistory.add(loaded);
+                            if (loaded.pending) {
+                                this.pendingMessages.add(loaded);
+                            }
+                            this.historyVersion++;
                         }
                     }
                 } catch (Exception e) {
@@ -438,8 +482,21 @@ public class ChatWindow extends LiveWindow {
         return Math.max(1, this.getMessageAreaHeight() / MESSAGE_LINE_HEIGHT);
     }
 
+    private int getInputBoxHeight() {
+        int lineCount = MathHelper.clamp(this.inputBox.wrappedLines(this.fontRenderer, this.w - 18).size(), 1, MAX_VISIBLE_INPUT_LINES);
+        return lineCount * INPUT_LINE_HEIGHT + INPUT_VERTICAL_PADDING;
+    }
+
+    private int getInputBoxTop() {
+        return this.h - INPUT_BOTTOM_MARGIN - this.getInputBoxHeight();
+    }
+
+    private int getChatAreaBottom() {
+        return this.getInputBoxTop() - INPUT_TOP_MARGIN;
+    }
+
     private int getChatBoxHeight() {
-        return this.h - (this.chatBoxY + CHAT_INPUT_RESERVE);
+        return Math.max(0, this.getChatAreaBottom() - this.chatBoxY);
     }
 
     private int getMessageAreaTop() {
@@ -455,7 +512,7 @@ public class ChatWindow extends LiveWindow {
     }
 
     public int getMaxScrollPosition() {
-        return Math.max(0, this.chatHistory.size() - this.getVisibleMessageLines());
+        return Math.max(0, this.getRenderedLines().size() - this.getVisibleMessageLines());
     }
 
     public boolean isAtBottom() {
@@ -467,40 +524,159 @@ public class ChatWindow extends LiveWindow {
         this.chatScrolledToBottom = true;
     }
 
-    @Override
-    public void keyTyped(char typedChar, int keyCode) {
-        this.markAsRead();
-        if (keyCode == 257 || keyCode == 335) {
-            String s = this.inputField.getText().trim();
-            if (!s.isEmpty() && this.mc.player != null) {
-                if (LivemessageUtil.checkOnlineStatus(this.liveProfile.uuid) && !WhisperRateLimiter.isOnCooldown()) {
+    private boolean autocompletePlayerName() {
+        // The old buffer-position backspace loop below assumes every backspace() call removes
+        // exactly one character; with selection support, backspace() clears a selection first
+        // instead, so a leftover selection would desync the loop from `partial`'s length.
+        this.inputBox.clearSelection();
+
+        String text = this.inputBox.getText();
+        int cursor = this.inputBox.getCursor();
+        int wordStart = Math.max(text.lastIndexOf(' ', cursor - 1), text.lastIndexOf('\n', cursor - 1)) + 1;
+        String partial = text.substring(wordStart, cursor);
+        if (partial.isEmpty() || this.mc.getNetworkHandler() == null) return false;
+
+        String match = null;
+        for (PlayerListEntry entry : this.mc.getNetworkHandler().getPlayerList()) {
+            String name = entry.getProfile().name();
+            if (name.regionMatches(true, 0, partial, 0, partial.length())
+                && (this.mc.player == null || !entry.getProfile().id().equals(this.mc.player.getUuid()))) {
+                match = name;
+                break;
+            }
+        }
+        if (match == null) return false;
+
+        for (int i = 0; i < partial.length(); i++) this.inputBox.backspace();
+        for (char c : match.toCharArray()) this.inputBox.insertChar(c);
+        this.inputBox.insertChar(' ');
+        return true;
+    }
+
+    private void sendOrQueue() {
+        String full = this.inputBox.getText();
+        if (full.isBlank() || this.mc.player == null) {
+            return;
+        }
+
+        boolean online = LivemessageUtil.checkOnlineStatus(this.liveProfile.uuid);
+        boolean firstLine = true;
+
+        for (String rawLine : full.split("\n")) {
+            String trimmedLine = rawLine.trim();
+            if (trimmedLine.isEmpty()) continue;
+
+            for (String chunk : splitToFit(trimmedLine, this.maxLineLength)) {
+                if (chunk.isEmpty()) continue;
+
+                if (firstLine && online && !WhisperRateLimiter.isOnCooldown()) {
                     this.suppressEchoUntil = System.currentTimeMillis() + 3000L;
-                    WhisperRateLimiter.markSelfInitiated(this.liveProfile.username, s);
-                    this.mc.player.networkHandler.sendChatCommand(LiveMessage.INSTANCE.getPmCommand() + " " + this.liveProfile.username + " " + s);
+                    WhisperRateLimiter.markSelfInitiated(this.liveProfile.username, chunk);
+                    this.mc.player.networkHandler.sendChatCommand(LiveMessage.INSTANCE.getPmCommand() + " " + this.liveProfile.username + " " + chunk);
                     WhisperRateLimiter.recordSent();
-                    this.addMessage(s, true);
+                    this.addMessage(chunk, true);
                 } else {
-                    this.queueMessage(s);
+                    this.queueMessage(chunk);
                 }
-
-                this.inputField.setText("");
-            }
-        } else if (keyCode == 266) {
-            this.chatScrollPosition = MathHelper.clamp(this.chatScrollPosition - 10, 0, this.getMaxScrollPosition());
-            this.chatScrolledToBottom = this.isAtBottom();
-        } else if (keyCode == 267) {
-            this.chatScrollPosition = MathHelper.clamp(this.chatScrollPosition + 10, 0, this.getMaxScrollPosition());
-            this.chatScrolledToBottom = this.isAtBottom();
-        } else {
-            if (keyCode != 0 && this.lastKeyInput != null) {
-                this.inputField.keyPressed(this.lastKeyInput);
-            }
-
-            if (typedChar != 0 && this.lastCharInput != null) {
-                this.inputField.charTyped(this.lastCharInput);
+                firstLine = false;
             }
         }
 
+        this.inputBox.clear();
+    }
+
+    private static List<String> splitToFit(String text, int maxLen) {
+        List<String> out = new ArrayList<>();
+        String remaining = text;
+
+        while (remaining.length() > maxLen) {
+            int breakAt = remaining.lastIndexOf(' ', maxLen);
+            if (breakAt <= 0) {
+                breakAt = maxLen; // no space to break on hard cut
+            }
+            out.add(remaining.substring(0, breakAt).trim());
+            remaining = remaining.substring(breakAt).trim();
+        }
+
+        if (!remaining.isEmpty()) {
+            out.add(remaining);
+        }
+
+        return out;
+    }
+
+    @Override
+    public void keyTyped(char typedChar, int keyCode) {
+        this.markAsRead();
+        int inputWidth = this.w - 18;
+        boolean shift = this.isShiftHeld();
+        boolean ctrl = this.isCtrlHeld();
+        this.inputBox.setSelecting(shift);
+
+        if (keyCode == 257 || keyCode == 335) { // Enter / numpad Enter
+            if (shift) {
+                this.inputBox.newline();
+            } else {
+                this.sendOrQueue();
+            }
+        } else if (keyCode == GLFW.GLFW_KEY_A && ctrl) {
+            this.inputBox.selectAll();
+        } else if (keyCode == GLFW.GLFW_KEY_C && ctrl) {
+            if (this.mc.keyboard != null) {
+                // Selection if there is one, otherwise the whole box
+                String copied = this.inputBox.hasSelection() ? this.inputBox.getSelectedText() : this.inputBox.getText();
+                if (!copied.isEmpty()) this.mc.keyboard.setClipboard(copied);
+            }
+        } else if (keyCode == GLFW.GLFW_KEY_X && ctrl) {
+            if (this.mc.keyboard != null) {
+                String cut = this.inputBox.hasSelection() ? this.inputBox.getSelectedText() : this.inputBox.getText();
+                if (!cut.isEmpty()) this.mc.keyboard.setClipboard(cut);
+            }
+            if (!this.inputBox.deleteSelection()) {
+                this.inputBox.clear();
+            }
+        } else if (keyCode == GLFW.GLFW_KEY_V && ctrl) {
+            if (this.mc.keyboard != null) {
+                String clipboard = this.mc.keyboard.getClipboard();
+                if (clipboard != null && !clipboard.isEmpty()) {
+                    this.inputBox.insertText(clipboard);
+                }
+            }
+        } else if (keyCode == 259) { // Backspace
+            this.inputBox.backspace();
+        } else if (keyCode == 261) { // Delete
+            this.inputBox.delete();
+        } else if (keyCode == 263) { // Left
+            if (ctrl) this.inputBox.moveLeftWord();
+            else this.inputBox.moveLeft();
+        } else if (keyCode == 262) { // Right
+            if (ctrl) this.inputBox.moveRightWord();
+            else this.inputBox.moveRight();
+        } else if (keyCode == 268) { // Home
+            this.inputBox.moveHome();
+        } else if (keyCode == 269) { // End
+            this.inputBox.moveEnd();
+        } else if (keyCode == 265) { // Up
+            this.inputBox.moveUp(this.fontRenderer, inputWidth);
+        } else if (keyCode == 264) { // Down
+            this.inputBox.moveDown(this.fontRenderer, inputWidth);
+        } else if (keyCode == 266) { // Page Up chat history scroll
+            this.chatScrollPosition = MathHelper.clamp(this.chatScrollPosition - 10, 0, this.getMaxScrollPosition());
+            this.chatScrolledToBottom = this.isAtBottom();
+        } else if (keyCode == 267) { // Page Down
+            this.chatScrollPosition = MathHelper.clamp(this.chatScrollPosition + 10, 0, this.getMaxScrollPosition());
+            this.chatScrolledToBottom = this.isAtBottom();
+        } else if (keyCode == 258) { // Tab
+            if (!ctrl && this.autocompletePlayerName()) {
+                this.inputBox.ensureCaretVisible(this.fontRenderer, inputWidth);
+                return; // consumed by autocomplete
+            }
+            // no match (or ctrl held), fall through to super.keyTyped for window-cycling
+        } else if (!ctrl && typedChar != 0 && typedChar != '\n' && typedChar != '\r' && typedChar >= ' ') {
+            this.inputBox.insertChar(typedChar);
+        }
+
+        this.inputBox.ensureCaretVisible(this.fontRenderer, inputWidth);
         super.keyTyped(typedChar, keyCode);
     }
 
@@ -509,6 +685,16 @@ public class ChatWindow extends LiveWindow {
         this.markAsRead();
         boolean shift = GLFW.glfwGetKey(this.mc.getWindow().getHandle(), 340) == 1;
         int scrollAmount = shift ? 10 : 1;
+
+        // Wheel over the input box scrolls the input's wrapped text (so the top
+        // lines are reachable once they wrap past the visible box), not the chat.
+        int inputBoxTop = this.getInputBoxTop();
+        int inputBoxHeight = this.getInputBoxHeight();
+        if (this.mouseInRect(5, inputBoxTop, this.w - 10, inputBoxHeight, this.lastMouseX, this.lastMouseY)) {
+            this.inputBox.scrollBy(mWheelState < 0 ? 1 : -1, this.fontRenderer, this.w - 18);
+            return;
+        }
+
         if (mWheelState < 0) {
             this.chatScrollPosition = Math.min(this.chatScrollPosition + scrollAmount, this.getMaxScrollPosition());
         } else {
@@ -523,13 +709,21 @@ public class ChatWindow extends LiveWindow {
     @Override
     public void mouseReleased(int mouseX, int mouseY, int state) {
         this.scrolling = false;
+        this.inputDragging = false;
         super.mouseReleased(mouseX, mouseY, state);
     }
 
     @Override
     public void handleMouseDrag(double mouseX, double mouseY) {
-        if (this.scrolling && this.chatHistory.size() > this.getVisibleMessageLines()) {
-            int totalPixels = this.h - (this.chatBoxY + 10 + 13 + this.scrollBarHeight);
+        // The input box sits right where LiveWindow's resize grip lives (near the bottom-right
+        // corner), so mouseClicked can set both inputDragging and this.resizing on the same
+        // click.
+        if (this.inputDragging && !this.resizing && !this.dragging) {
+            this.placeCursorFromMouse((int) mouseX, (int) mouseY, true);
+            return;
+        }
+        if (this.scrolling && this.getMaxScrollPosition() > 0) {
+            int totalPixels = this.getChatBoxHeight() - this.scrollBarHeight;
             int maxScroll = this.getMaxScrollPosition();
             int relativeMouseY = (int) mouseY - (this.dragY + this.chatBoxY + this.y);
             this.chatScrollPosition = (int) MathHelper.clamp((float) (relativeMouseY * maxScroll) / totalPixels, 0.0F, maxScroll);
@@ -541,8 +735,12 @@ public class ChatWindow extends LiveWindow {
 
     @Override
     public void mouseClickMove(int mouseX, int mouseY, int clickedMouseButton, long timeSinceLastClick) {
-        if (this.scrolling && this.chatHistory.size() > this.getVisibleMessageLines()) {
-            int totalPixels = this.h - (this.chatBoxY + 10 + 13 + this.scrollBarHeight);
+        if (this.inputDragging && !this.resizing && !this.dragging) {
+            this.placeCursorFromMouse(mouseX, mouseY, true);
+            return;
+        }
+        if (this.scrolling && this.getMaxScrollPosition() > 0) {
+            int totalPixels = this.getChatBoxHeight() - this.scrollBarHeight;
             int maxScroll = this.getMaxScrollPosition();
             int relativeMouseY = mouseY - (this.dragY + this.chatBoxY + this.y);
             this.chatScrollPosition = (int) MathHelper.clamp((float) (relativeMouseY * maxScroll) / totalPixels, 0.0F, maxScroll);
@@ -578,6 +776,20 @@ public class ChatWindow extends LiveWindow {
                     return;
                 }
             }
+        } else if (mouseButton == 1) {
+            for (ChatWindow.ClickableChatLine line : this.clickableChatLines) {
+                if (line.contains(mouseX, mouseY) && line.messageIndex >= 0 && line.messageIndex < this.chatHistory.size()) {
+                    ChatWindow.ChatMessage msg = this.chatHistory.get(line.messageIndex);
+                    if (msg.pending) {
+                        QueueUtil.deleteQueued(this.liveProfile.uuid, msg.message);
+                        this.copyFeedbackText = "Removed from queue";
+                        this.copyFeedbackExpireAt = System.currentTimeMillis() + 1200L;
+                        this.copyFeedbackX = mouseX - this.x + 4;
+                        this.copyFeedbackY = mouseY - this.y - 12;
+                    }
+                    return;
+                }
+            }
         }
 
         boolean buttonClicked = false;
@@ -600,19 +812,23 @@ public class ChatWindow extends LiveWindow {
         }
 
         if (!buttonClicked) {
-            int inputFieldY = this.h - 13 - 2;
-            if (this.mouseInRect(5, inputFieldY, this.w - 10, 13, mouseX, mouseY)) {
-                this.inputField.setFocused(true);
+            int inputBoxTop = this.getInputBoxTop();
+            int inputBoxHeight = this.getInputBoxHeight();
+            if (this.mouseInRect(5, inputBoxTop, this.w - 10, inputBoxHeight, mouseX, mouseY)) {
+                this.inputFocused = true;
+                this.placeCursorFromMouse(mouseX, mouseY, this.isShiftHeld());
+                this.inputDragging = true;
             } else {
-                this.inputField.setFocused(false);
+                this.inputFocused = false;
+                this.inputBox.clearSelection();
             }
 
-            if (this.chatHistory.size() > this.getVisibleMessageLines()
-                && this.mouseInRect(5 + this.w - 10 - 10, this.chatBoxY, 10, this.h - (this.chatBoxY + 10 + 13), mouseX, mouseY)) {
+            if (this.getMaxScrollPosition() > 0
+                && this.mouseInRect(5 + this.w - 10 - 10, this.chatBoxY, 10, this.getChatBoxHeight(), mouseX, mouseY)) {
                 this.scrolling = true;
                 int maxScroll = this.getMaxScrollPosition();
                 if (maxScroll > 0) {
-                    int availableScrollArea = this.h - (this.chatBoxY + 10 + 13) - this.scrollBarHeight;
+                    int availableScrollArea = this.getChatBoxHeight() - this.scrollBarHeight;
                     int scrollY = this.chatBoxY + availableScrollArea * this.chatScrollPosition / maxScroll;
                     this.dragY = mouseY - (this.y + scrollY);
                 }
@@ -635,11 +851,33 @@ public class ChatWindow extends LiveWindow {
 
     // Click-to-copy: copies the full original message
     private void copyMessageToClipboard(String text) {
+        String safe = LivemessageUtil.stripChatDecorations(text);
         if (this.mc.keyboard != null) {
-            this.mc.keyboard.setClipboard(text);
+            this.mc.keyboard.setClipboard(safe);
         }
         this.copyFeedbackText = "Copied!";
         this.copyFeedbackExpireAt = System.currentTimeMillis() + 1200L;
+    }
+
+    private boolean isShiftHeld() {
+        return GLFW.glfwGetKey(this.mc.getWindow().getHandle(), GLFW.GLFW_KEY_LEFT_SHIFT) == 1
+            || GLFW.glfwGetKey(this.mc.getWindow().getHandle(), GLFW.GLFW_KEY_RIGHT_SHIFT) == 1;
+    }
+
+    private void placeCursorFromMouse(int mouseX, int mouseY, boolean selecting) {
+        int inputWidth = this.w - 18;
+        int lineCount = Math.max(1, this.inputBox.wrapSegments(this.fontRenderer, inputWidth).size());
+        this.inputBox.clampScroll(this.fontRenderer, inputWidth);
+        int start = this.inputBox.getScrollIndex();
+        int relY = mouseY - this.y - (this.getInputBoxTop() + 2);
+        int lineIdx = MathHelper.clamp(start + Math.floorDiv(relY, INPUT_LINE_HEIGHT), 0, lineCount - 1);
+        this.inputBox.setCursorAt(this.fontRenderer, inputWidth, lineIdx, mouseX - this.x - 8, selecting);
+        this.inputBox.ensureCaretVisible(this.fontRenderer, inputWidth);
+    }
+
+    private boolean isCtrlHeld() {
+        return GLFW.glfwGetKey(this.mc.getWindow().getHandle(), GLFW.GLFW_KEY_LEFT_CONTROL) == 1
+            || GLFW.glfwGetKey(this.mc.getWindow().getHandle(), GLFW.GLFW_KEY_RIGHT_CONTROL) == 1;
     }
 
     private void openUrl(String url) {
@@ -672,48 +910,52 @@ public class ChatWindow extends LiveWindow {
             if (window instanceof ChatWindow chatWindow && chatWindow.liveProfile.uuid.equals(uuid)) {
                 chatWindow.chatHistory.clear();
                 chatWindow.pendingMessages.clear();
+                chatWindow.historyVersion++;
                 chatWindow.loadChatHistory();
             }
         }
     }
 
-    private List<ChatWindow.RenderedLine> buildRenderedLines(int startMessageIndex, int chatBoxX, int chatColorMe, int chatColorOther) {
+    private List<ChatWindow.RenderedLine> buildRenderedLines() {
         List<ChatWindow.RenderedLine> lines = new ArrayList<>();
-        if (startMessageIndex >= this.chatHistory.size()) {
+        if (this.chatHistory.isEmpty()) {
             return lines;
         }
 
-        DateFormat dateFormat = new SimpleDateFormat("MMMM dd, yyyy");
-        DateFormat timeFormat = new SimpleDateFormat("<HH:mm> ");
-        String lastDay = dateFormat.format(new Date(System.currentTimeMillis()));
+        String lastDay = DATE_FORMAT.format(new Date(System.currentTimeMillis()));
 
-        for (int i = startMessageIndex; i < this.chatHistory.size(); i++) {
+        for (int i = 0; i < this.chatHistory.size(); i++) {
             ChatWindow.ChatMessage chatMessage = this.chatHistory.get(i);
             boolean isTrimmed = false;
             String message = LivemessageUtil.stripChatDecorations(chatMessage.message);
             Date timestamp = new Date(chatMessage.timestamp);
-            int baseColor = chatMessage.sentByMe ? chatColorMe : chatColorOther;
+            int baseColor = chatMessage.sentByMe ? GuiUtil.getSingleRGB(255) : GuiUtil.getSingleRGB(252);
 
             if (chatMessage.pending) {
                 message = message + " (pending)";
                 baseColor = GuiUtil.getSingleRGB(140);
             }
 
+            if (chatMessage.notAccepted) {
+                message = message + " (not accepted)";
+                baseColor = GuiUtil.getRGB(255, 100, 100);
+            }
+
             while (true) {
-                String thisDay = dateFormat.format(timestamp);
+                String thisDay = DATE_FORMAT.format(timestamp);
                 if (!thisDay.equals(lastDay)) {
                     lastDay = thisDay;
-                    lines.add(new ChatWindow.RenderedLine(thisDay, chatBoxX + 4, GuiUtil.getSingleRGB(64), false, -1));
+                    lines.add(new ChatWindow.RenderedLine(thisDay, this.chatBoxX + 4, GuiUtil.getSingleRGB(64), false, -1));
                 } else {
                     if (!isTrimmed) {
-                        message = timeFormat.format(timestamp) + message;
+                        message = TIME_FORMAT.format(timestamp) + message;
                     }
 
                     int trimIndent = isTrimmed ? this.getTextWidth("<00:00> ") : 0;
-                    int maxWidth = this.w - (chatBoxX * 2 + 8 + trimIndent + 10 - 5);
-                    String trimmed = this.fontRenderer.trimToWidth(message, maxWidth);
-                    lines.add(new ChatWindow.RenderedLine(trimmed, chatBoxX + 4 + trimIndent, baseColor, true, i));
-                    if (message.equals(trimmed)) {
+                    int maxWidth = this.w - (this.chatBoxX * 2 + 8 + trimIndent + 10 - 5);
+                    String trimmed = GuiUtil.wrapWordBoundary(this.fontRenderer, message, maxWidth);
+                    lines.add(new ChatWindow.RenderedLine(trimmed.stripTrailing(), this.chatBoxX + 4 + trimIndent, baseColor, true, i));
+                    if (trimmed.length() >= message.length()) {
                         break;
                     }
 
@@ -726,44 +968,71 @@ public class ChatWindow extends LiveWindow {
         return lines;
     }
 
-    private void drawChatHistory(DrawContext context, int chatBoxX, int chatBoxY, int chatColorMe, int chatColorOther) {
+    // chatScrollPosition indexes into the full rendered-line list for the whole history, so the
+    // list is cached and only rebuilt when the history, window width, or current day changes.
+    private List<ChatWindow.RenderedLine> getRenderedLines() {
+        String day = DATE_FORMAT.format(new Date(System.currentTimeMillis()));
+        if (this.renderedCacheVersion != this.historyVersion
+            || this.renderedCacheWidth != this.w
+            || !this.renderedCacheDay.equals(day)) {
+            this.renderedLinesCache = this.buildRenderedLines();
+            this.renderedCacheVersion = this.historyVersion;
+            this.renderedCacheWidth = this.w;
+            this.renderedCacheDay = day;
+        }
+
+        return this.renderedLinesCache;
+    }
+
+    private void drawChatHistory(DrawContext context, int chatColorMe, int chatColorOther) {
         this.clickableLinks.clear();
         this.clickableChatLines.clear();
         this.clampScrollPosition();
 
-        if (this.chatHistory.isEmpty()) {
+        List<ChatWindow.RenderedLine> lines = this.getRenderedLines();
+        int totalLines = lines.size();
+
+        if (totalLines == 0) {
             int placeholderY = this.getMessageAreaBottomEdge() - MESSAGE_LINE_HEIGHT;
-            this.drawText(context, "You're chatting with " + this.liveProfile.username, chatBoxX + 4, placeholderY, GuiUtil.getSingleRGB(96), false);
+            this.drawText(context, "You're chatting with " + this.liveProfile.username, this.chatBoxX + 4, placeholderY, GuiUtil.getSingleRGB(96), false);
             this.chatScrolledToBottom = true;
             return;
         }
 
-        int messageAreaTop = this.getMessageAreaTop();
         int messageAreaBottomEdge = this.getMessageAreaBottomEdge();
         int capacity = this.getVisibleMessageLines();
-        List<ChatWindow.RenderedLine> lines = this.buildRenderedLines(this.chatScrollPosition, chatBoxX, chatColorMe, chatColorOther);
-        int drawCount = Math.min(lines.size(), capacity);
-        int startIndex = this.isAtBottom() ? Math.max(0, lines.size() - drawCount) : 0;
-        int y = this.isAtBottom()
-            ? messageAreaBottomEdge - drawCount * MESSAGE_LINE_HEIGHT
-            : messageAreaTop;
-        this.chatScrolledToBottom = this.isAtBottom() && lines.size() <= capacity;
+        int maxScroll = Math.max(0, totalLines - capacity);
 
-        for (int i = startIndex; i < startIndex + drawCount && i < lines.size(); i++) {
-            if (y + MESSAGE_LINE_HEIGHT > messageAreaBottomEdge) {
-                this.chatScrolledToBottom = false;
-                break;
+        // Always the `capacity` lines starting at chatScrollPosition, anchored to the bottom edge
+        // so the newest visible line sits flush against the input box and no gap appears while scrolling.
+        int startLine = Math.min(this.chatScrollPosition, maxScroll);
+        int endLine = Math.min(totalLines, startLine + capacity);
+        int drawCount = endLine - startLine;
+        int y = messageAreaBottomEdge - drawCount * MESSAGE_LINE_HEIGHT;
+        this.chatScrolledToBottom = startLine >= maxScroll;
+
+        for (int i = startLine; i < endLine; i++) {
+            ChatWindow.RenderedLine line = lines.get(i);
+            int color = line.color;
+            if (line.messageIndex >= 0) {
+                ChatWindow.ChatMessage m = this.chatHistory.get(line.messageIndex);
+                color = m.sentByMe ? chatColorMe : chatColorOther;
+                if (m.pending) {
+                    color = GuiUtil.getSingleRGB(140);
+                } else if (m.notAccepted) {
+                    color = GuiUtil.getRGB(255, 100, 100);
+                }
             }
 
-            ChatWindow.RenderedLine line = lines.get(i);
             if (line.urls) {
-                this.drawTextWithUrls(context, line.text, line.x, y, line.color);
+                this.drawTextWithUrls(context, line.text, line.x, y, color);
             } else {
-                this.drawText(context, line.text, line.x, y, line.color, false);
+                this.drawText(context, line.text, line.x, y, color, false);
             }
 
             if (line.messageIndex >= 0) {
-                this.clickableChatLines.add(new ClickableChatLine(this.x + 5, this.y + y, this.w - 20, MESSAGE_LINE_HEIGHT, line.messageIndex));
+                int textWidth = this.getTextWidth(line.text);
+                this.clickableChatLines.add(new ClickableChatLine(this.x + line.x, this.y + y, textWidth, this.getTextHeight(), line.messageIndex));
             }
 
             y += MESSAGE_LINE_HEIGHT;
@@ -843,6 +1112,48 @@ public class ChatWindow extends LiveWindow {
         }
     }
 
+    /**
+     * Total number of messages persisted for this conversation (one jsonl line per
+     * message), read straight from the history files - not just the ~100 lines loaded
+     * into memory. Recounts at most every DISK_COUNT_REFRESH_MS or whenever the
+     * in-memory history version changes, and also picks up the offline-UUID file
+     * (mirrors syncHistoryFromFile).
+     */
+    private long countMessagesOnDisk() {
+        long now = System.currentTimeMillis();
+        if (this.totalMessagesOnDisk >= 0
+            && this.totalMessagesCountedVersion == this.historyVersion
+            && now - this.totalMessagesCountedAtMs < DISK_COUNT_REFRESH_MS) {
+            return this.totalMessagesOnDisk;
+        }
+
+        long count = countFileLines(LivemessageUtil.MESSAGES_FOLDER.resolve(this.liveProfile.uuid.toString() + ".jsonl").toFile());
+        UUID offlineUuid = UUID.nameUUIDFromBytes(
+            ("OfflinePlayer:" + this.liveProfile.username.toLowerCase(Locale.ROOT)).getBytes()
+        );
+        if (!offlineUuid.equals(this.liveProfile.uuid)) {
+            count += countFileLines(LivemessageUtil.MESSAGES_FOLDER.resolve(offlineUuid.toString() + ".jsonl").toFile());
+        }
+
+        this.totalMessagesOnDisk = count;
+        this.totalMessagesCountedVersion = this.historyVersion;
+        this.totalMessagesCountedAtMs = now;
+        return count;
+    }
+
+    private static long countFileLines(File file) {
+        if (!file.isFile()) return 0;
+        long lines = 0;
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            while (reader.readLine() != null) {
+                lines++;
+            }
+        } catch (IOException e) {
+            return 0;
+        }
+        return lines;
+    }
+
     @Override
     public void drawWindow(DrawContext context, int bgColor, int fgColor) {
         boolean online = LivemessageUtil.checkOnlineStatus(this.liveProfile.uuid);
@@ -855,11 +1166,25 @@ public class ChatWindow extends LiveWindow {
             this.title = this.title + " \u00a7l(" + unreads + ")";
         }
 
-        this.scrollBarHeight = this.chatHistory.size() < 2
-            ? 0
-            : (int) MathHelper.clamp(
-            Math.floor((this.h - (this.chatBoxY + 10 + 13)) / Math.max((this.chatHistory.size() - 1) / 10, 1)), 10.0, (this.h - (this.chatBoxY + 10 + 13)) / 2
-        );
+        int chatBoxHeight = this.getChatBoxHeight();
+        this.scrollBarHeight = this.getMaxScrollPosition() > 0
+            ? (int) MathHelper.clamp(
+            Math.floor((double) chatBoxHeight * this.getVisibleMessageLines() / this.getRenderedLines().size()), 10.0, chatBoxHeight / 2.0
+        ) : 0;
+
+        // input box stays fully opaque
+        int inputBoxTop = this.getInputBoxTop();
+        int inputBoxHeight = this.getInputBoxHeight();
+        GuiUtil.drawRect(context, 0, titlebarHeight, this.w, this.chatBoxY - 1 - titlebarHeight, bgColor);
+        GuiUtil.drawRect(context, 0, this.chatBoxY - 1, 4, chatBoxHeight + 2, bgColor);
+        GuiUtil.drawRect(context, this.w - 4, this.chatBoxY - 1, 4, chatBoxHeight + 2, bgColor);
+        GuiUtil.drawRect(context, 0, this.chatBoxY + chatBoxHeight + 1, this.w,
+            Math.max(0, inputBoxTop - 1 - (this.chatBoxY + chatBoxHeight + 1)), bgColor);
+        GuiUtil.drawRect(context, 0, inputBoxTop - 1, 4, inputBoxHeight + 2, bgColor);
+        GuiUtil.drawRect(context, this.w - 4, inputBoxTop - 1, 4, inputBoxHeight + 2, bgColor);
+        GuiUtil.drawRect(context, 0, inputBoxTop - 1 + inputBoxHeight + 2, this.w,
+            Math.max(0, this.h - (inputBoxTop - 1 + inputBoxHeight + 2)), bgColor);
+
         super.drawWindow(context, bgColor, fgColor);
         GuiUtil.drawRect(context, 3, titlebarHeight + 3, 36, 36, online ? GuiUtil.getRGB(60, 148, 100) : GuiUtil.getSingleRGB(128));
         if (this.lastMouseX > this.x + 40
@@ -883,6 +1208,8 @@ public class ChatWindow extends LiveWindow {
         }
 
         this.drawText(context, displayUsername, 42, titlebarHeight + 5, usernameColor, false);
+        String totalText = " (" + this.countMessagesOnDisk() + " msg total)";
+        this.drawText(context, totalText, 42 + this.getTextWidth(displayUsername), titlebarHeight + 5, GuiUtil.getSingleRGB(128), false);
         this.drawText(context, this.liveProfile.uuid.toString(), 42, titlebarHeight + 5 + 11, GuiUtil.getSingleRGB(128), false);
         String onlineStatusText = online ? "online" : "offline";
         this.drawText(context, onlineStatusText, 42, titlebarHeight + 5 + 21, GuiUtil.getSingleRGB(128), false);
@@ -892,25 +1219,29 @@ public class ChatWindow extends LiveWindow {
                 + " (" + this.pendingMessages.size() + " queued)";
             this.drawText(context, cooldownText, 42 + this.getTextWidth(onlineStatusText), titlebarHeight + 5 + 21, GuiUtil.getSingleRGB(160), false);
         }
+
         int chatbg = 36;
         int textbg = 24;
-        GuiUtil.drawRect(context, 4, this.chatBoxY - 1, this.w - 10 + 2, this.h - (this.chatBoxY + 10 + 13) + 2, GuiUtil.getSingleRGB(64));
-        GuiUtil.drawRect(context, 5, this.chatBoxY, this.w - 10, this.h - (this.chatBoxY + 10 + 13), GuiUtil.getSingleRGB(chatbg));
+        int innerAlpha = LiveMessage.INSTANCE != null ? LiveMessage.INSTANCE.innerBackgroundAlpha.get() : 255;
+        GuiUtil.drawRect(context, 4, this.chatBoxY - 1, this.w - 10 + 2, chatBoxHeight + 2, GuiUtil.withAlpha(GuiUtil.getSingleRGB(64), innerAlpha));
+        GuiUtil.drawRect(context, 5, this.chatBoxY, this.w - 10, chatBoxHeight, GuiUtil.withAlpha(GuiUtil.getSingleRGB(chatbg), innerAlpha));
+        // The input box is never affected by inner-background-alpha
+        // fully opaque so typed text always has a solid backing to read against.
         int inputBorderColor = online ? GuiUtil.getSingleRGB(64) : GuiUtil.getRGB(200, 50, 50);
         int inputBgColor = online ? GuiUtil.getSingleRGB(textbg) : GuiUtil.getRGB(40, 20, 20);
-        GuiUtil.drawRect(context, 4, this.chatBoxY - 1 + this.h - (this.chatBoxY + 5 + 13), this.w - 10 + 2, 15, inputBorderColor);
-        GuiUtil.drawRect(context, 5, this.chatBoxY + this.h - (this.chatBoxY + 5 + 13), this.w - 10, 13, inputBgColor);
+        GuiUtil.drawRect(context, 4, inputBoxTop - 1, this.w - 10 + 2, inputBoxHeight + 2, inputBorderColor);
+        GuiUtil.drawRect(context, 5, inputBoxTop, this.w - 10, inputBoxHeight, inputBgColor);
         if (!online) {
             String warningIcon = "\u00a7l!";
             int iconX = 5 + this.w - 10 - this.getTextWidth(warningIcon) - 3;
-            int iconY = this.chatBoxY + this.h - (this.chatBoxY + 5 + 13) + 2;
+            int iconY = inputBoxTop + 2;
             this.drawText(context, warningIcon, iconX + 1, iconY, GuiUtil.getRGB(100, 20, 20), false);
             this.drawText(context, warningIcon, iconX, iconY, GuiUtil.getRGB(255, 85, 85), false);
         }
 
-        if (this.chatHistory.size() > this.getVisibleMessageLines()) {
+        if (this.getMaxScrollPosition() > 0) {
             int maxScroll = this.getMaxScrollPosition();
-            int availableScrollArea = this.h - (this.chatBoxY + 10 + 13) - this.scrollBarHeight;
+            int availableScrollArea = chatBoxHeight - this.scrollBarHeight;
             int scrollY = this.chatBoxY + (maxScroll > 0 ? availableScrollArea * this.chatScrollPosition / maxScroll : 0);
             GuiUtil.drawRect(
                 context,
@@ -921,7 +1252,7 @@ public class ChatWindow extends LiveWindow {
                 this.scrolling
                     ? GuiUtil.getSingleRGB(128)
                     : (
-                    this.mouseInRect(5 + this.w - 10 - 10, this.chatBoxY, 10, this.h - (this.chatBoxY + 10 + 13), this.lastMouseX, this.lastMouseY)
+                    this.mouseInRect(5 + this.w - 10 - 10, this.chatBoxY, 10, chatBoxHeight, this.lastMouseX, this.lastMouseY)
                     ? GuiUtil.getSingleRGB(96)
                     : GuiUtil.getSingleRGB(64)
                 )
@@ -934,15 +1265,18 @@ public class ChatWindow extends LiveWindow {
         } else if (isEnemy) {
             otherPlayerColor = GuiUtil.getRGB(255, 85, 85);
         } else {
-            otherPlayerColor = fgColor;
+            // fgColor carries the window's background opacity (windowBackgroundAlpha);
+            // chat text must stay fully readable, so force its alpha to max - the same
+            // opacity friends/enemies already get from the opaque getRGB() colors.
+            otherPlayerColor = GuiUtil.withAlpha(fgColor, 255);
         }
 
-        this.drawChatHistory(context, 5, this.chatBoxY, GuiUtil.getSingleRGB(255), otherPlayerColor);
+        this.drawChatHistory(context, GuiUtil.getSingleRGB(255), otherPlayerColor);
         this.drawProfilePic(context, 5, titlebarHeight + 5);
 
         if (this.pendingUrl != null) {
             if (System.currentTimeMillis() < this.pendingUrlExpireAt) {
-                GuiUtil.drawTooltip(context, "Click link again to open: " + this.pendingUrl, 8, this.h - 13 - 2 - 16);
+                GuiUtil.drawTooltip(context, "Click link again to open: " + this.pendingUrl, 8, inputBoxTop - 16);
             } else {
                 this.pendingUrl = null;
             }
@@ -964,11 +1298,56 @@ public class ChatWindow extends LiveWindow {
     @Override
     public void drawTextFields(DrawContext context) {
         context.getMatrices().translate(this.x, this.y);
-        this.inputField.setEditableColor(this.active ? -1 : -8355712);
-        this.inputField.setX(8);
-        this.inputField.setY(this.h - 13 - 2);
-        this.inputField.setWidth(this.w - 18);
-        this.inputField.render(context, this.lastMouseX - this.x, this.lastMouseY - this.y, 0.0F);
+
+        int inputWidth = this.w - 18;
+        List<MultilineInputBox.Segment> segs = this.inputBox.wrapSegments(this.fontRenderer, inputWidth);
+        int boxTop = this.getInputBoxTop();
+        int boxLeft = 8;
+
+        // Renders MAX_VISIBLE_INPUT_LINES wrapped lines starting at the box's
+        // scroll position (clamped). The caret-following view can be scrolled up
+        // with the mouse wheel so wrapped text past the visible box stays reachable.
+        this.inputBox.clampScroll(this.fontRenderer, inputWidth);
+        int start = this.inputBox.getScrollIndex();
+        int textColor = this.active ? -1 : -8355712;
+        boolean hasSelection = this.inputBox.hasSelection();
+        int selStart = this.inputBox.getSelectionStart();
+        int selEnd = this.inputBox.getSelectionEnd();
+
+        int lineY = boxTop + 2;
+        int endLine = Math.min(segs.size(), start + MAX_VISIBLE_INPUT_LINES);
+        for (int i = start; i < endLine; i++) {
+            MultilineInputBox.Segment seg = segs.get(i);
+            int segStart = seg.startOffset;
+            int segEnd = segStart + seg.text.length();
+
+            if (hasSelection && selEnd > segStart && selStart <= segEnd) {
+                int from = Math.max(selStart, segStart) - segStart;
+                int to = Math.min(selEnd, segEnd) - segStart;
+                int hx = boxLeft + this.getTextWidth(seg.text.substring(0, from));
+                int hw = this.getTextWidth(seg.text.substring(from, to));
+                if (selEnd > segEnd) hw += 3; // stub so a selected newline is visible
+                if (hw > 0) {
+                    GuiUtil.drawRect(context, hx, lineY - 1, hw, INPUT_LINE_HEIGHT, GuiUtil.getRGB(60, 90, 160));
+                }
+            }
+
+            this.drawText(context, seg.text, boxLeft, lineY, textColor, false);
+            lineY += INPUT_LINE_HEIGHT;
+        }
+
+        if (this.active && this.inputFocused && this.inputBox.cursorVisible()) {
+            int caretLineIndex = this.inputBox.cursorLineIndex(this.fontRenderer, inputWidth);
+            if (caretLineIndex >= start && caretLineIndex < endLine) {
+                int caretCol = this.inputBox.cursorColumnInLine(this.fontRenderer, inputWidth);
+                String lineText = caretLineIndex < segs.size() ? segs.get(caretLineIndex).text : "";
+                int clampedCol = Math.min(caretCol, lineText.length());
+                int caretX = boxLeft + this.getTextWidth(lineText.substring(0, clampedCol));
+                int caretY = boxTop + 2 + (caretLineIndex - start) * INPUT_LINE_HEIGHT;
+                context.fill(caretX, caretY, caretX + 1, caretY + 9, GuiUtil.fade(-1));
+            }
+        }
+
         context.getMatrices().translate(-this.x, -this.y);
     }
 
@@ -1014,6 +1393,7 @@ public class ChatWindow extends LiveWindow {
         public long timestamp;
         public UUID myUUID;
         public boolean pending = false;
+        public boolean notAccepted = false;
 
         ChatMessage(String message, boolean sentByMe, long timestamp) {
             this.message = message;

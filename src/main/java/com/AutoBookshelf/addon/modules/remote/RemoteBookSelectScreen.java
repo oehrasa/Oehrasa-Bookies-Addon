@@ -14,7 +14,7 @@ import java.util.function.Consumer;
 // and pick one or more books to queue for import.
 public class RemoteBookSelectScreen extends WindowScreen {
     private static final int TITLE_LABEL_MAX_CHARS = 60;
-    private static final int GROUP_LABEL_MAX_CHARS = 50;
+    private static final int FILE_LABEL_MAX_CHARS = 48;
     private static final int AUTHOR_LABEL_MAX_CHARS = 32;
     // Leading spaces on the author line
     private static final String AUTHOR_INDENT = "    ";
@@ -26,11 +26,17 @@ public class RemoteBookSelectScreen extends WindowScreen {
 
     private WVerticalList listContainer;
     private WTextBox search;
+    // Set the moment the import button runs, so the onClosed callback can tell a
+    // confirmed import apart from an actual cancel and only fire onCancel for the latter.
+    private boolean confirmed = false;
 
-    public RemoteBookSelectScreen(List<BookEntry> entries, Consumer<List<BookEntry>> onConfirm) {
+    public RemoteBookSelectScreen(List<BookEntry> entries, Consumer<List<BookEntry>> onConfirm, Runnable onCancel) {
         super(GuiThemes.get(), "Select Books to Import");
         this.allEntries = entries;
         this.onConfirm = onConfirm;
+        onClosed(() -> {
+            if (!confirmed) onCancel.run();
+        });
     }
 
     @Override
@@ -39,33 +45,50 @@ public class RemoteBookSelectScreen extends WindowScreen {
         search.setFocused(true);
         search.action = () -> refreshList(search.get());
 
-        listContainer = add(theme.verticalList()).expandX().widget();
-        refreshList("");
+        var header = add(theme.horizontalList()).expandX().widget();
 
-        var footer = add(theme.horizontalList()).expandX().widget();
-
-        WButton selectAllBtn = footer.add(theme.button("Select All Visible")).widget();
+        WButton selectAllBtn = header.add(theme.button("Select All Visible")).widget();
         selectAllBtn.action = () -> {
+            List<BookEntry> targets = new ArrayList<>();
             for (BookEntry entry : visible) {
                 WCheckbox cb = checkboxes.get(entry);
-                if (cb != null) cb.checked = true;
+                if (cb != null) targets.add(entry);
+            }
+            if (targets.isEmpty()) return;
+
+            // Toggle: if any visible book is unchecked, tick everything (fills the rest)
+            // if every visible book is already checked, clear all.
+            boolean anyUnchecked = false;
+            for (BookEntry entry : targets) {
+                if (!checkboxes.get(entry).checked) {
+                    anyUnchecked = true;
+                    break;
+                }
+            }
+            boolean selectAll = anyUnchecked;
+            for (BookEntry entry : targets) {
+                checkboxes.get(entry).checked = selectAll;
             }
         };
 
-        WButton importBtn = footer.add(theme.button("Import Selected")).widget();
+        WButton importBtn = header.add(theme.button("Import Selected")).widget();
         importBtn.action = () -> {
             List<BookEntry> selected = new ArrayList<>();
             for (var e : checkboxes.entrySet()) {
                 if (e.getValue().checked) selected.add(e.getKey());
             }
             if (!selected.isEmpty()) {
+                confirmed = true;
                 onConfirm.accept(selected);
                 close();
             }
         };
 
-        WButton cancelBtn = footer.add(theme.button("Cancel")).widget();
+        WButton cancelBtn = header.add(theme.button("Cancel")).widget();
         cancelBtn.action = this::close;
+
+        listContainer = add(theme.verticalList()).expandX().widget();
+        refreshList("");
     }
 
     private void refreshList(String filterRaw) {
@@ -73,7 +96,7 @@ public class RemoteBookSelectScreen extends WindowScreen {
         visible.clear(); // reset tracked-visible set for this filter pass
         String filter = filterRaw == null ? "" : filterRaw.toLowerCase(Locale.ROOT);
 
-        Map<String, List<BookEntry>> byGroup = new LinkedHashMap<>();
+        List<BookEntry> matched = new ArrayList<>();
         for (BookEntry entry : allEntries) {
             // Matches on the filename-derived group/title and the real
             // book_title/author when the manifest has them. An entry with
@@ -86,46 +109,44 @@ public class RemoteBookSelectScreen extends WindowScreen {
                 nullToEmpty(entry.author)
             ).toLowerCase(Locale.ROOT);
             if (!filter.isEmpty() && !haystack.contains(filter)) continue;
-            visible.add(entry); // this entry passed the filter, so it's currently rendered
-            byGroup.computeIfAbsent(entry.group == null || entry.group.isEmpty() ? "Ungrouped" : entry.group,
-                g -> new ArrayList<>()).add(entry);
+            matched.add(entry);
         }
 
-        if (byGroup.isEmpty()) {
+        if (matched.isEmpty()) {
             listContainer.add(theme.label("No matches."));
             return;
         }
 
-        for (var groupEntry : byGroup.entrySet()) {
-            List<BookEntry> books = groupEntry.getValue();
+        // Each book renders as its own titled block
+        // Layout is: title, separator strip, then a row with the checkbox
+        // sitting on the .txt filename, and the author at the bottom.
+        for (int i = 0; i < matched.size(); i++) {
+            BookEntry entry = matched.get(i);
+            visible.add(entry); // this entry passed the filter, so it's currently rendered
 
-            String groupLabel = truncate(groupEntry.getKey(), GROUP_LABEL_MAX_CHARS)
-                + " (" + books.size() + (books.size() == 1 ? " book)" : " books)");
-            // horizontalSeparator(text) draws divider lines with the group name inline
-            listContainer.add(theme.horizontalSeparator(groupLabel)).expandX();
+            listContainer.add(theme.label("(" + (i + 1) + ") " + truncate(entry.displayTitle(), TITLE_LABEL_MAX_CHARS))).expandX();
+            listContainer.add(theme.horizontalSeparator()).expandX();
 
-            for (int i = 0; i < books.size(); i++) {
-                BookEntry entry = books.get(i);
-                var row = listContainer.add(theme.horizontalList()).expandX().widget();
+            var fileRow = listContainer.add(theme.horizontalList()).expandX().widget();
+            WCheckbox checkbox = checkboxes.computeIfAbsent(entry, e -> theme.checkbox(false));
+            fileRow.add(checkbox);
+            fileRow.add(theme.label(truncate(fileNameOf(entry), FILE_LABEL_MAX_CHARS)));
 
-                WCheckbox checkbox = checkboxes.computeIfAbsent(entry, e -> theme.checkbox(false));
-                row.add(checkbox);
+            if (entry.hasAuthor()) {
+                listContainer.add(theme.label(AUTHOR_INDENT + "by " + truncate(entry.author, AUTHOR_LABEL_MAX_CHARS))).expandX();
+            }
 
-                // Title and author stack as two separate lines next to the
-                // checkbox, instead of being crammed onto one line with
-                // "by Author" appended right after the title separated by
-                // only a single space.
-                WVerticalList textColumn = row.add(theme.verticalList()).expandX().widget();
-                textColumn.add(theme.label(truncate(entry.displayTitle(), TITLE_LABEL_MAX_CHARS))).expandX();
-                if (entry.hasAuthor()) {
-                    textColumn.add(theme.label(AUTHOR_INDENT + "by " + truncate(entry.author, AUTHOR_LABEL_MAX_CHARS))).expandX();
-                }
-
-                if (i < books.size() - 1) {
-                    listContainer.add(theme.horizontalSeparator()).expandX();
-                }
+            if (i < matched.size() - 1) {
+                listContainer.add(theme.horizontalSeparator()).expandX().padTop(12).padBottom(12);
             }
         }
+    }
+
+    private static String fileNameOf(BookEntry entry) {
+        String file = entry.file;
+        if (file == null) return "?";
+        int slash = Math.max(file.lastIndexOf('/'), file.lastIndexOf('\\'));
+        return slash >= 0 ? file.substring(slash + 1) : file;
     }
 
     private static String nullToEmpty(String s) {

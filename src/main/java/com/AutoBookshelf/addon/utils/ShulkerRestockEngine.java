@@ -1,6 +1,5 @@
 package com.AutoBookshelf.addon.utils;
 
-import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import net.minecraft.block.ShulkerBoxBlock;
 import net.minecraft.client.MinecraftClient;
@@ -47,7 +46,9 @@ public class ShulkerRestockEngine {
         boolean rotate,
         int shulkerHotbarSlot, // 1-9, display
         List<Item> protectedItems,
-        List<BlockPos> excludedPositions
+        List<BlockPos> excludedPositions,
+        int maxPlacementAttempts,
+        int maxOpenAttempts
     ) {
     }
 
@@ -59,13 +60,11 @@ public class ShulkerRestockEngine {
 
     // Bounded wait times for each confirmation state, in client ticks. These
     // exist because sending a packet is not confirmation that the server
-    // acted on it - every WAIT_FOR_* state polls the actual world/UI state
+    // acted on it every WAIT_FOR_* state polls the actual world/UI state
     // each tick instead of just assuming success after a fixed delay.
     private static final int PLACEMENT_TIMEOUT_TICKS = 20;
     private static final int OPEN_TIMEOUT_TICKS = 20;
     private static final int BREAK_TIMEOUT_TICKS = 200;
-    private static final int MAX_PLACEMENT_ATTEMPTS = 5;
-    private static final int MAX_OPEN_ATTEMPTS = 3;
 
     private final MinecraftClient mc;
     private final PlacementEngine placementEngine;
@@ -127,9 +126,7 @@ public class ShulkerRestockEngine {
     /**
      * True if, on the most recently completed attempt, every stack of the target
      * item was taken out of the shulker before it was broken. False means the
-     * box was broken (or left placed) while still holding leftover contents -
-     * callers that break-after-fill should treat that dropped box as worth
-     * chasing down, unlike a fully-emptied one.
+     * box was broken (or left placed) while still holding leftover contents
      */
     public boolean wasShulkerFullyEmptied() {
         return shulkerFullyEmptied;
@@ -227,7 +224,14 @@ public class ShulkerRestockEngine {
                 abort("No available hotbar slot to place shulker (all slots are protected).");
                 return;
             }
-            InvUtils.move().from(shulkerSlot).toHotbar(targetSlot);
+            // Single atomic swap
+            mc.interactionManager.clickSlot(
+                mc.player.playerScreenHandler.syncId,
+                shulkerSlot,
+                targetSlot,
+                SlotActionType.SWAP,
+                mc.player
+            );
             shulkerSlot = targetSlot;
             delayTicks = 2;
             return;
@@ -295,8 +299,7 @@ public class ShulkerRestockEngine {
         }
 
         // Sending the interaction packet is not confirmation the server placed
-        // anything - WAIT_FOR_PLACEMENT polls the real world state for the
-        // shulker before we ever try to open it.
+        // anything
         stateTicks = 0;
         stage = Stage.WAIT_FOR_PLACEMENT;
     }
@@ -311,13 +314,13 @@ public class ShulkerRestockEngine {
         stateTicks++;
         if (stateTicks < PLACEMENT_TIMEOUT_TICKS) return;
 
-        // Timed out - the world never showed a shulker at this position.
+        // Timeout, the world never showed a shulker at this position.
         // Record it as failed so the next candidate search skips it, and try
         // again from scratch rather than waiting forever.
         failedPositions.add(placedShulkerPos);
         placementAttempts++;
-        if (placementAttempts >= MAX_PLACEMENT_ATTEMPTS) {
-            abort("Couldn't confirm shulker placement after " + MAX_PLACEMENT_ATTEMPTS + " attempts. Resetting.");
+        if (placementAttempts >= config.maxPlacementAttempts()) {
+            abort("Couldn't confirm shulker placement after " + config.maxPlacementAttempts() + " attempts. Resetting.");
             return;
         }
         stateTicks = 0;
@@ -387,8 +390,8 @@ public class ShulkerRestockEngine {
         if (stateTicks < OPEN_TIMEOUT_TICKS) return;
 
         openAttempts++;
-        if (openAttempts >= MAX_OPEN_ATTEMPTS) {
-            abort("Couldn't open the shulker after " + MAX_OPEN_ATTEMPTS + " attempts. Resetting.");
+        if (openAttempts >= config.maxOpenAttempts()) {
+            abort("Couldn't open the shulker after " + config.maxOpenAttempts() + " attempts. Resetting.");
             return;
         }
         stateTicks = 0;
@@ -397,9 +400,7 @@ public class ShulkerRestockEngine {
 
     private void doRestock() {
         if (!(mc.currentScreen instanceof HandledScreen<?> screen)) {
-            // GUI closed on its own (e.g. server-side kick from the container);
-            // fall through to the close/break flow, which handles a
-            // already-closed screen cleanly.
+            // GUI closed on its own
             stage = Stage.CLOSE_SHULKER;
             return;
         }
@@ -416,13 +417,7 @@ public class ShulkerRestockEngine {
             if (stack.getItem() == currentTargetItem) {
                 mc.interactionManager.clickSlot(handler.syncId, i, 0, SlotActionType.QUICK_MOVE, mc.player);
                 // Re-check the real inventory rather than assuming this quick-move
-                // consumed an empty slot. currentTargetItem is the block the player
-                // is actively building with, so a partial stack of it almost always
-                // already exists in the hotbar/inventory - QUICK_MOVE merges into
-                // that existing stack instead of using a new slot in that case, and
-                // blindly decrementing here caused the loop to stop early "to keep
-                // 1 slot free" when no slot had actually been spent, leaving items
-                // behind in the shulker for no reason.
+                // consumed an empty slot.
                 if (countEmptyPlayerSlots() <= keepFree) break;
             }
         }
@@ -519,10 +514,6 @@ public class ShulkerRestockEngine {
             return;
         }
 
-        // Sending another breaking-progress tick is not confirmation of
-        // anything either - we keep polling the block state above every tick,
-        // and only give up once BREAK_TIMEOUT_TICKS is exceeded, instead of
-        // looping on this indefinitely (e.g. because no pickaxe was found).
         mc.interactionManager.updateBlockBreakingProgress(placedShulkerPos, Direction.UP);
         mc.player.swingHand(Hand.MAIN_HAND);
 
@@ -547,7 +538,7 @@ public class ShulkerRestockEngine {
     private void abort(String message) {
         if (message != null) callback.onInfo(message);
         // A break attempt may have been in progress (pickaxe already swapped
-        // in) when the abort was triggered - restore it before the original
+        // in) when the abort was triggered, restore it before the original
         // slot, same ordering succeed() uses.
         restorePickaxeSlot();
         restoreOriginalSlot();

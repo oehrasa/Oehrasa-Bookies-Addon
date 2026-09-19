@@ -30,7 +30,7 @@ import net.minecraft.network.packet.s2c.play.EntitySpawnS2CPacket;
 import net.minecraft.network.packet.s2c.play.EntityStatusS2CPacket;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
-import org.jetbrains.annotations.Nullable;  // added missing import
+import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
 
@@ -601,7 +601,7 @@ public class NeboM extends HudElement {
             miningTicks.put(entityId, actionDisplayTicks.get());
         }
 
-        // Totem of undying popped - entity status 35 is the vanilla "totem used" event
+        // Totem of undying popped thats entity status 35 is the vanilla "totem used" event
         if (event.packet instanceof EntityStatusS2CPacket packet) {
             if (packet.getStatus() == 35) {
                 Entity entity = packet.getEntity(mc.world);
@@ -611,7 +611,7 @@ public class NeboM extends HudElement {
             }
         }
 
-        // Crystal placed / projectile thrown by anyone - guess who did it by nearest player to the spawn position
+        // Crystal placed / projectile thrown by anyone that guess who did it by nearest player to the spawn position
         if (event.packet instanceof EntitySpawnS2CPacket packet) {
             EntityType<?> type = packet.getEntityType();
             Vec3d spawnPos = new Vec3d(packet.getX(), packet.getY(), packet.getZ());
@@ -630,7 +630,7 @@ public class NeboM extends HudElement {
             }
         }
 
-        // Container opened (chest/trapped chest/ender chest/shulker box) - block event packet is broadcast
+        // Container opened (chest/trapped chest/ender chest/shulker box) block event packet is broadcast
         // to nearby clients when a container's viewer count changes. Barrels don't use this (their open
         // state is a plain blockstate property), so they aren't detectable this way.
         if (event.packet instanceof BlockEventS2CPacket packet) {

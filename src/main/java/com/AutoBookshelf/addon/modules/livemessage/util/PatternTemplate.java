@@ -18,7 +18,11 @@ public final class PatternTemplate {
         }
 
         if (trimmed.regionMatches(true, 0, "regex:", 0, 6)) {
-            return Pattern.compile(trimmed.substring(6).trim());
+            String raw = trimmed.substring(6).trim();
+            if (raw.length() > 300) {
+                throw new IllegalArgumentException("regex: pattern too long (" + raw.length() + " chars, max 300)");
+            }
+            return Pattern.compile(raw);
         }
 
         return Pattern.compile(toRegex(trimmed, allowRankPrefix), Pattern.CASE_INSENSITIVE);

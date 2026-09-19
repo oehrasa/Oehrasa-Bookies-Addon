@@ -136,6 +136,8 @@ public class TeleportTimer extends HudElement {
 
     private static final Pattern FORMATTING_CODE = Pattern.compile("§[0-9a-fk-or]");
 
+    private static final SettingColor BAR_BACKGROUND = new SettingColor(0, 0, 0, 100);
+
     private static final Pattern TELEPORT_WARMUP = Pattern.compile("^Teleporting.*?\\bin\\s+(\\d+)\\s*seconds?");
     private static final Pattern COOLDOWN_MSG = Pattern.compile("^You have to wait (?:(\\d+)m\\s*)?(\\d+)s\\s+to teleport again");
     private static final Pattern TELEPORT_CANCEL = Pattern.compile("^Successfully cancelled your pending teleport request to:\\s*(\\S+)");
@@ -215,7 +217,7 @@ public class TeleportTimer extends HudElement {
             if (isHome) {
                 homeWarmupTicks = ticks;
                 homeWarmupTotal = ticks;
-                // Extract destination (e.g., "first")
+                // Extract destination ("first")
                 String dest = "";
                 if (message.contains(" to ")) {
                     int start = message.indexOf(" to ") + 4;
@@ -294,6 +296,7 @@ public class TeleportTimer extends HudElement {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
+        if (mc.world == null || mc.player == null) return;
         if (homeWarmupTicks > 0) homeWarmupTicks--;
         if (tpaWarmupTicks > 0) tpaWarmupTicks--;
         if (homeTicksRemaining > 0) homeTicksRemaining--;
@@ -359,7 +362,7 @@ public class TeleportTimer extends HudElement {
         renderer.text(label, x, y, colour, false, scale);
         double textH = renderer.textHeight(false, scale);
         // Background bar
-        renderer.quad(x, y + textH + 2, getWidth(), barH, new SettingColor(0, 0, 0, 100));
+        renderer.quad(x, y + textH + 2, getWidth(), barH, BAR_BACKGROUND);
         // Filled bar
         double filledW = getWidth() * fraction;
         renderer.quad(x, y + textH + 2, filledW, barH, colour);

@@ -103,6 +103,28 @@ public class LiveMessage extends Module {
                 .visible(this.fadeAnimation::get)
                 .build()
         );
+    public final Setting<Integer> windowBackgroundAlpha = this.sgGeneral
+        .add(
+            new meteordevelopment.meteorclient.settings.IntSetting.Builder()
+                .name("window-background-alpha")
+                .description("Opacity of the ManeWindow and ChatWindow background and title bar.")
+                .defaultValue(120)
+                .min(0)
+                .max(255)
+                .sliderRange(40, 255)
+                .build()
+        );
+    public final Setting<Integer> innerBackgroundAlpha = this.sgGeneral
+        .add(
+            new meteordevelopment.meteorclient.settings.IntSetting.Builder()
+                .name("inner-background-alpha")
+                .description("Opacity of the inner chat list, input box, buddy list and search bar backgrounds inside the windows.")
+                .defaultValue(125)
+                .min(0)
+                .max(255)
+                .sliderRange(20, 255)
+                .build()
+        );
     public final Setting<Integer> defaultChatWidth = this.sgGeneral
         .add(
             new meteordevelopment.meteorclient.settings.IntSetting.Builder()
@@ -173,6 +195,14 @@ public class LiveMessage extends Module {
                 .name("sounds")
                 .description("Play notification sounds for new DMs.")
                 .defaultValue(true)
+                .build()
+        );
+    public final Setting<Boolean> friendsOnlyMessages = this.sgAntiSpam
+        .add(
+            new meteordevelopment.meteorclient.settings.BoolSetting.Builder()
+                .name("friends-only")
+                .description("Only receive DMs from players on your friends list. Messages from non-friends are silently dropped.")
+                .defaultValue(false)
                 .build()
         );
     public final Setting<Boolean> allowRankPrefix = this.sgPatterns
@@ -483,7 +513,7 @@ public class LiveMessage extends Module {
 
             for (LiveWindow window : LivemessageGui.liveWindows) {
                 if (window instanceof ChatWindow chatWindow) {
-                    if (chatWindow.inputField != null && chatWindow.inputField.isFocused()) {
+                    if (chatWindow.inputFocused) {
                         anyFieldFocused = true;
                         break;
                     }

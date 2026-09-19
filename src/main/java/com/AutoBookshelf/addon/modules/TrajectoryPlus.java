@@ -523,7 +523,7 @@ public class TrajectoryPlus extends Module {
                 ? Math.min(simulationSteps.get(), MAX_SIMULATION_STEPS_HARD_CAP)
                 : MAX_SIMULATION_STEPS_HARD_CAP;
             for (int i = 0; i < maxSteps; i++) {
-                SimulationStep result = simulator.tick(); // ADDED — this was missing
+                SimulationStep result = simulator.tick();
 
                 processHitResults(result);
                 if (result.shouldStop) break;

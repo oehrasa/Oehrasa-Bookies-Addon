@@ -19,7 +19,15 @@ public final class WhisperRateLimiter {
 
     private static final Map<String, Deque<SentRecord>> RECENT_SELF_SENDS = new ConcurrentHashMap<>(); // CHANGED
     private static final long SELF_SEND_DEDUPE_MS = 15_000L;
-    private static final int MAX_RECORDS_PER_USER = 8; // ADDED — bounds memory; old entries also age out via SELF_SEND_DEDUPE_MS
+    private static final int MAX_RECORDS_PER_USER = 8;
+    // bounds memory; old entries also age out via SELF_SEND_DEDUPE_MS
+
+    private static volatile String lastSelfSendUser = null;
+    private static volatile SentRecord lastSelfSend = null;
+    /**
+     * Narrow window around markSelfInitiated() that a rejection ("whispers disabled") must fall within
+     */
+    private static final long LAST_SELF_SEND_WINDOW_MS = 5_000L;
 
     private record SentRecord(String message, long at) {
     }
@@ -53,6 +61,8 @@ public final class WhisperRateLimiter {
             username.toLowerCase(Locale.ROOT), k -> new ConcurrentLinkedDeque<>());
         records.addFirst(new SentRecord(message, System.currentTimeMillis()));
         while (records.size() > MAX_RECORDS_PER_USER) records.pollLast(); // CHANGED: bound the per-user backlog
+        lastSelfSend = new SentRecord(message, System.currentTimeMillis());
+        lastSelfSendUser = username;
     }
 
     /**
@@ -75,5 +85,29 @@ public final class WhisperRateLimiter {
             }
         }
         return false;
+    }
+
+    public static String lastSelfSendUser() {
+        return lastSelfSendUser;
+    }
+
+    public static String lastSelfSendMessage() {
+        return lastSelfSend == null ? null : lastSelfSend.message();
+    }
+
+    public static long lastSelfSendAt() {
+        return lastSelfSend == null ? 0L : lastSelfSend.at();
+    }
+
+    /**
+     * True if a whisper matching (username, message) was the most recent self-initiated send (rejection target).
+     */
+    public static boolean isLastSelfSend(String username, String message) {
+        if (username == null || message == null || lastSelfSendUser == null) return false;
+        long now = System.currentTimeMillis();
+        return lastSelfSend != null
+            && username.equalsIgnoreCase(lastSelfSendUser)
+            && message.equals(lastSelfSend.message())
+            && now - lastSelfSend.at() < LAST_SELF_SEND_WINDOW_MS;
     }
 }
