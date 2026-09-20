@@ -10,7 +10,6 @@ import meteordevelopment.meteorclient.mixin.AbstractContainerScreenAccessor;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.misc.input.KeyAction;
-import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
@@ -48,6 +47,7 @@ public class AutoLoader extends Module {
         PREPARE_SECOND_ECHEST,
         PLACE_SECOND_ECHEST,
         OPEN,
+        AUTO_TAKE,
         WAIT_CLOSE,
         BREAK,
         BREAK_SECOND_ECHEST
@@ -97,8 +97,16 @@ public class AutoLoader extends Module {
     private int secondPlaceAttempts = 0;
     private int preActionSlot = -1;
 
-    private int freeingHotbarSlot = -1;
-    private int freeSlotWaitTicks = 0;
+    /**
+     * AUTO_TAKE settle/retry budget. The container GUI becoming visible and its
+     * contents actually arriving are two separate packets, so we wait a couple
+     * ticks (and re-read the handler every tick) before clicking. This keeps the
+     * quick-move burst from being dropped server-side for acting on a stale view.
+     */
+    private static final int AUTO_TAKE_SETTLE_TICKS = 3;
+    private static final int AUTO_TAKE_MAX_TICKS = 15;
+    private int autoTakeWaitTicks = 0;
+    private int autoTakeTicks = 0;
 
     /**
      * Positions where placement was attempted but never materialized
@@ -116,6 +124,7 @@ public class AutoLoader extends Module {
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgPlacement = settings.createGroup("Placement");
+    private final SettingGroup sgRetries = settings.createGroup("Retries");
 
     private final Setting<Boolean> instantShulker = sgGeneral.add(new BoolSetting.Builder()
         .name("instant-shulker")
@@ -151,6 +160,21 @@ public class AutoLoader extends Module {
             "then open the first one. Both are broken after you close.")
         .defaultValue(false)
         .visible(() -> instantEChest.get() && breakAfterUse.get())
+        .build()
+    );
+
+    private final Setting<Boolean> autoTake = sgGeneral.add(new BoolSetting.Builder()
+        .name("auto-take")
+        .description("Automatically take all items from the container before it closes, instead of waiting for you to take them manually.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Boolean> onlySingleItem = sgGeneral.add(new BoolSetting.Builder()
+        .name("only-single-item")
+        .description("Only auto-take if the container holds just one distinct item; otherwise leave it for you to take manually.")
+        .defaultValue(false)
+        .visible(autoTake::get)
         .build()
     );
 
@@ -214,7 +238,7 @@ public class AutoLoader extends Module {
     private final Setting<Integer> placeRange = sgPlacement.add(new IntSetting.Builder()
         .name("place-range")
         .description("Maximum search distance at which the container may be placed.")
-        .defaultValue(5)
+        .defaultValue(2)
         .min(1)
         .sliderMax(5)
         .build()
@@ -232,6 +256,35 @@ public class AutoLoader extends Module {
         .description("When air-place is on, try positions that have a solid block below first.")
         .defaultValue(true)
         .visible(airPlace::get)
+        .build()
+    );
+
+    private final Setting<Integer> maxOpenAttempts = sgRetries.add(new IntSetting.Builder()
+        .name("max-open-attempts")
+        .description("How many ticks to retry waiting for the container to appear/open before giving up or trying a new spot.")
+        .defaultValue(20)
+        .min(1)
+        .sliderMax(60)
+        .build()
+    );
+
+    private final Setting<Integer> maxSecondPlaceAttempts = sgRetries.add(new IntSetting.Builder()
+        .name("max-second-place-attempts")
+        .description("How many times to retry placing the second ender chest before giving up and opening the first only.")
+        .defaultValue(12)
+        .min(1)
+        .sliderMax(40)
+        .visible(() -> instantEChest.get() && doubleEChest.get())
+        .build()
+    );
+
+    private final Setting<Integer> maxBreakAttempts = sgRetries.add(new IntSetting.Builder()
+        .name("max-break-attempts")
+        .description("How many times to retry breaking the container before giving up.")
+        .defaultValue(40)
+        .min(1)
+        .sliderMax(100)
+        .visible(breakAfterUse::get)
         .build()
     );
 
@@ -271,8 +324,8 @@ public class AutoLoader extends Module {
         breakAttempts = 0;
         secondPlaceAttempts = 0;
         preActionSlot = -1;
-        freeingHotbarSlot = -1;
-        freeSlotWaitTicks = 0;
+        autoTakeWaitTicks = 0;
+        autoTakeTicks = 0;
         failedPositions.clear();
     }
 
@@ -326,6 +379,7 @@ public class AutoLoader extends Module {
             case PREPARE_SECOND_ECHEST -> doPrepareSecondEchest();
             case PLACE_SECOND_ECHEST -> doPlaceSecond();
             case OPEN -> doOpen();
+            case AUTO_TAKE -> doAutoTake();
             case WAIT_CLOSE -> {
                 if (!(mc.gui.screen() instanceof AbstractContainerScreen)) {
                     if (breakAfterUse.get()) stage = Stage.BREAK;
@@ -355,55 +409,24 @@ public class AutoLoader extends Module {
                 }
             }
 
-            if (freeingHotbarSlot != -1) {
-                if (!mc.player.getInventory().getItem(freeingHotbarSlot).isEmpty()) {
-                    if (++freeSlotWaitTicks > 10) {
-                        info("Hotbar slot never cleared, skipping container.");
-                        stage = Stage.IDLE;
-                        resetState();
-                        return;
-                    }
-                    delayTicks = 1;
-                    return;
-                }
-
-                // Confirmed empty now, it's safe to move the container in.
-                InvUtils.move().from(containerInvSlot).toHotbar(freeingHotbarSlot);
-                containerHotbarSlot = freeingHotbarSlot;
-                containerInvSlot = freeingHotbarSlot; // sync
-                freeingHotbarSlot = -1;
-                freeSlotWaitTicks = 0;
-                delayTicks = 2;
+            int targetSlot = resolveHotbarSlot();
+            if (targetSlot == -1) {
+                info("No available hotbar slot (all slots are protected). Skipping container.");
+                stage = Stage.IDLE;
+                resetState();
                 return;
             }
 
-            // Already an empty hotbar slot? Just move straight there.
-            int emptyHotbar = findEmptySlot(0, 9);
-            if (emptyHotbar != -1) {
-                InvUtils.move().from(containerInvSlot).toHotbar(emptyHotbar);
-                containerHotbarSlot = emptyHotbar;
-                containerInvSlot = emptyHotbar; // sync
-                delayTicks = 2;
-                return;
-            }
-
-            for (int i = 0; i < 9; i++) {
-                ItemStack hotbarStack = mc.player.getInventory().getItem(i);
-                if (hotbarStack.isEmpty() || isProtected(hotbarStack)) continue;
-
-                int emptyMain = findEmptySlot(9, 36);
-                if (emptyMain == -1) continue;
-
-                InvUtils.move().fromHotbar(i).to(emptyMain);
-                freeingHotbarSlot = i;
-                freeSlotWaitTicks = 0;
-                delayTicks = 2;
-                return;
-            }
-
-            info("No empty hotbar slot could be freed. Skipping container.");
-            stage = Stage.IDLE;
-            resetState();
+            // Single atomic swap
+            mc.gameMode.handleContainerInput(
+                mc.player.inventoryMenu.containerId,
+                containerInvSlot,
+                targetSlot,
+                ContainerInput.SWAP,
+                mc.player
+            );
+            containerInvSlot = targetSlot; // now <9, next doSetup() call falls through below
+            delayTicks = 2;
             return;
         }
 
@@ -536,8 +559,8 @@ public class AutoLoader extends Module {
             return;
         }
 
-        if (++secondPlaceAttempts > 12) {
-            info("Failed to place the second ender chest after 12 attempts, opening first only.");
+        if (++secondPlaceAttempts > maxSecondPlaceAttempts.get()) {
+            info("Failed to place the second ender chest after " + maxSecondPlaceAttempts.get() + " attempts, opening first only.");
             placedPos = firstPos;
             stage = Stage.OPEN;
             delayTicks = 2;
@@ -572,7 +595,13 @@ public class AutoLoader extends Module {
                 stage = Stage.OPEN;
                 return;
             }
-            InvUtils.move().from(containerInvSlot).toHotbar(tgt);
+            mc.gameMode.handleContainerInput(
+                mc.player.inventoryMenu.containerId,
+                containerInvSlot,
+                tgt,
+                ContainerInput.SWAP,
+                mc.player
+            );
             containerInvSlot = tgt;
             containerHotbarSlot = tgt;
             delayTicks = 3;
@@ -592,7 +621,7 @@ public class AutoLoader extends Module {
 
         if (mc.gui.screen() instanceof AbstractContainerScreen) {
             openAttempts = 0;
-            stage = Stage.WAIT_CLOSE;
+            stage = autoTake.get() ? Stage.AUTO_TAKE : Stage.WAIT_CLOSE;
             return;
         }
 
@@ -604,7 +633,7 @@ public class AutoLoader extends Module {
         if (!present) {
             // Genuinely never materialized, this is the only case where it's
             // safe to abandon and try elsewhere.
-            if (++openAttempts > 20) {
+            if (++openAttempts > maxOpenAttempts.get()) {
                 failedPositions.add(placedPos);
                 boolean needsSecondSpot = isEnderChest && doubleEChest.get();
                 BlockPos retry = placementEngine.findPlacement(
@@ -659,6 +688,132 @@ public class AutoLoader extends Module {
         delayTicks = 4;
     }
 
+    private void doAutoTake() {
+        if (!(mc.gui.screen() instanceof AbstractContainerScreen<?> screen)) {
+            // Already closed somehow; let WAIT_CLOSE pick up cleanly from here.
+            stage = Stage.WAIT_CLOSE;
+            return;
+        }
+
+        AbstractContainerMenu handler = screen.getMenu();
+
+        if (onlySingleItem.get() && hasMixedItems(handler)) {
+            // Leave the GUI open
+            stage = Stage.WAIT_CLOSE;
+            return;
+        }
+
+        // The GUI being visible and its contents having arrived are not the same
+        // thing: the open-screen packet and the container-content sync can land
+        // in separate ticks.
+        if (autoTakeWaitTicks < AUTO_TAKE_SETTLE_TICKS) {
+            autoTakeWaitTicks++;
+            delayTicks = 1;
+            return;
+        }
+
+        // Nothing left in the container, the take is complete.
+        if (!stillHoldsItems(handler)) {
+            mc.player.closeContainer();
+            stage = Stage.WAIT_CLOSE;
+            return;
+        }
+
+        // Genuinely nowhere to put what's left (no free slot beyond the reserved
+        // one and nothing can merge into a partial stack): leave it for the
+        // player instead of silently breaking the container with its contents.
+        if (!hasRoomForContents(handler)) {
+            info("No room in inventory for the container's items, leaving for manual take.");
+            stage = Stage.WAIT_CLOSE;
+            return;
+        }
+
+        // Bounded retry: if the server drops some of the burst (laggy tick,
+        // stale revision), the handler gets re-synced and re-reading it next
+        // tick lets us pick up whatever was left behind.
+        if (++autoTakeTicks > AUTO_TAKE_MAX_TICKS) {
+            warning("Couldn't take all items from the container in time, leaving for manual take.");
+            stage = Stage.WAIT_CLOSE;
+            return;
+        }
+
+        for (int i = 0; i < 27; i++) {
+            ItemStack stack = handler.getSlot(i).getItem();
+            if (stack.isEmpty()) continue;
+            mc.gameMode.handleContainerInput(handler.containerId, i, 0, ContainerInput.QUICK_MOVE, mc.player);
+            // Re-check the real inventory rather than assuming this quick-move
+            // consumed an empty slot.
+            if (!hasRoomForContents(handler)) break;
+        }
+
+        delayTicks = 1;
+    }
+
+    /**
+     * True if any of the container's 27 slots still holds an item.
+     */
+    private boolean stillHoldsItems(AbstractContainerMenu handler) {
+        for (int i = 0; i < 27; i++) {
+            if (!handler.getSlot(i).getItem().isEmpty()) return true;
+        }
+        return false;
+    }
+
+    /**
+     * True if at least one item in the container could be moved into the player
+     * inventory right now: either a free slot beyond the ones keepFreeSlots()
+     * reserves for picking up the broken container, or a partial stack the item
+     * can merge into without consuming a new slot.
+     */
+    private boolean hasRoomForContents(AbstractContainerMenu handler) {
+        for (int i = 0; i < 27; i++) {
+            ItemStack stack = handler.getSlot(i).getItem();
+            if (stack.isEmpty()) continue;
+
+            if (countEmptyPlayerSlots() > keepFreeSlots()) return true;
+
+            for (int p = 0; p < 36; p++) {
+                ItemStack playerStack = mc.player.getInventory().getItem(p);
+                if (playerStack.isEmpty()) continue;
+                if (playerStack.getCount() < playerStack.getItem().getDefaultMaxStackSize()
+                    && ItemStack.isSameItemSameComponents(stack, playerStack)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * True if the container's 27 slots hold more than one distinct item type.
+     * Empty slots don't count.
+     */
+    private boolean hasMixedItems(AbstractContainerMenu handler) {
+        Item found = null;
+        for (int i = 0; i < 27; i++) {
+            ItemStack stack = handler.getSlot(i).getItem();
+            if (stack.isEmpty()) continue;
+            if (found == null) {
+                found = stack.getItem();
+            } else if (stack.getItem() != found) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private int keepFreeSlots() {
+        return breakAfterUse.get() ? 1 : 0;
+    }
+
+    private int countEmptyPlayerSlots() {
+        int empty = 0;
+        for (int i = 0; i < 36; i++) {
+            if (mc.player.getInventory().getItem(i).isEmpty()) empty++;
+        }
+        return empty;
+    }
+
     private void doBreak(boolean isSecond) {
         if (mc.gui.screen() != null) {
             mc.player.closeContainer();
@@ -672,7 +827,7 @@ public class AutoLoader extends Module {
             return;
         }
 
-        if (++breakAttempts > 40) {
+        if (++breakAttempts > maxBreakAttempts.get()) {
             info("Timed out while breaking the container.");
             restorePreBreakSlot();
             stage = Stage.IDLE;
@@ -838,6 +993,10 @@ public class AutoLoader extends Module {
 
     private void sendResyncPacket() {
         if (mc.player == null || mc.player.connection == null) return;
+        // Never resync while any GUI is open: a stray resync sent mid-take can
+        // desync the open container's handler and make the server silently drop
+        // the subsequent quick-move clicks.
+        if (mc.gui.screen() != null) return;
 
         AbstractContainerMenu handler = mc.player.containerMenu;
         Int2ObjectMap<HashedStack> modifiedStacks = new Int2ObjectOpenHashMap<>();
@@ -871,13 +1030,6 @@ public class AutoLoader extends Module {
 
     private boolean isBundleItem(ItemStack stack) {
         return stack.getItem() instanceof BundleItem;
-    }
-
-    private int findEmptySlot(int start, int end) {
-        for (int i = start; i < end; i++) {
-            if (mc.player.getInventory().getItem(i).isEmpty()) return i;
-        }
-        return -1;
     }
 
     private boolean isExpectedItem(ItemStack stack) {

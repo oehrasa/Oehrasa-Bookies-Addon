@@ -86,6 +86,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new PacketEat());
         Modules.get().add(new PortalCave());
         Modules.get().add(new PressItemFrame());
+        Modules.get().add(new PzH2000());
         Modules.get().add(new PlatformBuilder());
         // S
         Modules.get().add(new SignRender());

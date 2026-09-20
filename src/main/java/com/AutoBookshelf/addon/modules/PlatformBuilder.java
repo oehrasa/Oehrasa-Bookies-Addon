@@ -325,6 +325,26 @@ public class PlatformBuilder extends Module {
         .build()
     );
 
+    private final Setting<Integer> restockMaxPlacementAttempts = sgRestock.add(new IntSetting.Builder()
+        .name("shulker-max-place-attempts")
+        .description("How many times to retry finding/placing the shulker before giving up on this restock.")
+        .defaultValue(5)
+        .min(1)
+        .sliderMax(20)
+        .visible(autoRestock::get)
+        .build()
+    );
+
+    private final Setting<Integer> restockMaxOpenAttempts = sgRestock.add(new IntSetting.Builder()
+        .name("shulker-max-open-attempts")
+        .description("How many times to retry opening the placed shulker before giving up.")
+        .defaultValue(3)
+        .min(1)
+        .sliderMax(20)
+        .visible(autoRestock::get)
+        .build()
+    );
+
     private final HashSet<BlockPos> pendingPlacements = new HashSet<>();
 
     private int delay = 0;
@@ -775,7 +795,9 @@ public class PlatformBuilder extends Module {
             restockRotate.get(),
             restockShulkerHotbarSlot.get(),
             restockProtectedItems.get(),
-            footprint
+            footprint,
+            restockMaxPlacementAttempts.get(),
+            restockMaxOpenAttempts.get()
         );
     }
 

@@ -222,8 +222,8 @@ public final class AsmrAudioEngine {
             boolean played = stream(track.url(), myGen);
             if (played || myGen != generation.get()) return; // success, or superseded mid-stream
 
-            // stream() failed to produce any audio (e.g. the 403 -> ffmpeg
-            // "invalid data" case) - retry with a fresh resolve rather than
+            // stream() failed to produce any audio (the 403 -> ffmpeg
+            // "invalid data" case) retry with a fresh resolve rather than
             // leaving the user on a permanently broken track.
             if (attempt < MAX_ATTEMPTS) {
                 statusMessage = "stream failed, retrying (" + attempt + "/" + MAX_ATTEMPTS + ")...";

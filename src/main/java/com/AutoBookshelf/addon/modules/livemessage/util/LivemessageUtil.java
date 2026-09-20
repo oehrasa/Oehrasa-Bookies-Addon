@@ -27,6 +27,9 @@ public class LivemessageUtil {
     public static final List<Pattern> TO_PATTERNS = new ArrayList<>();
     private static final Pattern TIMESTAMP_PREFIX = Pattern.compile("^<\\d{1,2}:\\d{2}>\\s*");
 
+    // Server added player head marker
+    private static final Pattern HEAD_MARKER = Pattern.compile("(?i)\\[[^\\[\\]]+\\s+head\\]\\s*");
+
     private static final String[] DEFAULT_INCOMING = new String[]{
         "player whispers:",
         "From player:",
@@ -176,12 +179,18 @@ public class LivemessageUtil {
         }
     }
 
+    private static final Pattern BIDI_AND_ZERO_WIDTH = Pattern.compile(
+        "[\\u200B-\\u200F\\u202A-\\u202E\\u2066-\\u2069\\u001B]"
+    );
+
     public static String stripChatDecorations(String text) {
         if (text == null) {
             return "";
         }
 
         String stripped = text.replaceAll("§[0-9a-fk-or]", "");
+        stripped = BIDI_AND_ZERO_WIDTH.matcher(stripped).replaceAll("");
+        stripped = HEAD_MARKER.matcher(stripped).replaceAll("");
         stripped = TIMESTAMP_PREFIX.matcher(stripped).replaceFirst("");
         return stripped;
     }

@@ -4,6 +4,7 @@ import com.AutoBookshelf.addon.modules.livemessage.util.LivemessageUtil;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 import java.io.File;
@@ -61,6 +62,13 @@ public class GuiUtil {
         return a << 24 | r << 16 | g << 8 | b;
     }
 
+    /**
+     * Replaces the alpha channel of an ARGB color, keeping the RGB unchanged.
+     */
+    public static int withAlpha(int argb, int alpha) {
+        return (alpha << 24) | (argb & 0xFFFFFF);
+    }
+
     public static int getWindowColor(UUID uuid) {
         try {
             File settingsFile = LivemessageUtil.LIVEMESSAGE_FOLDER.resolve("mainwindow.json").toFile();
@@ -105,6 +113,38 @@ public class GuiUtil {
 
     public static void drawRect(GuiGraphicsExtractor context, int x, int y, int w, int h, int color) {
         context.fill(x, y, x + w, y + h, fade(color));
+    }
+
+    /**
+     * Trims a line to fit within {@code maxWidth} without splitting a word. Breaks at the last
+     * space that fits; a single word wider than the line.
+     */
+    public static String wrapWordBoundary(Font renderer, String text, int maxWidth) {
+        if (renderer.width(text) <= maxWidth) {
+            return text;
+        }
+
+        int fitLen = renderer.plainSubstrByWidth(text, maxWidth).length();
+        if (fitLen >= text.length()) {
+            return text;
+        }
+        if (fitLen == 0) {
+            return text.substring(0, 1); // avoid an infinite loop if a single char exceeds maxWidth
+        }
+
+        if (text.charAt(fitLen - 1) == ' ') {
+            return text.substring(0, fitLen);
+        }
+        if (text.charAt(fitLen) == ' ') {
+            return text.substring(0, fitLen + 1);
+        }
+
+        int lastSpace = text.lastIndexOf(' ', fitLen - 1);
+        if (lastSpace > 0) {
+            return text.substring(0, lastSpace + 1);
+        }
+
+        return text.substring(0, fitLen); // single long word, mid-word break is unavoidable
     }
 
     public static void drawTooltip(GuiGraphicsExtractor context, String text, int x, int y) {

@@ -176,6 +176,71 @@ public class QueueUtil {
     }
 
     /**
+     * Marks the most recent sent (non-pending) message matching (message, sentAt) for uuid as
+     * not accepted when the server responds with "whispers disabled". Deterministic under
+     * this uuid's lock and atomic.
+     */
+    public static int markNotAccepted(UUID uuid, String message, long sentAt) {
+        int flagged = 0;
+        synchronized (lockFor(uuid)) {
+            File file = fileFor(uuid);
+            if (!file.exists()) return 0;
+
+            List<String> rewritten = new ArrayList<>();
+            ChatWindow.ChatMessage target = null;
+            int targetLine = -1;
+
+            try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+                String line;
+                int lineIdx = 0;
+                while ((line = reader.readLine()) != null) {
+                    ChatWindow.ChatMessage parsed;
+                    try {
+                        parsed = GSON.fromJson(line, ChatWindow.ChatMessage.class);
+                    } catch (Exception e) {
+                        rewritten.add(line);
+                        lineIdx++;
+                        continue;
+                    }
+
+                    if (parsed != null && parsed.sentByMe && !parsed.pending
+                        && parsed.message != null && parsed.message.equals(message)
+                        && Math.abs(parsed.timestamp - sentAt) < WHISPER_REJECT_WINDOW_MS) {
+                        target = parsed;
+                        targetLine = lineIdx;
+                    }
+                    rewritten.add(line);
+                    lineIdx++;
+                }
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to read history file for " + uuid, e);
+            }
+
+            if (target != null && targetLine >= 0) {
+                target.notAccepted = true;
+                String newLine = GSON.toJson(target);
+                if (!newLine.equals(rewritten.get(targetLine))) {
+                    rewritten.set(targetLine, newLine);
+                    try {
+                        writeAtomic(file, rewritten);
+                        flagged = 1;
+                    } catch (IOException e) {
+                        throw new RuntimeException("Failed to rewrite history file for " + uuid, e);
+                    }
+                }
+            }
+        }
+
+        if (flagged > 0) {
+            ChatWindow.refreshIfOpen(uuid);
+        }
+
+        return flagged;
+    }
+
+    private static final long WHISPER_REJECT_WINDOW_MS = 10_000L;
+
+    /**
      * Atomically pops the single oldest pending message for uuid: reads the file, flips that
      * one line's pending flag to false, and writes the file back, all while holding this
      * uuid's lock

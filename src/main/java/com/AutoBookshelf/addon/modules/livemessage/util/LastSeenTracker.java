@@ -9,11 +9,12 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.lang.reflect.Type;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static com.AutoBookshelf.addon.modules.livemessage.LiveMessage.logError;
 
 public class LastSeenTracker {
-    private static final Map<UUID, Long> lastSeen = new HashMap<>();
+    private static final Map<UUID, Long> lastSeen = new ConcurrentHashMap<>();
     private static Set<UUID> previouslyOnline = new HashSet<>();
 
     private static final long SAVE_INTERVAL_MS = 30_000;

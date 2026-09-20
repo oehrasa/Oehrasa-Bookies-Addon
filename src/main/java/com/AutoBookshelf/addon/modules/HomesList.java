@@ -6,6 +6,7 @@ import com.google.gson.*;
 import com.google.gson.reflect.TypeToken;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.game.ReceiveMessageEvent;
+import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.gui.GuiTheme;
 import meteordevelopment.meteorclient.gui.GuiThemes;
@@ -29,7 +30,12 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.common.ClientboundShowDialogPacket;
 import net.minecraft.resources.Identifier;
+import net.minecraft.server.dialog.ActionButton;
+import net.minecraft.server.dialog.Dialog;
+import net.minecraft.server.dialog.DialogListDialog;
+import net.minecraft.server.dialog.MultiActionDialog;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -70,6 +76,13 @@ public class HomesList extends Module {
         .name("refresh-on-activate")
         .description("Automatically fetch the table using /homes when the module is enabled.")
         .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<String> fetchCommand = sgGeneral.add(new StringSetting.Builder()
+        .name("fetch-command")
+        .description("Command sent to fetch the home list tables.")
+        .defaultValue("homes")
         .build()
     );
 
@@ -136,9 +149,37 @@ public class HomesList extends Module {
     private final Setting<Boolean> debugMode = sgDebug.add(new BoolSetting.Builder()
         .name("debug-mode")
         .description("Show detailed debug information.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<String> guiTitle = sgGeneral.add(new StringSetting.Builder()
+        .name("gui-title")
+        .description("Title of the homes ui sent by the server.")
+        .defaultValue("Homes")
+        .build()
+    );
+
+    private final SettingGroup sgQueue = settings.createGroup("Teleport Queue");
+
+    private final Setting<Boolean> queueTeleports = sgQueue.add(new BoolSetting.Builder()
+        .name("queue-teleports")
+        .description("If a teleport is on cooldown, wait it out and automatically resend the command.")
         .defaultValue(true)
         .build()
     );
+
+    private static final java.util.regex.Pattern COOLDOWN_PATTERN = java.util.regex.Pattern.compile(
+        "wait\\s+(?:(\\d+)h)?\\s*(?:(\\d+)m)?\\s*(?:(\\d+(?:\\.\\d+)?)s)?\\s+to teleport again"
+    );
+
+    private static final long DEBUG_DEDUPE_MS = 500L;
+
+    private String lastAttemptedHome = null;
+    private String queuedHome = null;
+    private long queuedReadyAtMillis = 0L;
+    private String lastDebugLine = null;
+    private long lastDebugTime = 0L;
 
     private static final Gson GSON = new GsonBuilder()
         .registerTypeAdapter(HomeEntry.class, new HomeEntryAdapter())
@@ -158,7 +199,7 @@ public class HomesList extends Module {
     private boolean quickForceClosed = false;
 
     public HomesList() {
-        super(Addon.CATEGORY, "Homes-List", "Manage and teleport to your server homes with a GUI.");
+        super(Addon.CATEGORY, "Homes-list", "Manage and teleport to your server homes with a GUI.");
         saveFile = new File(new File(MeteorClient.mc.gameDirectory, "meteor-client"), "homes.json");
     }
 
@@ -178,6 +219,9 @@ public class HomesList extends Module {
         waitingForServerHomes = false;
         needsTableRebuild = false;
         quickForceClosed = false;
+        lastAttemptedHome = null;
+        queuedHome = null;
+        queuedReadyAtMillis = 0L;
         closeQuickScreen(false);
     }
 
@@ -222,14 +266,19 @@ public class HomesList extends Module {
 
     public void refreshFromServer() {
         if (MeteorClient.mc.player == null) return;
-        MeteorClient.mc.player.connection.sendCommand("homes");
+        MeteorClient.mc.player.connection.sendCommand(fetchCommand.get());
         waitingForServerHomes = true;
     }
 
     @EventHandler
     private void onMessageReceived(ReceiveMessageEvent event) {
-        if (!waitingForServerHomes) return;
         String msg = event.getMessage().getString();
+
+        if (queueTeleports.get()) {
+            handleCooldownMessage(msg);
+        }
+
+        if (!waitingForServerHomes) return;
         String prefix = chatPrefix.get();
 
         int idx = msg.indexOf(prefix);
@@ -250,7 +299,56 @@ public class HomesList extends Module {
             String homeName = part.trim().replaceAll("§[0-9a-fk-orA-FK-OR]", "").trim();
             if (homeName.isEmpty()) continue;
             serverHomes.add(homeName);
+        }
 
+        applyServerHomes(serverHomes);
+    }
+
+    @EventHandler
+    private void onPacketReceive(PacketEvent.Receive event) {
+        if (debugMode.get() && event.packet instanceof ClientboundShowDialogPacket debugPacket) {
+            Dialog debugDialog = debugPacket.dialog().value();
+            debug("[debug] ClientboundShowDialogPacket title=" + debugDialog.common().computeExternalTitle().getString()
+                + ", type=" + debugDialog.getClass().getSimpleName()
+                + ", waiting=" + waitingForServerHomes);
+        }
+
+        if (!waitingForServerHomes) return;
+        if (!(event.packet instanceof ClientboundShowDialogPacket packet)) return;
+
+        Dialog dialog = packet.dialog().value();
+
+        List<String> serverHomes;
+
+        if (dialog instanceof DialogListDialog listDialog) {
+            String title = listDialog.common().computeExternalTitle().getString().trim();
+            if (!title.equalsIgnoreCase(guiTitle.get())) return;
+
+            serverHomes = new ArrayList<>();
+            for (Holder<Dialog> entry : listDialog.dialogs()) {
+                String name = entry.value().common().computeExternalTitle().getString().trim();
+                if (!name.isEmpty()) serverHomes.add(name);
+            }
+        } else if (dialog instanceof MultiActionDialog multiDialog) {
+            String title = multiDialog.common().computeExternalTitle().getString().trim();
+            if (!title.equalsIgnoreCase(guiTitle.get())) return;
+
+            // The server now renders homes as action buttons (one home per label).
+            serverHomes = new ArrayList<>();
+            for (ActionButton action : multiDialog.actions()) {
+                String name = action.button().label().getString().trim();
+                if (!name.isEmpty()) serverHomes.add(name);
+            }
+        } else {
+            return;
+        }
+
+        applyServerHomes(serverHomes);
+        event.cancel();
+    }
+
+    private void applyServerHomes(List<String> serverHomes) {
+        for (String homeName : serverHomes) {
             if (homes.stream().noneMatch(h -> h.originalName.equalsIgnoreCase(homeName))) {
                 // pick a unique icon from the full item registry instead of a small fixed
                 // pool, so auto-added homes don't collide.
@@ -310,14 +408,56 @@ public class HomesList extends Module {
 
     public void teleportTo(String homeName) {
         if (MeteorClient.mc.player == null) return;
+        sendTeleport(homeName);
+        if (debugMode.get()) debug("Teleport to " + homeName);
+    }
+
+    private void sendTeleport(String homeName) {
+        lastAttemptedHome = homeName;
         MeteorClient.mc.player.connection.sendCommand("home " + homeName);
-        if (debugMode.get()) info("Teleport to " + homeName);
+    }
+
+    private void debug(String message) {
+        long now = System.currentTimeMillis();
+        if (message.equals(lastDebugLine) && now - lastDebugTime < DEBUG_DEDUPE_MS) {
+            return;
+        }
+        lastDebugLine = message;
+        lastDebugTime = now;
+        info(message);
+    }
+
+    private void handleCooldownMessage(String msg) {
+        if (lastAttemptedHome == null) return;
+
+        java.util.regex.Matcher m = COOLDOWN_PATTERN.matcher(msg);
+        if (!m.find()) return;
+
+        // Already queued for the same home: ignore repeated cooldown messages
+        if (queuedHome != null && queuedHome.equals(lastAttemptedHome)) return;
+
+        double seconds = 0;
+        if (m.group(1) != null) seconds += Integer.parseInt(m.group(1)) * 3600;
+        if (m.group(2) != null) seconds += Integer.parseInt(m.group(2)) * 60;
+        if (m.group(3) != null) seconds += Double.parseDouble(m.group(3));
+
+        // Queue even when the server reports 0s ("wait 0m 0s to teleport again"),
+        // padding the retry by 1s so the command isn't sent in the same tick cuz 0s
+        int padMillis = 1000;
+        queuedHome = lastAttemptedHome;
+        queuedReadyAtMillis = System.currentTimeMillis() + (long) (seconds * 1000) + padMillis;
+
+        if (debugMode.get()) debug("Teleport to " + queuedHome + " is on cooldown, retrying in " + (seconds + 1) + "s.");
     }
 
     public void renameHome(HomeEntry entry, String newName) {
         if (MeteorClient.mc.player == null || entry == null) return;
         newName = newName == null ? "" : newName.trim();
         if (newName.isEmpty()) return;
+        if (newName.matches(".*\\s.*")) {
+            info("Home names cannot contain spaces.");
+            return;
+        }
 
         String command = renameCommandFormat.get()
             .replace("{oldName}", entry.originalName == null ? "" : entry.originalName)
@@ -376,6 +516,15 @@ public class HomesList extends Module {
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (MeteorClient.mc.player == null || MeteorClient.mc.level == null) return;
+
+        if (queueTeleports.get() && queuedHome != null
+            && System.currentTimeMillis() >= queuedReadyAtMillis) {
+            String pending = queuedHome;
+            queuedHome = null;
+            queuedReadyAtMillis = 0L;
+            sendTeleport(pending);
+            if (debugMode.get()) debug("Cooldown finished, teleporting to " + pending + ".");
+        }
 
         boolean keyPressed = quickSelectKey.get().isPressed();
 
@@ -806,7 +955,11 @@ public class HomesList extends Module {
                 newEntry.autoAdded = home != null && home.autoAdded;
                 newEntry.favorite = home != null && home.favorite;
                 if (home == null) module.addHome(newEntry);
-                else module.updateHome(index, newEntry);
+                else {
+                    int current = module.getHomes().indexOf(home);
+                    if (current >= 0) module.updateHome(current, newEntry);
+                    else module.addHome(newEntry);
+                }
                 if (parent != null) {
                     parent.rebuildTable();
                     MeteorClient.mc.gui.setScreen(parent);
@@ -830,6 +983,7 @@ public class HomesList extends Module {
 
                     module.renameHome(home, newName);
                     originalName.set(newName);
+                    displayName.set(home.displayName);
                     renameBox.set("");
 
                     if (parent != null) parent.rebuildTable();

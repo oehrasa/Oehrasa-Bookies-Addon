@@ -27,7 +27,7 @@ import net.minecraft.world.entity.player.PlayerSkin;
 import net.minecraft.world.item.*;
 import net.minecraft.world.level.block.*;
 import net.minecraft.world.phys.Vec3;
-import org.jetbrains.annotations.Nullable;  // added missing import
+import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
 
@@ -593,7 +593,7 @@ public class NeboM extends HudElement {
             miningTicks.put(entityId, actionDisplayTicks.get());
         }
 
-        // Totem of undying popped. entity status/event 35 is the vanilla "totem used" event
+        // Totem of undying popped thats entity status 35 is the vanilla "totem used" event
         if (event.packet instanceof ClientboundEntityEventPacket packet) {
             if (packet.getEventId() == 35) {
                 Entity entity = packet.getEntity(mc.level);
@@ -603,7 +603,7 @@ public class NeboM extends HudElement {
             }
         }
 
-        // Crystal placed / projectile thrown by anyone (guess who did it by nearest player to the spawn position)
+        // Crystal placed / projectile thrown by anyone that guess who did it by nearest player to the spawn position
         if (event.packet instanceof ClientboundAddEntityPacket packet) {
             EntityType<?> type = packet.getType();
             Vec3 spawnPos = new Vec3(packet.getX(), packet.getY(), packet.getZ());
