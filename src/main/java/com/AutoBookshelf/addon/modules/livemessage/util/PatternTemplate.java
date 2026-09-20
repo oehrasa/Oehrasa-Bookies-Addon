@@ -5,6 +5,7 @@ import java.util.regex.Pattern;
 public final class PatternTemplate {
     private static final String USERNAME_MARKER = "\u0000PLAYER\u0000";
     private static final String USERNAME_REGEX = "([^:\\[\\]\\s]{3,16})";
+    private static final String USERNAME_REGEX_NONCAPTURING = "(?:[^:\\[\\]\\s]{3,16})";
     private static final String RANK_PREFIX = "(?:<[^>]+> )?";
 
     private PatternTemplate() {
@@ -17,7 +18,11 @@ public final class PatternTemplate {
         }
 
         if (trimmed.regionMatches(true, 0, "regex:", 0, 6)) {
-            return Pattern.compile(trimmed.substring(6).trim());
+            String raw = trimmed.substring(6).trim();
+            if (raw.length() > 300) {
+                throw new IllegalArgumentException("regex: pattern too long (" + raw.length() + " chars, max 300)");
+            }
+            return Pattern.compile(raw);
         }
 
         return Pattern.compile(toRegex(trimmed, allowRankPrefix), Pattern.CASE_INSENSITIVE);
@@ -33,10 +38,16 @@ public final class PatternTemplate {
             regex.append(RANK_PREFIX);
         }
 
+        boolean usernameCaptured = false;
         for (int i = 0; i < parts.length; i++) {
             regex.append(Pattern.quote(parts[i]));
             if (i < parts.length - 1) {
-                regex.append(USERNAME_REGEX);
+                if (!usernameCaptured) {
+                    regex.append(USERNAME_REGEX);
+                    usernameCaptured = true;
+                } else {
+                    regex.append(USERNAME_REGEX_NONCAPTURING);
+                }
             }
         }
 

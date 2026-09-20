@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.BookUtils;
 import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -12,6 +13,7 @@ import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.screens.inventory.BookViewScreen;
 import net.minecraft.client.player.RemotePlayer;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
@@ -55,6 +57,25 @@ public class InventoryTracker extends Module {
         .name("show-container-contents")
         .description("Also displays the contents of shulker boxes (or other containers) in the tracked grid, if the server sends that data.")
         .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Double> heightOffset = sgGeneral.add(new DoubleSetting.Builder()
+        .name("height-offset")
+        .description("Extra world-space Y offset above eye height, to avoid rendering on Nametags row.")
+        .defaultValue(0.6)
+        .min(0)
+        .sliderRange(0, 4)
+        .build()
+    );
+
+    private final Setting<Integer> screenGap = sgGeneral.add(new IntSetting.Builder()
+        .name("screen-gap")
+        .description("Extra pixel gap between the panel and its anchor point.")
+        .defaultValue(20)
+        .min(0)
+        .max(100)
+        .sliderRange(0, 100)
         .build()
     );
 
@@ -102,6 +123,27 @@ public class InventoryTracker extends Module {
         .build()
     );
 
+    private final SettingGroup sgBooks = settings.createGroup("Books");
+
+    private final Setting<Boolean> announceHeldBooks = sgBooks.add(new BoolSetting.Builder()
+        .name("announce-held-books")
+        .description("Prints a tracked player's held book contents to chat when they change.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> predictBook = sgBooks.add(new BoolSetting.Builder()
+        .name("predict-book")
+        .description("While an .invsee <player> gui screen is open, live-refreshes it as that player edits their book.")
+        .defaultValue(true)
+        .build()
+    );
+
+    public final Map<UUID, ItemStack> lastHeldBook = new HashMap<>();
+    private final Map<UUID, List<String>> lastBookPages = new HashMap<>();
+    private UUID predictingUuid = null;
+    private int predictingPageIndex = 0;
+
     // Reused scratch array for pulling container contents out of a held shulker box,
     // Each slot is copied into the display list
     // immediately after being filled, before this array is reused for the next stack.
@@ -120,6 +162,11 @@ public class InventoryTracker extends Module {
     @Nullable
     public TrackedInventory getTracked(UUID uuid) {
         return inventoryMap.get(uuid);
+    }
+
+    public void startPredicting(UUID uuid) {
+        predictingUuid = uuid;
+        predictingPageIndex = 0;
     }
 
     @EventHandler
@@ -161,6 +208,11 @@ public class InventoryTracker extends Module {
                 // Only the slot that actually changed gets pushed into history.
                 tracked.update(newStack, slot);
 
+                // Book detection/announce/predict
+                if (slot == EquipmentSlot.MAINHAND || slot == EquipmentSlot.OFFHAND) {
+                    checkHeldBook(uuid, player, newStack);
+                }
+
                 injectTrackedItems(player.getInventory(), tracked, mainHandStack);
                 buildRenderPreview(uuid, player, tracked);
 
@@ -170,6 +222,49 @@ public class InventoryTracker extends Module {
 
         lastEquipment.keySet().retainAll(seenUUIDs);
         renderPreviews.keySet().retainAll(seenUUIDs);
+        lastHeldBook.keySet().retainAll(seenUUIDs);
+        lastBookPages.keySet().retainAll(seenUUIDs);
+    }
+
+    private void checkHeldBook(UUID uuid, Player player, ItemStack stack) {
+        BookUtils.BookContent content = BookUtils.checkHeldBook(stack);
+        if (content == null) return;
+
+        List<String> pages = content.pages();
+        List<String> previous = lastBookPages.put(uuid, pages);
+        lastHeldBook.put(uuid, stack.copy());
+
+        if (announceHeldBooks.get() && !pages.equals(previous)) {
+            info("§6=== " + player.getName().getString() + "'s book ===");
+            BookUtils.printBookInfo(content, this::info);
+        }
+
+        if (predictBook.get() && uuid.equals(predictingUuid)) {
+            refreshPredictedScreen(previous == null ? List.of() : previous, pages, stack);
+        }
+    }
+
+    private void refreshPredictedScreen(List<String> oldPages, List<String> newPages, ItemStack stack) {
+        if (!(mc.screen instanceof BookViewScreen)) {
+            predictingUuid = null; // viewer closed it themselves, stop chasing
+            return;
+        }
+
+        int target = 0;
+        for (int i = 0; i < newPages.size(); i++) {
+            String oldText = i < oldPages.size() ? oldPages.get(i) : "";
+            if (!oldText.equals(newPages.get(i))) {
+                target = i;
+                break;
+            }
+        }
+        predictingPageIndex = target;
+
+        mc.execute(() -> {
+            BookViewScreen screen = new BookViewScreen(BookViewScreen.BookAccess.fromItem(stack));
+            mc.setScreen(screen);
+            if (predictingPageIndex > 0) screen.setPage(predictingPageIndex);
+        });
     }
 
     private void injectTrackedItems(Inventory inventory, TrackedInventory tracked, ItemStack mainHand) {
@@ -233,6 +328,10 @@ public class InventoryTracker extends Module {
         playerMap.clear();
         lastEquipment.clear();
         renderPreviews.clear();
+        lastHeldBook.clear();
+        lastBookPages.clear();
+        predictingUuid = null;
+        predictingPageIndex = 0;
     }
 
     private record PreviewData(
@@ -318,7 +417,7 @@ public class InventoryTracker extends Module {
             double dist = mc.player.distanceTo(player);
             if (dist > maxRenderDistance.get()) continue;
 
-            Vector3d vec = new Vector3d(player.getX(), player.getEyeY() + 0.6, player.getZ());
+            Vector3d vec = new Vector3d(player.getX(), player.getEyeY() + 0.6 + heightOffset.get(), player.getZ());
             if (!NametagUtils.to2D(vec, 1.0)) continue;
 
             // Recomputed live every frame
@@ -329,7 +428,7 @@ public class InventoryTracker extends Module {
             int screenY = (int) (vec.y * guiScaleY);
 
             int panelX = screenX - preview.panelWidth() / 2;
-            int panelY = screenY - preview.panelHeight() - 20;
+            int panelY = screenY - preview.panelHeight() - screenGap.get();
 
             if (panelX < 0) panelX = 0;
             if (panelY < 0) panelY = 0;

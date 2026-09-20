@@ -6,8 +6,10 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import meteordevelopment.meteorclient.commands.Command;
 import meteordevelopment.meteorclient.systems.modules.Modules;
+import net.minecraft.client.gui.screens.inventory.BookViewScreen;
 import net.minecraft.client.multiplayer.ClientSuggestionProvider;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 
 public class InvseeCommand extends Command {
 
@@ -78,6 +80,29 @@ public class InvseeCommand extends Command {
                 mc.execute(() -> mc.setScreen(new InventoryTrackerScreen(finalTarget, tracked)));
                 return SINGLE_SUCCESS;
             })
+            .then(literal("gui")
+                .executes(ctx -> {
+                    String name = StringArgumentType.getString(ctx, "name");
+                    InventoryTracker mod = requireTracker();
+                    if (mod == null) return SINGLE_SUCCESS;
+
+                    Player target = findPlayer(mod, name);
+                    if (target == null) {
+                        error("Player '" + name + "' not found in world or saved data.");
+                        return SINGLE_SUCCESS;
+                    }
+
+                    ItemStack book = mod.lastHeldBook.get(target.getUUID());
+                    if (book == null || book.isEmpty()) {
+                        error("No tracked book data for '" + name + "' yet.");
+                        return SINGLE_SUCCESS;
+                    }
+
+                    mod.startPredicting(target.getUUID());
+                    mc.execute(() -> mc.setScreen(new BookViewScreen(BookViewScreen.BookAccess.fromItem(book))));
+                    return SINGLE_SUCCESS;
+                })
+            )
         );
     }
 

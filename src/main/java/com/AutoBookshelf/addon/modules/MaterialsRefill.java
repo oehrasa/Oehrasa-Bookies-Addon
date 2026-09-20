@@ -13,7 +13,9 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class MaterialsRefill extends Module {
 
@@ -31,16 +33,31 @@ public class MaterialsRefill extends Module {
                 if (success) {
                     if (autoToggle.get()) toggle();
                 } else {
-                    // Same 20-tick backoff the old inline logic used before retrying checkStock().
-                    retryCooldown = 20;
+                    // Don't park on a target item that can't be restocked (no
+                    // shulker box with it). Put it on a short cooldown so the
+                    // next checkStock() pass moves on to the other target items
+                    // instead of hammering the same one forever.
+                    if (lastAttemptItem != null) {
+                        itemFailCooldowns.put(lastAttemptItem, ITEM_FAIL_COOLDOWN_TICKS);
+                    }
                 }
             }
         });
 
     private int retryCooldown = 0;
 
+    /**
+     * Per-target suppression after a restock attempt for that item failed
+     * (most commonly "no shulker box containing it"), so the module tries the
+     * rest of the target list before retrying it.
+     */
+    private static final int ITEM_FAIL_COOLDOWN_TICKS = 60; // ~3s
+    private final Map<Item, Integer> itemFailCooldowns = new HashMap<>();
+    private Item lastAttemptItem = null;
+
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgControls = settings.createGroup("Controls");
+    private final SettingGroup sgRetries = settings.createGroup("Retries");
 
     private final Setting<List<Item>> targetItems = sgGeneral.add(new ItemListSetting.Builder()
         .name("target-items")
@@ -127,6 +144,24 @@ public class MaterialsRefill extends Module {
         .build()
     );
 
+    private final Setting<Integer> maxPlacementAttempts = sgRetries.add(new IntSetting.Builder()
+        .name("max-placement-attempts")
+        .description("How many times to retry finding/placing a shulker before giving up on this restock.")
+        .defaultValue(5)
+        .min(1)
+        .sliderMax(20)
+        .build()
+    );
+
+    private final Setting<Integer> maxOpenAttempts = sgRetries.add(new IntSetting.Builder()
+        .name("max-open-attempts")
+        .description("How many times to retry opening the placed shulker before giving up.")
+        .defaultValue(3)
+        .min(1)
+        .sliderMax(20)
+        .build()
+    );
+
     @SuppressWarnings("unused")
     private final Setting<Keybind> setTargetFromHeld = sgControls.add(new KeybindSetting.Builder()
         .name("set-target-from-held")
@@ -157,12 +192,16 @@ public class MaterialsRefill extends Module {
     @Override
     public void onActivate() {
         retryCooldown = 0;
+        itemFailCooldowns.clear();
+        lastAttemptItem = null;
         restockEngine.reset();
     }
 
     @Override
     public void onDeactivate() {
         retryCooldown = 0;
+        itemFailCooldowns.clear();
+        lastAttemptItem = null;
         restockEngine.reset();
     }
 
@@ -175,6 +214,8 @@ public class MaterialsRefill extends Module {
             return;
         }
 
+        tickFailCooldowns();
+
         if (retryCooldown > 0) {
             retryCooldown--;
             return;
@@ -183,12 +224,22 @@ public class MaterialsRefill extends Module {
         checkStock();
     }
 
+    private void tickFailCooldowns() {
+        itemFailCooldowns.entrySet().removeIf(entry -> entry.getValue() <= 0);
+        itemFailCooldowns.replaceAll((item, ticks) -> ticks - 1);
+    }
+
     private void checkStock() {
         List<Item> items = targetItems.get();
         if (items.isEmpty()) return;
 
+        // Top-down priority, but skip items that just failed to restock so the
+        // module works its way through the other low targets first. Cooldowns
+        // expire on their own so unavailable items get re-tested periodically.
         for (Item item : items) {
+            if (itemFailCooldowns.containsKey(item)) continue;
             if (InvUtils.find(item).count() < restockThreshold.get()) {
+                lastAttemptItem = item;
                 restockEngine.start(item, buildConfig());
                 return;
             }
@@ -205,7 +256,9 @@ public class MaterialsRefill extends Module {
             rotate.get(),
             shulkerHotbarSlot.get(),
             protectedItems.get(),
-            List.<BlockPos>of()
+            List.<BlockPos>of(),
+            maxPlacementAttempts.get(),
+            maxOpenAttempts.get()
         );
     }
 }

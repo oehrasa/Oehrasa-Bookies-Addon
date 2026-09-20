@@ -1,10 +1,13 @@
 package com.AutoBookshelf.addon.modules.livemessage.util;
 
 import com.AutoBookshelf.addon.modules.livemessage.LiveMessage;
+import com.AutoBookshelf.addon.modules.livemessage.gui.ChatWindow;
 import com.AutoBookshelf.addon.modules.livemessage.gui.LivemessageGui;
+import com.AutoBookshelf.addon.utils.QueueUtil;
 import net.minecraft.network.chat.Component;
 
 import java.util.Locale;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -12,6 +15,9 @@ public final class LivemessageMatcher {
     private static final Pattern PM_COMMAND_PATTERN = Pattern.compile(
         "^/(?:msg|w|whisper|tell|pm|m|t)\\s+(\\S+)\\s+(.+)$",
         Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern WHISPERS_DISABLED_PATTERN = Pattern.compile(
+        "(?i).*(?:whispers?\\s+disabled|whispering\\s+(?:is|are)\\s+disabled).*"
     );
     private static String lastHandledLine = null;
     private static long lastHandledTime = 0L;
@@ -57,6 +63,12 @@ public final class LivemessageMatcher {
             return false;
         }
 
+        if (isWhispersDisabledLine(rawMessage)) {
+            markHandled(rawMessage);
+            handleWhispersDisabled();
+            return false;
+        }
+
         Match match = tryMatch(rawMessage);
         if (match == null) {
             return false;
@@ -66,6 +78,14 @@ public final class LivemessageMatcher {
             markHandled(rawMessage);
             if (isDebugEnabled()) {
                 LiveMessage.LOG.info("Suppressed self-echo DM to '{}': {}", match.username(), match.message());
+            }
+            return false;
+        }
+
+        if (!match.outgoing() && isNonFriendBlocked(match)) {
+            markHandled(rawMessage);
+            if (isDebugEnabled()) {
+                LiveMessage.LOG.info("Dropped non-friend DM from '{}': {}", match.username(), match.message());
             }
             return false;
         }
@@ -81,6 +101,13 @@ public final class LivemessageMatcher {
         markHandled(rawMessage);
         logHit(match, rawMessage);
         return LivemessageGui.newMessage(match.username(), match.message(), match.outgoing());
+    }
+
+    private static boolean isNonFriendBlocked(Match match) {
+        if (LiveMessage.INSTANCE == null || !LiveMessage.INSTANCE.friendsOnlyMessages.get()) {
+            return false;
+        }
+        return meteordevelopment.meteorclient.systems.friends.Friends.get().get(match.username()) == null;
     }
 
     private static boolean isBlockedAdvertiser(Match match) {
@@ -99,6 +126,34 @@ public final class LivemessageMatcher {
         if (!matched) return false;
 
         return meteordevelopment.meteorclient.systems.friends.Friends.get().get(match.username()) == null;
+    }
+
+    private static boolean isWhispersDisabledLine(String rawMessage) {
+        if (rawMessage == null) {
+            return false;
+        }
+        return WHISPERS_DISABLED_PATTERN.matcher(LivemessageUtil.normalizeChatLine(rawMessage)).matches();
+    }
+
+    private static void handleWhispersDisabled() {
+        String username = WhisperRateLimiter.lastSelfSendUser();
+        String message = WhisperRateLimiter.lastSelfSendMessage();
+        long sentAt = WhisperRateLimiter.lastSelfSendAt();
+        if (username == null || message == null) {
+            return;
+        }
+
+        LiveProfileCache.LiveProfile profile = LiveProfileCache.getLiveprofileFromName(username);
+        UUID uuid = profile != null ? profile.uuid : null;
+        if (uuid == null) {
+            return;
+        }
+
+        int flagged = QueueUtil.markNotAccepted(uuid, message, sentAt);
+        if (isDebugEnabled()) {
+            LiveMessage.LOG.info("Whisper rejected ('whispers disabled') for '{}', flagged {} message(s): {}", username, flagged, message);
+        }
+        ChatWindow.refreshIfOpen(uuid);
     }
 
     private static boolean isDuplicateHandle(String rawMessage) {

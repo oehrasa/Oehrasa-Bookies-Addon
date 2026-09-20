@@ -2,6 +2,7 @@ package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
+import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
@@ -18,19 +19,26 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Holder;
+import net.minecraft.network.protocol.game.ClientboundSoundEntityPacket;
+import net.minecraft.network.protocol.game.ClientboundSoundPacket;
+import net.minecraft.resources.Identifier;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.*;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.SculkSensorPhase;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.gameevent.GameEvent;
+import net.minecraft.world.level.gameevent.vibrations.VibrationSystem;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3d;
 import org.lwjgl.glfw.GLFW;
 
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -45,6 +53,9 @@ public class SculkRange extends Module {
     private static final double CALIBRATED_RANGE = 16.0;
     private static final double NORMAL_RANGE = 8.0;
     private static final Direction[] DIRECTIONS = Direction.values();
+
+    // How many ticks a received sound stays eligible to be matched against a sensor activation.
+    private static final int SOUND_WINDOW_TICKS = 2;
 
     private final Setting<Integer> renderDistance = sgGeneral.add(new IntSetting.Builder()
         .name("render-distance")
@@ -202,7 +213,7 @@ public class SculkRange extends Module {
 
     private final Setting<Boolean> showActivationPower = sgExperimental.add(new BoolSetting.Builder()
         .name("show-activation-power")
-        .description("When a sensor activates, show its synced power/signal-strength value above it. Calibrated sensors also show their exact triggering frequency.")
+        .description("When a sensor activates, show its synced power/signal-strength value above it. Calibrated sensors also show their exact triggering frequency, or the precise sound-matched event when one is found.")
         .defaultValue(false)
         .build());
 
@@ -224,7 +235,7 @@ public class SculkRange extends Module {
 
     private final Setting<SettingColor> frequencyTextColor = sgExperimental.add(new ColorSetting.Builder()
         .name("frequency-text-color")
-        .description("Colour of a calibrated sensor's exact triggering-frequency label.")
+        .description("Colour of a calibrated sensor's frequency/event label.")
         .defaultValue(new SettingColor(255, 220, 100, 255))
         .visible(showActivationPower::get)
         .build());
@@ -248,13 +259,45 @@ public class SculkRange extends Module {
         "Death/Explosion"       // 15: entity die, explode
     };
 
+    /**
+     * Sound -> exact game event it corresponds to. The frequency of each event
+     * is taken from vanilla itself (VibrationSystem.getGameEventFrequency), so a sound label
+     * is only ever accepted when it matches the frequency the sensor actually
+     * reported (its blockstate POWER). Without that check, the module used to
+     * show whatever labelled sound happened to be nearest to an activating
+     * sensor
+     */
+    private record SoundEventInfo(Holder<GameEvent> event, String label) {
+    }
+
+    private static final Map<Identifier, SoundEventInfo> SOUND_EVENTS = Map.of(
+        SoundEvents.PISTON_EXTEND.location(), new SoundEventInfo(GameEvent.BLOCK_ACTIVATE, "Piston Extend"),
+        SoundEvents.PISTON_CONTRACT.location(), new SoundEventInfo(GameEvent.BLOCK_ACTIVATE, "Piston Retract"),
+        SoundEvents.GENERIC_SPLASH.location(), new SoundEventInfo(GameEvent.SPLASH, "Splash"),
+        SoundEvents.GENERIC_EXPLODE.value().location(), new SoundEventInfo(GameEvent.EXPLODE, "Explosion"),
+        SoundEvents.CHEST_OPEN.location(), new SoundEventInfo(GameEvent.CONTAINER_OPEN, "Chest Open"),
+        SoundEvents.CHEST_CLOSE.location(), new SoundEventInfo(GameEvent.CONTAINER_CLOSE, "Chest Close"),
+        SoundEvents.IRON_DOOR_OPEN.location(), new SoundEventInfo(GameEvent.BLOCK_OPEN, "Iron Door Open"),
+        SoundEvents.IRON_DOOR_CLOSE.location(), new SoundEventInfo(GameEvent.BLOCK_CLOSE, "Iron Door Close"),
+        SoundEvents.GENERIC_EAT.value().location(), new SoundEventInfo(GameEvent.EAT, "Eating"),
+        SoundEvents.GENERIC_DRINK.value().location(), new SoundEventInfo(GameEvent.DRINK, "Drinking")
+    );
+
     private final Set<SensorData> sensors = new HashSet<>();
     private final Set<BlockPos> manualSensors = new HashSet<>();
+    private final Deque<SoundEcho> recentSounds = new ArrayDeque<>();
     private volatile ExecutorService workerThread;
     private boolean selectKeyWasDown;
+    private long tickCounter;
 
     private enum SensorType {
         CALIBRATED, NORMAL, SHRIEKER
+    }
+
+    /**
+     * A recently observed sound packet, kept just long enough to be matched against a sensor activation.
+     */
+    private record SoundEcho(BlockPos pos, Identifier soundId, long tick) {
     }
 
     private final class SensorData {
@@ -266,6 +309,8 @@ public class SculkRange extends Module {
         Set<BlockPos> sphereBlocks = new HashSet<>();
         // Shell voxels after culling interior blocks; this is what the renderer iterates.
         Set<BlockPos> exposedBlocks = new HashSet<>();
+        // Resolved via sound correlation at the moment of activation; null until resolved, or if unmatched.
+        String activeSoundLabel;
 
         SensorData(BlockPos pos, SensorType type, boolean hasRedstoneOutput, boolean hasShriekerInRange) {
             this.pos = pos;
@@ -318,12 +363,14 @@ public class SculkRange extends Module {
     public void onActivate() {
         if (mc.level == null) return;
         sensors.clear();
+        recentSounds.clear();
         scanAllChunks();
     }
 
     @Override
     public void onDeactivate() {
         sensors.clear();
+        recentSounds.clear();
         shutdownWorker();
     }
 
@@ -353,11 +400,16 @@ public class SculkRange extends Module {
     private void onGameJoined(GameJoinedEvent event) {
         if (!isActive()) return;
         sensors.clear();
+        recentSounds.clear();
         scanAllChunks();
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
+        tickCounter++;
+        while (!recentSounds.isEmpty() && tickCounter - recentSounds.peekFirst().tick() > SOUND_WINDOW_TICKS)
+            recentSounds.pollFirst();
+
         if (!isActive() || !manualMode.get()) return;
         boolean down = selectKey.get().isPressed();
         if (down && !selectKeyWasDown && mc.hitResult instanceof BlockHitResult hit) {
@@ -371,6 +423,43 @@ public class SculkRange extends Module {
             }
         }
         selectKeyWasDown = down;
+    }
+
+    @EventHandler
+    private void onPacketReceive(PacketEvent.Receive event) {
+        if (!isActive() || mc.level == null) return;
+
+        mc.execute(() -> {
+            if (event.packet instanceof ClientboundSoundPacket packet) {
+                recordSound(packet.getSound().value().location(),
+                    BlockPos.containing(packet.getX(), packet.getY(), packet.getZ()));
+            } else if (event.packet instanceof ClientboundSoundEntityPacket packet) {
+                Entity entity = mc.level.getEntity(packet.getId());
+                if (entity != null) recordSound(packet.getSound().value().location(), entity.blockPosition());
+            }
+        });
+    }
+
+    private void recordSound(Identifier soundId, BlockPos pos) {
+        recentSounds.addLast(new SoundEcho(pos.immutable(), soundId, tickCounter));
+        while (recentSounds.size() > 64) recentSounds.pollFirst(); // hard cap independent of tick-based pruning
+    }
+
+    private String resolveSoundLabel(BlockPos sensorPos, double range, int power) {
+        double bestDistSq = Double.MAX_VALUE;
+        String bestLabel = null;
+        double rangeSq = range * range;
+
+        for (SoundEcho echo : recentSounds) {
+            SoundEventInfo info = SOUND_EVENTS.get(echo.soundId());
+            if (info == null) continue;
+            if (VibrationSystem.getGameEventFrequency(info.event()) != power) continue;
+            double distSq = echo.pos().distSqr(sensorPos);
+            if (distSq > rangeSq || distSq >= bestDistSq) continue;
+            bestDistSq = distSq;
+            bestLabel = info.label();
+        }
+        return bestLabel;
     }
 
     @EventHandler
@@ -442,6 +531,14 @@ public class SculkRange extends Module {
                     s.hasRedstoneOutput = hasRedstoneOutput(mc.level, pos);
                     s.hasShriekerInRange = hasShriekerInRange(mc.level, pos);
                 }
+                if (isType == SensorType.CALIBRATED) {
+                    boolean wasActive = event.oldState.getValue(SculkSensorBlock.PHASE) == SculkSensorPhase.ACTIVE;
+                    boolean isActive = event.newState.getValue(SculkSensorBlock.PHASE) == SculkSensorPhase.ACTIVE;
+                    if (!wasActive && isActive) {
+                        int power = event.newState.getValue(SculkSensorBlock.POWER);
+                        s.activeSoundLabel = resolveSoundLabel(s.pos, s.range(), power);
+                    } else if (!isActive) s.activeSoundLabel = null;
+                }
                 break;
             }
         }
@@ -456,8 +553,9 @@ public class SculkRange extends Module {
     }
 
     /**
-     * Maps a calibrated sculk sensor's power value directly to the vanilla note-block
-     * frequency it corresponds to.
+     * Maps a calibrated sculk sensor's power value to the vanilla frequency bucket it corresponds to.
+     * This is a many-to-one bucket label; prefer SensorData.activeSoundLabel when it's non-null, since
+     * it identifies the specific event rather than just the shared bucket.
      */
     private String exactFrequencyLabel(int power) {
         return (power >= 1 && power < VIBRATION_LABELS.length) ? VIBRATION_LABELS[power] : null;
@@ -694,11 +792,10 @@ public class SculkRange extends Module {
             int power = state.getValue(SculkSensorBlock.POWER);
             String powerText = "Power " + power;
 
-            // Calibrated sensors output the triggering event's vanilla note-block
-            // frequency as their power, independent of distance — this is exact,
-            // not a guess. Normal sensors only encode distance in power, so there's
-            // nothing meaningful to show beyond the power value itself.
-            String freqText = sensor.type == SensorType.CALIBRATED ? exactFrequencyLabel(power) : null;
+            // Prefer the sound-matched exact event over the generic shared-frequency bucket label.
+            String freqText = sensor.type == SensorType.CALIBRATED
+                ? (sensor.activeSoundLabel != null ? sensor.activeSoundLabel : exactFrequencyLabel(power))
+                : null;
 
             Vector3d vec3 = new Vector3d(sensor.pos.getX() + 0.5, sensor.pos.getY() + 1.3, sensor.pos.getZ() + 0.5);
             if (NametagUtils.to2D(vec3, vibrationTextScale.get())) {

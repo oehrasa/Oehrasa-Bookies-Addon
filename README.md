@@ -23,8 +23,8 @@
 Tested successfully with these mods.
 <font color="turquoise">Switch the branch repo if You want to see the other version config</font>
 
-- baritone-meteor-26.1.jar **(API Required!)**
-- meteor-client-26.1.2-22.jar **(Required!)**
+- baritone-meteor-26.1.jar **(or baritone API Required!)**
+- meteor-client-26.1.2-42.jar **(Required!)**
 - client_maps-1.3.2+26.1.jar (Recommended for Mapart-Namer module)
 - map-in-slot-3.5.0.jar (Recommended for Mapart-Namer module)
 
@@ -36,9 +36,9 @@ Tested successfully with these mods.
 
 ## Features
 
-**49 modules**, **8 commands**, **10 HUD elements**, **9 mixin**, and **18 Utils**
+**50 modules**, **8 commands**, **10 HUD elements**, **9 mixin**, and **19 Utils**
 
-## Modules (49 total)
+## Modules (50 total)
 <details>
 <summary><b>Modules</b> (Bookies modules)</summary>
 
@@ -79,19 +79,20 @@ Tested successfully with these mods.
 35. **Mats-Refill** - Automatically restocks materials from shulker boxes
 36. **Mob-Owner** - Shows entity owner by saving into cache
 37. **PacketEat** - Allows you to eat without interrupting other actions
-38. **Platform** - Build a platform within a selected area at a given y-level
-39. **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
-40. **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in
+38. **PzH200** - With just a bow and this module, It can fire shells at a high velocity aided by a laser rangefinder
+39. **Platform** - Build a platform within a selected area at a given y-level
+40. **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
+41. **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in
     1.13+ chunks
-41. **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
-42. **Sculk-Range** - Shows the detection range of normal or calibrated sculk sensors and shriekers
-43. **SignRender** - Renders sign text through walls with advanced clustering
-44. **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
-45. **Tnt-Fuse-Esp** - Shows the fuse time of lit tnt
-46. **Trajectory-Plus** - Smooth projectile prediction and tracking
-47. **Tsundere-Furry** - Transforms outgoing chat messages into animal sounds, tsundere, or both :>
-48. **Unwax-Aura** - Automatically removes wax from waxed copper blocks
-49. **Yuri-Asmr** - Streams a random ASMR search result through yt-dlp + ffmpeg with integrated HUD
+42. **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
+43. **Sculk-Range** - Shows the detection range of normal or calibrated sculk sensors and shriekers
+44. **SignRender** - Renders sign text through walls with advanced clustering
+45. **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
+46. **Tnt-Fuse-Esp** - Shows the fuse time of lit tnt
+47. **Trajectory-Plus** - Smooth projectile prediction and tracking
+48. **Tsundere-Furry** - Transforms outgoing chat messages into animal sounds, tsundere, or both :>
+49. **Unwax-Aura** - Automatically removes wax from waxed copper blocks
+50. **Yuri-Asmr** - Streams a random ASMR search result through yt-dlp + ffmpeg with integrated HUD
 
 </details>
 
@@ -182,6 +183,42 @@ https://youtu.be/tDzfNo_uWMA
 </details>
 
 <details>
+<summary><b>LiveMessage</b> - Keystroke quirks by window</summary>
+
+<b>Chat window (input box)</b>
+
+1. Enter = send ; blank lines skipped, and lines longer than the max length
+   are splitted into multiple messages (when online & off cooldown); everything else goes to queue.
+2. Shift+Enter = insert a literal newline (multiline message)
+3. Tab = autocomplete the player name (online players, case-insensitive prefix match)
+   Ctrl+Tab = skip autocomplete and cycle windows instead
+4. Ctrl+A = select all ; Ctrl+C = copy (selection, else whole box) ; Ctrl+X = cut
+   (selection, else clears whole box) ; Ctrl+V = paste (multiline clipboard kept)
+5. Backspace = delete 1 char ; Delete = delete forward
+6. Ctrl+Left / Ctrl+Right = jump word ; Left / Right = move 1 char
+7. Home / End = jump to start / end of line
+8. Up / Down = move across wrapped (just visual) lines, not chat history
+9. Hold Shift while using arrows / clicking+dragging = extend text selection
+10. Page Up / Page Down = scroll chat history by 10 lines (not the input caret)
+11. Left-click a message line = copy the stripped original message to clipboard (shows "Copied!")
+12. Right-click a queued (pending) message = remove it from the queued list
+13. Drag the title bar = move window ; drag the bottom-right corner = resize ;
+    drag the scroll bar (or its track) = scroll chat ; drag inside input = select text
+
+<b>Buddy/Mane window</b>
+
+1. Tab in the search field = autocomplete a buddy name ; Ctrl+Tab = cycle windows
+2. Page Up / Page Down = scroll the buddy list by 10 lines
+
+<b>Notes window</b>
+
+1. Ctrl+Z / Ctrl+Y = undo / redo
+2. Enter in add-note = save the note
+3. Page Up / Page Down = scroll notes by 5 lines
+
+</details>
+
+<details>
 <summary><b>Mapart-Namer</b> - Auto‑names maps based on inventory slot layout</summary>
 
 1. Position mapart in inventory grid
@@ -226,7 +263,9 @@ Open an [issue](https://github.com/oehrasa/Oehrasa-Bookies-Addon/issues) or subm
 
 ## License
 
-[GNU GPLv3](LICENSE) - Free to fork and modify.
+[GNU GPLv3](LICENSE) - Free to fork and modify. Any modified or derived work
+of this code must be distributed under the same licence (GPL-3.0).
+No relicensing to proprietary/closed-source.
 
 >## Disclaimer
 >Designed for anarchy servers like 6b6t.org. Use responsibly.

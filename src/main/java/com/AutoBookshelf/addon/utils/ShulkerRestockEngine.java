@@ -1,6 +1,5 @@
 package com.AutoBookshelf.addon.utils;
 
-import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
@@ -47,7 +46,9 @@ public class ShulkerRestockEngine {
         boolean rotate,
         int shulkerHotbarSlot, // 1-9, display
         List<Item> protectedItems,
-        List<BlockPos> excludedPositions
+        List<BlockPos> excludedPositions,
+        int maxPlacementAttempts,
+        int maxOpenAttempts
     ) {
     }
 
@@ -64,8 +65,6 @@ public class ShulkerRestockEngine {
     private static final int PLACEMENT_TIMEOUT_TICKS = 20;
     private static final int OPEN_TIMEOUT_TICKS = 20;
     private static final int BREAK_TIMEOUT_TICKS = 200;
-    private static final int MAX_PLACEMENT_ATTEMPTS = 5;
-    private static final int MAX_OPEN_ATTEMPTS = 3;
 
     private final Minecraft mc;
     private final PlacementEngine placementEngine;
@@ -227,7 +226,14 @@ public class ShulkerRestockEngine {
                 abort("No available hotbar slot to place shulker (all slots are protected).");
                 return;
             }
-            InvUtils.move().from(shulkerSlot).toHotbar(targetSlot);
+            // Single atomic swap
+            mc.gameMode.handleContainerInput(
+                mc.player.inventoryMenu.containerId,
+                shulkerSlot,
+                targetSlot,
+                ContainerInput.SWAP,
+                mc.player
+            );
             shulkerSlot = targetSlot;
             delayTicks = 2;
             return;
@@ -316,8 +322,8 @@ public class ShulkerRestockEngine {
         // again from scratch rather than waiting forever.
         failedPositions.add(placedShulkerPos);
         placementAttempts++;
-        if (placementAttempts >= MAX_PLACEMENT_ATTEMPTS) {
-            abort("Couldn't confirm shulker placement after " + MAX_PLACEMENT_ATTEMPTS + " attempts. Resetting.");
+        if (placementAttempts >= config.maxPlacementAttempts()) {
+            abort("Couldn't confirm shulker placement after " + config.maxPlacementAttempts() + " attempts. Resetting.");
             return;
         }
         stateTicks = 0;
@@ -387,8 +393,8 @@ public class ShulkerRestockEngine {
         if (stateTicks < OPEN_TIMEOUT_TICKS) return;
 
         openAttempts++;
-        if (openAttempts >= MAX_OPEN_ATTEMPTS) {
-            abort("Couldn't open the shulker after " + MAX_OPEN_ATTEMPTS + " attempts. Resetting.");
+        if (openAttempts >= config.maxOpenAttempts()) {
+            abort("Couldn't open the shulker after " + config.maxOpenAttempts() + " attempts. Resetting.");
             return;
         }
         stateTicks = 0;

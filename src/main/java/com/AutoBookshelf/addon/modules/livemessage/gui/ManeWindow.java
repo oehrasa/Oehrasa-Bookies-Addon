@@ -85,6 +85,8 @@ public class ManeWindow extends LiveWindow {
         this.liveSkinUtil = LiveSkinUtil.get(this.liveProfile.uuid);
         this.closeButton = false;
         this.loadMainWindowColor();
+        this.minw = 150;
+        this.w = 150;
         searchField = new EditBox(this.mc.font, 9, this.h - 16, this.w - 18, 12, Component.literal(""));
         searchField.setMaxLength(16);
         searchField.setBordered(false);
@@ -227,6 +229,24 @@ public class ManeWindow extends LiveWindow {
         }
     }
 
+    private boolean autocompleteSearch() {
+        String partial = searchField.getValue().trim();
+        if (partial.isEmpty()) return false;
+
+        String match = null;
+        for (ManeWindow.BuddyListEntry entry : buddyListEntries) {
+            if (entry.uuid != null && entry.username.regionMatches(true, 0, partial, 0, partial.length())) {
+                match = entry.username;
+                break;
+            }
+        }
+        if (match == null) return false;
+
+        searchField.setValue(match);
+        searchField.moveCursorToEnd(false);
+        return true;
+    }
+
     @Override
     public void keyTyped(char typedChar, int keyCode) {
         int maxVisibleLines = (this.h - (this.buddyListY + 13 + 15)) / 12;
@@ -235,6 +255,13 @@ public class ManeWindow extends LiveWindow {
             listScrollPosition = Math.max(0, listScrollPosition - 10);
         } else if (keyCode == 267) {
             listScrollPosition = Math.min(maxScroll, listScrollPosition + 10);
+        } else if (keyCode == 258) { // Tab
+            boolean ctrl = GLFW.glfwGetKey(this.mc.getWindow().handle(), GLFW.GLFW_KEY_LEFT_CONTROL) == 1
+                || GLFW.glfwGetKey(this.mc.getWindow().handle(), GLFW.GLFW_KEY_RIGHT_CONTROL) == 1;
+            if (!ctrl && this.autocompleteSearch()) {
+                return; // consumed by autocomplete
+            }
+            // no match, fall through to super.keyTyped for window-cycling
         } else {
             if (keyCode != 0 && this.lastKeyInput != null) {
                 searchField.keyPressed(this.lastKeyInput);
@@ -586,12 +613,27 @@ public class ManeWindow extends LiveWindow {
 
     @Override
     public void drawWindow(GuiGraphicsExtractor context, int bgColor, int fgColor) {
-        this.w = 150;
         this.title = "Livemessage";
+
+        // Interior regions not covered by a panel keep the window's own
+        // background opacity, so the buddy list can be transparent to the game
+        // independently of the window. Drawn first so the frame's outline,
+        // titlebar and resize grip stay on top.
+        int buddyPanelH = this.h - (this.buddyListY + 10 + 13) + 2;
+        GuiUtil.drawRect(context, 0, titlebarHeight, this.w, this.buddyListY - 1 - titlebarHeight, bgColor);
+        GuiUtil.drawRect(context, 0, this.buddyListY - 1, 4, buddyPanelH, bgColor);
+        GuiUtil.drawRect(context, this.w - 4, this.buddyListY - 1, 4, buddyPanelH, bgColor);
+        GuiUtil.drawRect(context, 0, (this.buddyListY - 1) + buddyPanelH, this.w,
+            Math.max(0, this.h - 19 - ((this.buddyListY - 1) + buddyPanelH)), bgColor);
+        GuiUtil.drawRect(context, 0, this.h - 19, 4, 15, bgColor);
+        GuiUtil.drawRect(context, this.w - 4, this.h - 19, 4, 15, bgColor);
+        GuiUtil.drawRect(context, 0, this.h - 4, this.w, 4, bgColor);
+
         super.drawWindow(context, bgColor, fgColor);
         this.updateButtonStates();
-        GuiUtil.drawRect(context, 4, this.buddyListY - 1, this.w - 10 + 2, this.h - (this.buddyListY + 10 + 13) + 2, GuiUtil.getRGB(64, 64, 64));
-        GuiUtil.drawRect(context, 5, this.buddyListY, this.w - 10, this.h - (this.buddyListY + 10 + 13), GuiUtil.getRGB(36, 36, 36));
+        int innerAlpha = LiveMessage.INSTANCE != null ? LiveMessage.INSTANCE.innerBackgroundAlpha.get() : 255;
+        GuiUtil.drawRect(context, 4, this.buddyListY - 1, this.w - 10 + 2, this.h - (this.buddyListY + 10 + 13) + 2, GuiUtil.withAlpha(GuiUtil.getRGB(64, 64, 64), innerAlpha));
+        GuiUtil.drawRect(context, 5, this.buddyListY, this.w - 10, this.h - (this.buddyListY + 10 + 13), GuiUtil.withAlpha(GuiUtil.getRGB(36, 36, 36), innerAlpha));
         this.liveButtons.forEach(btn -> btn.draw(context));
         generateBuddylist();
         int maxVisibleLines = (this.h - (this.buddyListY + 13 + 15)) / 12;
@@ -610,7 +652,7 @@ public class ManeWindow extends LiveWindow {
             if (i < buddyListEntries.size() && i >= 0 && i - listScrollPosition < maxVisibleLines) {
                 ManeWindow.BuddyListEntry buddyListEntry = buddyListEntries.get(i);
                 if (buddyListEntry.uuid != null) {
-                    GuiUtil.drawRect(context, 5, this.buddyListY + (i - listScrollPosition) * 12 + 3, listWidth, 12, GuiUtil.getRGB(64, 64, 64));
+                    GuiUtil.drawRect(context, 5, this.buddyListY + (i - listScrollPosition) * 12 + 3, listWidth, 12, GuiUtil.withAlpha(GuiUtil.getRGB(64, 64, 64), innerAlpha));
                 }
             }
         }
@@ -640,6 +682,7 @@ public class ManeWindow extends LiveWindow {
         this.drawText(context, "online", 42, titlebarHeight + 5 + 11, GuiUtil.getSingleRGB(128), false);
         GuiUtil.drawRect(context, 3, titlebarHeight + 3, 36, 36, GuiUtil.getRGB(60, 148, 100));
         this.drawProfilePic(context, 5, titlebarHeight + 5, this.liveProfile.uuid);
+        // The search field is never affected by inner-background-alpha
         GuiUtil.drawRect(context, 4, this.h - 13 - 5 - 1, this.w - 10 + 2, 15, GuiUtil.getSingleRGB(64));
         GuiUtil.drawRect(context, 5, this.h - 13 - 5, this.w - 10, 13, GuiUtil.getSingleRGB(24));
         if (searchField.getValue().trim().length() == 0) {

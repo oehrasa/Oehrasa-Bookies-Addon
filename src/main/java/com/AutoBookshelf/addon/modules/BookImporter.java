@@ -202,6 +202,12 @@ public class BookImporter extends Module {
     private int pendingFileIndex = -1;
     private boolean manuallySubscribed = false;
 
+    // Remote-library async flow guard. While true, a manifest fetch or book
+    // download is in flight; onActivate() must not reopen the browser or
+    // start a second concurrent fetch/download until the pending one settles
+    // (successfully, with an error, or via the user cancelling the screen).
+    private boolean remoteBusy = false;
+
     // Progress persistence (store completed source and part keys)
     private static final String PROGRESS_FILE = "AutoBookshelf/import_progress.json";
     private final Set<String> completedParts = new HashSet<>();  // keys = "sourceName|partNumber"
@@ -283,6 +289,14 @@ public class BookImporter extends Module {
         }
 
         if (importSource.get() == ImportSource.RemoteLibrary) {
+            if (remoteBusy) {
+                // A manifest fetch or download from a previous activation is
+                // still in flight, don't spawn a second one or reopen the
+                // browser on top of it.
+                sendMessage("§eRemote library is still loading, please wait...");
+                toggle();
+                return;
+            }
             // Can't produce tasks synchronously (manifest fetch + download are async)
             toggle();
             openRemoteBrowser();
@@ -305,6 +319,7 @@ public class BookImporter extends Module {
     }
 
     private void openRemoteBrowser() {
+        remoteBusy = true;
         sendMessage("Fetching remote library manifest...");
 
         CompletableFuture
@@ -317,20 +332,27 @@ public class BookImporter extends Module {
             })
             .whenComplete((entries, throwable) -> mc.execute(() -> {
                 if (throwable != null) {
+                    remoteBusy = false;
                     error("Failed to load remote manifest: " + throwable.getCause());
                     return;
                 }
                 if (entries.isEmpty()) {
+                    remoteBusy = false;
                     sendMessage("Remote manifest is empty.");
                     return;
                 }
 
-                mc.setScreen(new RemoteBookSelectScreen(entries, this::onRemoteSelectionConfirmed));
+                // remoteBusy stays true while the selection screen is open;
+                // it's cleared either by onRemoteSelectionConfirmed()
+                // finishing its download phase, or by the cancel callback
+                // below if the player closes the screen without picking anything.
+                mc.setScreen(new RemoteBookSelectScreen(entries, this::onRemoteSelectionConfirmed, () -> remoteBusy = false));
             }));
     }
 
     private void onRemoteSelectionConfirmed(List<BookEntry> selected) {
         if (mc.player == null || mc.level == null) {
+            remoteBusy = false;
             error("Cannot start import while not in a world.");
             return;
         }
@@ -351,6 +373,7 @@ public class BookImporter extends Module {
             })
             .whenComplete((fetched, throwable) -> mc.execute(() -> {
                 if (throwable != null) {
+                    remoteBusy = false;
                     error("Download failed: " + throwable.getCause());
                     return;
                 }
@@ -369,6 +392,7 @@ public class BookImporter extends Module {
                 }
 
                 if (queued.isEmpty()) {
+                    remoteBusy = false;
                     sendMessage("Nothing downloaded successfully, cancelling.");
                     return;
                 }
@@ -379,6 +403,11 @@ public class BookImporter extends Module {
                 for (ImportTask t : queued) {
                     sendMessage("Queued: " + t.sourceName + " (" + t.allPages.size() + " pages, " + t.totalParts + " part(s))");
                 }
+
+                // Fetch/download phase is fully done now, hand off to
+                // normal activation (or straight to beginImport() if the
+                // module is somehow already on).
+                remoteBusy = false;
 
                 if (!isActive()) {
                     pendingSource = PendingSource.REMOTE;

@@ -309,6 +309,9 @@ public class NotesWindow extends LiveWindow {
 
     @Override
     public void drawWindow(GuiGraphicsExtractor context, int bgColor, int fgColor) {
+        // Base drawWindow only draws the frame, so NotesWindow fills its own
+        // (fully opaque) body before the frame elements go on top.
+        GuiUtil.drawRect(context, 0, 0, this.w, this.h, bgColor);
         super.drawWindow(context, bgColor, fgColor);
 
         // Header section for the Clear-done/Select-all buttons, kept visually separate from the list below it.
