@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -71,6 +72,8 @@ public class LivemessageUtil {
     public static void reloadPatterns() {
         FROM_PATTERNS.clear();
         TO_PATTERNS.clear();
+        DEFAULT_PATTERNS.clear();
+        MODULE_PATTERNS.clear();
         boolean allowRankPrefix = LiveMessage.INSTANCE == null || LiveMessage.INSTANCE.allowRankPrefix.get();
         int fromModule = loadModulePatterns(true, allowRankPrefix);
         int toModule = loadModulePatterns(false, allowRankPrefix);
@@ -90,9 +93,23 @@ public class LivemessageUtil {
         );
     }
 
+    // Identity-based: tracks which compiled Pattern instances came from the built-in
+    // DEFAULT_INCOMING/DEFAULT_OUTGOING templates, so a one-off slow match (GC pause, JIT
+    // warmup) never permanently discards a default format
+    public static final Set<Pattern> DEFAULT_PATTERNS =
+        java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+
+    // Identity-based: same protection for the module's own incoming-format-*/outgoing-format-*
+    // settings. Those are plain literal-ish strings, not user regex, so a single slow match
+    // must not evict them either — only patterns from the user-editable regex files are removed.
+    public static final Set<Pattern> MODULE_PATTERNS =
+        java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+
     private static void loadDefaults(String[] templates, List<Pattern> target, boolean allowRankPrefix) {
         for (String template : templates) {
-            addPattern(target, template, allowRankPrefix, "default");
+            if (addPattern(target, template, allowRankPrefix, "default")) {
+                DEFAULT_PATTERNS.add(target.get(target.size() - 1));
+            }
         }
     }
 
@@ -120,6 +137,7 @@ public class LivemessageUtil {
 
         for (Setting<String> setting : settings) {
             if (addPattern(target, setting.get(), allowRankPrefix, "module")) {
+                MODULE_PATTERNS.add(target.get(target.size() - 1));
                 count++;
             }
         }
@@ -179,20 +197,60 @@ public class LivemessageUtil {
         }
     }
 
-    private static final Pattern BIDI_AND_ZERO_WIDTH = Pattern.compile(
-        "[\\u200B-\\u200F\\u202A-\\u202E\\u2066-\\u2069\\u001B]"
+    // Bidi direction controls and the terminal escape, not zero-width joiners: ZWSP/ZWNJ/ZWJ
+    // (200B-200D) must survive so Persian/Arabic writing and ZWJ emoji are not corrupted in stored
+    // notes or displayed chat. Stripping 200E/200F (LRM/RLM), 202A-202E and 2066-2069 (isolates)
+    // keeps spoofing via hidden direction flips out of the parsed text.
+    private static final Pattern BIDI_CONTROLS = Pattern.compile(
+        "[\\u200E-\\u200F\\u202A-\\u202E\\u2066-\\u2069\\u001B]"
     );
+    private static final Pattern HEX_COLOR_CODE = Pattern.compile("§x§[0-9a-fA-F](?:§[0-9a-fA-F]){5}");
+    private static final Pattern LEGACY_COLOR_CODE = Pattern.compile("(?i)§[0-9a-fk-orx]");
+    private static final Pattern SAFE_USERNAME = Pattern.compile("^[A-Za-z0-9_]{1,16}$");
 
     public static String stripChatDecorations(String text) {
         if (text == null) {
             return "";
         }
 
-        String stripped = text.replaceAll("§[0-9a-fk-or]", "");
-        stripped = BIDI_AND_ZERO_WIDTH.matcher(stripped).replaceAll("");
+        String stripped = HEX_COLOR_CODE.matcher(text).replaceAll("");
+        stripped = LEGACY_COLOR_CODE.matcher(stripped).replaceAll("");
+        stripped = stripped.replace("§", "");
+        stripped = BIDI_CONTROLS.matcher(stripped).replaceAll("");
         stripped = HEAD_MARKER.matcher(stripped).replaceAll("");
         stripped = TIMESTAMP_PREFIX.matcher(stripped).replaceFirst("");
         return stripped;
+    }
+
+    /**
+     * True only for a text that is safe to place as a /command target argument: a plain
+     * Minecraft username, no leading '/', no spaces, no format code characters. Anything
+     * else must never be interpolated into sendChatCommand().
+     */
+    public static boolean isSafeUsername(String username) {
+        if (username == null) {
+            return false;
+        }
+        return SAFE_USERNAME.matcher(username).matches();
+    }
+
+    /**
+     * Case-insensitive check for a player with the given name in the current tab list.
+     */
+    public static boolean isPlayerInTabList(String username) {
+        if (username == null) {
+            return false;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.getConnection() == null) {
+            return false;
+        }
+        for (PlayerInfo entry : mc.getConnection().getOnlinePlayers()) {
+            if (entry.getProfile().name().equalsIgnoreCase(username)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static String normalizeChatLine(String text) {

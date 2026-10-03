@@ -1,5 +1,6 @@
 package com.AutoBookshelf.addon.modules.chesttracker;
 
+
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
@@ -73,7 +74,7 @@ public class ChestTrackerScreen extends Screen {
         searchField.setMaxLength(50);
         searchField.setHint(Component.literal("Search items..."));
         searchField.setResponder(this::onSearchChanged);
-        this.addWidget(searchField);
+        this.addRenderableWidget(searchField);
 
         clearSearchButton = Button.builder(
                 Component.literal("§cx"),
@@ -146,14 +147,23 @@ public class ChestTrackerScreen extends Screen {
         switch (module.getSortMode()) {
             case COUNT_DESC -> allItems.sort((a, b) -> Integer.compare(b.count, a.count));
             case COUNT_ASC  -> allItems.sort((a, b) -> Integer.compare(a.count, b.count));
-            case NAME_ASC   -> allItems.sort((a, b) -> a.item.getName(a.item.getDefaultInstance()).getString().compareToIgnoreCase(b.item.getName(b.item.getDefaultInstance()).getString()));
-            case NAME_DESC  -> allItems.sort((a, b) -> b.item.getName(b.item.getDefaultInstance()).getString().compareToIgnoreCase(a.item.getName(a.item.getDefaultInstance()).getString()));
+            case NAME_ASC -> allItems.sort((a, b) -> a.sortName.compareToIgnoreCase(b.sortName));
+            case NAME_DESC -> allItems.sort((a, b) -> b.sortName.compareToIgnoreCase(a.sortName));
             case DISTANCE -> {
                 if (minecraft.player == null) break;
                 Vec3 playerPos = minecraft.player.position();
+                // Single pass over the tracked containers instead of a per-item
+                // scan: compute each container's distance once and keep the
+                // minimum per item.
                 distanceCache.clear();
-                for (ItemEntry entry : allItems) {
-                    distanceCache.put(entry.item, getClosestContainerDistance(entry.item, playerPos, dimensionContainers));
+                for (TrackedContainer container : dimensionContainers) {
+                    BlockPos pos = container.getPosition();
+                    double dist = Math.sqrt(playerPos.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5));
+                    for (Map.Entry<String, Integer> entry : container.getItems().entrySet()) {
+                        Identifier id = Identifier.tryParse(entry.getKey());
+                        if (id == null || !BuiltInRegistries.ITEM.containsKey(id)) continue;
+                        distanceCache.merge(BuiltInRegistries.ITEM.getValue(id), dist, Math::min);
+                    }
                 }
                 allItems.sort((a, b) -> Double.compare(
                     distanceCache.getOrDefault(a.item, Double.MAX_VALUE),
@@ -170,7 +180,7 @@ public class ChestTrackerScreen extends Screen {
         } else {
             String query = searchQuery.toLowerCase();
             filteredItems = allItems.stream()
-                .filter(entry -> entry.item.getName(entry.item.getDefaultInstance()).getString().toLowerCase().contains(query))
+                .filter(entry -> entry.sortName.toLowerCase().contains(query))
                 .collect(Collectors.toList());
         }
         int rows = (int) Math.ceil(filteredItems.size() / (double) ITEMS_PER_ROW);
@@ -243,14 +253,13 @@ public class ChestTrackerScreen extends Screen {
         String dimName = currentDim.contains("overworld") ? "Overworld" :
             currentDim.contains("nether") ? "Nether" :
             currentDim.contains("end") ? "End" : currentDim;
-        context.centeredText(
+        context.text(
             this.font,
             "§l§eChest Tracker §r§7- " + dimName,
-            this.width / 2,
+            this.width / 2 - this.font.width("§l§eChest Tracker §r§7- " + dimName) / 2,
             8,
-            0xFFFFFF
+            0xFFFFFFFF
         );
-        searchField.extractWidgetRenderState(context, mouseX, mouseY, delta);
         clearSearchButton.visible = !searchQuery.isEmpty();
         clearSearchButton.active = !searchQuery.isEmpty();
         renderItemGrid(context, mouseX, mouseY);
@@ -307,11 +316,11 @@ public class ChestTrackerScreen extends Screen {
         } else {
             itemCountText = String.format("§e%d §7items found (filtered from §e%d§7 total)", filteredItems.size(), allItems.size());
         }
-        int countTextWidth = this.font.width(itemCountText);
+        int countTextWidth = minecraft.font.width(itemCountText);
         int countX = this.width / 2 - countTextWidth / 2;
         int countY = 52;
         context.fill(countX - 4, countY - 2, countX + countTextWidth + 4, countY + 10, 0xDD000000);
-        context.text(this.font, itemCountText, countX, countY, 0xFFFFAA00, false);
+        context.text(minecraft.font, itemCountText, countX, countY, 0xFFFFAA00, false);
     }
 
     private void renderScrollbar(GuiGraphicsExtractor context, int mouseX, int mouseY) {
@@ -348,7 +357,7 @@ public class ChestTrackerScreen extends Screen {
                     ItemEntry entry = filteredItems.get(index);
                     List<TrackedContainer> containers = data.searchItem(entry.item);
                     List<Component> tooltip = new ArrayList<>();
-                    tooltip.add(Component.literal("§f§l" + entry.item.getName(entry.item.getDefaultInstance()).getString()));
+                    tooltip.add(Component.literal("§f§l" + entry.item.getName(new ItemStack(entry.item)).getString()));
                     tooltip.add(Component.literal(""));
                     tooltip.add(Component.literal("§7Total Amount: §a" + formatCountFull(entry.count)));
                     tooltip.add(Component.literal("§7Found in: §e" + containers.size() + " §7containers"));
@@ -432,8 +441,7 @@ public class ChestTrackerScreen extends Screen {
         List<TrackedContainer> results = data.searchItem(entry.item);
         module.searchItem(entry.item);
         if (minecraft != null && minecraft.player != null) {
-            String msg = String.format("§aLit: §e%d §7boxes", results.size());
-            minecraft.player.sendSystemMessage(Component.literal(msg));
+            minecraft.player.sendSystemMessage(Component.literal(String.format("§aLit: §e%d §7boxes", results.size())));
         }
         this.onClose();
     }
@@ -491,6 +499,14 @@ public class ChestTrackerScreen extends Screen {
     private static class ItemEntry {
         final Item item;
         final int count;
-        ItemEntry(Item item, int count) { this.item = item; this.count = count; }
+        // Precomputed once per entry so NAME sorting / search filtering don't
+        // rebuild the display name Component on every comparison.
+        final String sortName;
+
+        ItemEntry(Item item, int count) {
+            this.item = item;
+            this.count = count;
+            this.sortName = item.getName(new ItemStack(item)).getString();
+        }
     }
 }

@@ -7,15 +7,12 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.misc.Keybind;
-import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+
+import java.util.*;
 
 public class MaterialsRefill extends Module {
 
@@ -45,6 +42,9 @@ public class MaterialsRefill extends Module {
         });
 
     private int retryCooldown = 0;
+
+    private static final int STOCK_CHECK_INTERVAL = 10; // ticks (~0.5s)
+    private int stockCheckTicks = 0;
 
     /**
      * Per-target suppression after a restock attempt for that item failed
@@ -175,7 +175,7 @@ public class MaterialsRefill extends Module {
                 if (!current.contains(held.getItem())) {
                     current.add(held.getItem());
                     targetItems.set(current);
-                    info("Added target item: " + held.getItem().getName(held).getString());
+                    info("Added target item: " + held.getHoverName().getString());
                 } else {
                     info("Item already in target list.");
                 }
@@ -233,12 +233,36 @@ public class MaterialsRefill extends Module {
         List<Item> items = targetItems.get();
         if (items.isEmpty()) return;
 
+        // Scanning the full inventory each tick is wasteful. Throttle the
+        // stock check to every ~0.5s and do a single pass over the main
+        // inventory, counting all target items at once instead of calling
+        // InvUtils.find() (a 36-slot scan) once per target item.
+        if (++stockCheckTicks < STOCK_CHECK_INTERVAL) return;
+        stockCheckTicks = 0;
+
+        Set<Item> targets = new HashSet<>(items);
+        Map<Item, Integer> counts = new HashMap<>();
+        for (ItemStack stack : mc.player.getInventory().getNonEquipmentItems()) {
+            if (stack.isEmpty()) continue;
+            Item item = stack.getItem();
+            if (targets.contains(item)) {
+                counts.merge(item, stack.getCount(), Integer::sum);
+            }
+        }
+        ItemStack offhand = mc.player.getOffhandItem();
+        if (!offhand.isEmpty()) {
+            Item item = offhand.getItem();
+            if (targets.contains(item)) {
+                counts.merge(item, offhand.getCount(), Integer::sum);
+            }
+        }
+
         // Top-down priority, but skip items that just failed to restock so the
         // module works its way through the other low targets first. Cooldowns
         // expire on their own so unavailable items get re-tested periodically.
         for (Item item : items) {
             if (itemFailCooldowns.containsKey(item)) continue;
-            if (InvUtils.find(item).count() < restockThreshold.get()) {
+            if (counts.getOrDefault(item, 0) < restockThreshold.get()) {
                 lastAttemptItem = item;
                 restockEngine.start(item, buildConfig());
                 return;

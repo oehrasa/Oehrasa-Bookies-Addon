@@ -14,7 +14,11 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.item.PrimedTnt;
+import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3d;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * made by cqb13
@@ -128,18 +132,40 @@ public class TntFuseEsp extends Module {
         super(Addon.CATEGORY2, "Tnt-Fuse-Esp", "Shows the fuse time of lit tnt.");
     }
 
+    private static final int SCAN_INTERVAL = 20; // frames between lit-TNT rescans
+    private final List<PrimedTnt> tntCache = new ArrayList<>();
+    private int frameCounter = SCAN_INTERVAL;
+
     public boolean shouldHideFlashing() {
         return hideTntFlashing.get();
     }
 
+    @Override
+    public void onDeactivate() {
+        tntCache.clear();
+        frameCounter = SCAN_INTERVAL;
+    }
+
     @EventHandler
     private void onRender3D(Render3DEvent event) {
-        if (mc.level == null || mc.player == null || !showTntFuse.get()) {
+        if (mc.level == null || mc.player == null) return;
+
+        // Refresh regardless of which render layers are enabled so the cached list
+        // stays warm for both the 3D boxes and the 2D fuse text.
+        if (++frameCounter >= SCAN_INTERVAL) {
+            frameCounter = 0;
+            tntCache.clear();
+            for (Entity entity : mc.level.entitiesForRendering()) {
+                if (entity instanceof PrimedTnt tnt) tntCache.add(tnt);
+            }
+        }
+
+        if (!showTntFuse.get()) {
             return;
         }
 
-        for (Entity entity : mc.level.entitiesForRendering()) {
-            if (!(entity instanceof PrimedTnt tntEntity)) {
+        for (PrimedTnt tntEntity : tntCache) {
+            if (tntEntity.isRemoved()) {
                 continue;
             }
 
@@ -148,9 +174,9 @@ public class TntFuseEsp extends Module {
             Color sideColor = new Color(color.r, color.g, color.b, sideOpacity.get());
             Color lineColor = new Color(color.r, color.g, color.b, lineOpacity.get());
 
-            event.renderer.box(entity.getX() - .5, entity.getY(), entity.getZ() - .5, entity.getX() + 0.5,
-                entity.getY() + 1,
-                entity.getZ() + 0.5, sideColor, lineColor, shapeMode.get(), 0);
+            event.renderer.box(tntEntity.getX() - .5, tntEntity.getY(), tntEntity.getZ() - .5, tntEntity.getX() + 0.5,
+                tntEntity.getY() + 1,
+                tntEntity.getZ() + 0.5, sideColor, lineColor, shapeMode.get(), 0);
         }
     }
 
@@ -160,48 +186,40 @@ public class TntFuseEsp extends Module {
             return;
         }
 
-        for (Entity entity : mc.level.entitiesForRendering()) {
-            if (!(entity instanceof PrimedTnt tntEntity)) {
+        for (PrimedTnt tntEntity : tntCache) {
+            if (tntEntity.isRemoved()) {
                 continue;
             }
 
-            if (PlayerUtils.isWithin(entity.position(), (double) nearDistance.get()) && hideWhenNear.get()) {
+            if (PlayerUtils.isWithin(tntEntity.position(), (double) nearDistance.get()) && hideWhenNear.get()) {
                 continue;
             }
 
-            if (!PlayerUtils.isWithin(entity.position(), (double) farDistance.get()) && hideWhenFar.get()) {
+            if (!PlayerUtils.isWithin(tntEntity.position(), (double) farDistance.get()) && hideWhenFar.get()) {
                 continue;
             }
 
-            Vector3d vec3 = new Vector3d(entity.getX(), entity.getY() + 0.5, entity.getZ());
+            Vec3 vec3 = new Vec3(tntEntity.getX(), tntEntity.getY() + 0.5, tntEntity.getZ());
+            Vector3d joml = new Vector3d(vec3.x, vec3.y, vec3.z);
 
-            if (NametagUtils.to2D(vec3, textScale.get())) {
-                NametagUtils.begin(vec3);
-                TextRenderer.get().begin(1, false, true);
+            if (!NametagUtils.to2D(joml, textScale.get())) continue;
+            NametagUtils.begin(joml);
 
-                String text = String.format("%.2f", (double) tntEntity.getFuse() / 20);
+            // to2D already applied textScale, so the renderer itself draws at scale 1.
+            TextRenderer fuseRenderer = TextRenderer.get();
+            fuseRenderer.begin(1, false, true);
 
-                double textWidth = TextRenderer.get().getWidth(text);
-                double textHeight = TextRenderer.get().getHeight();
+            String text = String.format("%.2f", (double) tntEntity.getFuse() / 20);
+            Color color = computeColorFromFuse.get() ? fuseColor(tntEntity.getFuse()) : textColor.get();
 
-                Color color;
+            // Measured after begin() so the metrics match the transform the glyphs are drawn with.
+            double textWidth = fuseRenderer.getWidth(text);
+            double textHeight = fuseRenderer.getHeight();
 
-                if (computeColorFromFuse.get()) {
-                    color = fuseColor(tntEntity.getFuse());
-                } else {
-                    color = textColor.get();
-                }
+            fuseRenderer.render(text, -textWidth / 2, -textHeight / 2, color, true);
+            fuseRenderer.end();
 
-                TextRenderer.get().render(
-                    text,
-                    -textWidth / 2,
-                    -textHeight / 2,
-                    color,
-                    true);
-
-                TextRenderer.get().end();
-                NametagUtils.end();
-            }
+            NametagUtils.end();
         }
     }
 

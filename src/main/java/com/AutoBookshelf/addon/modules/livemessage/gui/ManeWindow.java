@@ -414,11 +414,12 @@ public class ManeWindow extends LiveWindow {
         Friends friends = Friends.get();
         EnemyManager enemyManager = EnemyManager.get();
         Map<UUID, String> onlinePlayers = new HashMap<>();
-        if (Minecraft.getInstance().getConnection() != null) {
-            for (PlayerInfo entry : Minecraft.getInstance().getConnection().getOnlinePlayers()) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.getConnection() != null && minecraft.player != null) {
+            for (PlayerInfo entry : minecraft.getConnection().getOnlinePlayers()) {
                 GameProfile gameProfile = entry.getProfile();
                 UUID uuid = gameProfile.id();
-                if (!uuid.equals(Minecraft.getInstance().player.getUUID())) {
+                if (!uuid.equals(minecraft.player.getUUID())) {
                     onlinePlayers.put(uuid, gameProfile.name());
                 }
             }

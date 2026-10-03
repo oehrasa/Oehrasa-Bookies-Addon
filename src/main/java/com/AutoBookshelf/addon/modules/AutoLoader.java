@@ -154,15 +154,6 @@ public class AutoLoader extends Module {
         .build()
     );
 
-    private final Setting<Boolean> doubleEChest = sgGeneral.add(new BoolSetting.Builder()
-        .name("double-ender-chest")
-        .description("Place a second ender chest mirrored next to the first (same facing, same Y), " +
-            "then open the first one. Both are broken after you close.")
-        .defaultValue(false)
-        .visible(() -> instantEChest.get() && breakAfterUse.get())
-        .build()
-    );
-
     private final Setting<Boolean> autoTake = sgGeneral.add(new BoolSetting.Builder()
         .name("auto-take")
         .description("Automatically take all items from the container before it closes, instead of waiting for you to take them manually.")
@@ -175,6 +166,15 @@ public class AutoLoader extends Module {
         .description("Only auto-take if the container holds just one distinct item; otherwise leave it for you to take manually.")
         .defaultValue(false)
         .visible(autoTake::get)
+        .build()
+    );
+
+    private final Setting<Boolean> doubleEChest = sgGeneral.add(new BoolSetting.Builder()
+        .name("double-ender-chest")
+        .description("Place a second ender chest mirrored next to the first (same facing, same Y), " +
+            "then open the first one. Both are broken after you close.")
+        .defaultValue(false)
+        .visible(() -> instantEChest.get() && breakAfterUse.get())
         .build()
     );
 
@@ -419,7 +419,7 @@ public class AutoLoader extends Module {
 
             // Single atomic swap
             mc.gameMode.handleContainerInput(
-                mc.player.inventoryMenu.containerId,
+                mc.player.containerMenu.containerId,
                 containerInvSlot,
                 targetSlot,
                 ContainerInput.SWAP,
@@ -437,12 +437,12 @@ public class AutoLoader extends Module {
     private void doUseItem() {
         preActionSlot = mc.player.getInventory().getSelectedSlot();
         mc.player.getInventory().setSelectedSlot(containerHotbarSlot);
-        mc.player.connection.send(new ServerboundSetCarriedItemPacket(containerHotbarSlot));
+        mc.getConnection().send(new ServerboundSetCarriedItemPacket(containerHotbarSlot));
         mc.gameMode.useItem(mc.player, InteractionHand.MAIN_HAND);
         mc.player.swing(InteractionHand.MAIN_HAND);
         if (preActionSlot >= 0 && preActionSlot <= 8 && preActionSlot != containerHotbarSlot) {
             mc.player.getInventory().setSelectedSlot(preActionSlot);
-            mc.player.connection.send(new ServerboundSetCarriedItemPacket(preActionSlot));
+            mc.getConnection().send(new ServerboundSetCarriedItemPacket(preActionSlot));
         }
         finish();
     }
@@ -466,7 +466,7 @@ public class AutoLoader extends Module {
         }
 
         mc.player.getInventory().setSelectedSlot(containerHotbarSlot);
-        mc.player.connection.send(new ServerboundSetCarriedItemPacket(containerHotbarSlot));
+        mc.getConnection().send(new ServerboundSetCarriedItemPacket(containerHotbarSlot));
 
         boolean needsSecondSpot = isEnderChest && doubleEChest.get();
         BlockPos placePos = placementEngine.findPlacement(
@@ -519,7 +519,7 @@ public class AutoLoader extends Module {
         }
 
         mc.player.getInventory().setSelectedSlot(containerHotbarSlot);
-        mc.player.connection.send(new ServerboundSetCarriedItemPacket(containerHotbarSlot));
+        mc.getConnection().send(new ServerboundSetCarriedItemPacket(containerHotbarSlot));
 
         Direction leftDir = firstApproachFacing.getCounterClockWise();
         BlockPos placePos = firstPos.relative(leftDir);
@@ -596,7 +596,7 @@ public class AutoLoader extends Module {
                 return;
             }
             mc.gameMode.handleContainerInput(
-                mc.player.inventoryMenu.containerId,
+                mc.player.containerMenu.containerId,
                 containerInvSlot,
                 tgt,
                 ContainerInput.SWAP,
@@ -677,12 +677,12 @@ public class AutoLoader extends Module {
         BlockHitResult hit = new BlockHitResult(center, Direction.UP, placedPos, false);
         if (rotate.get()) {
             Rotations.rotate(Rotations.getYaw(center), Rotations.getPitch(center), -100, () -> {
-                mc.player.connection.send(
+                mc.getConnection().send(
                     new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND, hit, 0));
                 mc.player.swing(InteractionHand.MAIN_HAND);
             });
         } else {
-            mc.player.connection.send(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND, hit, 0));
+            mc.getConnection().send(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND, hit, 0));
             mc.player.swing(InteractionHand.MAIN_HAND);
         }
         delayTicks = 4;
@@ -761,25 +761,43 @@ public class AutoLoader extends Module {
 
     /**
      * True if at least one item in the container could be moved into the player
-     * inventory right now: either a free slot beyond the ones keepFreeSlots()
-     * reserves for picking up the broken container, or a partial stack the item
-     * can merge into without consuming a new slot.
+     * inventory right now without ever dropping the empty-slot count below
+     * keepFreeSlots(). A quick-move of a single container slot consumes at most
+     * one empty player slot, so any spare slot beyond the reserve is always
+     * safe; when only the reserve is left, the move is only safe if the whole
+     * stack merges into existing partial stacks and needs no new slot. Just
+     * "some partial stack has room" is not enough: its overflow would eat the
+     * reserved slot.
      */
     private boolean hasRoomForContents(AbstractContainerMenu handler) {
+        int empty = countEmptyPlayerSlots();
+        int keepFree = keepFreeSlots();
         for (int i = 0; i < 27; i++) {
             ItemStack stack = handler.getSlot(i).getItem();
             if (stack.isEmpty()) continue;
 
-            if (countEmptyPlayerSlots() > keepFreeSlots()) return true;
+            if (empty > keepFree) return true;
 
-            for (int p = 0; p < 36; p++) {
-                ItemStack playerStack = mc.player.getInventory().getItem(p);
-                if (playerStack.isEmpty()) continue;
-                if (playerStack.getCount() < playerStack.getItem().getDefaultMaxStackSize()
-                    && ItemStack.isSameItemSameComponents(stack, playerStack)) {
-                    return true;
-                }
-            }
+            if (fitsEntirelyIntoPartials(stack)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * True if the stack's full count can be absorbed by matching partial stacks
+     * currently in the player inventory, so a quick-move of it consumes no
+     * empty slot.
+     */
+    private boolean fitsEntirelyIntoPartials(ItemStack stack) {
+        int remaining = stack.getCount();
+        for (int p = 0; p < 36; p++) {
+            ItemStack playerStack = mc.player.getInventory().getItem(p);
+            if (playerStack.isEmpty()) continue;
+            if (!ItemStack.isSameItemSameComponents(stack, playerStack)) continue;
+            int room = playerStack.getMaxStackSize() - playerStack.getCount();
+            if (room <= 0) continue;
+            remaining -= room;
+            if (remaining <= 0) return true;
         }
         return false;
     }
@@ -841,7 +859,7 @@ public class AutoLoader extends Module {
             if (ps != -1) {
                 preBreakSlot = mc.player.getInventory().getSelectedSlot();
                 mc.player.getInventory().setSelectedSlot(ps);
-                mc.player.connection.send(new ServerboundSetCarriedItemPacket(ps));
+                mc.getConnection().send(new ServerboundSetCarriedItemPacket(ps));
                 pickaxeEquipped = true;
             }
         }
@@ -880,19 +898,19 @@ public class AutoLoader extends Module {
 
     private void sendBreakPackets(BlockPos pos, Direction dir) {
         if (packetBreakGrim.get()) {
-            mc.player.connection.send(new ServerboundPlayerActionPacket(
+            mc.getConnection().send(new ServerboundPlayerActionPacket(
                 ServerboundPlayerActionPacket.Action.STOP_DESTROY_BLOCK, pos, dir));
-            mc.player.connection.send(new ServerboundPlayerActionPacket(
+            mc.getConnection().send(new ServerboundPlayerActionPacket(
                 ServerboundPlayerActionPacket.Action.START_DESTROY_BLOCK, pos, dir));
-            mc.player.connection.send(new ServerboundPlayerActionPacket(
+            mc.getConnection().send(new ServerboundPlayerActionPacket(
                 ServerboundPlayerActionPacket.Action.ABORT_DESTROY_BLOCK, pos, dir));
         } else {
-            mc.player.connection.send(new ServerboundPlayerActionPacket(
+            mc.getConnection().send(new ServerboundPlayerActionPacket(
                 ServerboundPlayerActionPacket.Action.START_DESTROY_BLOCK, pos, dir));
-            mc.player.connection.send(new ServerboundPlayerActionPacket(
+            mc.getConnection().send(new ServerboundPlayerActionPacket(
                 ServerboundPlayerActionPacket.Action.ABORT_DESTROY_BLOCK, pos, dir));
         }
-        mc.player.connection.send(new ServerboundPlayerActionPacket(
+        mc.getConnection().send(new ServerboundPlayerActionPacket(
             ServerboundPlayerActionPacket.Action.STOP_DESTROY_BLOCK, pos, dir));
     }
 
@@ -982,17 +1000,17 @@ public class AutoLoader extends Module {
     }
 
     private void sendAirPlacePackets(BlockHitResult hit, int revision) {
-        mc.player.connection.send(new ServerboundPlayerActionPacket(
+        mc.getConnection().send(new ServerboundPlayerActionPacket(
             ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
-        mc.player.connection.send(
+        mc.getConnection().send(
             new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND, hit, revision));
-        mc.player.connection.send(new ServerboundPlayerActionPacket(
+        mc.getConnection().send(new ServerboundPlayerActionPacket(
             ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
         mc.player.swing(InteractionHand.MAIN_HAND);
     }
 
     private void sendResyncPacket() {
-        if (mc.player == null || mc.player.connection == null) return;
+        if (mc.player == null || mc.getConnection() == null) return;
         // Never resync while any GUI is open: a stray resync sent mid-take can
         // desync the open container's handler and make the server silently drop
         // the subsequent quick-move clicks.
@@ -1000,7 +1018,7 @@ public class AutoLoader extends Module {
 
         AbstractContainerMenu handler = mc.player.containerMenu;
         Int2ObjectMap<HashedStack> modifiedStacks = new Int2ObjectOpenHashMap<>();
-        mc.player.connection.send(new ServerboundContainerClickPacket(
+        mc.getConnection().send(new ServerboundContainerClickPacket(
             handler.containerId,
             handler.getStateId(),
             (short) -1,
@@ -1054,7 +1072,7 @@ public class AutoLoader extends Module {
     private void restorePreBreakSlot() {
         if (pickaxeEquipped && preBreakSlot >= 0 && preBreakSlot <= 8) {
             mc.player.getInventory().setSelectedSlot(preBreakSlot);
-            mc.player.connection.send(new ServerboundSetCarriedItemPacket(preBreakSlot));
+            mc.getConnection().send(new ServerboundSetCarriedItemPacket(preBreakSlot));
         }
         pickaxeEquipped = false;
         preBreakSlot = -1;

@@ -36,9 +36,9 @@ Tested successfully with these mods.
 
 ## Features
 
-**50 modules**, **8 commands**, **10 HUD elements**, **9 mixin**, and **19 Utils**
+**51 modules**, **8 commands**, **10 HUD elements**, **10 mixin**, and **19 Utils**
 
-## Modules (50 total)
+## Modules (51 total)
 <details>
 <summary><b>Modules</b> (Bookies modules)</summary>
 
@@ -65,34 +65,35 @@ Tested successfully with these mods.
 21. **DoubleCrystalPopper** - Attacks a locked target then pops two crystals with configurable delays
 22. **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
 23. **Fatamorgana** - Maho x Miho, Miho x Yukari, Maho x Erika
-24. **Get-Preview** - Shows an item preview overlay on bundles, shulkers, and books
-25. **Homes-List** - Manage and teleport to your server homes with a GUI
-26. **Item-Despawn** - Highlights items that are about to despawn
-27. **Inventory-Info** - SHoiGu!! GEraShimov!!!
-28. **InventoryTracker** - Tracks and shows the equipment/slot history of other players in render distance (use .invsee to open screen)
-29. **KMDB** - Builds Wither, Iron Golem, Snow Golem, or Copper Golem automatically
-30. **LiveMessage** - Advanced DM management system with GUI
-31. **MURADAESA** - Detects likely player activity outside 128 blocks by scoring world-change packet patterns
-32. **Minecart-Placer** - Places any minecarts on any rails in range
-33. **Map-Grid** - Highlights map grid boundaries around the player
-34. **Mapart-Namer** - Auto‑names maps based on inventory slot layout
-35. **Mats-Refill** - Automatically restocks materials from shulker boxes
-36. **Mob-Owner** - Shows entity owner by saving into cache
-37. **PacketEat** - Allows you to eat without interrupting other actions
-38. **PzH200** - With just a bow and this module, It can fire shells at a high velocity aided by a laser rangefinder
-39. **Platform** - Build a platform within a selected area at a given y-level
-40. **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
-41. **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in
+24. **Force-Access** - Mines the block that keeps a container from opening, then opens it, also works through walls
+25. **Get-Preview** - Shows an item preview overlay on bundles, shulkers, and books
+26. **Homes-List** - Manage and teleport to your server homes with a GUI
+27. **Item-Despawn** - Highlights items that are about to despawn
+28. **Inventory-Info** - SHoiGu!! GEraShimov!!!
+29. **InventoryTracker** - Tracks and shows the equipment/slot history of other players in render distance (use .invsee to open screen)
+30. **KMDB** - Builds Wither, Iron Golem, Snow Golem, or Copper Golem, or Creaking automatically
+31. **LiveMessage** - Advanced DM management system with GUI
+32. **MURADAESA** - Detects likely player activity outside 128 blocks by scoring world-change packet patterns
+33. **Minecart-Placer** - Places any minecarts on any rails in range
+34. **Map-Grid** - Highlights map grid boundaries around the player
+35. **Mapart-Namer** - Auto‑names maps based on inventory slot layout
+36. **Mats-Refill** - Automatically restocks materials from shulker boxes
+37. **Mob-Owner** - Shows entity owner by saving into cache
+38. **PacketEat** - Allows you to eat without interrupting other actions
+39. **PzH200** - With just a bow and this module, It can fire shells at a high velocity aided by a laser rangefinder
+40. **Platform** - Build a platform within a selected area at a given y-level
+41. **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
+42. **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in
     1.13+ chunks
-42. **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
-43. **Sculk-Range** - Shows the detection range of normal or calibrated sculk sensors and shriekers
-44. **SignRender** - Renders sign text through walls with advanced clustering
-45. **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
-46. **Tnt-Fuse-Esp** - Shows the fuse time of lit tnt
-47. **Trajectory-Plus** - Smooth projectile prediction and tracking
-48. **Tsundere-Furry** - Transforms outgoing chat messages into animal sounds, tsundere, or both :>
-49. **Unwax-Aura** - Automatically removes wax from waxed copper blocks
-50. **Yuri-Asmr** - Streams a random ASMR search result through yt-dlp + ffmpeg with integrated HUD
+43. **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
+44. **Sculk-Range** - Shows the detection range of normal or calibrated sculk sensors and shriekers
+45. **SignRender** - Renders sign text through walls with advanced clustering
+46. **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
+47. **Tnt-Fuse-Esp** - Shows the fuse time of lit tnt
+48. **Trajectory-Plus** - Smooth projectile prediction and tracking
+49. **Tsundere-Furry** - Transforms outgoing chat messages into animal sounds, tsundere, or both :>
+50. **Unwax-Aura** - Automatically removes wax from waxed copper blocks
+51. **Yuri-Asmr** - Streams a random ASMR search result through yt-dlp + ffmpeg with integrated HUD
 
 </details>
 
@@ -238,7 +239,7 @@ https://youtu.be/uZQGECqCU_A
 ## Credits
 List of addons I used as reference(skid? mwhehe), You should check them out it's pretty awesome!
 
-- **[FileAutoLogin](https://github.com/DortyTheGreat/FileAutoLogin)** - Base of this addon rip
+- **[FileAutoLogin](https://github.com/DortyTheGreat/FileAutoLogin)** - Base of this addon
 - **[Clarity](https://github.com/ck-clarity/addon)** - Image HUD
 - **[meerhax](https://github.com/dekrom/meeerhax)** - Elytra time HUD
 - **[BepHax](https://github.com/dekrom/BepHaxAddon)** - Basically a bunch including this README

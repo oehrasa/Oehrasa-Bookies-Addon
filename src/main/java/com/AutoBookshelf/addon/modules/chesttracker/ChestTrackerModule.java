@@ -272,6 +272,7 @@ public class ChestTrackerModule extends Module {
     private boolean autoOpened = false;
     private int awaitingTicks = 0;
     private List<ItemStack> lastSnapshot = null;
+    private final List<ItemStack> scanScratch = new ArrayList<>();
     private BlockPos[] currentOpenPositions = new BlockPos[2];
 
     private int tickCounter = 0;
@@ -308,7 +309,7 @@ public class ChestTrackerModule extends Module {
 
     @Override
     public void onDeactivate() {
-        data.saveData();
+        data.saveDataSync();
     }
 
     private void resetState() {
@@ -331,7 +332,10 @@ public class ChestTrackerModule extends Module {
 
     private BlockPos getCanonicalChestPos(BlockPos pos) {
         if (mc.level == null) return pos;
-        BlockState state = mc.level.getBlockState(pos);
+        return getCanonicalChestPos(pos, mc.level.getBlockState(pos));
+    }
+
+    private BlockPos getCanonicalChestPos(BlockPos pos, BlockState state) {
         Block block = state.getBlock();
 
         // Only double chests need normalization
@@ -370,8 +374,10 @@ public class ChestTrackerModule extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Pre event) {
+        boolean inContainerScreen = isInContainerScreen();
+
         // Count down the on-screen status message.
-        if (displayTimer > 0 && !isInContainerScreen()) {
+        if (displayTimer > 0 && !inContainerScreen) {
             displayTimer--;
         }
 
@@ -399,7 +405,7 @@ public class ChestTrackerModule extends Module {
 
         // Auto close logic
         if (shouldAutoClose) {
-            if (!isInContainerScreen()) {
+            if (!inContainerScreen) {
                 shouldAutoClose = false;
                 ticksUntilClose = 0;
             } else if (ticksUntilClose > 0) {
@@ -415,14 +421,17 @@ public class ChestTrackerModule extends Module {
         }
 
         if (awaiting) {
-            if (isInContainerScreen()) {
+            if (inContainerScreen) {
                 AbstractContainerMenu handler = mc.player.containerMenu;
                 if (handler != null && currentOpenPositions[0] != null) {
-                    List<ItemStack> snapshot = snapshotContainerSlots(handler);
-                    if (lastSnapshot != null && snapshotsEqual(snapshot, lastSnapshot)) {
-                        commitTrackedContainer(snapshot);
+                    // Scan the live slots into a reusable list; only copy into a
+                    // fresh snapshot when the contents actually changed, instead of
+                    // copying every slot every tick.
+                    scanContainerSlots(handler, scanScratch);
+                    if (lastSnapshot != null && snapshotsEqual(scanScratch, lastSnapshot)) {
+                        commitTrackedContainer(lastSnapshot);
                     } else {
-                        lastSnapshot = snapshot;
+                        lastSnapshot = snapshotContainerSlots(handler);
                         awaitingTicks++;
                         if (awaitingTicks > AWAITING_TIMEOUT) {
                             if (debugMode.get()) info("Contents never stabilized, giving up capture");
@@ -446,7 +455,7 @@ public class ChestTrackerModule extends Module {
         }
 
         // Container opening loop
-        if (isInContainerScreen()) return;
+        if (inContainerScreen) return;
         if (awaiting) return;
 
         boolean shouldSearch = autoOpenEnabled.get();
@@ -459,6 +468,7 @@ public class ChestTrackerModule extends Module {
         tickCounter = 0;
 
         int range = (int) Math.ceil(autoOpenRange.get());
+        double maxDistSq = autoOpenRange.get() * autoOpenRange.get();
         BlockPos playerPos = mc.player.blockPosition();
         String currentDim = getCurrentDimension();
         for (int x = -range; x <= range; x++) {
@@ -466,7 +476,6 @@ public class ChestTrackerModule extends Module {
                 for (int z = -range; z <= range; z++) {
                     BlockPos blockPos = playerPos.offset(x, y, z);
                     double distSq = mc.player.distanceToSqr(blockPos.getX() + 0.5, blockPos.getY() + 0.5, blockPos.getZ() + 0.5);
-                    double maxDistSq = autoOpenRange.get() * autoOpenRange.get();
                     if (distSq > maxDistSq) continue;
                     BlockState blockState = mc.level.getBlockState(blockPos);
                     Block block = blockState.getBlock();
@@ -475,7 +484,7 @@ public class ChestTrackerModule extends Module {
 
                     // Use the canonical position for the "already tracked" check so
                     // we don't re-open a double chest that was tracked via its other half
-                    BlockPos canonicalPos = getCanonicalChestPos(blockPos);
+                    BlockPos canonicalPos = getCanonicalChestPos(blockPos, blockState);
                     boolean isAlreadyTracked = data.getContainer(canonicalPos, currentDim) != null;
                     if (!isAlreadyTracked && block instanceof ChestBlock) {
                         ChestType chestType = blockState.getValue(ChestBlock.TYPE);
@@ -487,7 +496,7 @@ public class ChestTrackerModule extends Module {
                     }
 
                     boolean shouldOpen = false;
-                    if (autoOpenEnabled.get() && !isAlreadyTracked) {
+                    if (shouldSearch && !isAlreadyTracked) {
                         shouldOpen = true;
                     }
 
@@ -534,7 +543,7 @@ public class ChestTrackerModule extends Module {
 
     @EventHandler
     private void onGameLeft(GameLeftEvent event) {
-        data.saveData();
+        data.saveDataSync();
     }
 
     @EventHandler
@@ -596,7 +605,7 @@ public class ChestTrackerModule extends Module {
         if (displayTimer > 0 && showOnScreen.get() && !displayText.isEmpty()) {
             GuiGraphicsExtractor statusContext = event.graphics;
             int screenWidth = mc.getWindow().getGuiScaledWidth();
-            statusContext.centeredText(mc.font, displayText, screenWidth / 2, 4, 0xFFFFFF);
+            statusContext.text(mc.font, displayText, screenWidth / 2 - mc.font.width(displayText) / 2, 4, 0xFFFFFFFF, false);
         }
 
         if (!renderLabels.get()) return;
@@ -698,6 +707,17 @@ public class ChestTrackerModule extends Module {
             snapshot.add(slot.getItem().copy());
         }
         return snapshot;
+    }
+
+    // Fill the provided list with the container's live slot stacks (no copies).
+    // Only a snapshot that we intend to keep for comparison is copied, so the
+    // common case of "contents unchanged" costs no ItemStack allocations.
+    private void scanContainerSlots(AbstractContainerMenu handler, List<ItemStack> out) {
+        out.clear();
+        int containerSlots = handler.slots.size() - 36;
+        for (int i = 0; i < containerSlots && i < handler.slots.size(); i++) {
+            out.add(handler.slots.get(i).getItem());
+        }
     }
 
     private boolean snapshotsEqual(List<ItemStack> a, List<ItemStack> b) {
@@ -896,7 +916,7 @@ public class ChestTrackerModule extends Module {
             // actually landed on disk, and surface that to the player
             // instead of pretending it silently always works.
             int failuresBefore = data.getSaveFailures();
-            data.saveData();
+            data.saveDataSync();
             if (data.getSaveFailures() > failuresBefore) {
                 setDisplayText("§cFailed to save data - check logs");
                 if (debugMode.get()) warning("Manual save failed");
@@ -926,6 +946,6 @@ public class ChestTrackerModule extends Module {
         currentSearchItem = held.getItem();
         List<TrackedContainer> results = data.searchItem(currentSearchItem);
         if (debugMode.get())
-            info("Found " + results.size() + " containers with " + currentSearchItem.getName(currentSearchItem.getDefaultInstance()).getString());
+            info("Found " + results.size() + " containers with " + currentSearchItem.getName(new ItemStack(currentSearchItem)).getString());
     }
 }

@@ -1,5 +1,5 @@
 [versions]
-mod-version = "26.1.2-1.2.1"
+mod-version = "26.1.2-1.2.2"
 
 # Fabric (https://fabricmc.net/develop)
 jdk = "25"
@@ -17,8 +17,8 @@ meteor = "26.1.2-SNAPSHOT"
 baritone = "26.1-SNAPSHOT"
 
 # Mods
-
 [libraries]
+
 # Fabric base
 minecraft = { module = "com.mojang:minecraft", version.ref = "minecraft" }
 fabric-loader = { module = "net.fabricmc:fabric-loader", version.ref = "fabric-loader" }

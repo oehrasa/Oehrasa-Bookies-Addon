@@ -12,13 +12,17 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.resources.Identifier;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.enchantment.Enchantments;
+import net.minecraft.world.item.enchantment.ItemEnchantments;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
@@ -65,6 +69,14 @@ public class DriedGhastPlacer extends Module {
         .defaultValue(true)
         .build());
 
+    private final Setting<Integer> breakTimeout = sgGeneral.add(new IntSetting.Builder()
+        .name("break-timeout")
+        .description("Ticks to keep mining the ice before giving up on the cycle.")
+        .defaultValue(40)
+        .min(10)
+        .sliderMax(200)
+        .build());
+
     private final Setting<Boolean> fastMode = sgGeneral.add(new BoolSetting.Builder()
         .name("fast-mode")
         .description("Skip ice placement – look for existing water sources on solid blocks instead.")
@@ -91,6 +103,8 @@ public class DriedGhastPlacer extends Module {
     private BlockPos supportBlockPos;
     private int delayTicks = 0;
     private int placedCount = 0;
+    private int breakWaitTicks = 0;
+    private int breakWaitStep = 0;
     private Block driedGhastBlock = null;
     private int iceSlot = -1, pickSlot = -1, ghastSlot = -1;
 
@@ -106,6 +120,8 @@ public class DriedGhastPlacer extends Module {
         stage = Stage.IDLE;
         targetPos = supportBlockPos = null;
         delayTicks = 0;
+        breakWaitTicks = 0;
+        breakWaitStep = 0;
         placedCount = 0;
         driedGhastBlock = null;
         iceSlot = pickSlot = ghastSlot = -1;
@@ -129,7 +145,7 @@ public class DriedGhastPlacer extends Module {
             case WAIT_ICE -> checkIce();
             case ROTATE_TO_BREAK -> breakIce();
             case BREAK_ICE -> executeBreakIce();
-            case WAIT_BREAK -> checkWater();
+            case WAIT_BREAK -> checkBreak();
             // Normal stages
             case ROTATE_TO_PLACE_GHAST -> placeGhast();
             case PLACE_GHAST -> executePlaceGhast();
@@ -194,11 +210,14 @@ public class DriedGhastPlacer extends Module {
 
         BlockPos playerFeet = mc.player.blockPosition();
         BlockPos playerHead = playerFeet.above();
-        double maxDistSq = range.get() * range.get();
+        double rangeVal = range.get();
+        int minBound = (int) -rangeVal;
+        int maxBound = (int) rangeVal;
+        double maxDistSq = rangeVal * rangeVal;
 
-        for (int dx = (int) -range.get(); dx <= range.get(); dx++)
-            for (int dy = (int) -range.get(); dy <= range.get(); dy++)
-                for (int dz = (int) -range.get(); dz <= range.get(); dz++) {
+        for (int dx = minBound; dx <= maxBound; dx++)
+            for (int dy = minBound; dy <= maxBound; dy++)
+                for (int dz = minBound; dz <= maxBound; dz++) {
                     BlockPos pos = playerFeet.offset(dx, dy, dz);
 
                     // Skip blocks right at the player's feet or head
@@ -206,7 +225,8 @@ public class DriedGhastPlacer extends Module {
                     if (pos.distSqr(playerFeet) > maxDistSq) continue;
 
                     // Skip if any entity (other than the local player) occupies this block
-                    if (!mc.level.getEntities(null, new AABB(pos)).isEmpty()) continue;
+                    if (mc.level.getEntitiesOfClass(Entity.class, new AABB(pos), e -> true).stream().anyMatch(e -> !(e instanceof net.minecraft.world.entity.player.Player && e == mc.player)))
+                        continue;
 
                     BlockState ts = mc.level.getBlockState(pos);
                     if (requireWater) {
@@ -220,11 +240,11 @@ public class DriedGhastPlacer extends Module {
                     if (below.equals(playerFeet)) continue;
 
                     BlockState bs = mc.level.getBlockState(below);
-                    if (!bs.isRedstoneConductor(mc.level, below)) continue;
+                    if (!bs.isSolid()) continue;
                     if (bs.getBlock() == driedGhastBlock) continue;
 
-                    targetPos = pos;
-                    supportBlockPos = below;
+                    targetPos = new BlockPos(pos.getX(), pos.getY(), pos.getZ());
+                    supportBlockPos = new BlockPos(below.getX(), below.getY(), below.getZ());
                     return true;
                 }
         return false;
@@ -248,10 +268,59 @@ public class DriedGhastPlacer extends Module {
     private void breakIce() { stage = Stage.BREAK_ICE; }
 
     private void executeBreakIce() {
-        mc.getConnection().send(new ServerboundPlayerActionPacket(ServerboundPlayerActionPacket.Action.START_DESTROY_BLOCK, targetPos, Direction.UP));
-        mc.getConnection().send(new ServerboundPlayerActionPacket(ServerboundPlayerActionPacket.Action.STOP_DESTROY_BLOCK, targetPos, Direction.UP));
+        mc.gameMode.startDestroyBlock(targetPos, Direction.UP);
+        mc.gameMode.continueDestroyBlock(targetPos, Direction.UP);
         mc.player.swing(InteractionHand.MAIN_HAND);
+        breakWaitTicks = 0;
+        breakWaitStep = 4;
         delayTicks = 4; stage = Stage.WAIT_BREAK;
+    }
+
+    /**
+     * WAIT_BREAK. continueDestroyBlock is a per-tick "keep holding" call, so the
+     * single one sent by executeBreakIce is not enough on its own: the ice is still
+     * there on the next tick, so keep mining it until it breaks. The whole wait is
+     * bounded by break-timeout, because otherwise the state spun until water
+     * appeared and hung forever whenever the ice never broke (wrong tool, silk
+     * touch, another player breaking it first) or broke into plain air instead of
+     * exposing water.
+     */
+    private void checkBreak() {
+        BlockState state = mc.level.getBlockState(targetPos);
+        if (state.getBlock() == Blocks.ICE) {
+            if (rotate.get()) Rotations.rotate(Rotations.getYaw(Vec3.atCenterOf(targetPos)), Rotations.getPitch(Vec3.atCenterOf(targetPos)), -100, () -> {});
+            mc.gameMode.continueDestroyBlock(targetPos, Direction.UP);
+            mc.player.swing(InteractionHand.MAIN_HAND);
+        } else if (state.getBlock() == Blocks.WATER) {
+            // Ice is gone and did its job - clear the wait counter and hand over.
+            breakWaitTicks = 0;
+            breakWaitStep = 0;
+            checkWater();
+            return;
+        }
+
+        // Still ice, or ice already gone with no water yet: keep the bounded wait
+        // running, and give up once the budget is spent. The budget is in ticks, but
+        // this runs once per delay rather than once per tick, so charge the wait the
+        // delay it just spent plus the tick this check itself ran on. Counting calls
+        // instead stretched the real wait to roughly three times break-timeout.
+        breakWaitTicks += breakWaitStep + 1;
+        if (breakWaitTicks > breakTimeout.get()) {
+            info("§cNo water after " + breakTimeout.get() + " ticks, skipping this spot.");
+            abortCycle();
+            return;
+        }
+        breakWaitStep = 2;
+        delayTicks = 2;
+    }
+
+    /** Abandons the current placement cycle without touching the placed-block count. */
+    private void abortCycle() {
+        InvUtils.swapBack();
+        stage = Stage.IDLE;
+        targetPos = supportBlockPos = null;
+        breakWaitTicks = 0;
+        breakWaitStep = 0;
     }
 
     private void checkWater() {
@@ -286,9 +355,10 @@ public class DriedGhastPlacer extends Module {
     private boolean isValidPickaxe(ItemStack stack) {
         if (stack.isEmpty()) return false;
         if (!stack.is(ItemTags.PICKAXES)) return false;
-        var ench = stack.get(net.minecraft.core.component.DataComponents.ENCHANTMENTS);
-        if (ench != null) for (var entry : ench.entrySet())
-            if (entry.getKey().is(net.minecraft.resources.Identifier.withDefaultNamespace("silk_touch"))) return false;
+        Identifier silkTouchId = Enchantments.SILK_TOUCH.identifier();
+        ItemEnchantments ench = stack.getOrDefault(DataComponents.ENCHANTMENTS, ItemEnchantments.EMPTY);
+        for (var entry : ench.entrySet())
+            if (entry.getKey().unwrapKey().map(key -> key.identifier().equals(silkTouchId)).orElse(false)) return false;
         return true;
     }
 

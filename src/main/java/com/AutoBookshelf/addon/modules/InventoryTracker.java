@@ -53,13 +53,6 @@ public class InventoryTracker extends Module {
         .build()
     );
 
-    private final Setting<Boolean> showShulkerContents = sgGeneral.add(new BoolSetting.Builder()
-        .name("show-container-contents")
-        .description("Also displays the contents of shulker boxes (or other containers) in the tracked grid, if the server sends that data.")
-        .defaultValue(false)
-        .build()
-    );
-
     private final Setting<Double> heightOffset = sgGeneral.add(new DoubleSetting.Builder()
         .name("height-offset")
         .description("Extra world-space Y offset above eye height, to avoid rendering on Nametags row.")
@@ -79,13 +72,20 @@ public class InventoryTracker extends Module {
         .build()
     );
 
+    private final Setting<Boolean> showShulkerContents = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-container-contents")
+        .description("Also displays the contents of shulker boxes (or other containers) in the tracked grid, if the server sends that data.")
+        .defaultValue(false)
+        .build()
+    );
+
     private final Setting<Integer> maxRenderDistance = sgGeneral.add(new IntSetting.Builder()
         .name("max-render-distance")
         .description("Maximum distance to render the tracked inventory grid.")
         .defaultValue(24)
         .min(1)
-        .max(64)
-        .sliderRange(1, 64)
+        .max(128)
+        .sliderRange(1, 128)
         .build()
     );
 
@@ -421,8 +421,8 @@ public class InventoryTracker extends Module {
             if (!NametagUtils.to2D(vec, 1.0)) continue;
 
             // Recomputed live every frame
-            double guiScaleX = (double) mc.getWindow().getGuiScaledWidth() / mc.getWindow().getScreenWidth();
-            double guiScaleY = (double) mc.getWindow().getGuiScaledHeight() / mc.getWindow().getScreenHeight();
+            double guiScaleX = (double) mc.getWindow().getGuiScaledWidth() / mc.getWindow().getWidth();
+            double guiScaleY = (double) mc.getWindow().getGuiScaledHeight() / mc.getWindow().getHeight();
 
             int screenX = (int) (vec.x * guiScaleX);
             int screenY = (int) (vec.y * guiScaleY);

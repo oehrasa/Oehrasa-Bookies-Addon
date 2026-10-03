@@ -35,6 +35,8 @@ public class MinecartPlacer extends Module {
     private int placedCount = 0;
     private boolean waitingForMinecarts = false;
     private int waitCounter = 0;
+    private int cachedMinecartSlot = -1;
+    private int cachedEmptyHotbarSlot = -1;
 
     private enum MinecartType {
         MINECART(Items.MINECART, "Minecart"),
@@ -211,6 +213,8 @@ public class MinecartPlacer extends Module {
         waitingForMinecarts = false;
         delayLeft = 0;
         waitCounter = 0;
+        cachedMinecartSlot = -1;
+        cachedEmptyHotbarSlot = -1;
 
         info("§aFound §f" + targetRails.size() + " §a" + railType.get().name + "s. Placing " + minecartType.get().name + "s...");
     }
@@ -254,18 +258,20 @@ public class MinecartPlacer extends Module {
 
         // Loop through all rails to find one that needs a minecart
         boolean foundRail = false;
+        Block targetRail = railType.get().block;
+        boolean shouldSkipOccupied = skipOccupied.get();
 
         for (int i = 0; i < targetRails.size(); i++) {
             int index = (currentIndex + i) % targetRails.size();
             BlockPos railPos = targetRails.get(index);
 
             // Check if block is still the correct rail type
-            if (mc.level.getBlockState(railPos).getBlock() != railType.get().block) {
+            if (mc.level.getBlockState(railPos).getBlock() != targetRail) {
                 continue;
             }
 
             // Check if rail already has a minecart
-            if (skipOccupied.get() && hasMinecartOnRail(railPos)) {
+            if (shouldSkipOccupied && hasMinecartOnRail(railPos)) {
                 continue;
             }
 
@@ -286,7 +292,6 @@ public class MinecartPlacer extends Module {
 
             // Place the minecart
             placeMinecart(railPos, minecartSlot);
-            placedCount++;
             delayLeft = placeDelay.get();
             currentIndex = (currentIndex + 1) % targetRails.size();
             return;
@@ -311,53 +316,100 @@ public class MinecartPlacer extends Module {
     private int findMinecartInInventory() {
         Item targetItem = minecartType.get().item;
 
+        if (cachedMinecartSlot != -1) {
+            ItemStack cached = mc.player.getInventory().getItem(cachedMinecartSlot);
+            if (!cached.isEmpty() && cached.getItem() == targetItem) {
+                return cachedMinecartSlot;
+            }
+            cachedMinecartSlot = -1;
+        }
+
         for (int i = 0; i < 36; i++) {
             ItemStack stack = mc.player.getInventory().getItem(i);
             if (!stack.isEmpty() && stack.getItem() == targetItem) {
+                cachedMinecartSlot = i;
                 return i;
             }
         }
+        cachedMinecartSlot = -1;
         return -1;
     }
 
     private void placeMinecart(BlockPos railPos, int slot) {
+        // Target the center of the rail block directly
+        // This allows placing through walls
         Vec3 targetPos = Vec3.atCenterOf(railPos);
-        BlockHitResult hitResult = new BlockHitResult(targetPos, Direction.UP, railPos, false);
+
+        // Create a hit result pointing directly at the rail
+        BlockHitResult hitResult = new BlockHitResult(
+            targetPos,
+            Direction.UP,
+            railPos,
+            false
+        );
+
         int previousSlot = mc.player.getInventory().getSelectedSlot();
-
-        // If the minecart is in the main inventory, swap it into a hotbar slot
-        if (slot >= 9) {
-            int hotbarSlot = -1;
-            for (int i = 0; i < 9; i++) {
-                if (mc.player.getInventory().getItem(i).isEmpty()) {
-                    hotbarSlot = i;
-                    break;
-                }
-            }
-            if (hotbarSlot == -1) hotbarSlot = 0;
-
-            int slotId = SlotUtils.indexToId(slot);
-            mc.gameMode.handleContainerInput(
-                mc.player.inventoryMenu.containerId,
-                slotId,
-                hotbarSlot,
-                ContainerInput.SWAP,
-                mc.player
-            );
-            slot = hotbarSlot;
-        }
-
-        mc.player.getInventory().setSelectedSlot(slot);
+        Item targetItem = minecartType.get().item;
 
         Rotations.rotate(Rotations.getYaw(targetPos), Rotations.getPitch(targetPos), () -> {
-            mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hitResult);
+            // The slot content may have changed while the rotation was pending
+            // (packet lag, inventory fiddling). A minecart that is no longer
+            // there means nothing to place — leave the rail untouched instead of
+            // swapping in whatever now sits in that slot.
+            ItemStack held = mc.player.getInventory().getItem(slot);
+            if (held.isEmpty() || held.getItem() != targetItem) return;
+
+            // Switch to minecart slot
+            if (slot < 9) {
+                mc.player.getInventory().setSelectedSlot(slot);
+            } else {
+                // Swap to hotbar if needed
+                int tempSlot = cachedEmptyHotbarSlot;
+                if (tempSlot == -1 || !mc.player.getInventory().getItem(tempSlot).isEmpty()) {
+                    tempSlot = -1;
+                    for (int i = 0; i < 9; i++) {
+                        if (mc.player.getInventory().getItem(i).isEmpty()) {
+                            tempSlot = i;
+                            break;
+                        }
+                    }
+                    cachedEmptyHotbarSlot = tempSlot;
+                }
+                if (tempSlot == -1) tempSlot = 0;
+
+                // Swap against the player's own inventory container, never a
+                // screen that might be open, and convert the inventory index to
+                // a container slot id (raw indexes only coincide with slot ids
+                // for the main inventory section).
+                mc.gameMode.handleContainerInput(
+                    mc.player.inventoryMenu.containerId,
+                    SlotUtils.indexToId(slot),
+                    tempSlot,
+                    ContainerInput.SWAP,
+                    mc.player
+                );
+                mc.player.getInventory().setSelectedSlot(tempSlot);
+            }
+
+            // Place the minecart
+            mc.gameMode.useItemOn(
+                mc.player,
+                InteractionHand.MAIN_HAND,
+                hitResult
+            );
+
             mc.player.swing(InteractionHand.MAIN_HAND);
+
+            // Restore previous slot
+            if (previousSlot != mc.player.getInventory().getSelectedSlot()) {
+                mc.player.getInventory().setSelectedSlot(previousSlot);
+            }
+
+            // Only count and announce a placement that actually went out (the
+            // swap/use happens deferred, inside this rotation callback).
+            placedCount++;
+            info("§aPlaced " + minecartType.get().name + " on " + railType.get().name + " at §f" + railPos.getX() + ", " + railPos.getY() + ", " + railPos.getZ());
         });
-
-        mc.player.getInventory().setSelectedSlot(previousSlot);
-
-        info("§aPlaced " + minecartType.get().name + " on " + railType.get().name + " at §f"
-            + railPos.getX() + ", " + railPos.getY() + ", " + railPos.getZ());
     }
 
     @EventHandler
@@ -401,5 +453,7 @@ public class MinecartPlacer extends Module {
         placedCount = 0;
         delayLeft = 0;
         waitCounter = 0;
+        cachedMinecartSlot = -1;
+        cachedEmptyHotbarSlot = -1;
     }
 }

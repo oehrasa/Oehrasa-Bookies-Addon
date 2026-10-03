@@ -2,6 +2,7 @@ package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.AreaSelector;
+import com.AutoBookshelf.addon.utils.BookUtils;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
@@ -12,6 +13,7 @@ import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.Rotations;
+import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -29,8 +31,10 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
+
 import java.io.File;
 import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -77,14 +81,85 @@ public class BookshelfFiller extends Module {
     private boolean extractingSingleBlock = false;
     private BlockPos singleBlockPos = null;
     private List<Integer> singleBlockSlots = new ArrayList<>();
+    // Slots chosen at start (respecting extract-mode): retries only re-target these,
+    // so LIMITED mode doesn't end up extracting everything anyway.
+    private List<Integer> extractOriginalSlots = new ArrayList<>();
     private int singleBlockSlotIndex = 0;
     private int extractionRetryCount = 0;
     private static final int MAX_EXTRACTION_RETRIES = 3;
+    // The shelf slot whose take is awaiting server confirmation (client block-state
+    // flips to empty). The extract loop only advances after the confirm or a timeout,
+    // so it never re-clicks a slot the server already emptied while the previous book
+    // is still in hotbar transit - the failure mode that placed a book back in.
+    private int pendingExtractSlot = -1;
+    private int pendingExtractTicks = 0;
+    private static final int EXTRACT_CONFIRM_MAX_TICKS = 40;
 
     private int dedicatedSwapSlot = -1;
 
+    private static final Pattern TITLE_NUMBER_PATTERN = Pattern.compile("\\d+");
+
+    private int cachedBookSlot = -1;
+
     private String displayText = "";
     private int displayTimer = 0;
+
+    // Book log (which book title went into which shelf slot) - persisted to disk, hover display.
+    // loggedMillis is the wall-clock write time of the entry (0 = loaded from disk); it powers
+    // the "remember" grace window so fresh placements aren't pruned while the server syncs.
+    private record BookLogEntry(String title, String author, long loggedMillis) {
+    }
+
+    private final Map<String, Map<String, Map<Integer, BookLogEntry>>> bookLog = new HashMap<>();
+    private File bookLogFile;
+    private boolean bookLogLoaded = false;
+    private boolean bookLogLoadFailed = false;
+    private boolean bookLogDirty = false;
+    private long bookLogLastSaveMs = 0;
+    private int bookLogVerifyTicks = 0;
+    private static final long BOOK_LOG_SAVE_INTERVAL_MS = 2000;
+    private static final int BOOK_LOG_VERIFY_INTERVAL_TICKS = 20;
+    private static final long BOOK_LOG_REMEMBER_MS = 30_000;
+    // A book whose logged slot reads empty is "claimed" by that slot whenever the
+    // refill pass could act on it (player in range, chunk loaded, chiseled shelf):
+    // while the fill is placing into new slots a book taken out of an old slot stays
+    // reserved for its slot, the refill pass returns it there during fill pauses
+    // (waiting for books / inter-place delay) instead of it flowing into the next new
+    // slot.
+    private static final double REFILL_MAX_DISTANCE = 6.0;
+
+    private long claimedTitlesTick = -1;
+    private final Set<String> claimedTitlesCache = new HashSet<>();
+
+    // Idle refill pass: re-puts removed books into their remembered slots.
+    private static class RefillTask {
+        final BlockPos pos;
+        final int slot;
+        final String title;
+        final String author;
+
+        RefillTask(BlockPos pos, int slot, String title, String author) {
+            this.pos = pos;
+            this.slot = slot;
+            this.title = title;
+            this.author = author;
+        }
+    }
+
+    private final List<RefillTask> refillQueue = new ArrayList<>();
+    private int refillIndex = 0;
+    private int refillDelay = 0;
+    private int refillScanTicks = 0;
+    // Consecutive failed placement clicks per refill slot (scoped by world/dimension and
+    // shelf position). A slot that keeps failing must be abandoned, or the endless retry
+    // also re-arms the remember grace on every attempt, keeping its stale log entry alive.
+    // Counts are cleared in verifyBookLog whenever a slot is seen occupied.
+    private final Map<String, Integer> refillStrikeCount = new HashMap<>();
+    private static final int REFILL_MAX_STRIKES = 3;
+
+    private String refillStrikeKey(BlockPos pos, int slot) {
+        return bookLogScopeKey() + "|" + shelfPosKey(pos) + ":" + slot;
+    }
 
     // Book counter state
     private boolean countingMode = false;
@@ -124,6 +199,7 @@ public class BookshelfFiller extends Module {
     private final SettingGroup sgRender = settings.createGroup("Render");
     private final SettingGroup sgProtection = settings.createGroup("Protection");
     private final SettingGroup sgCounter = settings.createGroup("Book Counter");
+    private final SettingGroup sgBookLog = settings.createGroup("Book Log");
 
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
         .name("delay")
@@ -138,6 +214,13 @@ public class BookshelfFiller extends Module {
         .name("continuous-checking")
         .description("Never stop checking for books, continuously monitor inventory for new books.")
         .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<FillLayout> fillLayout = sgGeneral.add(new EnumSetting.Builder<FillLayout>()
+        .name("fill-layout")
+        .description("Order across the wall and within each shelf: bottom-first fills the lowest Y layer of the selected wall upward (bottom shelf row before the top); top-first is the reverse.")
+        .defaultValue(FillLayout.TOP_FIRST)
         .build()
     );
 
@@ -188,6 +271,63 @@ public class BookshelfFiller extends Module {
                 info("§aCounts reset! You can now turn this setting off.");
             }
         })
+        .build()
+    );
+
+    private final Setting<Boolean> bookLogEnabled = sgBookLog.add(new BoolSetting.Builder()
+        .name("book-log")
+        .description("Track which book title is placed into which chiseled bookshelf slot and persist it to AutoBookshelf/bookshelf_books.json. Entries are removed when the slot empties.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> hoverShowBooks = sgBookLog.add(new BoolSetting.Builder()
+        .name("hover-display")
+        .description("Show the logged book title above a chiseled bookshelf slot while hovering it.")
+        .visible(bookLogEnabled::get)
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Double> hoverTextScale = sgBookLog.add(new DoubleSetting.Builder()
+        .name("hover-text-scale")
+        .description("Text scale of the hovered book title.")
+        .visible(bookLogEnabled::get)
+        .defaultValue(1.1)
+        .min(0.5)
+        .sliderMax(4)
+        .build()
+    );
+
+    private final Setting<SettingColor> hoverTextColor = sgBookLog.add(new ColorSetting.Builder()
+        .name("hover-text-color")
+        .description("Colour of the hovered book title text.")
+        .visible(bookLogEnabled::get)
+        .defaultValue(new SettingColor(255, 255, 255, 255))
+        .build()
+    );
+
+    private final Setting<SettingColor> hoverAuthorColor = sgBookLog.add(new ColorSetting.Builder()
+        .name("hover-author-color")
+        .description("Colour of the hovered book author line.")
+        .visible(bookLogEnabled::get)
+        .defaultValue(new SettingColor(140, 140, 140, 255))
+        .build()
+    );
+
+    private final Setting<Boolean> remember = sgBookLog.add(new BoolSetting.Builder()
+        .name("remember")
+        .description("Keep matching the book that is being put into each slot for a short period even if the slot reads empty")
+        .visible(bookLogEnabled::get)
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> refillRemoved = sgBookLog.add(new BoolSetting.Builder()
+        .name("refill-removed")
+        .description("When idle, scan the log and place the same book back into any remembered slot that has become empty.")
+        .visible(remember::get)
+        .defaultValue(true)
         .build()
     );
 
@@ -363,6 +503,22 @@ public class BookshelfFiller extends Module {
         @Override public String toString() { return title; }
     }
 
+    private enum FillLayout {
+        TOP_FIRST("Top row first"),
+        BOTTOM_FIRST("Bottom row first");
+
+        private final String title;
+
+        FillLayout(String title) {
+            this.title = title;
+        }
+
+        @Override
+        public String toString() {
+            return title;
+        }
+    }
+
     public BookshelfFiller() {
         super(Addon.CATEGORY, "Bookshelf-Filler", "oeh Yuri romcom bookshelves restocker.");
     }
@@ -397,9 +553,12 @@ public class BookshelfFiller extends Module {
         extractingSingleBlock = false;
         singleBlockPos = null;
         singleBlockSlots.clear();
+        extractOriginalSlots.clear();
         singleBlockSlotIndex = 0;
         originalSlot = -1;
         extractionRetryCount = 0;
+        pendingExtractSlot = -1;
+        pendingExtractTicks = 0;
 
         areaSelector.reset();
         targetPos = null;
@@ -420,6 +579,7 @@ public class BookshelfFiller extends Module {
         rows.clear();
         sortedBookSlots.clear();
         currentBookIndex = 0;
+        cachedBookSlot = -1;
         currentBookTitle = "";
         currentBookAuthor = "";
         currentBookSlot = -1;
@@ -486,6 +646,466 @@ public class BookshelfFiller extends Module {
         } catch (Exception e) {
             error("Failed to save cache: " + e.getMessage());
         }
+    }
+
+    private String shelfPosKey(BlockPos pos) {
+        return pos.getX() + "," + pos.getY() + "," + pos.getZ();
+    }
+
+    private static BlockPos parseShelfPosKey(String key) {
+        try {
+            String[] parts = key.split(",");
+            if (parts.length != 3) return null;
+            return new BlockPos(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]), Integer.parseInt(parts[2]));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // The log is keyed per server/save + dimension so coordinates on one server can
+    // never show or prune another server's entries.
+    private String bookLogScopeKey() {
+        String server;
+        if (mc.getCurrentServer() != null) {
+            server = mc.getCurrentServer().ip;
+        } else if (mc.getSingleplayerServer() != null) {
+            server = mc.getSingleplayerServer().getWorldData().getLevelName();
+        } else {
+            server = "unknown";
+        }
+        return server + "|" + getWorldName();
+    }
+
+    private Map<String, Map<Integer, BookLogEntry>> bookLogForWorld() {
+        ensureBookLogLoaded();
+        return bookLog.computeIfAbsent(bookLogScopeKey(), k -> new HashMap<>());
+    }
+
+    private void ensureBookLogLoaded() {
+        if (bookLogLoaded) return;
+        loadBookLog();
+    }
+
+    private void loadBookLog() {
+        if (bookLogLoaded) return;
+        if (!bookLogEnabled.get()) return;
+        bookLogLoaded = true;
+        bookLogLoadFailed = false;
+        try {
+            bookLogFile = new File(mc.gameDirectory, "AutoBookshelf/bookshelf_books.json");
+            if (!bookLogFile.exists()) return;
+
+            String json = new String(Files.readAllBytes(bookLogFile.toPath()));
+            JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+            // Parse into a temp map and swap it in only on success so a malformed entry
+            // can't leave a partial log that the next save would persist over the real file.
+            Map<String, Map<String, Map<Integer, BookLogEntry>>> parsed = new HashMap<>();
+            for (Map.Entry<String, com.google.gson.JsonElement> worldEntry : root.entrySet()) {
+                Map<String, Map<Integer, BookLogEntry>> shelves = new HashMap<>();
+                for (Map.Entry<String, com.google.gson.JsonElement> shelfEntry : worldEntry.getValue().getAsJsonObject().entrySet()) {
+                    Map<Integer, BookLogEntry> slotsMap = new HashMap<>();
+                    for (Map.Entry<String, com.google.gson.JsonElement> slotEntry : shelfEntry.getValue().getAsJsonObject().entrySet()) {
+                        try {
+                            int slot = Integer.parseInt(slotEntry.getKey());
+                            if (slot < 0 || slot > 5) continue;
+                            JsonObject entryObj = slotEntry.getValue().getAsJsonObject();
+                            String title = entryObj.has("title") ? entryObj.get("title").getAsString() : "Unknown";
+                            String author = entryObj.has("author") ? entryObj.get("author").getAsString() : "";
+                            // Loaded entries never start with the remember grace: it is
+                            // re-armed only when the module actively places a book, so
+                            // persisted entries for slots that are genuinely empty get
+                            // pruned by the sweep instead of lingering as ghosts.
+                            slotsMap.put(slot, new BookLogEntry(title, author, 0));
+                        } catch (Exception ignored) {
+                        }
+                    }
+                    if (!slotsMap.isEmpty()) shelves.put(shelfEntry.getKey(), slotsMap);
+                }
+                if (!shelves.isEmpty()) parsed.put(worldEntry.getKey(), shelves);
+            }
+            bookLog.clear();
+            bookLog.putAll(parsed);
+        } catch (Exception e) {
+            // Keep the on-disk log authoritative: in-memory stays as it was and saves
+            // are blocked until a successful load (see saveBookLog).
+            bookLogLoadFailed = true;
+            error("Failed to load book log: " + e.getMessage());
+        }
+    }
+
+    private void markBookLogDirty() {
+        bookLogDirty = true;
+    }
+
+    private void maybeSaveBookLog() {
+        if (!bookLogDirty) return;
+        long now = System.currentTimeMillis();
+        if (now - bookLogLastSaveMs < BOOK_LOG_SAVE_INTERVAL_MS) return;
+        saveBookLog();
+    }
+
+    private void forceSaveBookLog() {
+        if (bookLogDirty) saveBookLog();
+    }
+
+    private void saveBookLog() {
+        if (!bookLogEnabled.get()) return;
+        if (bookLogLoadFailed) return;
+        ensureBookLogLoaded();
+        if (bookLogFile == null) {
+            bookLogFile = new File(mc.gameDirectory, "AutoBookshelf/bookshelf_books.json");
+        }
+
+        try {
+            JsonObject root = new JsonObject();
+            for (Map.Entry<String, Map<String, Map<Integer, BookLogEntry>>> worldEntry : bookLog.entrySet()) {
+                JsonObject worldData = new JsonObject();
+                for (Map.Entry<String, Map<Integer, BookLogEntry>> shelfEntry : worldEntry.getValue().entrySet()) {
+                    JsonObject slotsData = new JsonObject();
+                    for (Map.Entry<Integer, BookLogEntry> slotEntry : shelfEntry.getValue().entrySet()) {
+                        BookLogEntry entry = slotEntry.getValue();
+                        JsonObject entryObj = new JsonObject();
+                        entryObj.addProperty("title", entry.title());
+                        entryObj.addProperty("author", entry.author());
+                        slotsData.add(slotEntry.getKey().toString(), entryObj);
+                    }
+                    worldData.add(shelfEntry.getKey(), slotsData);
+                }
+                root.add(worldEntry.getKey(), worldData);
+            }
+
+            Files.createDirectories(bookLogFile.getParentFile().toPath());
+            java.nio.file.Path target = bookLogFile.toPath();
+            java.nio.file.Path tmp = target.resolveSibling(target.getFileName() + ".tmp");
+            Files.write(tmp, root.toString().getBytes());
+            try {
+                Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+            bookLogDirty = false;
+            bookLogLastSaveMs = System.currentTimeMillis();
+        } catch (Exception e) {
+            error("Failed to save book log: " + e.getMessage());
+        }
+    }
+
+    private void logBookPlacement(BlockPos pos, int slot, String title, String author) {
+        if (!bookLogEnabled.get()) return;
+        if (title == null || title.isEmpty()) title = "Unknown";
+        if (author == null) author = "";
+        BookLogEntry entry = new BookLogEntry(title, author, System.currentTimeMillis());
+        bookLogForWorld().computeIfAbsent(shelfPosKey(pos), k -> new HashMap<>()).put(slot, entry);
+        markBookLogDirty();
+    }
+
+    // When the fill places a book into a NEW slot, drop any other logged entry for the
+    // same title whose slot currently reads empty (it was the old home the book left).
+    // One book = one entry; the old empty slot stops expecting the title instead of
+    // lingering until the sweep prunes it. Occupied slots are never touched.
+    private void pruneStaleDuplicateEntries(BlockPos placedPos, int placedSlot, String title) {
+        if (title == null || title.isEmpty()) return;
+        ensureBookLogLoaded();
+        Map<String, Map<Integer, BookLogEntry>> worldBooks = bookLog.get(bookLogScopeKey());
+        if (worldBooks == null || worldBooks.isEmpty()) return;
+
+        boolean changed = false;
+        Iterator<Map.Entry<String, Map<Integer, BookLogEntry>>> shelfIt = worldBooks.entrySet().iterator();
+        while (shelfIt.hasNext()) {
+            Map.Entry<String, Map<Integer, BookLogEntry>> shelf = shelfIt.next();
+            BlockPos pos = parseShelfPosKey(shelf.getKey());
+            if (pos == null) continue;
+
+            Iterator<Map.Entry<Integer, BookLogEntry>> slotIt = shelf.getValue().entrySet().iterator();
+            while (slotIt.hasNext()) {
+                Map.Entry<Integer, BookLogEntry> slotEntry = slotIt.next();
+                if (pos.equals(placedPos) && slotEntry.getKey() == placedSlot) continue;
+                BookLogEntry entry = slotEntry.getValue();
+                if (entry.title() == null || !entry.title().trim().equalsIgnoreCase(title)) continue;
+                if (!isLoggedSlotEmpty(pos, slotEntry.getKey())) continue;
+                slotIt.remove();
+                changed = true;
+            }
+
+            if (shelf.getValue().isEmpty()) shelfIt.remove();
+        }
+
+        if (changed) markBookLogDirty();
+    }
+
+    // A freshly-written placement stays "remembered" for the grace window: the module
+    // is still putting that book (or the server hasn't synced the slot yet), so the
+    // entry must not be pruned or dropped by the hover path, and a re-fill of the same
+    // position overwrites it rather than registering a new addition.
+    private boolean isRemembered(BookLogEntry entry) {
+        if (entry == null || !remember.get()) return false;
+        return System.currentTimeMillis() - entry.loggedMillis() < BOOK_LOG_REMEMBER_MS;
+    }
+
+    /**
+     * All claimed titles, rebuilt once per game tick (mc.player.tickCount) instead of
+     * per-title: refreshBookList()/findNextBookToPlace() previously called this
+     * scan up to 36x per tick, each one re-walking every logged shelf and slot.
+     */
+    private Set<String> claimedTitles() {
+        if (mc.player == null) return claimedTitlesCache;
+        long tick = mc.player.tickCount;
+        if (tick == claimedTitlesTick) return claimedTitlesCache;
+        claimedTitlesTick = tick;
+        claimedTitlesCache.clear();
+
+        if (!bookLogEnabled.get() || !remember.get() || !refillRemoved.get()) return claimedTitlesCache;
+        ensureBookLogLoaded();
+        Map<String, Map<Integer, BookLogEntry>> worldBooks = bookLog.get(bookLogScopeKey());
+        if (worldBooks == null || worldBooks.isEmpty()) return claimedTitlesCache;
+
+        for (Map.Entry<String, Map<Integer, BookLogEntry>> shelf : worldBooks.entrySet()) {
+            BlockPos pos = parseShelfPosKey(shelf.getKey());
+            if (pos == null) continue;
+
+            for (Map.Entry<Integer, BookLogEntry> slotEntry : shelf.getValue().entrySet()) {
+                BookLogEntry entry = slotEntry.getValue();
+                if (entry.title() == null || entry.title().isEmpty()) continue;
+                if (!isBookSlotRefillCandidate(pos, slotEntry.getKey(), entry)) continue;
+                claimedTitlesCache.add(entry.title().trim().toLowerCase(Locale.ROOT));
+            }
+        }
+        return claimedTitlesCache;
+    }
+
+    private boolean isTitleClaimedByRemovedBook(String title) {
+        if (!bookLogEnabled.get() || !remember.get() || !refillRemoved.get()) return false;
+        if (title == null || title.isEmpty()) return false;
+        return claimedTitles().contains(title.trim().toLowerCase(Locale.ROOT));
+    }
+
+    // True when the given logged slot is empty right now and the refill pass could
+    // actually act on it (loaded chunk, chiseled bookshelf, within refill range).
+    // Shared by buildRefillQueue and the claim check so they can never disagree.
+    private boolean isBookSlotRefillCandidate(BlockPos pos, int slot, BookLogEntry entry) {
+        if (entry == null || mc.player == null || mc.level == null) return false;
+        // Only refill shelves the player could actually click: the block
+        // interaction range is the source of truth, with REFILL_MAX_DISTANCE as
+        // a hard cap so reach-boosted servers still behave predictably.
+        double reach = Math.min(mc.player.blockInteractionRange(), REFILL_MAX_DISTANCE);
+        if (mc.player.getEyePosition().distanceTo(Vec3.atCenterOf(pos)) > reach) return false;
+        return isLoggedSlotEmpty(pos, slot);
+    }
+
+    private boolean isLoggedSlotEmpty(BlockPos pos, int slot) {
+        if (!mc.level.isLoaded(pos)) return false;
+        BlockState state = mc.level.getBlockState(pos);
+        if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) return false;
+        return !state.getValue(ChiseledBookShelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot));
+    }
+
+    // Refill runs only when the fill cannot race it: never during extraction/selection,
+    // and during a fill only on ticks where the fill is actually blocked waiting for
+    // more books.
+    private boolean canRefillNow() {
+        if (extractingSingleBlock || !extractQueue.isEmpty()) return false;
+        if (areaSelector.isSelecting()) return false;
+        if (!isFilling) return true;
+        return waitingForRetry;
+    }
+
+    private int findBookSlotByTitle(String title) {
+        for (int i = 0; i < 36; i++) {
+            ItemStack stack = mc.player.getInventory().getItem(i);
+            if (stack.getItem() == Items.WRITTEN_BOOK && !stack.isEmpty()) {
+                String t = getBookTitle(stack);
+                if (t != null && t.trim().equalsIgnoreCase(title)) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
+    private void buildRefillQueue() {
+        refillQueue.clear();
+        ensureBookLogLoaded();
+        Map<String, Map<Integer, BookLogEntry>> worldBooks = bookLog.get(bookLogScopeKey());
+        if (worldBooks == null || worldBooks.isEmpty()) return;
+
+        for (Map.Entry<String, Map<Integer, BookLogEntry>> shelf : worldBooks.entrySet()) {
+            BlockPos pos = parseShelfPosKey(shelf.getKey());
+            if (pos == null) continue;
+
+            for (Map.Entry<Integer, BookLogEntry> slotEntry : shelf.getValue().entrySet()) {
+                int slot = slotEntry.getKey();
+                BookLogEntry entry = slotEntry.getValue();
+                if (!isBookSlotRefillCandidate(pos, slot, entry)) continue;
+                if (findBookSlotByTitle(entry.title()) == -1) continue;
+                refillQueue.add(new RefillTask(pos, slot, entry.title(), entry.author()));
+            }
+        }
+    }
+
+    private boolean refillPlace(RefillTask task) {
+        String refillKey = refillStrikeKey(task.pos, task.slot);
+        // A queued task can be many ticks old: the shelf may have been broken, the
+        // slot re-occupied, or the player walked out of range. Revalidate before the
+        // click so we never throw on a missing facing, yank a book out of an occupied
+        // slot, or interact from too far away.
+        BookLogEntry entry = lookupBookLog(task.pos, task.slot);
+        if (!isBookSlotRefillCandidate(task.pos, task.slot, entry)) {
+            // Slot now occupied (placement confirmed) or the entry aged out: any
+            // accumulated failure strikes are stale.
+            refillStrikeCount.remove(refillKey);
+            return true;
+        }
+        int bookSlot = findBookSlotByTitle(task.title);
+        if (bookSlot == -1) return true;
+
+        int strikes = refillStrikeCount.getOrDefault(refillKey, 0);
+        if (strikes >= REFILL_MAX_STRIKES) {
+            if (strikes == REFILL_MAX_STRIKES) {
+                info("§cRefill: gave up on slot " + (task.slot + 1) + " (" + BookUtils.sanitizeForChat(task.title) + ") - placement keeps failing");
+                refillStrikeCount.put(refillKey, strikes + 1); // log once per give-up
+            }
+            return true;
+        }
+        refillStrikeCount.put(refillKey, strikes + 1);
+
+        updateCurrentBookStatus(bookSlot);
+        // Re-arm the remember grace so the sweep/hover keep matching this placement,
+        // mapping the re-fill back to the same barrier/slot.
+        logBookPlacement(task.pos, task.slot, task.title, task.author);
+
+        BlockState state = mc.level.getBlockState(task.pos);
+        Direction facing = state.getValue(BlockStateProperties.HORIZONTAL_FACING);
+        Vec3 hitVec = BookUtils.getSlotHitVec(task.pos, facing, task.slot);
+        BlockHitResult hitResult = new BlockHitResult(hitVec, facing, task.pos, false);
+
+        int previousSlot = mc.player.getInventory().getSelectedSlot();
+        Rotations.rotate(
+            Rotations.getYaw(hitVec),
+            Rotations.getPitch(hitVec),
+            () -> {
+                int swapSlot = findSwapSlot();
+                if (bookSlot >= 9) {
+                    mc.gameMode.handleContainerInput(
+                        mc.player.containerMenu.containerId,
+                        bookSlot,
+                        swapSlot,
+                        ContainerInput.SWAP,
+                        mc.player
+                    );
+                    mc.player.getInventory().setSelectedSlot(swapSlot);
+                } else {
+                    mc.player.getInventory().setSelectedSlot(bookSlot);
+                }
+
+                mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hitResult);
+                mc.player.swing(InteractionHand.MAIN_HAND);
+
+                if (previousSlot != mc.player.getInventory().getSelectedSlot()) {
+                    mc.player.getInventory().setSelectedSlot(previousSlot);
+                }
+            }
+        );
+
+        return true;
+    }
+
+    private void handleRefill() {
+        if (!bookLogEnabled.get() || !remember.get() || !refillRemoved.get()) return;
+        if (mc.player == null || mc.level == null) return;
+
+        // Maintenance pass may interleave with fill pauses but never on a tick where the
+        // fill or an extraction is about to click.
+        if (!canRefillNow()) return;
+
+        if (refillDelay > 0) {
+            refillDelay--;
+            return;
+        }
+
+        if (refillQueue.isEmpty()) {
+            if (--refillScanTicks > 0) return;
+            refillScanTicks = BOOK_LOG_VERIFY_INTERVAL_TICKS;
+            buildRefillQueue();
+            if (refillQueue.isEmpty()) return;
+            refillIndex = 0;
+        }
+
+        RefillTask task = refillQueue.get(refillIndex);
+        refillIndex++;
+        if (refillIndex >= refillQueue.size()) refillQueue.clear();
+
+        refillPlace(task);
+        refillDelay = Math.max(delay.get(), 8);
+    }
+
+    private void logBookRemoved(BlockPos pos, int slot) {
+        if (!bookLogEnabled.get()) return;
+        ensureBookLogLoaded();
+        Map<String, Map<Integer, BookLogEntry>> worldBooks = bookLog.get(bookLogScopeKey());
+        if (worldBooks == null) return;
+        Map<Integer, BookLogEntry> slotsMap = worldBooks.get(shelfPosKey(pos));
+        if (slotsMap == null) return;
+        if (slotsMap.remove(slot) != null) {
+            if (slotsMap.isEmpty()) worldBooks.remove(shelfPosKey(pos));
+            if (worldBooks.isEmpty()) bookLog.remove(bookLogScopeKey());
+            markBookLogDirty();
+        }
+    }
+
+    private BookLogEntry lookupBookLog(BlockPos pos, int slot) {
+        ensureBookLogLoaded();
+        Map<String, Map<Integer, BookLogEntry>> worldBooks = bookLog.get(bookLogScopeKey());
+        if (worldBooks == null) return null;
+        Map<Integer, BookLogEntry> slotsMap = worldBooks.get(shelfPosKey(pos));
+        return slotsMap == null ? null : slotsMap.get(slot);
+    }
+
+    private void verifyBookLog() {
+        if (!bookLogEnabled.get() || bookLog.isEmpty()) return;
+        ensureBookLogLoaded();
+        Map<String, Map<Integer, BookLogEntry>> worldBooks = bookLog.get(bookLogScopeKey());
+        if (worldBooks == null || worldBooks.isEmpty()) return;
+
+        boolean changed = false;
+        Iterator<Map.Entry<String, Map<Integer, BookLogEntry>>> shelfIt = worldBooks.entrySet().iterator();
+        while (shelfIt.hasNext()) {
+            Map.Entry<String, Map<Integer, BookLogEntry>> shelf = shelfIt.next();
+
+            BlockPos pos = parseShelfPosKey(shelf.getKey());
+            if (pos == null) {
+                shelfIt.remove();
+                changed = true;
+                continue;
+            }
+
+            // Only check loaded shelves so logs for unloaded chunks survive.
+            if (!mc.level.isLoaded(pos)) continue;
+
+            BlockState state = mc.level.getBlockState(pos);
+            if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) {
+                shelfIt.remove();
+                changed = true;
+                continue;
+            }
+
+            Iterator<Map.Entry<Integer, BookLogEntry>> slotIt = shelf.getValue().entrySet().iterator();
+            while (slotIt.hasNext()) {
+                Map.Entry<Integer, BookLogEntry> slotEntry = slotIt.next();
+                boolean occupied = state.getValue(ChiseledBookShelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slotEntry.getKey()));
+                if (occupied) {
+                    // Placement confirmed: drop any refill failure strikes for this slot.
+                    refillStrikeCount.remove(refillStrikeKey(pos, slotEntry.getKey()));
+                } else if (!isRemembered(slotEntry.getValue())) {
+                    slotIt.remove();
+                    refillStrikeCount.remove(refillStrikeKey(pos, slotEntry.getKey()));
+                    changed = true;
+                }
+            }
+
+            if (shelf.getValue().isEmpty()) shelfIt.remove();
+        }
+
+        if (changed) markBookLogDirty();
     }
 
     private void resetAllCounts() {
@@ -702,21 +1322,27 @@ public class BookshelfFiller extends Module {
 
         int originalSize = singleBlockSlots.size();
 
+        List<Integer> chosen;
         if (extractMode.get() == ExtractMode.LIMITED && maxExtractBooks.get() > 0) {
             int targetCount = Math.min(maxExtractBooks.get(), originalSize);
             Collections.shuffle(singleBlockSlots);
-            singleBlockSlots = singleBlockSlots.subList(0, targetCount);
+            chosen = new ArrayList<>(singleBlockSlots.subList(0, targetCount));
             sendMessage("§aLIMITED mode: extracting §f" + targetCount + " §aof §f" + originalSize + " §abooks");
         } else {
             Collections.sort(singleBlockSlots);
+            chosen = new ArrayList<>(singleBlockSlots);
             sendMessage("§aALL mode: extracting all §f" + originalSize + " §abooks");
         }
 
+        singleBlockSlots = chosen;
+        extractOriginalSlots = new ArrayList<>(chosen);
         singleBlockPos = pos;
         singleBlockSlotIndex = 0;
         extractingSingleBlock = true;
         originalSlot = mc.player.getInventory().getSelectedSlot();
         extractionRetryCount = 0;
+        pendingExtractSlot = -1;
+        pendingExtractTicks = 0;
 
         setDisplayText(String.format("Extracting %d books...", singleBlockSlots.size()));
     }
@@ -728,11 +1354,31 @@ public class BookshelfFiller extends Module {
             return;
         }
 
+        // Wait for the previous take to be confirmed (the client block-state flips the
+        // slot back to empty) before issuing the next click. Without this, a stale
+        // "still occupied" slot gets re-clicked while the taken book sits in the hotbar
+        // and the server inserts it back into the shelf.
+        if (pendingExtractSlot != -1) {
+            BlockState confirmState = mc.level.getBlockState(singleBlockPos);
+            boolean emptied = confirmState.getBlock() != Blocks.CHISELED_BOOKSHELF
+                || !confirmState.getValue(ChiseledBookShelfBlock.SLOT_OCCUPIED_PROPERTIES.get(pendingExtractSlot));
+            if (emptied) {
+                pendingExtractSlot = -1;
+            } else if (++pendingExtractTicks >= EXTRACT_CONFIRM_MAX_TICKS) {
+                pendingExtractSlot = -1;
+            } else {
+                extractDelay = 1;
+                return;
+            }
+        }
+
         if (singleBlockSlotIndex >= singleBlockSlots.size()) {
             BlockState state = mc.level.getBlockState(singleBlockPos);
             if (state.getBlock() == Blocks.CHISELED_BOOKSHELF && extractionRetryCount < MAX_EXTRACTION_RETRIES) {
+                // Only re-target slots from the original selection, so LIMITED mode
+                // doesn't end up harvesting every remaining book anyway.
                 boolean hasBooksLeft = false;
-                for (int slot = 0; slot < 6; slot++) {
+                for (int slot : extractOriginalSlots) {
                     if (state.getValue(ChiseledBookShelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot))) {
                         hasBooksLeft = true;
                         break;
@@ -742,12 +1388,11 @@ public class BookshelfFiller extends Module {
                 if (hasBooksLeft) {
                     extractionRetryCount++;
                     singleBlockSlots.clear();
-                    for (int slot = 0; slot < 6; slot++) {
+                    for (int slot : extractOriginalSlots) {
                         if (state.getValue(ChiseledBookShelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot))) {
                             singleBlockSlots.add(slot);
                         }
                     }
-                    Collections.sort(singleBlockSlots);
                     singleBlockSlotIndex = 0;
                     sendMessage("§eRetrying extraction for remaining books... (" + extractionRetryCount + "/" + MAX_EXTRACTION_RETRIES + ")");
                     setDisplayText("Retrying extraction...");
@@ -794,19 +1439,59 @@ public class BookshelfFiller extends Module {
         }
 
         extractBook(singleBlockPos, slot, emptySlot);
+        pendingExtractSlot = slot;
+        pendingExtractTicks = 0;
         singleBlockSlotIndex++;
         extractDelay = extractDelayTicks.get();
+    }
+
+    // Makes sure the selected hotbar slot holds nothing before an extraction click so
+    // the click takes the shelf book into the hand/inventory instead of inserting the
+    // held item. When the hand holds something, swaps it into an empty main-inventory
+    // slot (inventory index 9-35, matching the codebase's clickSlot convention).
+    private boolean ensureEmptyHand(int selectedSlot) {
+        if (mc.player.getInventory().getItem(selectedSlot).isEmpty()) return true;
+        int emptyMain = -1;
+        for (int i = 9; i < 36; i++) {
+            if (mc.player.getInventory().getItem(i).isEmpty()) {
+                emptyMain = i;
+                break;
+            }
+        }
+        if (emptyMain == -1) return false;
+        mc.gameMode.handleContainerInput(
+            mc.player.containerMenu.containerId,
+            emptyMain,
+            selectedSlot,
+            ContainerInput.SWAP,
+            mc.player
+        );
+        return true;
     }
 
     private void extractBook(BlockPos pos, int slot, int targetSlot) {
         BlockState state = mc.level.getBlockState(pos);
         Direction facing = state.getValue(BlockStateProperties.HORIZONTAL_FACING);
-        Vec3 hitVec = getHitVec(pos, facing, slot);
+        Vec3 hitVec = BookUtils.getSlotHitVec(pos, facing, slot);
 
         BlockHitResult hitResult = new BlockHitResult(hitVec, facing, pos, false);
         int previousSlot = mc.player.getInventory().getSelectedSlot();
 
         Rotations.rotate(Rotations.getYaw(hitVec), Rotations.getPitch(hitVec), () -> {
+            // Re-check the slot right before the click: it may have emptied (or the
+            // shelf may be gone) since this click was queued. Taking an empty slot while
+            // the prior book is still in a nearby hotbar slot is what makes a book flip
+            // back into the shelf, so skip rather than click.
+            BlockState current = mc.level.getBlockState(pos);
+            if (current.getBlock() != Blocks.CHISELED_BOOKSHELF
+                || !current.getValue(ChiseledBookShelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot))) {
+                if (previousSlot != mc.player.getInventory().getSelectedSlot()) {
+                    mc.player.getInventory().setSelectedSlot(previousSlot);
+                }
+                return;
+            }
+
+            int handSlot;
             if (targetSlot >= 9) {
                 int tempHotbarSlot = -1;
                 for (int i = 0; i < 9; i++) {
@@ -818,41 +1503,48 @@ public class BookshelfFiller extends Module {
 
                 if (tempHotbarSlot == -1) {
                     tempHotbarSlot = findSwapSlot();
-                    mc.gameMode.handleContainerInput(
-                        mc.player.containerMenu.containerId,
-                        targetSlot,
-                        tempHotbarSlot,
-                        ContainerInput.SWAP,
-                        mc.player
-                    );
-                } else {
-                    mc.gameMode.handleContainerInput(
-                        mc.player.containerMenu.containerId,
-                        targetSlot,
-                        tempHotbarSlot,
-                        ContainerInput.SWAP,
-                        mc.player
-                    );
                 }
-
+                mc.gameMode.handleContainerInput(
+                    mc.player.containerMenu.containerId,
+                    targetSlot,
+                    tempHotbarSlot,
+                    ContainerInput.SWAP,
+                    mc.player
+                );
                 mc.player.getInventory().setSelectedSlot(tempHotbarSlot);
+                handSlot = tempHotbarSlot;
             } else {
                 mc.player.getInventory().setSelectedSlot(targetSlot);
+                handSlot = targetSlot;
+            }
+
+            // The click must extract (empty hand) or vanilla will insert whatever it is
+            // holding into the shelf. On a stale-occupancy retry the server may have
+            // already removed the book while the client hand still carries it, swap
+            // the occupant free first so the take actually happens.
+            if (!ensureEmptyHand(handSlot)) {
+                // No extraction click was sent; put the previously selected slot back
+                // and skip the log/count below so nothing reports a book was removed.
+                if (previousSlot != mc.player.getInventory().getSelectedSlot()) {
+                    mc.player.getInventory().setSelectedSlot(previousSlot);
+                }
+                return;
             }
 
             mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hitResult);
             mc.player.swing(InteractionHand.MAIN_HAND);
 
+            logBookRemoved(pos, slot);
+            extractCount++;
+            if (showExtractMessages.get()) {
+                sendMessage("§aExtracted book from slot §f" + (slot + 1));
+            }
+            setDisplayText(String.format("Extracted book from slot %d", slot + 1));
+
             if (previousSlot != mc.player.getInventory().getSelectedSlot()) {
                 mc.player.getInventory().setSelectedSlot(previousSlot);
             }
         });
-
-        extractCount++;
-        if (showExtractMessages.get()) {
-            sendMessage("§aExtracted book from slot §f" + (slot + 1));
-        }
-        setDisplayText(String.format("Extracted book from slot %d", slot + 1));
     }
 
     private void initializeGrid() {
@@ -884,10 +1576,14 @@ public class BookshelfFiller extends Module {
             int totalBookshelves = rows.stream().mapToInt(List::size).sum();
             info("§aFound §f" + rows.size() + " §arows with §f" + totalBookshelves + " §abookshelves total");
             if (enableFilter.get()) {
-                info("§7Filter enabled - sorting by first number first.");
+                info("§7Filter enabled -> sorting by first number first.");
                 info("§7Books found: §f" + sortedBookSlots.size());
             }
-            info("§7Filling from pos1 to pos2: left to right, top to bottom.");
+            if (fillLayout.get() == FillLayout.BOTTOM_FIRST) {
+                info("§7Layout: lowest Y layer of the wall first, bottom row of each shelf first (fills upward).");
+            } else {
+                info("§7Layout: highest Y layer of the wall first, top row of each shelf first (fills downward).");
+            }
             if (useDedicatedSlot.get()) {
                 info("§7Using dedicated swap slot: §f" + (dedicatedSwapSlot + 1));
             }
@@ -898,8 +1594,9 @@ public class BookshelfFiller extends Module {
         sortedBookSlots.clear();
         currentBookIndex = 0;
 
-        Pattern numberPattern = Pattern.compile("\\d+");
+        Pattern numberPattern = TITLE_NUMBER_PATTERN;
         Map<Integer, BookInfo> slotBookInfoMap = new HashMap<>();
+        int claimedCount = 0;
 
         for (int i = 0; i < 36; i++) {
             ItemStack stack = mc.player.getInventory().getItem(i);
@@ -907,6 +1604,13 @@ public class BookshelfFiller extends Module {
                 String title = getBookTitle(stack);
                 String author = getBookAuthor(stack);
                 if (title != null) {
+                    // A book that was just taken out of a remembered slot is claimed by
+                    // it; the fill leaves it alone (refill returns it there).
+                    if (isTitleClaimedByRemovedBook(title)) {
+                        claimedCount++;
+                        continue;
+                    }
+
                     List<Integer> numbers = new ArrayList<>();
                     Matcher matcher = numberPattern.matcher(title);
                     while (matcher.find()) {
@@ -929,7 +1633,9 @@ public class BookshelfFiller extends Module {
 
         if (slotBookInfoMap.isEmpty()) {
             if (verboseChecking.get() && !hasShownNoBooksMessage && continuousChecking.get()) {
-                if (enableFilter.get()) {
+                if (claimedCount > 0) {
+                    info("§eAll remaining books are claimed by emptied slots; waiting for refill.");
+                } else if (enableFilter.get()) {
                     info("§eNo numbers found in books! Waiting.");
                 } else {
                     info("§eNo books found in inventory! Waiting.");
@@ -1009,6 +1715,13 @@ public class BookshelfFiller extends Module {
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.level == null) return;
+
+        if (--bookLogVerifyTicks <= 0) {
+            bookLogVerifyTicks = BOOK_LOG_VERIFY_INTERVAL_TICKS;
+            verifyBookLog();
+        }
+        maybeSaveBookLog();
+        handleRefill();
 
         if (displayTimer > 0) {
             displayTimer--;
@@ -1096,7 +1809,11 @@ public class BookshelfFiller extends Module {
                 currentSlot = 0;
                 retryCount = 0;
                 stuckCounter = 0;
-                info("§aFinished top half of row " + (currentRow + 1) + ", now filling bottom half...");
+                if (fillLayout.get() == FillLayout.BOTTOM_FIRST) {
+                    info("§aFinished bottom half of row " + (currentRow + 1) + ", now filling top half...");
+                } else {
+                    info("§aFinished top half of row " + (currentRow + 1) + ", now filling bottom half...");
+                }
                 delayLeft = delay.get();
                 return;
             } else {
@@ -1123,7 +1840,12 @@ public class BookshelfFiller extends Module {
             return;
         }
 
-        int slotToFill = fillingBottomHalf ? currentSlot + 3 : currentSlot;
+        int slotToFill;
+        if (fillLayout.get() == FillLayout.BOTTOM_FIRST) {
+            slotToFill = fillingBottomHalf ? currentSlot : currentSlot + 3;
+        } else {
+            slotToFill = fillingBottomHalf ? currentSlot + 3 : currentSlot;
+        }
 
         double distance = mc.player.getEyePosition().distanceTo(Vec3.atCenterOf(pos));
         if (distance > 5.0) {
@@ -1173,6 +1895,9 @@ public class BookshelfFiller extends Module {
 
             updateCurrentBookStatus(bookSlot);
 
+            logBookPlacement(pos, slotToFill, currentBookTitle, currentBookAuthor);
+            pruneStaleDuplicateEntries(pos, slotToFill, currentBookTitle);
+
             if (showOnScreen.get()) {
                 String authorText = (currentBookAuthor != null && !currentBookAuthor.isEmpty()) ? " by " + currentBookAuthor : "";
                 String displayMsg = String.format("Put: %s%s to slot %d", currentBookTitle, authorText, slotToFill + 1);
@@ -1188,7 +1913,7 @@ public class BookshelfFiller extends Module {
 
             targetPos = pos;
             Direction facing = state.getValue(BlockStateProperties.HORIZONTAL_FACING);
-            Vec3 hitVec = getHitVec(pos, facing, slotToFill);
+            Vec3 hitVec = BookUtils.getSlotHitVec(pos, facing, slotToFill);
 
             BlockHitResult hitResult = new BlockHitResult(hitVec, facing, pos, false);
             lastPos = pos;
@@ -1260,6 +1985,8 @@ public class BookshelfFiller extends Module {
 
     @EventHandler
     private void onRender2D(Render2DEvent event) {
+        renderBookLogHover(event);
+
         if (!showOnScreen.get()) return;
         if (displayText.isEmpty()) return;
 
@@ -1277,6 +2004,31 @@ public class BookshelfFiller extends Module {
         event.graphics.text(mc.font, displayText, 0, 0, 0xFFFFD700, true);
 
         event.graphics.pose().popMatrix();
+    }
+
+    private void renderBookLogHover(Render2DEvent event) {
+        if (!bookLogEnabled.get() || !hoverShowBooks.get()) return;
+        if (mc.level == null || mc.player == null) return;
+        if (!(mc.hitResult instanceof BlockHitResult hit)) return;
+
+        BlockPos pos = hit.getBlockPos();
+        BlockState state = mc.level.getBlockState(pos);
+        if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) return;
+
+        int slot = BookUtils.getSlotFromHit(hit);
+        if (slot == -1) return;
+
+        // Only show a title over an actually occupied slot. Remembered-but-empty slots
+        // are either being re-filled or were taken out on purpose; painting a phantom
+        // title over them is what the "ghost entry" confusion comes from. The sweep
+        // prunes them once the grace window elapses (refill re-arms the entry).
+        if (!state.getValue(ChiseledBookShelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot))) return;
+
+        BookLogEntry entry = lookupBookLog(pos, slot);
+        if (entry == null) return;
+
+        BookUtils.renderSlotHover(event, pos, state.getValue(BlockStateProperties.HORIZONTAL_FACING), slot,
+            entry.title(), entry.author(), hoverTextScale.get(), hoverTextColor.get(), hoverAuthorColor.get());
     }
 
     private void displayBookInfoInChat(String title, String author) {
@@ -1314,16 +2066,28 @@ public class BookshelfFiller extends Module {
         }
     }
 
-    public boolean isFilling() { return isFilling; }
-
     private int findNextBookToPlace() {
         if (!enableFilter.get()) {
+            if (cachedBookSlot != -1) {
+                ItemStack cached = mc.player.getInventory().getItem(cachedBookSlot);
+                if (cached.getItem() == Items.WRITTEN_BOOK && !cached.isEmpty()) {
+                    String cachedTitle = getBookTitle(cached);
+                    if (cachedTitle == null || !isTitleClaimedByRemovedBook(cachedTitle)) {
+                        return cachedBookSlot;
+                    }
+                }
+                cachedBookSlot = -1;
+            }
             for (int i = 0; i < 36; i++) {
                 ItemStack stack = mc.player.getInventory().getItem(i);
                 if (stack.getItem() == Items.WRITTEN_BOOK && !stack.isEmpty()) {
+                    String foundTitle = getBookTitle(stack);
+                    if (foundTitle != null && isTitleClaimedByRemovedBook(foundTitle)) continue;
+                    cachedBookSlot = i;
                     return i;
                 }
             }
+            cachedBookSlot = -1;
             return -1;
         }
 
@@ -1331,11 +2095,15 @@ public class BookshelfFiller extends Module {
             int slot = sortedBookSlots.get(currentBookIndex);
             ItemStack stack = mc.player.getInventory().getItem(slot);
             if (stack.getItem() == Items.WRITTEN_BOOK && !stack.isEmpty()) {
-                return slot;
-            } else {
-                refreshBookList();
-                return currentBookIndex < sortedBookSlots.size() ? sortedBookSlots.get(currentBookIndex) : -1;
+                String foundTitle = getBookTitle(stack);
+                if (foundTitle != null && !isTitleClaimedByRemovedBook(foundTitle)) {
+                    return slot;
+                }
             }
+            // Slot is gone or the book is claimed by a just-emptied shelf slot
+            // (refill puts it back there); rebuild the pool and take the next one.
+            refreshBookList();
+            return currentBookIndex < sortedBookSlots.size() ? sortedBookSlots.get(currentBookIndex) : -1;
         }
 
         return -1;
@@ -1347,15 +2115,13 @@ public class BookshelfFiller extends Module {
 
         boolean increasingX = areaSelector.isXIncreasing();
         boolean increasingZ = areaSelector.isZIncreasing();
-        boolean increasingY = areaSelector.isYIncreasing();
 
-        all.sort((a, b) -> {
-            if (increasingY) {
-                return Integer.compare(a.getY(), b.getY());
-            } else {
-                return Integer.compare(b.getY(), a.getY());
-            }
-        });
+        // The fill layout dictates the wall direction: BOTTOM_FIRST starts at the
+        // lowest Y layer of the selected wall and fills upward, TOP_FIRST starts at
+        // the highest layer and fills downward (selection click order is irrelevant).
+        boolean fillToTop = fillLayout.get() == FillLayout.BOTTOM_FIRST;
+
+        all.sort((a, b) -> fillToTop ? Integer.compare(a.getY(), b.getY()) : Integer.compare(b.getY(), a.getY()));
 
         Map<Integer, List<BlockPos>> yLevels = new LinkedHashMap<>();
         for (BlockPos pos : all) {
@@ -1426,43 +2192,41 @@ public class BookshelfFiller extends Module {
         }
     }
 
-    private Vec3 getHitVec(BlockPos pos, Direction facing, int slot) {
-        double x = 0, y = 0;
-
-        switch (slot) {
-            case 0 -> { x = -0.25; y = 0.25; }
-            case 1 -> { x = 0.0;  y = 0.25; }
-            case 2 -> { x = 0.25; y = 0.25; }
-            case 3 -> { x = -0.25; y = -0.25; }
-            case 4 -> { x = 0.0;  y = -0.25; }
-            case 5 -> { x = 0.25; y = -0.25; }
-        }
-
-        Vec3 center = Vec3.atCenterOf(pos);
-
-        return switch (facing) {
-            case NORTH -> center.add(-x, y, -0.5);
-            case SOUTH -> center.add(x, y, 0.5);
-            case WEST  -> center.add(-0.5, y, x);
-            case EAST  -> center.add(0.5, y, -x);
-            default -> center;
-        };
-    }
-
     private void sendMessage(String msg) {
         info(msg);
-        if (mc.player != null) {
-            mc.player.sendSystemMessage(Component.literal(msg));
+        if (mc.player != null) mc.player.sendOverlayMessage(Component.literal(msg));
+    }
+
+    public void resetSelection() {
+        if (isFilling) {
+            pendingReset = true;
+        } else {
+            fullReset();
         }
+    }
+
+    public void setPos1(BlockPos pos) {
+        areaSelector.setPos1(pos);
+        info("§aPos1 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
+    }
+
+    public void setPos2(BlockPos pos) {
+        areaSelector.setPos2(pos);
+        info("§aPos2 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
     }
 
     @Override
     public void onActivate() {
+        // A failed load used to leave bookLogLoaded=true, locking the module out of
+        // re-reading the file for the rest of the session; retry on activation so
+        // fixing a malformed bookshelf_books.json actually takes effect.
+        if (bookLogLoadFailed) bookLogLoaded = false;
         fullReset();
         loadCache();
-        String toolName = new ItemStack(areaSelector.getSelectionToolItem()).getHoverName().getString();
-        String extractToolName = new ItemStack(extractTool.get()).getHoverName().getString();
-        String counterToolName = new ItemStack(counterTool.get()).getHoverName().getString();
+        loadBookLog();
+        String toolName = areaSelector.getSelectionToolItem().getName(ItemStack.EMPTY).getString();
+        String extractToolName = extractTool.get().getName(ItemStack.EMPTY).getString();
+        String counterToolName = counterTool.get().getName(ItemStack.EMPTY).getString();
         info("§aBookshelf Filler is activated.");
         info("§7- §f" + toolName + " §7= select area & fill");
         info("§7- §f" + extractToolName + " §7= extract books from a bookshelf");
@@ -1471,13 +2235,13 @@ public class BookshelfFiller extends Module {
             info("§7Hold the tool to use it");
         }
         if (enableFilter.get()) {
-            info("§7Filter enabled - automatically sort numbers from titles");
+            info("§7Filter enabled -> automatically sort numbers from titles");
         }
         if (showOnScreen.get()) {
             info("§7Status will be shown on screen");
         }
         if (continuousChecking.get()) {
-            info("§7Continuous checking §aENABLED §7- will wait for books if no books are found");
+            info("§7Continuous checking §aENABLED §7-> will wait for books if no books are found");
         }
         if (useDedicatedSlot.get()) {
             info("§7Using dedicated swap slot: §f" + (dedicatedSwapSlotIndex.get() + 1));
@@ -1499,5 +2263,6 @@ public class BookshelfFiller extends Module {
         countPos1 = null;
         countPos2 = null;
         saveCache();
+        forceSaveBookLog();
     }
 }

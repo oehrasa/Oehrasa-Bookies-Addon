@@ -377,8 +377,23 @@ public class AxolotlTools extends Module {
         }
     }
 
+    // World entity scan is throttled to every ESP_SCAN_INTERVAL frames; the cached
+    // entities are read live for position/pose, so rendering stays fluid.
+    private static final int ESP_SCAN_INTERVAL = 20; // frames between ESP rescans
+    private final List<Axolotl> espAxolotls = new ArrayList<>();
+    private int espFrameCounter = ESP_SCAN_INTERVAL;
+
+    private void refreshEspAxolotls() {
+        espAxolotls.clear();
+        for (Entity entity : mc.level.entitiesForRendering()) {
+            if (entity instanceof Axolotl axolotl) espAxolotls.add(axolotl);
+        }
+    }
+
     @Override
     public void onDeactivate() {
+        espAxolotls.clear();
+        espFrameCounter = ESP_SCAN_INTERVAL;
         timer = 0;
         rotPriority = 69420;
         interactVariants.clear();
@@ -581,11 +596,11 @@ public class AxolotlTools extends Module {
     private void onRender(Render3DEvent event) {
         if (!espVariants.get()) return;
         if (mc.player == null || mc.level == null) return;
-        List<Axolotl> axolotls = new ArrayList<>();
-        for (Entity entity : mc.level.entitiesForRendering()) {
-            if (entity instanceof Axolotl axolotl) axolotls.add(axolotl);
+        if (++espFrameCounter >= ESP_SCAN_INTERVAL) {
+            espFrameCounter = 0;
+            refreshEspAxolotls();
         }
-        axolotls = axolotls
+        List<Axolotl> axolotls = espAxolotls
             .stream()
             .filter(ax -> ax.blockPosition()
                 .closerThan(

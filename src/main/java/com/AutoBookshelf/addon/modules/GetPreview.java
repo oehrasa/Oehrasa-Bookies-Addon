@@ -48,6 +48,16 @@ public class GetPreview extends Module {
         .build()
     );
 
+    public final Setting<Integer> mapFillSize = sgGeneral.add(new IntSetting.Builder()
+        .name("map-fill-size")
+        .description("Scale of the rendered filled map, as a percentage. 100% (max) fills the whole icon; lower scales it down.")
+        .defaultValue(100)
+        .min(10)
+        .max(100)
+        .sliderRange(10, 100)
+        .build()
+    );
+
     public final Setting<IconPosition> iconPosition = sgGeneral.add(new EnumSetting.Builder<IconPosition>()
         .name("icon-position")
         .description("Position of the overlay icon on the slot.")
@@ -87,6 +97,13 @@ public class GetPreview extends Module {
         .name("capacity-bar")
         .description("Draw a bar on shulker boxes showing how full they are, like vanilla bundles.")
         .defaultValue(true)
+        .build()
+    );
+    public final Setting<Boolean> showEmptyBar = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-empty-bar")
+        .description("Show the capacity bar even when the container is completely empty.")
+        .defaultValue(true)
+        .visible(capacityBar::get)
         .build()
     );
 
@@ -156,6 +173,11 @@ public class GetPreview extends Module {
     // typed as ClientLevel so comparison is a single reference check, no allocation
     private ClientLevel lastWorld = null;
 
+    // Cheap world-change throttle: the preview caches stay valid while the world
+    // is unchanged, so only re-check (and clear on change) every SCAN_INTERVAL ticks.
+    private static final int SCAN_INTERVAL = 10;
+    private int worldCheckCounter = 0;
+
     // clear on disconnect so stale keys is gone
     @EventHandler
     private void onGameLeft(GameLeftEvent event) {
@@ -165,7 +187,7 @@ public class GetPreview extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        // One reference comparison per tick
+        if (worldCheckCounter++ % SCAN_INTERVAL != 0) return;
         if (mc.level != lastWorld) {
             lastWorld = mc.level;
             clearCaches();
@@ -277,6 +299,7 @@ public class GetPreview extends Module {
         for (ItemStack s : container.nonEmptyItemCopyStream().toList()) {
             filled += (double) s.getCount() * 64.0 / Math.max(1, s.getItem().getDefaultMaxStackSize());
         }
+        if (!showEmptyBar.get() && filled <= 0) return;
         float capacity = (float) Math.min(1.0, filled / maxItems);
 
         int barWidth = 13;
@@ -497,7 +520,9 @@ public class GetPreview extends Module {
 
         var matrices = context.pose();
         matrices.pushMatrix();
-        matrices.scale(0.125F, 0.125F);
+        // map() renders 128x128 map-pixels; default 100% = 0.125 fills the whole icon
+        float mapScale = mapFillSize.get() / 800.0f;
+        matrices.scale(mapScale, mapScale);
 
         MapRenderState renderState = new MapRenderState();
         mc.getMapRenderer().extractRenderState(mapId, mapState, renderState);

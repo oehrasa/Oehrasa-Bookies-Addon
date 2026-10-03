@@ -19,16 +19,24 @@ import static com.AutoBookshelf.addon.modules.livemessage.LiveMessage.logError;
 public class LiveProfileCache {
     public static Map<UUID, LiveProfileCache.LiveProfile> cachedProfiles = new ConcurrentHashMap<>();
     public static Map<String, UUID> cachedNames = new ConcurrentHashMap<>();
+    private static final int MAX_BAD_NAMES = 512;
+    private static final int MAX_BAD_UUIDS = 512;
     public static Set<UUID> badUUIDs = ConcurrentHashMap.newKeySet();
     public static Set<String> badNames = ConcurrentHashMap.newKeySet();
     private static final Pattern usernamePattern = Pattern.compile("^[A-Za-z0-9_]{1,16}$");
 
     private static LiveProfileCache.LiveProfile banUUID(UUID uuid) {
+        if (badUUIDs.size() >= MAX_BAD_UUIDS) {
+            badUUIDs.clear();
+        }
         badUUIDs.add(uuid);
         return null;
     }
 
     private static LiveProfileCache.LiveProfile banName(String name) {
+        if (badNames.size() >= MAX_BAD_NAMES) {
+            badNames.clear();
+        }
         badNames.add(name);
         return null;
     }
