@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 import static com.AutoBookshelf.addon.modules.livemessage.LiveMessage.logError;
 
@@ -29,7 +30,24 @@ public class NotesUtil {
             }
             try (FileReader reader = new FileReader(NOTES_FILE.toFile())) {
                 List<NoteEntry> notes = GSON.fromJson(reader, LIST_TYPE);
-                return notes != null ? notes : new ArrayList<>();
+                if (notes == null) {
+                    return new ArrayList<>();
+                }
+
+                notes.removeIf(java.util.Objects::isNull);
+                for (NoteEntry note : notes) {
+                    // A note without an id (hand-edited or ancient JSON) would NPE the id
+                    // keyed row-height cache and the click edit path
+                    if (note.id == null || note.id.isEmpty()) {
+                        note.id = UUID.randomUUID().toString();
+                    }
+                    if (note.subtexts == null) note.subtexts = new ArrayList<>();
+                    if (note.subtexts.isEmpty() && note.subtext != null && !note.subtext.isBlank()) {
+                        note.subtexts.add(note.subtext.trim());
+                    }
+                    note.subtext = null;
+                }
+                return notes;
             }
         } catch (Exception e) {
             logError("Failed to load notes", e);

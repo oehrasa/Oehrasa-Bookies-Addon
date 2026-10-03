@@ -5,8 +5,12 @@ import com.AutoBookshelf.addon.utils.BookUtils;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.commands.Command;
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.utils.render.color.Color;
+import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.ChiseledBookshelfBlock;
@@ -17,15 +21,30 @@ import net.minecraft.state.property.Properties;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
+
+import java.util.HashMap;
+import java.util.Map;
 
 public class ShelfCommand extends Command {
+
+    private static class ShelfEntry {
+        final String title;
+        final String author;
+
+        ShelfEntry(String title, String author) {
+            this.title = title;
+            this.author = author;
+        }
+    }
+
+    // world -> "x,y,z" -> slot -> entry read from that slot this session.
+    private final Map<String, Map<String, Map<Integer, ShelfEntry>>> hoverCache = new HashMap<>();
 
     private ItemStack currentBook = null;
 
     public ShelfCommand() {
         super("shelf", "Extracts a book from a chiseled bookshelf slot, reads it, and puts it back.");
+        MeteorClient.EVENT_BUS.subscribe(this);
     }
 
     @Override
@@ -79,6 +98,10 @@ public class ShelfCommand extends Command {
                         return;
                     }
                     currentBook = book.copy();
+                    BookUtils.BookContent content = BookUtils.checkHeldBook(currentBook);
+                    if (content != null) {
+                        recordHoverEntry(pos, slot, content.title(), content.author());
+                    }
                     BookUtils.printBookInfo(BookUtils.checkHeldBook(currentBook), this::info);
                 },
                 () -> {}
@@ -162,48 +185,56 @@ public class ShelfCommand extends Command {
         );
     }
 
-    private int getSlotFromHit(BlockHitResult hit) {
+    private void recordHoverEntry(BlockPos pos, int slot, String title, String author) {
+        if (title == null || title.isEmpty()) return;
+        String key = pos.getX() + "," + pos.getY() + "," + pos.getZ();
+        hoverCache.computeIfAbsent(getWorldName(), k -> new HashMap<>())
+            .computeIfAbsent(key, k -> new HashMap<>())
+            .put(slot, new ShelfEntry(title, author));
+    }
+
+    private String getWorldName() {
+        return mc.world != null ? mc.world.getRegistryKey().getValue().toString() : "unknown";
+    }
+
+    @EventHandler
+    private void onRender2D(Render2DEvent event) {
+        if (mc.world == null || mc.player == null) return;
+        if (!(mc.crosshairTarget instanceof BlockHitResult hit)) return;
+
+        // Only keep the current world's reads in memory.
+        String world = getWorldName();
+        if (hoverCache.size() > 1) {
+            hoverCache.keySet().removeIf(k -> !k.equals(world));
+        }
+        Map<String, Map<Integer, ShelfEntry>> worldCache = hoverCache.get(world);
+        if (worldCache == null || worldCache.isEmpty()) return;
+
         BlockPos pos = hit.getBlockPos();
         BlockState state = mc.world.getBlockState(pos);
-        if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) return -1;
+        if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) return;
 
-        Direction facing = state.get(Properties.HORIZONTAL_FACING);
-        Vec3d hitPos = hit.getPos();
-        Vec3d relative = hitPos.subtract(pos.getX(), pos.getY(), pos.getZ());
+        String key = pos.getX() + "," + pos.getY() + "," + pos.getZ();
+        Map<Integer, ShelfEntry> shelf = worldCache.get(key);
+        if (shelf == null) return;
 
-        double u, v;
-        switch (facing) {
-            case NORTH -> {
-                u = 1 - relative.x;
-                v = relative.y;
-            }
-            case SOUTH -> {
-                u = relative.x;
-                v = relative.y;
-            }
-            case WEST -> {
-                u = relative.z;
-                v = relative.y;
-            }
-            case EAST -> {
-                u = 1 - relative.z;
-                v = relative.y;
-            }
-            default -> {
-                return -1;
-            }
+        int slot = BookUtils.getSlotFromHit(hit);
+        if (slot == -1) return;
+
+        // Don't keep painting a title over a slot that no longer holds a book.
+        if (!state.get(ChiseledBookshelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slot))) {
+            shelf.remove(slot);
+            return;
         }
 
-        u = Math.max(0, Math.min(1, u));
-        v = Math.max(0, Math.min(1, v));
+        ShelfEntry entry = shelf.get(slot);
+        if (entry == null) return;
 
-        int col;
-        if (u < 0.375) col = 0;
-        else if (u < 0.6875) col = 1;
-        else col = 2;
+        BookUtils.renderSlotHover(event, pos, state.get(Properties.HORIZONTAL_FACING), slot,
+            entry.title, entry.author, 1.0, new Color(0xFFFFFF), new Color(0xAAAAAA));
+    }
 
-        int row = v >= 0.5 ? 0 : 1;
-
-        return col + row * 3;
+    private int getSlotFromHit(BlockHitResult hit) {
+        return BookUtils.getSlotFromHit(hit);
     }
 }

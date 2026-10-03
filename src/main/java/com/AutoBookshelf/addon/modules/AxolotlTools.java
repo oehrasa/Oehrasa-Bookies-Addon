@@ -30,6 +30,7 @@ import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Vec3d;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
@@ -243,6 +244,10 @@ public class AxolotlTools extends Module {
     private int rotPriority = 69420;
     private final Set<String> interactVariants = new HashSet<>();
 
+    private static final int ESP_SCAN_INTERVAL = 20; // frames between ESP rescans
+    private final List<AxolotlEntity> espAxolotls = new ArrayList<>();
+    private int espFrameCounter = ESP_SCAN_INTERVAL;
+
     // lightweight info()
     private static final long MSG_COOLDOWN_MS = 2000;
     private final Map<String, Long> msgCooldowns = new HashMap<>();
@@ -373,6 +378,8 @@ public class AxolotlTools extends Module {
         rotPriority = 69420;
         interactVariants.clear();
         msgCooldowns.clear();
+        espAxolotls.clear();
+        espFrameCounter = ESP_SCAN_INTERVAL;
     }
 
     @EventHandler
@@ -418,10 +425,12 @@ public class AxolotlTools extends Module {
                         );
                         double d = Double.MAX_VALUE;
                         AxolotlEntity target = null;
+                        Vec3d eye = mc.player.getEyePos();
                         for (AxolotlEntity ax : nearby) {
-                            if (mc.player.getEyePos().squaredDistanceTo(ax.getEntityPos()) < d) {
+                            double distSq = eye.squaredDistanceTo(ax.getEntityPos());
+                            if (distSq < d) {
                                 target = ax;
-                                d = mc.player.getEyePos().squaredDistanceTo(ax.getEntityPos());
+                                d = distSq;
                             }
                         }
                         if (target != null) {
@@ -520,10 +529,12 @@ public class AxolotlTools extends Module {
                         );
                         double d = Double.MAX_VALUE;
                         TropicalFishEntity target = null;
+                        Vec3d eye = mc.player.getEyePos();
                         for (TropicalFishEntity fish : nearby) {
-                            if (mc.player.getEyePos().squaredDistanceTo(fish.getEntityPos()) < d) {
+                            double distSq = eye.squaredDistanceTo(fish.getEntityPos());
+                            if (distSq < d) {
                                 target = fish;
-                                d = mc.player.getEyePos().squaredDistanceTo(fish.getEntityPos());
+                                d = distSq;
                             }
                         }
                         if (target != null) {
@@ -571,19 +582,17 @@ public class AxolotlTools extends Module {
     private void onRender(Render3DEvent event) {
         if (!espVariants.get()) return;
         if (mc.player == null || mc.world == null) return;
-        List<AxolotlEntity> axolotls = new ArrayList<>();
-        for (Entity entity : mc.world.getEntities()) {
-            if (entity instanceof AxolotlEntity axolotl) axolotls.add(axolotl);
+
+        // World entity scan is throttled to every ESP_SCAN_INTERVAL frames; the cached
+        // entities are read live for position/pose, so rendering stays fluid.
+        if (++espFrameCounter >= ESP_SCAN_INTERVAL) {
+            espFrameCounter = 0;
+            refreshEspAxolotls();
         }
-        axolotls = axolotls
-            .stream()
-            .filter(ax -> ax.getBlockPos()
-                .isWithinDistance(
-                    mc.player.getBlockPos(),
-                    mc.options.getViewDistance().getValue() * 16
-                )
-            ).toList();
-        for (AxolotlEntity axolotl : axolotls) {
+
+        for (AxolotlEntity axolotl : espAxolotls) {
+            if (axolotl.isRemoved()) continue;
+
             SettingColor lineColor;
             SettingColor sideColor;
             switch (axolotl.getVariant()) {
@@ -652,6 +661,24 @@ public class AxolotlTools extends Module {
                     axolotl.getBoundingBox().getCenter().z,
                     lineColor
                 );
+            }
+        }
+    }
+
+    private void refreshEspAxolotls() {
+        espAxolotls.clear();
+        List<AxolotlEntity> nearby = new ArrayList<>();
+        for (Entity entity : mc.world.getEntities()) {
+            if (entity instanceof AxolotlEntity axolotl) nearby.add(axolotl);
+        }
+        for (AxolotlEntity ax : nearby) {
+            if (ax.getBlockPos()
+                .isWithinDistance(
+                    mc.player.getBlockPos(),
+                    mc.options.getViewDistance().getValue() * 16
+                )
+            ) {
+                espAxolotls.add(ax);
             }
         }
     }

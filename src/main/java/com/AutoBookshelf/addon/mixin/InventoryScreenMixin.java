@@ -14,6 +14,6 @@ public class InventoryScreenMixin {
 
     @Inject(method = "render", at = @At("TAIL"))
     private void onRenderTail(DrawContext context, int mouseX, int mouseY, float delta, CallbackInfo ci) {
-        MeteorClient.EVENT_BUS.post(ScreenRenderEvent.get(context, delta));
+        MeteorClient.EVENT_BUS.post(ScreenRenderEvent.get(context, delta, mouseX, mouseY));
     }
 }

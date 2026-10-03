@@ -122,6 +122,12 @@ public class BetterBoatFly extends Module {
         ClientPlayerEntity player = mc.player;
         if (player == null || player.isRemoved() || player.hasVehicle()) return;
 
+        if (mountCooldown > 0) {
+            mountCooldown--;
+            return;
+        }
+
+        double mountRangeVal = mountRange.get();
         double radius = 5.0;
         Box searchBox = player.getBoundingBox().expand(radius);
         assert mc.world != null;
@@ -133,19 +139,15 @@ public class BetterBoatFly extends Module {
 
         for (BoatEntity boat : boats) {
             double distSq = boat.squaredDistanceTo(playerPos);
-            if (distSq < nearestDistSq && PlayerUtils.isWithin(boat, mountRange.get())) {
+            if (distSq < nearestDistSq && PlayerUtils.isWithin(boat, mountRangeVal)) {
                 nearest = boat;
                 nearestDistSq = distSq;
             }
         }
 
         if (nearest != null) {
-            if (mountCooldown <= 0) {
-                interact(nearest);
-                mountCooldown = 10; // half a second between attempts
-            } else {
-                mountCooldown--;
-            }
+            interact(nearest);
+            mountCooldown = 10; // half a second between attempts
         }
     }
 

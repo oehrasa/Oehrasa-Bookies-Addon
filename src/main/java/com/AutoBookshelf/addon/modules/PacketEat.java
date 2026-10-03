@@ -20,6 +20,7 @@ import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
+import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractItemC2SPacket;
 import net.minecraft.util.Hand;
 
@@ -122,6 +123,14 @@ public class PacketEat extends Module {
         .build()
     );
 
+    private final Setting<Boolean> suppressActions = sgAutoEat.add(new BoolSetting.Builder()
+        .name("suppress-packet-actions")
+        .description("While an eat cycle is active, cancel block-placement packets from third-party mods. Mining and attacking are never suppressed.")
+        .defaultValue(false)
+        .visible(autoEat::get)
+        .build()
+    );
+
     private final Setting<Integer> resumeDelay = sgAutoEat.add(new IntSetting.Builder()
         .name("resume-delay")
         .description("Extra ticks to keep paused modules paused after an eat cycle ends.")
@@ -190,7 +199,7 @@ public class PacketEat extends Module {
 
     private final Setting<Boolean> emergencyMode = sgEmergency.add(new BoolSetting.Builder()
         .name("emergency-mode")
-        .description("When health drops to emergency-health, drop everything (mining, placing blocks, attacking, pathing) and force-eat immediately.")
+        .description("When health drops to emergency-health, force-eat immediately. Your block placement are cancelled.")
         .defaultValue(false)
         .visible(autoEat::get)
         .build()
@@ -238,6 +247,7 @@ public class PacketEat extends Module {
 
     // Emergency-mode state
     private boolean emergencyActive = false;
+    private boolean emergencyBlocking = false;
     private final List<Class<? extends Module>> emergencyPausedAura = new ArrayList<>();
     private boolean emergencyPausedBaritone = false;
     private final List<Class<? extends Module>> emergencyPausedInteractions = new ArrayList<>();
@@ -255,8 +265,9 @@ public class PacketEat extends Module {
     @Override
     public void onDeactivate() {
         if (autoEating) stopAutoEating();
-        if (emergencyActive) stopEmergency();
+        if (emergencyBlocking) stopEmergency();
         emergencyActive = false;
+        emergencyBlocking = false;
         // Force-resolve any pending deferred resume so disabling the module
         // never leaves the paused auras off.
         resumeAuras();
@@ -306,26 +317,32 @@ public class PacketEat extends Module {
                 }
             }
         }
+
+        // Third-party mods (Litematica printers) cannot be paused like modules,
+        // so cancel their block placement while a cycle is actually chewing on
+        // food. Mining is never suppressed, and nothing is cancelled at all when
+        // there's no food left in the eat slot to recover from, so the cycle
+        // can't lock the player out of digging or attacking.
+        if (suppressActions.get() && autoEating
+            && eatSlot != -1 && getFoodComponent(player, eatSlot) != null
+            && event.packet instanceof PlayerInteractBlockC2SPacket) {
+            event.cancel();
+        }
     }
 
     private void handleAutoEat(ClientPlayerEntity player) {
-        boolean wasEmergency = emergencyActive;
+        boolean wasBlocking = emergencyBlocking;
         emergencyActive = emergencyMode.get() && player.getHealth() <= emergencyHealth.get() * 2;
 
-        if (emergencyActive && !wasEmergency) startEmergency();
-        else if (!emergencyActive && wasEmergency) stopEmergency();
+        // Engage the "drop placing modules" state only while there is actually
+        // food to force-eat. Critically low with no food is just critically low —
+        // nothing to recover from
+        emergencyBlocking = emergencyActive && findSlot(player, true) != -1;
 
-        // While critical, forcibly release the interaction keys so nothing can
-        // keep using/placing while we try to get a bite in.
-        if (emergencyActive) interruptCurrentAction(player);
+        if (emergencyBlocking && !wasBlocking) startEmergency();
+        else if (!emergencyBlocking && wasBlocking) stopEmergency();
 
         if (autoEating) {
-            if (eatStackCountAtStart != -1 && getStackCount(player, eatSlot) < eatStackCountAtStart) {
-                stopAutoEating();
-                postEatCooldown = computeCooldown();
-                return;
-            }
-
             eatTicks++;
 
             // De-sync spam is only meaningful on the direct-packet path. If we're
@@ -338,16 +355,39 @@ public class PacketEat extends Module {
                 );
             }
 
-            boolean minTicksReached = eatTicks >= eatDuration;
-            boolean timedOut = eatTicks >= eatDuration + CONFIRM_TIMEOUT_TICKS;
+            int count = getStackCount(player, eatSlot);
+            boolean stackConsumed = eatStackCountAtStart != -1 && count < eatStackCountAtStart;
+            boolean noFood = count <= 0 || getFoodComponent(player, eatSlot) == null;
+            boolean duringBite = !stackConsumed;
 
-            // Emergency: stop at the minimum usable duration, don't wait for
-            // server confirmation or the always-eat spam cooldown.
-            boolean readyToStop = minTicksReached && (!confirmFinish.get() || emergencyActive);
+            if (stackConsumed) eatStackCountAtStart = count;
 
-            if (readyToStop || timedOut) {
+            // AutoEat-style stat guard: end a cycle only once hunger/health actually
+            // recovered (and, with confirm-finish, only after the bite that restored
+            // them completed server-side), when the food ran out, or when the attempt
+            // timed out without making progress. Never swap the hotbar back earlier.
+            boolean recovered = !belowThreshold(player);
+            // Use at least HOTBAR_EAT_TICKS as the base so offhand cycles also get
+            // enough time to finish and be confirmed before the timeout fires.
+            int minEatDuration = Math.max(eatDuration, HOTBAR_EAT_TICKS);
+            boolean timedOut = duringBite && eatTicks >= minEatDuration + CONFIRM_TIMEOUT_TICKS;
+
+            boolean readyToStop = noFood || timedOut;
+            if (!emergencyActive && recovered && (stackConsumed || !confirmFinish.get())) {
+                readyToStop = true;
+            }
+
+            if (readyToStop) {
                 stopAutoEating();
                 postEatCooldown = computeCooldown();
+                return;
+            }
+
+            // A bite finished and more food is still needed -> chain-eat the next
+            // item in the stack from the same slot, without leaving it.
+            if (stackConsumed) {
+                eatTicks = 0;
+                useSelectedFood(player);
             }
             return;
         }
@@ -380,11 +420,15 @@ public class PacketEat extends Module {
         int slot = findSlot(player, emergencyActive);
         if (slot == -1) return;
 
+        // Only interrupt the current action when we're actually about to bite
+        // into something
+        if (emergencyActive) interruptCurrentAction(player);
+
         eatSlot = slot;
-        startAutoEating(player, emergencyActive);
+        startAutoEating(player);
     }
 
-    private void startAutoEating(ClientPlayerEntity player, boolean emergency) {
+    private void startAutoEating(ClientPlayerEntity player) {
         // Pause combat auras
         wasAura.clear();
         if (pauseAuras.get()) {
@@ -429,27 +473,25 @@ public class PacketEat extends Module {
         // Decide method once per cycle, based on actual screen state right now.
         eatingViaScreenClick = mc.currentScreen != null;
 
+        autoEating = true;
+        eatTicks = 0;
+
+        useSelectedFood(player);
+    }
+
+    // Kicks off (or re-kicks) the eat using the same mechanism this cycle chose:
+    // the screen-open fallback goes through the real input/raycast pipeline, which
+    // is why the crosshair override above is needed for that branch; anything else
+    // sends the raw interact packet on the eat slot.
+    private void useSelectedFood(ClientPlayerEntity player) {
         if (eatingViaScreenClick) {
-            // Screen-open fallback: goes through the real input/raycast pipeline,
-            // which is why the crosshair override above is needed for this branch.
             Utils.rightClick();
-        } else if (emergency) {
-            // Emergency path: direct packet on a free hotbar slot; the interaction
-            // keys were already released in handleAutoEat so there is no conflict.
-            Hand hand = eatSlot == SlotUtils.OFFHAND ? Hand.OFF_HAND : Hand.MAIN_HAND;
-            player.networkHandler.sendPacket(
-                new PlayerInteractItemC2SPacket(hand, 0, player.getYaw(), player.getPitch())
-            );
         } else {
-            // Default, efficient path: raw packet, no raycast/crosshair involvement.
             Hand hand = eatSlot == SlotUtils.OFFHAND ? Hand.OFF_HAND : Hand.MAIN_HAND;
             player.networkHandler.sendPacket(
                 new PlayerInteractItemC2SPacket(hand, 0, player.getYaw(), player.getPitch())
             );
         }
-
-        autoEating = true;
-        eatTicks = 0;
     }
 
     private void stopAutoEating() {
@@ -497,9 +539,11 @@ public class PacketEat extends Module {
     }
 
     private void interruptCurrentAction(ClientPlayerEntity player) {
+        // Target only item use / placement: drop the use key and cancel any
+        // in-progress item interaction so nothing keeps building while we bite.
+        // The attack key and block-breaking progress are deliberately left
+        // untouched — mining must never be suppressed by this module.
         mc.options.useKey.setPressed(false);
-        mc.options.attackKey.setPressed(false);
-        mc.interactionManager.cancelBlockBreaking();
         if (player.isUsingItem()) player.stopUsingItem();
     }
 
@@ -628,16 +672,20 @@ public class PacketEat extends Module {
         return bestSlot;
     }
 
-    private boolean shouldEat(ClientPlayerEntity player) {
+    private boolean belowThreshold(ClientPlayerEntity player) {
         boolean health = player.getHealth() <= healthThreshold.get();
         boolean hunger = player.getHungerManager().getFoodLevel() <= hungerThreshold.get();
-        if (!thresholdMode.get().test(health, hunger)) {
+        return thresholdMode.get().test(health, hunger);
+    }
+
+    private boolean shouldEat(ClientPlayerEntity player) {
+        if (!belowThreshold(player)) {
             // Both stats have recovered above their thresholds, so the client is
             // no longer lagging behind a meal. Clear the anti-double-eat latch:
             // leaving it set would make the next cycle compare against this healed
             // baseline and stall in Both mode, where health rarely drops below it
             // at the same time hunger does.
-            if (!health && !hunger && lastCycleHealth != -1) {
+            if (lastCycleHealth != -1) {
                 lastCycleHealth = -1;
                 lastCycleHunger = -1;
             }

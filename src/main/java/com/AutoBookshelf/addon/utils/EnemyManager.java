@@ -11,13 +11,14 @@ import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Iterator;
-import java.util.List;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class EnemyManager extends System<EnemyManager> implements Iterable<Enemy> {
     private final List<Enemy> enemies = new ArrayList<>();
+    // ConcurrentHashMap for thread-safe access from main thread (get) and
+    // MeteorExecutor (updateInfo which can rename enemies asynchronously).
+    private final Map<String, Enemy> byName = new ConcurrentHashMap<>();
 
     public EnemyManager() {
         super("enemies");
@@ -27,11 +28,16 @@ public class EnemyManager extends System<EnemyManager> implements Iterable<Enemy
         return Systems.get(EnemyManager.class);
     }
 
+    private static String key(String name) {
+        return name.toLowerCase(Locale.ROOT);
+    }
+
     public boolean add(Enemy enemy) {
         if (enemy.name.isEmpty() || enemy.name.contains(" ")) return false;
         if (enemies.contains(enemy)) return false;
 
         enemies.add(enemy);
+        byName.putIfAbsent(key(enemy.name), enemy);
         save();
 
         MeteorExecutor.execute(enemy::updateInfo);
@@ -49,6 +55,7 @@ public class EnemyManager extends System<EnemyManager> implements Iterable<Enemy
 
     public boolean remove(Enemy enemy) {
         if (enemies.remove(enemy)) {
+            byName.entrySet().removeIf(e -> e.getValue() == enemy);
             save();
             return true;
         }
@@ -66,10 +73,36 @@ public class EnemyManager extends System<EnemyManager> implements Iterable<Enemy
     }
 
     public Enemy get(String name) {
-        for (Enemy enemy : enemies) {
-            if (enemy.name.equalsIgnoreCase(name)) return enemy;
+        if (name == null) return null;
+        String k = key(name);
+        Enemy enemy = byName.get(k);
+        if (enemy == null) {
+            for (Enemy e : enemies) {
+                if (e.name.equalsIgnoreCase(name)) {
+                    // Re-index the found enemy under the requested key atomically
+                    byName.compute(k, (key, existing) -> existing != null ? existing : e);
+                    return e;
+                }
+            }
+            return null;
         }
-        return null;
+        // updateInfo() can rename an enemy asynchronously on the executor thread;
+        // re-key the map entry if it drifted so the name-index stays consistent.
+        if (!key(enemy.name).equals(k)) {
+            byName.computeIfAbsent(key(enemy.name), ignored -> enemy);
+            // Remove stale key if it still points to this enemy
+            byName.remove(k, enemy);
+            // After rename, the old name no longer maps to this enemy.
+            // Search for an enemy whose current name matches the requested name.
+            for (Enemy e : enemies) {
+                if (e.name.equalsIgnoreCase(name)) {
+                    byName.compute(k, (key, existing) -> existing != null ? existing : e);
+                    return e;
+                }
+            }
+            return null;
+        }
+        return enemy;
     }
 
     public Enemy get(PlayerEntity player) {
@@ -108,6 +141,7 @@ public class EnemyManager extends System<EnemyManager> implements Iterable<Enemy
 
     public void clear() {
         enemies.clear();
+        byName.clear();
         save();
     }
 
@@ -126,6 +160,7 @@ public class EnemyManager extends System<EnemyManager> implements Iterable<Enemy
     @Override
     public EnemyManager fromTag(NbtCompound tag) {
         enemies.clear();
+        byName.clear();
 
         for (NbtElement itemTag : tag.getListOrEmpty("enemies")) {
             NbtCompound enemyTag = (NbtCompound) itemTag;
@@ -140,6 +175,7 @@ public class EnemyManager extends System<EnemyManager> implements Iterable<Enemy
                 : new Enemy(name);
 
             enemies.add(enemy);
+            byName.putIfAbsent(key(enemy.name), enemy);
         }
 
         Collections.sort(enemies);

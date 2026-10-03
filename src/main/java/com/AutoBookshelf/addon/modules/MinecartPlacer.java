@@ -34,6 +34,8 @@ public class MinecartPlacer extends Module {
     private int placedCount = 0;
     private boolean waitingForMinecarts = false;
     private int waitCounter = 0;
+    private int cachedMinecartSlot = -1;
+    private int cachedEmptyHotbarSlot = -1;
 
     private enum MinecartType {
         MINECART(Items.MINECART, "Minecart"),
@@ -210,6 +212,8 @@ public class MinecartPlacer extends Module {
         waitingForMinecarts = false;
         delayLeft = 0;
         waitCounter = 0;
+        cachedMinecartSlot = -1;
+        cachedEmptyHotbarSlot = -1;
 
         info("§aFound §f" + targetRails.size() + " §a" + railType.get().name + "s. Placing " + minecartType.get().name + "s...");
     }
@@ -253,18 +257,20 @@ public class MinecartPlacer extends Module {
 
         // Loop through all rails to find one that needs a minecart
         boolean foundRail = false;
+        Block targetRail = railType.get().block;
+        boolean shouldSkipOccupied = skipOccupied.get();
 
         for (int i = 0; i < targetRails.size(); i++) {
             int index = (currentIndex + i) % targetRails.size();
             BlockPos railPos = targetRails.get(index);
 
             // Check if block is still the correct rail type
-            if (mc.world.getBlockState(railPos).getBlock() != railType.get().block) {
+            if (mc.world.getBlockState(railPos).getBlock() != targetRail) {
                 continue;
             }
 
             // Check if rail already has a minecart
-            if (skipOccupied.get() && hasMinecartOnRail(railPos)) {
+            if (shouldSkipOccupied && hasMinecartOnRail(railPos)) {
                 continue;
             }
 
@@ -310,12 +316,22 @@ public class MinecartPlacer extends Module {
     private int findMinecartInInventory() {
         Item targetItem = minecartType.get().item;
 
+        if (cachedMinecartSlot != -1) {
+            ItemStack cached = mc.player.getInventory().getStack(cachedMinecartSlot);
+            if (!cached.isEmpty() && cached.getItem() == targetItem) {
+                return cachedMinecartSlot;
+            }
+            cachedMinecartSlot = -1;
+        }
+
         for (int i = 0; i < 36; i++) {
             ItemStack stack = mc.player.getInventory().getStack(i);
             if (!stack.isEmpty() && stack.getItem() == targetItem) {
+                cachedMinecartSlot = i;
                 return i;
             }
         }
+        cachedMinecartSlot = -1;
         return -1;
     }
 
@@ -340,12 +356,16 @@ public class MinecartPlacer extends Module {
                 mc.player.getInventory().setSelectedSlot(slot);
             } else {
                 // Swap to hotbar if needed
-                int tempSlot = -1;
-                for (int i = 0; i < 9; i++) {
-                    if (mc.player.getInventory().getStack(i).isEmpty()) {
-                        tempSlot = i;
-                        break;
+                int tempSlot = cachedEmptyHotbarSlot;
+                if (tempSlot == -1 || !mc.player.getInventory().getStack(tempSlot).isEmpty()) {
+                    tempSlot = -1;
+                    for (int i = 0; i < 9; i++) {
+                        if (mc.player.getInventory().getStack(i).isEmpty()) {
+                            tempSlot = i;
+                            break;
+                        }
                     }
+                    cachedEmptyHotbarSlot = tempSlot;
                 }
                 if (tempSlot == -1) tempSlot = 0;
 
@@ -418,5 +438,7 @@ public class MinecartPlacer extends Module {
         placedCount = 0;
         delayLeft = 0;
         waitCounter = 0;
+        cachedMinecartSlot = -1;
+        cachedEmptyHotbarSlot = -1;
     }
 }

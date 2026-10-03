@@ -8,11 +8,13 @@
     "HandledScreenMixin",
     "InGameHudMixin",
     "InventoryScreenMixin",
+    "MinecraftClientMixin",
     "MixinHandledScreen",
     "PlayerInventoryAccessor",
     "PlayerUtilsMixin",
     "TntEntityRendererMixin",
-    "accessor.AbstractSignEditScreenAccessor"
+    "accessor.AbstractSignEditScreenAccessor",
+    "accessor.ClientPlayerInteractionManagerAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

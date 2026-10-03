@@ -4,10 +4,10 @@ import com.AutoBookshelf.addon.modules.livemessage.LiveMessage;
 import com.AutoBookshelf.addon.modules.livemessage.gui.ChatWindow;
 import com.AutoBookshelf.addon.modules.livemessage.gui.LivemessageGui;
 import com.AutoBookshelf.addon.utils.QueueUtil;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.text.Text;
 
-import java.util.Locale;
-import java.util.UUID;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -19,11 +19,61 @@ public final class LivemessageMatcher {
     private static final Pattern WHISPERS_DISABLED_PATTERN = Pattern.compile(
         "(?i).*(?:whispers?\\s+disabled|whispering\\s+(?:is|are)\\s+disabled).*"
     );
+    private static final Pattern USERNAME_EDGE_MARKERS = Pattern.compile("^[<\\[]+|[>\\]]+$");
+    // Directed-at-the-player cues for the rejected-capture dump: without at least one of these an
+    // unmatched line is plain public chat, not a failed whisper, and is skipped. Deliberately
+    // localization-free (kept the words-as-words plus arrows) so localized/homoglyph whispers are
+    // still caught whenever they address the player.
+    private static final Pattern DIRECTED_CUES_PATTERN = Pattern.compile("\\b(?:you|me)\\b|->|→|⟶", Pattern.CASE_INSENSITIVE);
     private static String lastHandledLine = null;
     private static long lastHandledTime = 0L;
     private static final long DEDUPE_WINDOW_MS = 50L;
 
+    // Budget guard against user-supplied (regex:) patterns with catastrophic backtracking
+    // applied to attacker-controlled chat lines. Java regex can't be aborted mid-match, so
+    // when a match blows the budget we drop that pattern from the active lists to stop
+    // repeated client freezes. The template-generated patterns are linear and never trigger this.
+    private static final long MATCH_BUDGET_NANOS = 10_000_000L;
+    private static final long REDOS_WARN_INTERVAL_MS = 10_000L;
+
+    // Consecutive over-budget matches a user pattern must accumulate before it is
+    // discarded. A single slow run is usually a GC pause or JIT warmup rather than a
+    // genuinely pathological regex, so one overrun must not delete a pattern the user
+    // configured deliberately.
+    private static final int OVERRUNS_BEFORE_REMOVAL = 3;
+    private static final Map<Pattern, Integer> overrunCounts = new HashMap<>();
+    private static long lastReDoSWarn = 0L;
+
     private LivemessageMatcher() {
+    }
+
+    private static Matcher safeMatcher(Iterator<Pattern> patternIterator, Pattern pattern, String text) {
+        long start = System.nanoTime();
+        Matcher matcher = pattern.matcher(text);
+        boolean matched = matcher.matches();
+        if (System.nanoTime() - start > MATCH_BUDGET_NANOS) {
+            long now = System.currentTimeMillis();
+            if (now - lastReDoSWarn > REDOS_WARN_INTERVAL_MS) {
+                lastReDoSWarn = now;
+                LiveMessage.LOG.warn("Livemessage pattern '{}' took longer than {}ms to match; removing it to avoid client freezes. Check your regex patterns.", pattern, MATCH_BUDGET_NANOS / 1_000_000L);
+            }
+            // Built-in defaults are never removed, and a user-supplied pattern has to
+            // overrun several times in a row before it is discarded - one slow run is
+            // usually a GC pause or JIT warmup, not a pathological regex.
+            boolean removable = patternIterator != null && !LivemessageUtil.DEFAULT_PATTERNS.contains(pattern);
+            if (removable) {
+                int overruns = overrunCounts.merge(pattern, 1, Integer::sum);
+                if (overruns >= OVERRUNS_BEFORE_REMOVAL) {
+                    LiveMessage.LOG.warn("Livemessage pattern '{}' overran the match budget {} times in a row; removing it to avoid client freezes. Check your regex patterns.", pattern, overruns);
+                    patternIterator.remove();
+                    overrunCounts.remove(pattern);
+                }
+            }
+            return null;
+        }
+        // A run inside the budget clears the streak, so only consecutive overruns count.
+        overrunCounts.remove(pattern);
+        return matched ? matcher : null;
     }
 
     public static Match tryMatch(String rawMessage) {
@@ -32,18 +82,20 @@ public final class LivemessageMatcher {
             return null;
         }
 
-        for (Pattern pattern : LivemessageUtil.FROM_PATTERNS) {
-            Matcher matcher = pattern.matcher(text);
-            if (matcher.matches()) {
-                return new Match(cleanUsername(matcher.group(1)), matcher.group(2).trim(), false);
-            }
+        Iterator<Pattern> fromIterator = LivemessageUtil.FROM_PATTERNS.iterator();
+        while (fromIterator.hasNext()) {
+            Pattern pattern = fromIterator.next();
+            Matcher matcher = safeMatcher(fromIterator, pattern, text);
+            if (matcher == null) continue;
+            return new Match(cleanUsername(matcher.group(1)), matcher.group(2).trim(), false);
         }
 
-        for (Pattern pattern : LivemessageUtil.TO_PATTERNS) {
-            Matcher matcher = pattern.matcher(text);
-            if (matcher.matches()) {
-                return new Match(cleanUsername(matcher.group(1)), matcher.group(2).trim(), true);
-            }
+        Iterator<Pattern> toIterator = LivemessageUtil.TO_PATTERNS.iterator();
+        while (toIterator.hasNext()) {
+            Pattern pattern = toIterator.next();
+            Matcher matcher = safeMatcher(toIterator, pattern, text);
+            if (matcher == null) continue;
+            return new Match(cleanUsername(matcher.group(1)), matcher.group(2).trim(), true);
         }
 
         logMiss(text);
@@ -82,6 +134,14 @@ public final class LivemessageMatcher {
             return false;
         }
 
+        if (!match.outgoing() && isUnverifiedSender(match)) {
+            markHandled(rawMessage);
+            if (isDebugEnabled()) {
+                LiveMessage.LOG.info("Dropped unverified/suspicious DM from '{}': {}", match.username(), match.message());
+            }
+            return false;
+        }
+
         if (!match.outgoing() && isNonFriendBlocked(match)) {
             markHandled(rawMessage);
             if (isDebugEnabled()) {
@@ -108,6 +168,20 @@ public final class LivemessageMatcher {
             return false;
         }
         return meteordevelopment.meteorclient.systems.friends.Friends.get().get(match.username()) == null;
+    }
+
+    private static boolean isUnverifiedSender(Match match) {
+        // Both sender checks belong to verify-sender-in-tab (its description covers
+        // the username check and the tab-list check together). With it off the user
+        // has opted out of sender verification, so a legitimate DM from a server
+        // that allows nonstandard names must not be dropped as a spoof.
+        if (LiveMessage.INSTANCE == null || !LiveMessage.INSTANCE.verifySenderInTab.get()) {
+            return false;
+        }
+        if (!LivemessageUtil.isSafeUsername(match.username())) {
+            return true;
+        }
+        return !LivemessageUtil.isPlayerInTabList(match.username());
     }
 
     private static boolean isBlockedAdvertiser(Match match) {
@@ -142,6 +216,11 @@ public final class LivemessageMatcher {
         if (username == null || message == null) {
             return;
         }
+        // A "whispers disabled" line can be typed in public chat by anyone; only honor it if it
+        // arrives right after OUR own send, within WhisperRateLimiter's rejection window.
+        if (!WhisperRateLimiter.isLastSelfSend(username, message)) {
+            return;
+        }
 
         LiveProfileCache.LiveProfile profile = LiveProfileCache.getLiveprofileFromName(username);
         UUID uuid = profile != null ? profile.uuid : null;
@@ -168,18 +247,56 @@ public final class LivemessageMatcher {
         lastHandledTime = System.currentTimeMillis();
     }
 
+    private static volatile String cachedPmCommand = null;
+    private static volatile Pattern cachedPmPattern = null;
+
+    private static volatile String cachedSelfName = null;
+    private static volatile Pattern cachedSelfNamePattern = null;
+
+    private static Pattern selfNamePattern() {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        String name = (mc != null && mc.getSession() != null) ? mc.getSession().getUsername() : "";
+        Pattern pattern = cachedSelfNamePattern;
+        if (name.isEmpty()) {
+            return null;
+        }
+        if (pattern == null || !name.equals(cachedSelfName)) {
+            pattern = Pattern.compile("\\b" + Pattern.quote(name) + "\\b", Pattern.CASE_INSENSITIVE);
+            cachedSelfName = name;
+            cachedSelfNamePattern = pattern;
+        }
+        return pattern;
+    }
+
+    private static boolean isWhisperLike(String normalized) {
+        if (normalized == null || normalized.isEmpty()) {
+            return false;
+        }
+        if (DIRECTED_CUES_PATTERN.matcher(normalized).find()) {
+            return true;
+        }
+        Pattern selfName = selfNamePattern();
+        return selfName != null && selfName.matcher(normalized).find();
+    }
+
+    private static Pattern pmCommandPattern() {
+        String pmCommand = (LiveMessage.INSTANCE != null ? LiveMessage.INSTANCE.getPmCommand() : "msg").toLowerCase(Locale.ROOT);
+        Pattern pattern = cachedPmPattern;
+        if (!pmCommand.equals(cachedPmCommand) || pattern == null) {
+            pattern = Pattern.compile("^/?" + Pattern.quote(pmCommand) + "\\s+(\\S+)\\s+(.+)$", Pattern.CASE_INSENSITIVE);
+            cachedPmCommand = pmCommand;
+            cachedPmPattern = pattern;
+        }
+        return pattern;
+    }
+
     public static boolean handleOutgoingCommand(String commandLine) {
         if (commandLine == null || commandLine.isBlank()) {
             return false;
         }
 
         String trimmed = commandLine.trim();
-        String pmCommand = LiveMessage.INSTANCE != null ? LiveMessage.INSTANCE.getPmCommand().toLowerCase(Locale.ROOT) : "msg";
-        Pattern customPattern = Pattern.compile(
-            "^/?" + Pattern.quote(pmCommand) + "\\s+(\\S+)\\s+(.+)$",
-            Pattern.CASE_INSENSITIVE
-        );
-        Matcher customMatcher = customPattern.matcher(trimmed);
+        Matcher customMatcher = pmCommandPattern().matcher(trimmed);
         if (customMatcher.matches()) {
             String username = customMatcher.group(1).trim();
             String message = customMatcher.group(2).trim();
@@ -225,19 +342,32 @@ public final class LivemessageMatcher {
         }
     }
 
+    // Rate-limited dump of every whisper-like line that failed every DM pattern,
+    private static final long MISS_LOG_INTERVAL_MS = 1000;
+    private static long lastMissLogAt = 0L;
+    private static int missedInWindow = 0;
+
     private static void logMiss(String normalized) {
-        if (!isDebugEnabled()) {
+        // Fires only under the dedicated rejected-capture switch, and only for lines that
+        // plausibly address the player (mentions us, says "you"/"me", or has an arrow).
+        if (LiveMessage.INSTANCE == null
+            || !LiveMessage.INSTANCE.debugRejectedCapture.get()
+            || !isWhisperLike(normalized)) {
             return;
         }
 
-        String lower = normalized.toLowerCase(Locale.ROOT);
-        if (lower.contains("whisper")
-            || lower.contains("from ")
-            || lower.contains(" to ")
-            || lower.contains("->")
-            || lower.contains("msg")) {
-            LiveMessage.LOG.info("Unmatched potential DM line: '{}'", normalized);
+        long now = System.currentTimeMillis();
+        if (now - lastMissLogAt < MISS_LOG_INTERVAL_MS) {
+            missedInWindow++;
+            return;
         }
+
+        if (missedInWindow > 0) {
+            LiveMessage.INSTANCE.info("... and %d more unmatched lines in the previous second", missedInWindow);
+        }
+        LiveMessage.INSTANCE.info("Unmatched potential DM line: '%s'", normalized);
+        lastMissLogAt = now;
+        missedInWindow = 0;
     }
 
     private static boolean isDebugEnabled() {
@@ -249,7 +379,7 @@ public final class LivemessageMatcher {
             return "";
         }
 
-        return username.trim().replaceAll("^[<\\[]+|[>\\]]+$", "");
+        return USERNAME_EDGE_MARKERS.matcher(username.trim()).replaceAll("");
     }
 
     public record Match(String username, String message, boolean outgoing) {

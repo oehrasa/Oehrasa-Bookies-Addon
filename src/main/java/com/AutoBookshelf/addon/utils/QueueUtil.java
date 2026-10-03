@@ -30,21 +30,22 @@ public class QueueUtil {
 
     private static void writeAtomic(File file, List<String> lines) throws IOException {
         Path target = file.toPath();
-        Path tmp = Files.createTempFile(target.getParent(), file.getName(), ".tmp");
+        Path parent = target.getParent();
+        Path tempFile = Files.createTempFile(parent, file.getName(), ".tmp");
         try {
-            try (BufferedWriter writer = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
+            try (BufferedWriter writer = Files.newBufferedWriter(tempFile, StandardCharsets.UTF_8)) {
                 for (String l : lines) {
                     writer.write(l);
                     writer.write("\n");
                 }
             }
             try {
-                Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            } catch (AtomicMoveNotSupportedException e) { // fallback for filesystems without atomic rename support
-                Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
+                Files.move(tempFile, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(tempFile, target, StandardCopyOption.REPLACE_EXISTING);
             }
         } finally {
-            Files.deleteIfExists(tmp); // avoid leaking the temp file if move/write fails
+            Files.deleteIfExists(tempFile);
         }
     }
 

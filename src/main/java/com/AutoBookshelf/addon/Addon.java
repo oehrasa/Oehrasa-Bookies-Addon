@@ -65,6 +65,7 @@ public class Addon extends MeteorAddon {
         // E F G
         Modules.get().add(new ElytraPath());
         Modules.get().add(new Fatamorgana());
+        Modules.get().add(new ForceAccess());
         Modules.get().add(new GetPreview());
         // H
         Modules.get().add(new HomesList());

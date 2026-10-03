@@ -149,6 +149,8 @@ public class AutoBeacon extends Module {
     private int currentLayer = 0;
     private int baseY = 0;
     private int stuckTicks = 0;
+    private int cachedBlockSlot = -1;
+    private int cachedBeaconSlot = -1;
 
     public AutoBeacon() {
         super(Addon.CATEGORY, "Auto-Beacon", "Builds a 4-beacon pyramid at a selected location.");
@@ -184,6 +186,8 @@ public class AutoBeacon extends Module {
         preferredBlock = null;
         currentLayer = 0;
         stuckTicks = 0;
+        cachedBlockSlot = -1;
+        cachedBeaconSlot = -1;
     }
 
     @Override
@@ -515,19 +519,32 @@ public class AutoBeacon extends Module {
     }
 
     private FindItemResult findBlockInHotbar() {
+        List<Block> allowed = allowedBlocks.get();
         ItemStack mainHand = mc.player.getMainHandStack();
         if (!mainHand.isEmpty() && mainHand.getItem() instanceof BlockItem handBlock) {
-            if (allowedBlocks.get().contains(handBlock.getBlock())) {
+            if (allowed.contains(handBlock.getBlock())) {
                 preferredBlock = handBlock.getBlock();
+                cachedBlockSlot = mc.player.getInventory().getSelectedSlot();
                 return new FindItemResult(mc.player.getInventory().getSelectedSlot(), mainHand.getCount());
             }
+        }
+        if (cachedBlockSlot != -1) {
+            ItemStack cached = mc.player.getInventory().getStack(cachedBlockSlot);
+            if (!cached.isEmpty() && cached.getItem() instanceof BlockItem cachedBlock
+                && allowed.contains(cachedBlock.getBlock())
+                && (preferredBlock == null || preferredBlock == cachedBlock.getBlock())) {
+                return new FindItemResult(cachedBlockSlot, cached.getCount());
+            }
+            cachedBlockSlot = -1;
         }
         if (preferredBlock != null) {
             for (int i = 0; i < 9; i++) {
                 ItemStack stack = mc.player.getInventory().getStack(i);
                 if (!stack.isEmpty() && stack.getItem() instanceof BlockItem bi
-                    && bi.getBlock() == preferredBlock)
+                    && bi.getBlock() == preferredBlock) {
+                    cachedBlockSlot = i;
                     return new FindItemResult(i, stack.getCount());
+                }
             }
             FindItemResult result = InvUtils.find(stack ->
                 stack.getItem() instanceof BlockItem bi && bi.getBlock() == preferredBlock);
@@ -535,8 +552,10 @@ public class AutoBeacon extends Module {
                 FindItemResult empty = InvUtils.find(ItemStack::isEmpty, 0, 8);
                 if (empty.found()) {
                     InvUtils.move().from(result.slot()).toHotbar(empty.slot());
-                    return InvUtils.findInHotbar(stack ->
+                    FindItemResult hotbarResult = InvUtils.findInHotbar(stack ->
                         stack.getItem() instanceof BlockItem bi && bi.getBlock() == preferredBlock);
+                    if (hotbarResult.found()) cachedBlockSlot = hotbarResult.slot();
+                    return hotbarResult;
                 } else {
                     error("Hotbar full, can't pull preferred block.");
                     return new FindItemResult(-1, 0);
@@ -547,21 +566,24 @@ public class AutoBeacon extends Module {
         for (int i = 0; i < 9; i++) {
             ItemStack stack = mc.player.getInventory().getStack(i);
             if (!stack.isEmpty() && stack.getItem() instanceof BlockItem bi
-                && allowedBlocks.get().contains(bi.getBlock())) {
+                && allowed.contains(bi.getBlock())) {
                 preferredBlock = bi.getBlock();
+                cachedBlockSlot = i;
                 return new FindItemResult(i, stack.getCount());
             }
         }
-        for (Block allowed : allowedBlocks.get()) {
+        for (Block allowedBlock : allowed) {
             FindItemResult result = InvUtils.find(stack ->
-                stack.getItem() instanceof BlockItem bi && bi.getBlock() == allowed);
+                stack.getItem() instanceof BlockItem bi && bi.getBlock() == allowedBlock);
             if (result.found() && !result.isHotbar()) {
                 FindItemResult empty = InvUtils.find(ItemStack::isEmpty, 0, 8);
                 if (empty.found()) {
                     InvUtils.move().from(result.slot()).toHotbar(empty.slot());
-                    preferredBlock = allowed;
-                    return InvUtils.findInHotbar(stack ->
-                        stack.getItem() instanceof BlockItem bi && bi.getBlock() == allowed);
+                    preferredBlock = allowedBlock;
+                    FindItemResult hotbarResult = InvUtils.findInHotbar(stack ->
+                        stack.getItem() instanceof BlockItem bi && bi.getBlock() == allowedBlock);
+                    if (hotbarResult.found()) cachedBlockSlot = hotbarResult.slot();
+                    return hotbarResult;
                 } else {
                     error("Block in inventory but hotbar full.");
                     return new FindItemResult(-1, 0);
@@ -572,10 +594,18 @@ public class AutoBeacon extends Module {
     }
 
     private FindItemResult findBeaconInInventory() {
+        if (cachedBeaconSlot != -1) {
+            ItemStack cached = mc.player.getInventory().getStack(cachedBeaconSlot);
+            if (!cached.isEmpty() && cached.getItem() == Items.BEACON)
+                return new FindItemResult(cachedBeaconSlot, cached.getCount());
+            cachedBeaconSlot = -1;
+        }
         for (int i = 0; i < 9; i++) {
             ItemStack stack = mc.player.getInventory().getStack(i);
-            if (!stack.isEmpty() && stack.getItem() == Items.BEACON)
+            if (!stack.isEmpty() && stack.getItem() == Items.BEACON) {
+                cachedBeaconSlot = i;
                 return new FindItemResult(i, stack.getCount());
+            }
         }
         FindItemResult result = InvUtils.find(stack -> stack.getItem() == Items.BEACON);
         if (result.found() && !result.isHotbar()) {
@@ -584,8 +614,10 @@ public class AutoBeacon extends Module {
                 InvUtils.move().from(result.slot()).toHotbar(empty.slot());
                 for (int i = 0; i < 9; i++) {
                     ItemStack stack = mc.player.getInventory().getStack(i);
-                    if (!stack.isEmpty() && stack.getItem() == Items.BEACON)
+                    if (!stack.isEmpty() && stack.getItem() == Items.BEACON) {
+                        cachedBeaconSlot = i;
                         return new FindItemResult(i, stack.getCount());
+                    }
                 }
             } else {
                 error("Beacon in inventory but hotbar full.");

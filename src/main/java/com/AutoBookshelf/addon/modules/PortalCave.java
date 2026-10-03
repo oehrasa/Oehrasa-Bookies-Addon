@@ -37,12 +37,17 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
 import net.minecraft.world.chunk.WorldChunk;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 public class PortalCave extends Module {
+    private static final Logger LOGGER = LoggerFactory.getLogger("Portal-Cave");
 	private final SettingGroup sgGeneral = settings.getDefaultGroup();
 	private final SettingGroup sgRender = settings.createGroup("Render");
 	private final SettingGroup locationLogs = settings.createGroup("Location Logs");
@@ -221,17 +226,24 @@ public class PortalCave extends Module {
 		scanTheAir(chunks);
 		if (nearesttrcr.get()){
 			try {
-				if (possiblePortalLocations.stream().toList().size() > 0) {
-					for (int b = 0; b < possiblePortalLocations.stream().toList().size(); b++) {
-						if (PortalDistance > Math.sqrt(Math.pow(possiblePortalLocations.stream().toList().get(b).getCenter().x-1 - mc.player.getBlockX(), 2) + Math.pow(possiblePortalLocations.stream().toList().get(b).getCenter().z-1 - mc.player.getBlockZ(), 2))) {
-							closestPortalX = Math.round((float) possiblePortalLocations.stream().toList().get(b).getCenter().x-1);
-							closestPortalY = Math.round((float) possiblePortalLocations.stream().toList().get(b).getCenter().y-1);
-							closestPortalZ = Math.round((float) possiblePortalLocations.stream().toList().get(b).getCenter().z-1);
-							PortalDistance = Math.sqrt(Math.pow(possiblePortalLocations.stream().toList().get(b).getCenter().x-1 - mc.player.getBlockX(), 2) + Math.pow(possiblePortalLocations.stream().toList().get(b).getCenter().z-1 - mc.player.getBlockZ(), 2));
-						}
-					}
-					PortalDistance = 2000000000;
-				}
+                // Build the candidate list once instead of calling
+                // stream().toList() on every iteration (an O(n) copy each time).
+                List<Box> candidates = new ArrayList<>(possiblePortalLocations);
+                int playerX = mc.player.getBlockX();
+                int playerZ = mc.player.getBlockZ();
+                for (int b = 0; b < candidates.size(); b++) {
+                    Vec3d center = candidates.get(b).getCenter();
+                    double dx = center.x - 1 - playerX;
+                    double dz = center.z - 1 - playerZ;
+                    double dist = Math.sqrt(dx * dx + dz * dz);
+                    if (PortalDistance > dist) {
+                        closestPortalX = Math.round((float) (center.x - 1));
+                        closestPortalY = Math.round((float) (center.y - 1));
+                        closestPortalZ = Math.round((float) (center.z - 1));
+                        PortalDistance = dist;
+                    }
+                }
+                PortalDistance = 2000000000;
 			} catch (Exception e) {
 				e.printStackTrace();
 			}
@@ -608,10 +620,8 @@ public class PortalCave extends Module {
 		File file = getJsonFile();
 		boolean loaded = false;
 		if(file.exists()){
-			try{
-				FileReader reader = new FileReader(file);
+            try (FileReader reader = new FileReader(file)) {
 				List<PortalPattern> data = GSON.fromJson(reader, new TypeToken<List<PortalPattern>>() {}.getType());
-				reader.close();
 				if(data != null){
 					portalPatterns.addAll(data);
 					for(PortalPattern p : data){
@@ -619,13 +629,14 @@ public class PortalCave extends Module {
 					}
 					loaded = true;
 				}
-			}catch(Exception ignored){}
+            } catch (Exception e) {
+                LOGGER.warn("Failed to load portal pattern JSON", e);
+            }
 		}
 		if(!loaded){
 			file = getCsvFile();
 			if(file.exists()){
-				try{
-					BufferedReader reader = new BufferedReader(new FileReader(file));
+                try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
 					reader.readLine();
 					String line;
 					while((line = reader.readLine()) != null){
@@ -638,8 +649,9 @@ public class PortalCave extends Module {
 						portalPatterns.add(p);
 						loggedPortalPositions.add(new BlockPos(p.x, p.y, p.z));
 					}
-					reader.close();
-				}catch(Exception ignored){}
+                } catch (Exception e) {
+                    LOGGER.warn("Failed to load portal pattern CSV", e);
+                }
 			}
 		}
 	}
@@ -647,22 +659,26 @@ public class PortalCave extends Module {
 		try{
 			File file = getCsvFile();
 			file.getParentFile().mkdirs();
-			Writer writer = new FileWriter(file);
-			writer.write("X,Y,Z\n");
-			for(PortalPattern p : portalPatterns){
-				p.write(writer);
-			}
-			writer.close();
-		}catch(IOException ignored){}
+            try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
+                writer.write("X,Y,Z\n");
+                for (PortalPattern p : portalPatterns) {
+                    p.write(writer);
+                }
+            }
+        } catch (IOException e) {
+            LOGGER.warn("Failed to save portal pattern CSV", e);
+        }
 	}
 	private void saveJson() {
 		try{
 			File file = getJsonFile();
 			file.getParentFile().mkdirs();
-			Writer writer = new FileWriter(file);
-			GSON.toJson(portalPatterns, writer);
-			writer.close();
-		}catch(IOException ignored){}
+            try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
+                GSON.toJson(portalPatterns, writer);
+            }
+        } catch (IOException e) {
+            LOGGER.warn("Failed to save portal pattern JSON", e);
+        }
 	}
 	private File getJsonFile() {
 		return new File(new File(new File("TrouserStreak", "PortalPatterns"), Utils.getFileWorldName()), "portalpatterns.json");

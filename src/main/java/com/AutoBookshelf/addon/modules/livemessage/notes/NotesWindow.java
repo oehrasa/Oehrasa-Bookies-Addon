@@ -3,16 +3,14 @@ package com.AutoBookshelf.addon.modules.livemessage.notes;
 import com.AutoBookshelf.addon.modules.livemessage.gui.GuiUtil;
 import com.AutoBookshelf.addon.modules.livemessage.gui.LiveWindow;
 import com.AutoBookshelf.addon.modules.livemessage.gui.LivemessageGui;
+import com.AutoBookshelf.addon.modules.livemessage.util.LivemessageUtil;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.MathHelper;
 import org.lwjgl.glfw.GLFW;
 
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Deque;
-import java.util.List;
+import java.util.*;
 
 public class NotesWindow extends LiveWindow {
     private static NotesWindow instance;
@@ -21,11 +19,19 @@ public class NotesWindow extends LiveWindow {
     // Header row (titlebarHeight+2 .. titlebarHeight+13) holds the Clear-done/Select-all buttons;
     // the list starts below it so the buttons no longer overlap the top note row.
     private final int listY = titlebarHeight + 18;
-    private final int rowHeight = 22;
-    private final int footer = 18;
+    private static final int LINE_SPACING = 10;
+    // Long enough that editing a note with many sub texts never truncates content;
+    // the field scrolls horizontally for anything beyond its visible width.
+    private static final int MAX_INPUT_LENGTH = 2048;
     private int scrollPosition = 0;
     private boolean scrolling = false;
     private final int scrollBarWidth = 8;
+
+    // Wrapped sub lines per note id, so row heights and the per-frame draw don't
+    // re-measure glyph widths for every note on every scroll/click/render. Cleared
+    // whenever a note's content changes or the window width changes.
+    private final Map<String, List<String>> wrappedLinesCache = new HashMap<>();
+    private int cachedWrapWidth = -1;
 
     private String editingNoteId = null;
 
@@ -48,7 +54,7 @@ public class NotesWindow extends LiveWindow {
         this.notes = NotesUtil.load();
         this.sortNotes();
         this.inputField = new TextFieldWidget(this.mc.textRenderer, 9, this.h - 16, this.w - 18, 12, Text.literal(""));
-        this.inputField.setMaxLength(200);
+        this.inputField.setMaxLength(MAX_INPUT_LENGTH);
         this.inputField.setDrawsBackground(false);
         this.inputField.setFocused(true);
         this.inputField.setEditableColor(-1);
@@ -81,7 +87,7 @@ public class NotesWindow extends LiveWindow {
             NoteEntry c = new NoteEntry();
             c.id = n.id;
             c.text = n.text;
-            c.subtext = n.subtext;
+            c.subtexts = new ArrayList<>(n.subtexts);
             c.checked = n.checked;
             c.createdAt = n.createdAt;
             copy.add(c);
@@ -102,6 +108,7 @@ public class NotesWindow extends LiveWindow {
     private void applySnapshot(List<NoteEntry> snapshot) {
         this.notes.clear();
         this.notes.addAll(snapshot);
+        this.invalidateRowHeights();
         this.scrollPosition = MathHelper.clamp(this.scrollPosition, 0, this.getMaxScroll());
         NotesUtil.save(this.notes);
     }
@@ -123,6 +130,7 @@ public class NotesWindow extends LiveWindow {
     private void clearCompleted() {
         this.pushUndo();
         this.notes.removeIf(n -> n.checked);
+        this.invalidateRowHeights();
         NotesUtil.save(this.notes);
         this.scrollPosition = MathHelper.clamp(this.scrollPosition, 0, this.getMaxScroll());
     }
@@ -135,13 +143,28 @@ public class NotesWindow extends LiveWindow {
     }
 
     private void addNote(String text) {
-        if (text == null || text.isBlank()) {
+        // Drop invisible bidi/zero-width control chars before storing, so hidden
+        // formatting never survives inside a note. Visible characters - §, brackets,
+        // timestamps - are the user's own content and are kept verbatim.
+        String cleaned = LivemessageUtil.stripControlChars(text).trim();
+        if (cleaned.isBlank()) {
             return;
         }
 
-        String[] parts = text.split("\\|", 2);
+        // ' | ' (space-pipe-space) separates the main text from sub texts that grow
+        // below it. Splitting on the spaced separator keeps any standalone '|' inside
+        // a note intact, so "a|b" survives an edit round-trip instead of re-splitting.
+        String[] parts = cleaned.split(" \\| ", -1);
         String mainText = parts[0].trim();
-        String subtext = parts.length > 1 && !parts[1].trim().isEmpty() ? parts[1].trim() : null;
+        if (mainText.isBlank()) {
+            return;
+        }
+
+        List<String> subs = new ArrayList<>();
+        for (int i = 1; i < parts.length; i++) {
+            String sub = parts[i].trim();
+            if (!sub.isEmpty()) subs.add(sub);
+        }
 
         this.pushUndo();
 
@@ -149,24 +172,29 @@ public class NotesWindow extends LiveWindow {
             for (NoteEntry note : this.notes) {
                 if (note.id.equals(this.editingNoteId)) {
                     note.text = mainText;
-                    note.subtext = subtext;
+                    note.subtexts = subs;
                     break;
                 }
             }
             this.editingNoteId = null;
         } else {
             NoteEntry note = new NoteEntry(mainText);
-            note.subtext = subtext;
+            note.subtexts = subs;
             this.notes.add(0, note);
         }
 
         this.sortNotes();
+        this.invalidateRowHeights();
         NotesUtil.save(this.notes);
     }
 
     private void beginEdit(NoteEntry note) {
         this.editingNoteId = note.id;
-        this.inputField.setText(note.subtext != null && !note.subtext.isEmpty() ? note.text + " | " + note.subtext : note.text);
+        StringBuilder sb = new StringBuilder(note.text);
+        for (String sub : note.subtexts) {
+            sb.append(" | ").append(sub);
+        }
+        this.inputField.setText(sb.toString());
         this.inputField.setFocused(true);
     }
 
@@ -196,15 +224,73 @@ public class NotesWindow extends LiveWindow {
     }
 
     private int getListHeight() {
-        return this.h - this.listY - this.footer - 5;
+        return this.h - this.listY - 18 - 5;
     }
 
-    private int getMaxLines() {
-        return Math.max(1, this.getListHeight() / this.rowHeight);
+    /**
+     * Wraps one sub text into rows that fit the list width, so a long sub text
+     * grows downward instead of being cut off on a single line.
+     */
+    private List<String> wrapSubLines(String sub) {
+        List<String> lines = new ArrayList<>();
+        String rest = LivemessageUtil.stripControlChars(sub);
+        int maxWidth = this.w - 52;
+        while (!rest.isEmpty()) {
+            String piece = GuiUtil.wrapWordBoundary(this.fontRenderer, rest, maxWidth);
+            lines.add(piece.strip());
+            if (piece.length() >= rest.length()) break;
+            rest = rest.substring(piece.length());
+        }
+        return lines;
+    }
+
+    /**
+     * The wrapped sub rows of a note, memoized per note id so scroll math and the
+     * draw loop don't re-measure glyph widths on every event. Invalidated when the
+     * window width or any note's text changes.
+     */
+    private List<String> wrappedLines(NoteEntry note) {
+        if (this.cachedWrapWidth != this.w) {
+            this.wrappedLinesCache.clear();
+            this.cachedWrapWidth = this.w;
+        }
+        return this.wrappedLinesCache.computeIfAbsent(note.id, id -> {
+            List<String> lines = new ArrayList<>();
+            for (String sub : note.subtexts) {
+                if (sub != null && !sub.isBlank()) lines.addAll(this.wrapSubLines(sub));
+            }
+            return lines;
+        });
+    }
+
+    private void invalidateRowHeights() {
+        this.wrappedLinesCache.clear();
+    }
+
+    private int noteLineCount(NoteEntry note) {
+        return 1 + this.wrappedLines(note).size();
+    }
+
+    private int rowHeight(NoteEntry note) {
+        return 12 + LINE_SPACING * this.noteLineCount(note);
     }
 
     private int getMaxScroll() {
-        return Math.max(0, this.notes.size() - this.getMaxLines());
+        // Count from the bottom how many rows fit in the list area. A row taller
+        // than the leftover space only counts as reachable when it is the sole
+        // (bottom-most) visible row, otherwise it would hide notes below it.
+        int remaining = this.getListHeight();
+        int visible = 0;
+        for (int i = this.notes.size() - 1; i >= 0; i--) {
+            int h = this.rowHeight(this.notes.get(i));
+            if (h > remaining) {
+                if (visible == 0) visible++;
+                break;
+            }
+            remaining -= h;
+            visible++;
+        }
+        return Math.max(0, this.notes.size() - visible);
     }
 
     private boolean isCtrlDown() {
@@ -277,27 +363,34 @@ public class NotesWindow extends LiveWindow {
 
         int listHeight = this.getListHeight();
         if (this.mouseInRect(5, this.listY, this.w - 10, listHeight, mouseX, mouseY)) {
-            int row = this.scrollPosition + (mouseY - this.y - this.listY - 2) / this.rowHeight;
-            if (row >= 0 && row < this.notes.size()) {
-                NoteEntry note = this.notes.get(row);
-                boolean checkboxHit = mouseX - this.x >= 8 && mouseX - this.x <= 16;
-                boolean deleteHit = mouseX - this.x >= this.w - 15 && mouseX - this.x <= this.w - 7;
-                if (checkboxHit) {
-                    this.pushUndo();
-                    note.checked = !note.checked;
-                    this.sortNotes();
-                    NotesUtil.save(this.notes);
-                } else if (deleteHit) {
-                    this.pushUndo();
-                    this.notes.remove(row);
-                    NotesUtil.save(this.notes);
-                    this.scrollPosition = MathHelper.clamp(this.scrollPosition, 0, this.getMaxScroll());
-                } else if (note.id.equals(this.editingNoteId)) {
-                    this.endEdit();
-                } else {
-                    this.beginEdit(note);
+            // Rows grow with their sub texts, so walk the rows accumulating height.
+            int y = this.listY + 2;
+            for (int i = this.scrollPosition; i < this.notes.size(); i++) {
+                NoteEntry note = this.notes.get(i);
+                int rowH = this.rowHeight(note);
+                if (mouseY - this.y >= y && mouseY - this.y < y + rowH) {
+                    boolean checkboxHit = mouseX - this.x >= 8 && mouseX - this.x <= 16;
+                    boolean deleteHit = mouseX - this.x >= this.w - 15 && mouseX - this.x <= this.w - 7;
+                    if (checkboxHit) {
+                        this.pushUndo();
+                        note.checked = !note.checked;
+                        this.sortNotes();
+                        NotesUtil.save(this.notes);
+                    } else if (deleteHit) {
+                        this.pushUndo();
+                        this.notes.remove(i);
+                        this.invalidateRowHeights();
+                        NotesUtil.save(this.notes);
+                        this.scrollPosition = MathHelper.clamp(this.scrollPosition, 0, this.getMaxScroll());
+                    } else if (note.id.equals(this.editingNoteId)) {
+                        this.endEdit();
+                    } else {
+                        this.beginEdit(note);
+                    }
+                    return;
                 }
-                return;
+                y += rowH;
+                if (y >= this.listY + listHeight) break;
             }
         }
 
@@ -322,13 +415,18 @@ public class NotesWindow extends LiveWindow {
         GuiUtil.drawRect(context, 5, this.listY, this.w - 10, listHeight, GuiUtil.getSingleRGB(24));
 
         if (this.notes.isEmpty()) {
-            this.drawText(context, "No notes yet. Sub text example: meow :3 | the Cat", 10, this.listY + 5, GuiUtil.getSingleRGB(96), false);
+            this.drawText(context, "No notes yet. Format: main | sub 1 | sub 2 ...", 10, this.listY + 5, GuiUtil.getSingleRGB(96), false);
         } else {
-            int maxLines = this.getMaxLines();
-            int drawn = 0;
-            for (int i = this.scrollPosition; i < this.notes.size() && drawn < maxLines; i++, drawn++) {
+            int listBottom = this.listY + listHeight;
+            int y = this.listY + 2;
+            for (int i = this.scrollPosition; i < this.notes.size(); i++) {
                 NoteEntry note = this.notes.get(i);
-                int y = this.listY + 2 + drawn * this.rowHeight;
+
+                List<String> subLines = this.wrappedLines(note);
+                int rowH = 12 + LINE_SPACING * (1 + subLines.size());
+                // Skip the row entirely once its main text line itself no longer
+                // fits
+                if (y + 12 > listBottom) break;
 
                 int boxColor = note.checked ? GuiUtil.getRGB(85, 200, 85) : GuiUtil.getSingleRGB(96);
                 GuiUtil.drawRect(context, 8, y, 8, 8, boxColor);
@@ -340,16 +438,21 @@ public class NotesWindow extends LiveWindow {
                 int textColor = isEditing ? GuiUtil.getRGB(120, 180, 255) : note.checked ? GuiUtil.getSingleRGB(120) : GuiUtil.getSingleRGB(255);
                 String timeLabel = formatRelativeTime(note.createdAt);
                 int timeWidth = this.getTextWidth(timeLabel);
-                String clipped = this.fontRenderer.trimToWidth(note.text, this.w - 40 - timeWidth - 6);
+                String clipped = this.fontRenderer.trimToWidth(LivemessageUtil.stripControlChars(note.text), this.w - 40 - timeWidth - 6);
                 this.drawText(context, clipped, 20, y, textColor, false);
                 this.drawText(context, timeLabel, this.w - 20 - timeWidth, y, GuiUtil.getSingleRGB(96), false);
 
-                if (note.subtext != null && !note.subtext.isEmpty()) {
-                    String clippedSub = this.fontRenderer.trimToWidth(note.subtext, this.w - 40);
-                    this.drawText(context, clippedSub, 20, y + 10, GuiUtil.getSingleRGB(140), false);
+                int lineY = y + LINE_SPACING;
+                for (String subLine : subLines) {
+                    // Stop drawing sub lines once they'd cross the list's bottom
+                    // edge
+                    if (lineY + LINE_SPACING > listBottom) break;
+                    this.drawText(context, subLine, 20, lineY, GuiUtil.getSingleRGB(140), false);
+                    lineY += LINE_SPACING;
                 }
 
                 this.drawText(context, "x", this.w - 12, y, GuiUtil.getRGB(255, 100, 100), false);
+                y += rowH;
             }
         }
 

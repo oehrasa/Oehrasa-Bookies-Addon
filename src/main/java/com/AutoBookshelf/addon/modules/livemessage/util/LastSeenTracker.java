@@ -18,6 +18,8 @@ public class LastSeenTracker {
     private static Set<UUID> previouslyOnline = new HashSet<>();
 
     private static final long SAVE_INTERVAL_MS = 30_000;
+    private static final int MAX_ENTRIES = 2000;
+    private static final long STALE_ENTRY_MS = 90L * 24L * 60L * 60L * 1000L; // 90 days
     private static long lastSaveTime = 0L;
     private static boolean dirty = false;
     private static boolean loaded = false;
@@ -43,6 +45,7 @@ public class LastSeenTracker {
         }
         previouslyOnline = currentlyOnline;
 
+        prune();
         maybeSave();
     }
 
@@ -79,6 +82,28 @@ public class LastSeenTracker {
         return LivemessageUtil.LIVEMESSAGE_FOLDER.resolve("lastseen.json").toFile();
     }
 
+    /**
+     * Bounds the in-memory last-seen map: drops entries that haven't been seen in STALE_ENTRY_MS
+     * and trims the oldest entries once the hard cap is exceeded. Prevents a server churning
+     * through UUIDs from growing the map (and the saved file) without bound.
+     */
+    private static void prune() {
+        if (lastSeen.size() <= MAX_ENTRIES) {
+            return;
+        }
+        long cutoff = System.currentTimeMillis() - STALE_ENTRY_MS;
+        lastSeen.entrySet().removeIf(e -> e.getValue() < cutoff);
+        if (lastSeen.size() <= MAX_ENTRIES) {
+            return;
+        }
+        List<Map.Entry<UUID, Long>> oldest = new ArrayList<>(lastSeen.entrySet());
+        oldest.sort(Map.Entry.comparingByValue());
+        for (int i = 0; i < oldest.size() - MAX_ENTRIES; i++) {
+            lastSeen.remove(oldest.get(i).getKey());
+        }
+        dirty = true;
+    }
+
     private static void ensureLoaded() {
         if (loaded) return;
         loaded = true;
@@ -96,6 +121,7 @@ public class LastSeenTracker {
                     }
                 }
             }
+            prune();
         } catch (Exception e) {
             logError("Failed to load last-seen data", e);
         }

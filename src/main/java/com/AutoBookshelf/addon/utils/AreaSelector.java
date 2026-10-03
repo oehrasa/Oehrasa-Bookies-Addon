@@ -233,11 +233,13 @@ public class AreaSelector {
         List<BlockPos> list = new ArrayList<>();
         if (!hasCompleteSelection()) return list;
 
-        for (int y = minY(); y <= maxY(); y++) {
-            for (int x = minX(); x <= maxX(); x++) {
-                for (int z = minZ(); z <= maxZ(); z++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    if (matches.test(pos)) list.add(pos);
+        int minX = minX(), maxX = maxX(), minY = minY(), maxY = maxY(), minZ = minZ(), maxZ = maxZ();
+        BlockPos.Mutable pos = new BlockPos.Mutable();
+        for (int y = minY; y <= maxY; y++) {
+            for (int x = minX; x <= maxX; x++) {
+                for (int z = minZ; z <= maxZ; z++) {
+                    pos.set(x, y, z);
+                    if (matches.test(pos)) list.add(pos.toImmutable());
                 }
             }
         }
@@ -251,9 +253,12 @@ public class AreaSelector {
         List<BlockPos> list = new ArrayList<>();
         if (!hasCompleteSelection()) return list;
 
-        for (int x = minX(); x <= maxX(); x++) {
-            for (int z = minZ(); z <= maxZ(); z++) {
-                list.add(new BlockPos(x, y, z));
+        int minX = minX(), maxX = maxX(), minZ = minZ(), maxZ = maxZ();
+        BlockPos.Mutable pos = new BlockPos.Mutable();
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                pos.set(x, y, z);
+                list.add(pos.toImmutable());
             }
         }
         return list;

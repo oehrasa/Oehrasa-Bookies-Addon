@@ -74,6 +74,14 @@ public class GetPreview extends Module {
         .build()
     );
 
+    public final Setting<Boolean> showEmptyBar = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-empty-bar")
+        .description("Show the capacity bar even when the container is completely empty.")
+        .defaultValue(true)
+        .visible(capacityBar::get)
+        .build()
+    );
+
     public final Setting<Boolean> bookCapacityBar = sgGeneral.add(new BoolSetting.Builder()
         .name("book-capacity-bar")
         .description("Draw a bar on written books showing page fill (out of 100).")
@@ -115,6 +123,11 @@ public class GetPreview extends Module {
 
     private boolean isRenderingPreview = false;
 
+    // Cheap world-change throttle: the preview caches stay valid while the world
+    // is unchanged, so only re-check (and clear on change) every SCAN_INTERVAL ticks.
+    private static final int SCAN_INTERVAL = 10;
+    private int worldCheckCounter = 0;
+
     private static class CachedContainerData {
         final ItemStack previewStack;
         final boolean hasMultiple;
@@ -155,6 +168,7 @@ public class GetPreview extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
+        if (worldCheckCounter++ % SCAN_INTERVAL != 0) return;
         if (mc.world != lastWorld) {
             lastWorld = mc.world;
             clearCaches();
@@ -260,6 +274,7 @@ public class GetPreview extends Module {
         for (ItemStack s : container.iterateNonEmpty()) {
             filled += (double) s.getCount() * 64.0 / Math.max(1, s.getMaxCount());
         }
+        if (!showEmptyBar.get() && filled <= 0) return;
         float capacity = (float) Math.min(1.0, filled / maxItems);
 
         int barWidth = 13;
@@ -293,6 +308,7 @@ public class GetPreview extends Module {
         if (book == null) return;
 
         int pages = book.pages().size();
+        if (!showEmptyBar.get() && pages == 0) return;
         float capacity = Math.min(1.0F, pages / 100.0F);
 
         int barWidth = 13;

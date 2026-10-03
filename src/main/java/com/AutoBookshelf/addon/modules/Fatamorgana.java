@@ -153,7 +153,7 @@ public class Fatamorgana extends Module {
 
     private final Setting<Integer> depositSettleDelay = sgDeposit.add(new IntSetting.Builder()
         .name("deposit-settle-delay")
-        .description("Ticks to wait after the container GUI opens before evaluating deposit/close logic, to let the initial inventory sync packet arrive. Prevents the container being closed immediately (before anything is deposited) because slots briefly read as empty.")
+        .description("Ticks to wait after the container GUI opens before evaluating deposit/close logic, to let the initial inventory sync packet arrive.")
         .defaultValue(3)
         .min(0)
         .sliderMax(10)
@@ -287,12 +287,21 @@ public class Fatamorgana extends Module {
         }
     }
 
+    private int searchTickCounter = 0;
+    private static final int SEARCH_INTERVAL = 10;
+
     private void doSearching() {
         pruneCompletedTargets();
 
         // Idle guard: don't bother searching/rotating/opening anything if we
         // couldn't deposit even if we found a target.
         if (requireDepositItems.get() && !hasAnyDepositItem()) return;
+
+        // findNearestBarrel scans a ~(2*range)^3 cube of block states, which is
+        // wasteful to redo every tick while idling with nothing found. Throttle
+        // the search to once per SEARCH_INTERVAL ticks; ~0.5s discovery latency
+        // is irrelevant for manually positioned barrels and minecarts.
+        if (searchTickCounter++ % SEARCH_INTERVAL != 0) return;
 
         Entity entityTarget = findNearestChestMinecart(range.get());
         if (entityTarget != null) {

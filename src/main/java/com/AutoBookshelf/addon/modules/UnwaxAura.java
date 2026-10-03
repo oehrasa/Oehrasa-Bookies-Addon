@@ -26,9 +26,7 @@ import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 
-import java.util.HashSet;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 
 public class UnwaxAura extends Module {
     public enum CopperFilter {
@@ -261,6 +259,13 @@ public class UnwaxAura extends Module {
     private int originalSlot = -1;
     private boolean lookingForUnwaxed = false;
 
+    private static final int SCAN_INTERVAL = 10;   // ticks between idle target rescans
+    private static final int ESP_SCAN_INTERVAL = 20; // frames between ESP rescans
+    private final List<BlockPos> espBlocks = new ArrayList<>();
+    private final List<CopperGolemEntity> espGolems = new ArrayList<>();
+    private int scanTimer = 0;
+    private int espFrameCounter = ESP_SCAN_INTERVAL;
+
     public UnwaxAura() {
         super(Addon.CATEGORY2, "Unwax-Aura", "Automatically removes wax from copper blocks and optionally breaks them.");
     }
@@ -276,6 +281,10 @@ public class UnwaxAura extends Module {
         breakingStarted = false;
         originalSlot = -1;
         lookingForUnwaxed = false;
+        scanTimer = 0;
+        espBlocks.clear();
+        espGolems.clear();
+        espFrameCounter = ESP_SCAN_INTERVAL;
     }
 
     @Override
@@ -287,6 +296,8 @@ public class UnwaxAura extends Module {
         currentTarget = null;
         currentEntityTarget = null;
         pokedGolems.clear();
+        espBlocks.clear();
+        espGolems.clear();
     }
 
     private boolean isWaxedCopper(BlockState state) {
@@ -400,6 +411,15 @@ public class UnwaxAura extends Module {
     }
 
     private void findNextTarget() {
+        // While idle in SCAN this runs every tick; gate the block + golem scans so
+        // they only run every SCAN_INTERVAL ticks until something is found, then
+        // rescan immediately once the pending action has finished.
+        if (scanTimer > 0) {
+            scanTimer--;
+            return;
+        }
+        scanTimer = SCAN_INTERVAL;
+
         double closestDistSq = Double.MAX_VALUE;
         BlockPos closest = null;
         int r = range.get();
@@ -414,6 +434,7 @@ public class UnwaxAura extends Module {
             }
         }
         if (closest != null) {
+            scanTimer = 0;
             currentTarget = closest;
             currentEntityTarget = null;
             if (lookingForUnwaxed) {
@@ -427,6 +448,7 @@ public class UnwaxAura extends Module {
         if (!lookingForUnwaxed) {
             CopperGolemEntity golem = findGolem();
             if (golem != null) {
+                scanTimer = 0;
                 currentTarget = null;
                 currentEntityTarget = golem;
                 stage = Stage.ROTATE_UNWAX;
@@ -437,6 +459,7 @@ public class UnwaxAura extends Module {
         if (lookingForUnwaxed && breakMode.get() == BreakMode.BREAK_ALL) {
             lookingForUnwaxed = false;
             stage = Stage.SCAN;
+            scanTimer = 0;
         }
     }
 
@@ -588,16 +611,22 @@ public class UnwaxAura extends Module {
     @EventHandler
     private void onRender(Render3DEvent event) {
         if (!espEnabled.get() || mc.player == null || mc.world == null) return;
+
+        // Refresh the ESP candidate lists on a frame interval; each cached candidate
+        // is re-validated cheaply per frame below, so only the world scans are throttled.
+        if (++espFrameCounter >= ESP_SCAN_INTERVAL) {
+            espFrameCounter = 0;
+            refreshEsp();
+        }
+
         int rangeSq = espRange.get() * espRange.get();
         Set<BlockPos> blocks = new HashSet<>();
         if (currentTarget != null) {
             blocks.add(currentTarget);
         } else if (stage == Stage.SCAN) {
-            int r = range.get();
-            BlockPos playerPos = mc.player.getBlockPos();
-            for (BlockPos pos : BlockPos.iterateOutwards(playerPos, r, r, r)) {
+            for (BlockPos pos : espBlocks) {
                 if (isBlockTarget(mc.world.getBlockState(pos))) {
-                    blocks.add(pos.toImmutable());
+                    blocks.add(pos);
                 }
             }
         }
@@ -616,10 +645,9 @@ public class UnwaxAura extends Module {
         if (currentEntityTarget instanceof CopperGolemEntity current) {
             golems.add(current);
         } else if (stage == Stage.SCAN) {
-            for (Entity entity : mc.world.getEntities()) {
-                if (entity instanceof CopperGolemEntity golem && isValidGolemTarget(golem)) {
-                    golems.add(golem);
-                }
+            for (CopperGolemEntity golem : espGolems) {
+                if (golem.isRemoved() || !isValidGolemTarget(golem)) continue;
+                golems.add(golem);
             }
         }
         for (CopperGolemEntity golem : golems) {
@@ -632,6 +660,23 @@ public class UnwaxAura extends Module {
                     golem.getX(), golem.getY() + golem.getHeight() / 2, golem.getZ(),
                     tracerColor.get()
                 );
+            }
+        }
+    }
+
+    private void refreshEsp() {
+        espBlocks.clear();
+        espGolems.clear();
+        int r = range.get();
+        BlockPos playerPos = mc.player.getBlockPos();
+        for (BlockPos pos : BlockPos.iterateOutwards(playerPos, r, r, r)) {
+            if (isBlockTarget(mc.world.getBlockState(pos))) {
+                espBlocks.add(pos.toImmutable());
+            }
+        }
+        for (Entity entity : mc.world.getEntities()) {
+            if (entity instanceof CopperGolemEntity golem && isValidGolemTarget(golem)) {
+                espGolems.add(golem);
             }
         }
     }

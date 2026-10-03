@@ -94,7 +94,9 @@ public class ChestTrackerDataV2 {
     private void flushIfDirty() {
         if (!dirty) return;
         dirty = false;
-        saveData();
+        // Already running on saveExecutor, call directly instead of submitting
+        // another task, so this can't queue behind a save submitted after it.
+        snapshotAndWrite();
     }
 
     public void trackContainer(BlockPos pos, String dimension, String containerType, List<ItemStack> contents) {
@@ -202,7 +204,12 @@ public class ChestTrackerDataV2 {
         return saveFailures;
     }
 
-    public void saveData() {
+    /**
+     * Builds the snapshot and writes it, both on the executor thread, so the
+     * build order and the write order can never diverge between overlapping
+     * saveData()/saveDataSync()/flushIfDirty() calls.
+     */
+    private void snapshotAndWrite() {
         JsonObject root;
         try {
             root = buildSnapshotJson();
@@ -212,6 +219,30 @@ public class ChestTrackerDataV2 {
             return;
         }
         writeJsonToFile(root);
+    }
+
+    public void saveData() {
+        saveExecutor.submit(this::snapshotAndWrite);
+    }
+
+    /**
+     * Same as saveData() but blocks until write is flushed, for callers that
+     * must know the data is on disk (module deactivate, world-leave, manual save).
+     */
+    public void saveDataSync() {
+        // Bounded wait: every caller of saveDataSync() is on the client thread
+        // (deactivate, world-leave, the manual save button), so this must not be
+        // allowed to stall the game for many seconds when the save thread is stuck.
+        try {
+            saveExecutor.submit(this::snapshotAndWrite).get(2, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            saveFailures++;
+            LOGGER.error("Save interrupted while waiting for write", e);
+        } catch (ExecutionException | TimeoutException e) {
+            saveFailures++;
+            LOGGER.error("Failed to wait for data save (attempt {})", saveFailures, e);
+        }
     }
 
     private JsonObject buildSnapshotJson() {
@@ -236,11 +267,10 @@ public class ChestTrackerDataV2 {
     }
 
     /**
-     * Writes a previously-built snapshot to disk. Synchronized on
-     * fileWriteLock (not the data lock) so this can run on the background
-     * save-executor thread and, separately, on the main thread (manual
-     * "Save Data" button, world-leave) without two saves stomping on the
-     * same temp file if they overlap.
+     * Writes a previously-built snapshot to disk. Always runs on the single
+     * background save-executor thread; synchronized on fileWriteLock (not the
+     * data lock) so the debounced flush, manual "Save Data" button, and
+     * world-leave saves don't stomp on the same temp file if they overlap.
      */
     private void writeJsonToFile(JsonObject root) {
         synchronized (fileWriteLock) {

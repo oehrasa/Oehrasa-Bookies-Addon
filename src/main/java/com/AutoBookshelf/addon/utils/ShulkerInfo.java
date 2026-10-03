@@ -6,15 +6,19 @@ import net.minecraft.block.ShulkerBoxBlock;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.ContainerComponent;
 import net.minecraft.item.BlockItem;
-import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
+import net.minecraft.util.math.ColorHelper;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 public record ShulkerInfo(String name, Type type, int color, int slot, List<ItemStack> stacks) {
+
+    /**
+     * Vanilla's uncoloured shulker box, used for the base shulker and any dyed colour
+     * with no mapping. ShulkerView uses the same constant.
+     */
+    private static final int SHULKER_BOX_DEFAULT = 0xff9953b0;
 
     public static ShulkerInfo create(ItemStack stack, int slot) {
         if (!(stack.getItem() instanceof BlockItem bi) || !(bi.getBlock() instanceof ShulkerBoxBlock block))
@@ -31,22 +35,45 @@ public record ShulkerInfo(String name, Type type, int color, int slot, List<Item
         Type type = Modules.get().get(InventoryInfo.class).compact.get() ? Type.COMPACT : Type.FULL;
 
         if (type == Type.COMPACT) {
-            Map<Item, Integer> merged = new LinkedHashMap<>();
+            // Merge stacks that are the same item AND have identical components
+            // so merged stacks keep their component data (custom names, book
+            // author/pages, enchantments, damage, maps, etc.) for the tooltip.
+            // Rebuilding from the bare Item would strip all of that.
+            List<ItemStack> merged = new ArrayList<>();
             for (ItemStack item : items) {
-                merged.merge(item.getItem(), item.getCount(), Integer::sum);
+                ItemStack rep = null;
+                for (ItemStack candidate : merged) {
+                    if (ItemStack.areItemsAndComponentsEqual(candidate, item)) {
+                        rep = candidate;
+                        break;
+                    }
+                }
+                if (rep == null) {
+                    merged.add(item.copy());
+                } else {
+                    rep.setCount(rep.getCount() + item.getCount());
+                }
             }
-            items.clear();
-            merged.forEach((item, count) -> items.add(new ItemStack(item, count)));
+            items = merged;
         } else {
             // Fill to 27 slots for full view
             while (items.size() < 27) items.add(ItemStack.EMPTY);
         }
 
-        int color = -1;
-        if (block.getColor() != null) {
-            color = block.getColor().getMapColor().color;
-        }
-
+        int color = shulkerColor(block);
         return new ShulkerInfo(stack.getName().getString(), type, color, slot, items);
+    }
+
+    /**
+     * The bar colour for the grid header.
+     *
+     * <p>{@code DyeColor#getMapColor().color} is 24 bit RGB with no alpha, so handing it
+     * to a fill straight out drew a fully transparent bar - which is why every dyed
+     * shulker came out with no header at all while the undyed one, falling back to
+     * {@code -1}, drew opaque white. Alpha has to be forced on, or the colour is lost.
+     */
+    private static int shulkerColor(ShulkerBoxBlock block) {
+        if (block.getColor() == null) return SHULKER_BOX_DEFAULT;
+        return ColorHelper.withAlpha(255, block.getColor().getMapColor().color);
     }
 }

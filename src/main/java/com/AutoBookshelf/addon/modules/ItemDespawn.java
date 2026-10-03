@@ -11,6 +11,9 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.ItemEntity;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class ItemDespawn extends Module {
     private static final int VANILLA_LIFETIME = 6000;
 
@@ -107,6 +110,10 @@ public class ItemDespawn extends Module {
     private final java.util.PriorityQueue<ItemEntity> closestHeap = new java.util.PriorityQueue<>(11,
             (a, b) -> Double.compare(mc.player.squaredDistanceTo(b), mc.player.squaredDistanceTo(a)));
 
+    private static final int SCAN_INTERVAL = 20; // frames between world item rescans
+    private final List<ItemEntity> itemCache = new ArrayList<>();
+    private int frameCounter = SCAN_INTERVAL;
+
     public ItemDespawn() {
         super(Addon.CATEGORY, "Item-Despawn", "Highlights items that are about to despawn.");
     }
@@ -114,11 +121,18 @@ public class ItemDespawn extends Module {
     @Override
     public void onDeactivate() {
         closestHeap.clear();
+        itemCache.clear();
+        frameCounter = SCAN_INTERVAL;
     }
 
     @EventHandler
     private void onRender(Render3DEvent event) {
         if (mc.world == null || mc.player == null) return;
+
+        if (++frameCounter >= SCAN_INTERVAL) {
+            frameCounter = 0;
+            refreshItemCache();
+        }
 
         int max = maxRender.get();
         double rangeSq = (double) renderRange.get() * renderRange.get();
@@ -129,17 +143,8 @@ public class ItemDespawn extends Module {
         if (useHeap) {
             closestHeap.clear();
 
-            for (Entity entity : mc.world.getEntities()) {
-                if (!(entity instanceof ItemEntity item)) continue;
-                double distSq = mc.player.squaredDistanceTo(entity);
-                if (distSq > rangeSq) continue;
-
-                int age = item.getItemAge();
-                if (age == UNLIMITED_LIFETIME_AGE) continue;
-
-                int timeLeft = VANILLA_LIFETIME - age;
-                if (timeLeft <= 0 || timeLeft > warn) continue;
-
+            for (ItemEntity item : itemCache) {
+                if (!isRenderableItem(item, rangeSq, warn)) continue;
                 closestHeap.offer(item);
                 if (closestHeap.size() > max) {
                     closestHeap.poll(); // discard farthest
@@ -150,24 +155,41 @@ public class ItemDespawn extends Module {
                 renderItem(event, item, warn);
             }
         } else {
-            // No bound, or arbitrary-order truncation requested: single pass, cheapest path.
+            // No bound, or arbitrary-order truncation requested: single pass over the cached list.
             int rendered = 0;
 
-            for (Entity entity : mc.world.getEntities()) {
-                if (!(entity instanceof ItemEntity item)) continue;
-                if (mc.player.squaredDistanceTo(entity) > rangeSq) continue;
-
-                int age = item.getItemAge();
-                if (age == UNLIMITED_LIFETIME_AGE) continue;
-
-                int timeLeft = VANILLA_LIFETIME - age;
-                if (timeLeft <= 0 || timeLeft > warn) continue;
+            for (ItemEntity item : itemCache) {
+                if (!isRenderableItem(item, rangeSq, warn)) continue;
 
                 renderItem(event, item, warn);
 
                 if (max > 0 && ++rendered >= max) break;
             }
         }
+    }
+
+    // Refreshes the cached candidate item list from the world; on non-refresh frames
+    // rendering keeps using this list and only re-checks each cached entity cheaply.
+    private void refreshItemCache() {
+        itemCache.clear();
+        double rangeSq = (double) renderRange.get() * renderRange.get();
+        int warn = warnThreshold.get();
+        for (Entity entity : mc.world.getEntities()) {
+            if (!(entity instanceof ItemEntity item)) continue;
+            if (!isRenderableItem(item, rangeSq, warn)) continue;
+            itemCache.add(item);
+        }
+    }
+
+    private boolean isRenderableItem(ItemEntity item, double rangeSq, int warn) {
+        if (item.isRemoved()) return false;
+        if (mc.player.squaredDistanceTo(item) > rangeSq) return false;
+
+        int age = item.getItemAge();
+        if (age == UNLIMITED_LIFETIME_AGE) return false;
+
+        int timeLeft = VANILLA_LIFETIME - age;
+        return timeLeft > 0 && timeLeft <= warn;
     }
 
     private void renderItem(Render3DEvent event, ItemEntity item, int warn) {

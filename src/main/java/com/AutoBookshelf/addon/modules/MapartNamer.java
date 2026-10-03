@@ -9,9 +9,13 @@ import meteordevelopment.meteorclient.gui.widgets.containers.WVerticalList;
 import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.AnvilBlock;
+import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.ingame.AnvilScreen;
+import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.MapIdComponent;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
@@ -20,9 +24,7 @@ import net.minecraft.network.packet.s2c.play.CloseScreenS2CPacket;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.math.BlockPos;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
+import java.util.*;
 
 public class MapartNamer extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -116,6 +118,32 @@ public class MapartNamer extends Module {
         .build()
     );
 
+    private final Setting<Boolean> visualizeIndices = sgGeneral.add(new BoolSetting.Builder()
+        .name("visualize-indices")
+        .description("Draw the index each filled map will be renamed to on its icon, centered like Get-Preview's book initials.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<SettingColor> indexColor = sgGeneral.add(new ColorSetting.Builder()
+        .name("index-color")
+        .description("Color of the index overlay text.")
+        .defaultValue(new SettingColor(255, 255, 255))
+        .visible(visualizeIndices::get)
+        .build()
+    );
+
+    private final Setting<Double> indexSize = sgGeneral.add(new DoubleSetting.Builder()
+        .name("index-size")
+        .description("Scale multiplier for the index overlay text.")
+        .defaultValue(1.0)
+        .min(0.5)
+        .max(2.0)
+        .sliderRange(0.5, 1.5)
+        .visible(visualizeIndices::get)
+        .build()
+    );
+
     private final Setting<Integer> baseY = sgGeneral.add(new IntSetting.Builder()
         .name("base-y")
         .description("Current Y offset saved automatically. Do not edit manually.")
@@ -133,6 +161,10 @@ public class MapartNamer extends Module {
     private State state;
     private List<MapSlotInfo> mapSlots;
     private int ticks;
+
+    // invSlot -> index label for the overlay, recomputed each tick while the
+    // setting is on so it always reflects what the module would rename right now.
+    private final Map<Integer, String> indexLabels = new HashMap<>();
 
     private MapSlotInfo currentMap;
     private int mapStep;
@@ -162,6 +194,11 @@ public class MapartNamer extends Module {
         } else {
             info("§aEnabled. Right-click an anvil with maps in your inventory.");
         }
+    }
+
+    @Override
+    public void onDeactivate() {
+        indexLabels.clear();
     }
 
     // Reset button
@@ -239,7 +276,7 @@ public class MapartNamer extends Module {
             String expectedCoord = coordinateFormat.get()
                 .replace("{x}", String.valueOf(info.x))
                 .replace("{y}", String.valueOf(currentY));
-            String expectedName = mapName.get() + expectedCoord;
+            String expectedName = buildMapName(expectedCoord);
 
             if (resumeSequence.get() && info.currentName.equals(expectedName)) {
                 info("Skipping inv slot " + info.invSlot + " – already named " + expectedName);
@@ -266,6 +303,8 @@ public class MapartNamer extends Module {
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.world == null) return;
+
+        if (visualizeIndices.get()) refreshIndexLabels();
 
         // The screen itself is the reliable trigger. This avoids depending on
         // InventoryS2CPacket timing, which was preventing the module from ever
@@ -324,12 +363,7 @@ public class MapartNamer extends Module {
                 String coordPart = coordinateFormat.get()
                     .replace("{x}", String.valueOf(currentMap.x))
                     .replace("{y}", String.valueOf(currentY));
-                String newName;
-                if (coordPosition.get() == CoordPosition.Prefix) {
-                    newName = coordPart + mapName.get();
-                } else {
-                    newName = mapName.get() + coordPart;
-                }
+                String newName = buildMapName(coordPart);
                 info("Renaming inv slot " + currentMap.invSlot + " (row " + currentMap.row + ", col " + currentMap.col + ") to " + newName);
                 mc.getNetworkHandler().sendPacket(new RenameItemC2SPacket(newName));
                 mapStep = STEP_WAIT_RENAME;
@@ -399,6 +433,111 @@ public class MapartNamer extends Module {
     private int getNextBatchStartY() {
         int offset = startIndex.get() == StartIndex.ONE ? 1 : 0;
         return baseY.get() + offset;
+    }
+
+    private String buildMapName(String coordPart) {
+        return coordPosition.get() == CoordPosition.Prefix ? coordPart + mapName.get() : mapName.get() + coordPart;
+    }
+
+    /**
+     * Overlay hook called from the DrawContext/HandledScreen/InGameHud mixins.
+     * Filled maps that the module would rename get their index drawn centered on
+     * the item icon.
+     */
+    public void renderIndexOverlay(DrawContext context, int x, int y, ItemStack stack) {
+        if (!isActive()) return;
+        if (!visualizeIndices.get()) return;
+        if (mc.player == null || mc.player.getInventory() == null) return;
+        if (stack.getItem() != Items.FILLED_MAP) return;
+
+        String label = indexLabelForStack(stack);
+        if (label == null) return;
+
+        // Fit the label inside the 16x16 item, shrunk down to a readable floor,
+        // then scale by the user's size preference.
+        int textWidth = mc.textRenderer.getWidth(label);
+        float scale = Math.min(0.7f, 14f / textWidth) * indexSize.get().floatValue();
+
+        var matrices = context.getMatrices();
+        matrices.pushMatrix();
+        matrices.translate(x + 8, y + 8);
+        matrices.scale(scale, scale);
+        int textX = (int) (-textWidth / 2f);
+        int textY = (int) (-mc.textRenderer.fontHeight / 2f);
+        context.drawText(mc.textRenderer, label, textX, textY, indexColor.get().getPacked(), true);
+        matrices.popMatrix();
+    }
+
+    private void refreshIndexLabels() {
+        indexLabels.clear();
+
+        // Mirror the collectMapsAndStart scan (same invSlot -> row/col mapping and
+        // the same name/rename filters) so the overlay matches what the module is
+        // actually about to rename.
+        List<MapSlotInfo> maps = new ArrayList<>();
+        for (int invSlot = 0; invSlot < 36; invSlot++) {
+            ItemStack stack = mc.player.getInventory().getStack(invSlot);
+            if (stack.getItem() != Items.FILLED_MAP) continue;
+
+            String currentName = stack.getName().getString();
+            if (!renameAlreadyNamed.get() && !currentName.equals("Map")) continue;
+
+            int row = invSlot < 9 ? 3 : (invSlot - 9) / 9;
+            int col = invSlot % 9;
+            maps.add(new MapSlotInfo(0, row, col, invSlot, currentName));
+        }
+        if (maps.isEmpty()) return;
+
+        int minCol = maps.stream().mapToInt(s -> s.col).min().orElse(0);
+        int offset = startIndex.get() == StartIndex.ONE ? 1 : 0;
+
+        for (MapSlotInfo info : maps) {
+            int x = info.col - minCol + offset;
+            if (x >= mapWidth.get() + offset) continue;
+
+            int currentY = baseY.get() + info.row + offset;
+            String expectedCoord = coordinateFormat.get()
+                .replace("{x}", String.valueOf(x))
+                .replace("{y}", String.valueOf(currentY));
+            String expectedName = buildMapName(expectedCoord);
+
+            // Same filter as the rename queue: skip maps that are already named
+            // correctly when resume-sequence is on.
+            if (resumeSequence.get() && info.currentName.equals(expectedName)) continue;
+
+            indexLabels.put(info.invSlot, expectedCoord);
+        }
+    }
+
+    private String indexLabelForStack(ItemStack stack) {
+        // Identity first: the overlay hook is handed the very ItemStack object that
+        // lives in an inventory slot, so matching by reference gives each slot its
+        // own label even when several slots hold maps with the same MAP_ID.
+        var inventory = mc.player.getInventory();
+        for (int slot = 0; slot < 36; slot++) {
+            if (inventory.getStack(slot) == stack) {
+                // A slot with no pending label (or already named correctly) must
+                // stay unlabeled rather than borrowing a same-ID sibling's label.
+                return indexLabels.get(slot);
+            }
+        }
+
+        // Not an inventory slot's own stack (a copy from some render path):
+        // fall back to the old MAP_ID match so the overlay still shows. If two
+        // labeled slots share the same MAP_ID the source is ambiguous, so leave
+        // the copy unlabeled rather than guessing.
+        MapIdComponent id = stack.get(DataComponentTypes.MAP_ID);
+        if (id == null) return null;
+
+        String label = null;
+        for (Map.Entry<Integer, String> entry : indexLabels.entrySet()) {
+            ItemStack s = inventory.getStack(entry.getKey());
+            if (s.getItem() == Items.FILLED_MAP && id.equals(s.get(DataComponentTypes.MAP_ID))) {
+                if (label != null) return null;
+                label = entry.getValue();
+            }
+        }
+        return label;
     }
 
     private static class MapSlotInfo {

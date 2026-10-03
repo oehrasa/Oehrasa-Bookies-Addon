@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.mixin;
 
 import com.AutoBookshelf.addon.modules.GetPreview;
+import com.AutoBookshelf.addon.modules.MapartNamer;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.item.ItemStack;
@@ -16,6 +17,11 @@ public class DrawContextMixin {
         GetPreview module = Modules.get().get(GetPreview.class);
         if (module != null && module.isActive()) {
             module.renderBundleOverlay((DrawContext) (Object) this, x, y, stack);
+        }
+
+        MapartNamer mapart = Modules.get().get(MapartNamer.class);
+        if (mapart != null && mapart.isActive()) {
+            mapart.renderIndexOverlay((DrawContext) (Object) this, x, y, stack);
         }
     }
 }

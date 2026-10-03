@@ -230,12 +230,20 @@ public class SignRender extends Module {
             if (fullUpdate) {
                 this.updateTicker = 0;
                 this.collectSigns();
+
+                // Clustering is O(n^2) on screen distances, so recompute it
+                // only on full updates instead of every frame. Signs shared
+                // the world occlude identically between updates; only the
+                // "on screen" culling of unclustered signs changes, which the
+                // render pass applies every frame anyway.
+                if ((Boolean) this.enableClustering.get() && !this.allSigns.isEmpty()) {
+                    this.createClusters();
+                }
             } else {
                 this.updateSignPositions();
-            }
-
-            if ((Boolean) this.enableClustering.get() && !this.allSigns.isEmpty()) {
-                this.createClusters();
+                if ((Boolean) this.enableClustering.get()) {
+                    this.refreshClusterCenters();
+                }
             }
 
             this.renderSigns();
@@ -299,45 +307,70 @@ public class SignRender extends Module {
                 sign.distance = playerPos.distanceTo(sign.worldPos);
                 sign.updateScreenPosition(this.tempVec);
                 sign.scale = 1.0;
-                sign.color = new Color((Color) this.textColor.get());
+                // Reuse the color cached on full update instead of allocating
+                // a fresh Color per sign per frame.
+                if (sign.color == null) {
+                    sign.color = new Color((Color) this.textColor.get());
+                }
+            }
+        }
+    }
+
+    /**
+     * Cluster membership itself is only recomputed on full updates (see createClusters),
+     * but a cluster's rendered center is the primarySign's screen position, and
+     * updateSignPositions() moves that every frame. Without this, clusters visually lag
+     * a full update behind the signs they're anchored to.
+     */
+    private void refreshClusterCenters() {
+        for (SignRender.SignCluster cluster : this.clusters) {
+            if (cluster.primarySign != null) {
+                cluster.centerX = cluster.primarySign.screenX;
+                cluster.centerY = cluster.primarySign.screenY;
             }
         }
     }
 
     private void createClusters() {
         this.clusters.clear();
-
-        for (SignRender.SignRenderData clustered : this.allSigns) {
-            ;
+        if (this.allSigns.isEmpty()) {
+            return;
         }
 
         List<SignRender.SignRenderData> toCluster = new ArrayList<>(this.allSigns);
         Set<SignRender.SignRenderData> clustered = new HashSet<>();
         double radiusSq = (Double) this.clusterRadius.get() * (Double) this.clusterRadius.get();
 
-        while (!toCluster.isEmpty()) {
-            SignRender.SignRenderData seed = toCluster.remove(0);
-            if (!clustered.contains(seed) && seed.onScreen) {
-                SignRender.SignCluster cluster = new SignRender.SignCluster();
-                cluster.addSign(seed);
-                clustered.add(seed);
+        // Index-based scan instead of remove(0) on the ArrayList (O(n) shift
+        // per pop). Seeds are skipped via the clustered set; already-grouped
+        // signs never get re-scanned as seeds.
+        for (int i = 0; i < toCluster.size(); i++) {
+            SignRender.SignRenderData seed = toCluster.get(i);
+            if (clustered.contains(seed) || !seed.onScreen) {
+                continue;
+            }
 
-                for (SignRender.SignRenderData other : toCluster) {
-                    if (other.onScreen && !clustered.contains(other)) {
-                        double dx = seed.screenX - other.screenX;
-                        double dy = seed.screenY - other.screenY;
-                        double distSq = dx * dx + dy * dy;
-                        if (distSq <= radiusSq) {
-                            cluster.addSign(other);
-                            clustered.add(other);
-                        }
+            SignRender.SignCluster cluster = new SignRender.SignCluster();
+            cluster.addSign(seed);
+            clustered.add(seed);
+
+            for (int j = 0; j < toCluster.size(); j++) {
+                if (i == j) continue;
+                SignRender.SignRenderData other = toCluster.get(j);
+                if (other.onScreen && !clustered.contains(other)) {
+                    double dx = seed.screenX - other.screenX;
+                    double dy = seed.screenY - other.screenY;
+                    double distSq = dx * dx + dy * dy;
+                    if (distSq <= radiusSq) {
+                        cluster.addSign(other);
+                        clustered.add(other);
                     }
                 }
+            }
 
-                cluster.calculateCenter();
-                if (cluster.signs.size() > 1) {
-                    this.clusters.add(cluster);
-                }
+            cluster.calculateCenter();
+            if (cluster.signs.size() > 1) {
+                this.clusters.add(cluster);
             }
         }
     }
@@ -358,6 +391,7 @@ public class SignRender extends Module {
         Set<SignRender.SignRenderData> rendered = new HashSet<>();
 
         for (SignRender.SignCluster cluster : this.clusters) {
+            if (cluster.primarySign == null || !cluster.primarySign.onScreen) continue;
             switch ((SignRender.ClusterMode) this.clusterMode.get()) {
                 case Stack:
                     this.renderStackedCluster(cluster, textRenderer, rendered);

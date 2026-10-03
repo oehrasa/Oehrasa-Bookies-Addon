@@ -95,6 +95,13 @@ public class ShulkerRestockEngine {
      */
     private final List<BlockPos> failedPositions = new ArrayList<>();
 
+    /**
+     * Reused scratch list combining failed placement positions with the config's
+     * excluded positions; avoid+alloc is per placement attempt, this just keeps
+     * the ArrayList allocation from being repeated.
+     */
+    private final List<BlockPos> avoidScratch = new ArrayList<>();
+
     public ShulkerRestockEngine(MinecraftClient mc, PlacementEngine placementEngine, RestockCallback callback) {
         this.mc = mc;
         this.placementEngine = placementEngine;
@@ -246,7 +253,9 @@ public class ShulkerRestockEngine {
         mc.player.getInventory().setSelectedSlot(shulkerSlot);
         mc.player.networkHandler.sendPacket(new UpdateSelectedSlotC2SPacket(shulkerSlot));
 
-        List<BlockPos> avoid = new ArrayList<>(failedPositions);
+        List<BlockPos> avoid = avoidScratch;
+        avoid.clear();
+        avoid.addAll(failedPositions);
         avoid.addAll(config.excludedPositions());
 
         BlockPos placePos = placementEngine.findPlacement(
@@ -412,29 +421,46 @@ public class ShulkerRestockEngine {
         }
 
         var handler = screen.getScreenHandler();
-        for (int i = 0; i < 27; i++) {
+        // Single pass over the 27 box slots: quick-move every matching stack while
+        // remembering if any slot kept a partial stack after its own move, instead of
+        // re-walking all 27 slots a second time to detect leftovers.
+        boolean targetStillLeft = false;
+        int i = 0;
+        while (i < 27) {
             ItemStack stack = handler.getSlot(i).getStack();
-            if (stack.getItem() == currentTargetItem) {
-                mc.interactionManager.clickSlot(handler.syncId, i, 0, SlotActionType.QUICK_MOVE, mc.player);
-                // Re-check the real inventory rather than assuming this quick-move
-                // consumed an empty slot.
-                if (countEmptyPlayerSlots() <= keepFree) break;
+            if (stack.getItem() != currentTargetItem) {
+                i++;
+                continue;
+            }
+
+            mc.interactionManager.clickSlot(handler.syncId, i, 0, SlotActionType.QUICK_MOVE, mc.player);
+            // A quick-move can leave a partial stack behind in this slot.
+            if (handler.getSlot(i).getStack().getItem() == currentTargetItem) targetStillLeft = true;
+
+            // Re-check the real inventory rather than assuming this quick-move
+            // consumed an empty slot.
+            if (countEmptyPlayerSlots() <= keepFree) break;
+            i++;
+        }
+
+        // Broke out with a full inventory before reaching the end: the slots after the
+        // last quick-move were never touched, so any of them still holding the target
+        // means we stopped short even though that last move drained its own slot.
+        if (!targetStillLeft && i < 27) {
+            for (int j = i + 1; j < 27; j++) {
+                if (handler.getSlot(j).getStack().getItem() == currentTargetItem) {
+                    targetStillLeft = true;
+                    break;
+                }
             }
         }
 
-        // Any target-item slot in the shulker still holding a stack after the loop
-        // above means we stopped short of fully emptying it (either genuinely out
-        // of inventory room, or - previously - due to the miscounted early exit).
-        // Record that so the caller can tell a "fully emptied" success apart from
-        // a "still has contents" one and decide whether to bother chasing down
-        // the dropped box after it's broken.
-        shulkerFullyEmptied = true;
-        for (int i = 0; i < 27; i++) {
-            if (handler.getSlot(i).getStack().getItem() == currentTargetItem) {
-                shulkerFullyEmptied = false;
-                break;
-            }
-        }
+        // If any target-item slot in the shulker still holds a stack we stopped short
+        // of fully emptying it (either genuinely out of inventory room, or - previously -
+        // due to the miscounted early exit). Record that so the caller can tell a
+        // "fully emptied" success apart from a "still has contents" one and decide
+        // whether to bother chasing down the dropped box after it's broken.
+        shulkerFullyEmptied = !targetStillLeft;
 
         mc.player.closeHandledScreen();
         stage = Stage.CLOSE_SHULKER;

@@ -4,17 +4,23 @@ import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.entity.SortPriority;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.entity.Entity;
 import net.minecraft.entity.decoration.ItemFrameEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.hit.HitResult;
+import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public class PressItemFrame extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -50,6 +56,13 @@ public class PressItemFrame extends Module {
         .build()
     );
 
+    private final Setting<SortPriority> priority = sgGeneral.add(new EnumSetting.Builder<SortPriority>()
+        .name("priority")
+        .description("How to pick which frame to act on when several in-range frames qualify.")
+        .defaultValue(SortPriority.LowestDistance)
+        .build()
+    );
+
     private final Setting<Boolean> showInfo = sgGeneral.add(new BoolSetting.Builder()
         .name("show-info")
         .description("Display info when a frame is processed.")
@@ -58,6 +71,9 @@ public class PressItemFrame extends Module {
     );
 
     private int timer;
+
+    // Back off briefly instead of rescanning every tick when no frame is found.
+    private static final int NO_TARGET_RESCAN_DELAY = 5;
 
     public PressItemFrame() {
         super(Addon.CATEGORY2, "Press-Frame", "Flatten any nearby item frame because You're an Elite Rank.");
@@ -68,8 +84,7 @@ public class PressItemFrame extends Module {
         timer = 0;
     }
 
-    private boolean canSee(ItemFrameEntity frame) {
-        Vec3d eyes = mc.player.getEyePos();
+    private boolean canSee(ItemFrameEntity frame, Vec3d eyes) {
         // Accurate centre of the frame's bounding box
         Vec3d center = frame.getBoundingBox().getCenter();
         // Direction the frame's front is facing (opposite of the attached wall/ceiling/floor)
@@ -93,6 +108,29 @@ public class PressItemFrame extends Module {
         return distToHit >= distToTarget - 0.01;
     }
 
+    // Best candidate by priority.
+    private int compareFrames(ItemFrameEntity a, ItemFrameEntity b) {
+        SortPriority p = priority.get();
+
+        if (p == SortPriority.LowestDistance || p == SortPriority.LowestHealth) {
+            return Double.compare(PlayerUtils.squaredDistanceTo(a), PlayerUtils.squaredDistanceTo(b));
+        }
+        if (p == SortPriority.HighestDistance || p == SortPriority.HighestHealth) {
+            return Double.compare(PlayerUtils.squaredDistanceTo(b), PlayerUtils.squaredDistanceTo(a));
+        }
+
+        // ClosestAngle: prefer the frame nearest the player's current look direction.
+        double aYaw = Math.abs(MathHelper.wrapDegrees(Rotations.getYaw(a) - mc.player.getYaw()));
+        double bYaw = Math.abs(MathHelper.wrapDegrees(Rotations.getYaw(b) - mc.player.getYaw()));
+        double aPitch = Math.abs(Rotations.getPitch(a) - mc.player.getPitch());
+        double bPitch = Math.abs(Rotations.getPitch(b) - mc.player.getPitch());
+
+        return Double.compare(
+            aYaw * aYaw + aPitch * aPitch,
+            bYaw * bYaw + bPitch * bPitch
+        );
+    }
+
     @EventHandler
     public void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.world == null) return;
@@ -103,7 +141,11 @@ public class PressItemFrame extends Module {
         }
 
         double reach = mc.player.getEntityInteractionRange();
-        ItemFrameEntity target = null;
+        boolean onlyWith = onlyWithItem.get();
+        boolean rot = rotate.get();
+        Vec3d eyes = mc.player.getEyePos();
+
+        List<ItemFrameEntity> candidates = new ArrayList<>();
         for (ItemFrameEntity frame : mc.world.getEntitiesByClass(
             ItemFrameEntity.class,
             mc.player.getBoundingBox().expand(reach),
@@ -111,21 +153,26 @@ public class PressItemFrame extends Module {
         )) {
             if (frame.isInvisible()) continue;
             if (!PlayerUtils.isWithinReach(frame)) continue;
-            if (onlyWithItem.get() && frame.getHeldItemStack().isEmpty()) continue;
-            if (!canSee(frame)) continue;
+            if (onlyWith && frame.getHeldItemStack().isEmpty()) continue;
+            if (!canSee(frame, eyes)) continue;
 
-            target = frame;
-            break;
+            candidates.add(frame);
         }
 
-        if (target == null) return;
+        candidates.sort(this::compareFrames);
+        ItemFrameEntity target = candidates.isEmpty() ? null : candidates.get(0);
 
-        // Safety: if not rotating, ensure crosshair is on the specific frame
-        if (!rotate.get()) {
+        if (target == null) {
+            timer = NO_TARGET_RESCAN_DELAY;
+            return;
+        }
+
+        if (!rot) {
             HitResult hit = mc.crosshairTarget;
             if (hit == null || hit.getType() != HitResult.Type.ENTITY) return;
-            EntityHitResult entityHit = (EntityHitResult) hit;
-            if (entityHit.getEntity() != target) return;
+            Entity hitEntity = ((EntityHitResult) hit).getEntity();
+            if (!(hitEntity instanceof ItemFrameEntity hitFrame) || !candidates.contains(hitFrame)) return;
+            target = hitFrame;
         }
 
         ItemStack held = target.getHeldItemStack();

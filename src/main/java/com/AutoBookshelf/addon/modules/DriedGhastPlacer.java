@@ -13,7 +13,6 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
-import net.minecraft.util.math.Box;
 import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -23,6 +22,7 @@ import net.minecraft.registry.tag.ItemTags;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 
@@ -65,6 +65,14 @@ public class DriedGhastPlacer extends Module {
         .defaultValue(true)
         .build());
 
+    private final Setting<Integer> breakTimeout = sgGeneral.add(new IntSetting.Builder()
+        .name("break-timeout")
+        .description("Ticks to keep mining the ice before giving up on the cycle.")
+        .defaultValue(40)
+        .min(10)
+        .sliderMax(200)
+        .build());
+
     private final Setting<Boolean> fastMode = sgGeneral.add(new BoolSetting.Builder()
         .name("fast-mode")
         .description("Skip ice placement – look for existing water sources on solid blocks instead.")
@@ -91,6 +99,8 @@ public class DriedGhastPlacer extends Module {
     private BlockPos supportBlockPos;
     private int delayTicks = 0;
     private int placedCount = 0;
+    private int breakWaitTicks = 0;
+    private int breakWaitStep = 0;
     private Block driedGhastBlock = null;
     private int iceSlot = -1, pickSlot = -1, ghastSlot = -1;
 
@@ -106,6 +116,8 @@ public class DriedGhastPlacer extends Module {
         stage = Stage.IDLE;
         targetPos = supportBlockPos = null;
         delayTicks = 0;
+        breakWaitTicks = 0;
+        breakWaitStep = 0;
         placedCount = 0;
         driedGhastBlock = null;
         iceSlot = pickSlot = ghastSlot = -1;
@@ -129,7 +141,7 @@ public class DriedGhastPlacer extends Module {
             case WAIT_ICE -> checkIce();
             case ROTATE_TO_BREAK -> breakIce();
             case BREAK_ICE -> executeBreakIce();
-            case WAIT_BREAK -> checkWater();
+            case WAIT_BREAK -> checkBreak();
             // Normal stages
             case ROTATE_TO_PLACE_GHAST -> placeGhast();
             case PLACE_GHAST -> executePlaceGhast();
@@ -194,12 +206,16 @@ public class DriedGhastPlacer extends Module {
 
         BlockPos playerFeet = mc.player.getBlockPos();
         BlockPos playerHead = playerFeet.up();
-        double maxDistSq = range.get() * range.get();
+        double rangeVal = range.get();
+        int minBound = (int) -rangeVal;
+        int maxBound = (int) rangeVal;
+        double maxDistSq = rangeVal * rangeVal;
 
-        for (int dx = (int) -range.get(); dx <= range.get(); dx++)
-            for (int dy = (int) -range.get(); dy <= range.get(); dy++)
-                for (int dz = (int) -range.get(); dz <= range.get(); dz++) {
-                    BlockPos pos = playerFeet.add(dx, dy, dz);
+        BlockPos.Mutable pos = new BlockPos.Mutable();
+        for (int dx = minBound; dx <= maxBound; dx++)
+            for (int dy = minBound; dy <= maxBound; dy++)
+                for (int dz = minBound; dz <= maxBound; dz++) {
+                    pos.set(playerFeet.getX() + dx, playerFeet.getY() + dy, playerFeet.getZ() + dz);
 
                     // Skip blocks right at the player's feet or head
                     if (pos.equals(playerFeet) || pos.equals(playerHead)) continue;
@@ -223,8 +239,8 @@ public class DriedGhastPlacer extends Module {
                     if (!bs.isSolidBlock(mc.world, below)) continue;
                     if (bs.getBlock() == driedGhastBlock) continue;
 
-                    targetPos = pos;
-                    supportBlockPos = below;
+                    targetPos = new BlockPos(pos.getX(), pos.getY(), pos.getZ());
+                    supportBlockPos = new BlockPos(below.getX(), below.getY(), below.getZ());
                     return true;
                 }
         return false;
@@ -248,10 +264,66 @@ public class DriedGhastPlacer extends Module {
     private void breakIce() { stage = Stage.BREAK_ICE; }
 
     private void executeBreakIce() {
+        sendBreakPackets();
+        breakWaitTicks = 0;
+        breakWaitStep = 4;
+        delayTicks = 4;
+        stage = Stage.WAIT_BREAK;
+    }
+
+    private void sendBreakPackets() {
         mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.START_DESTROY_BLOCK, targetPos, Direction.UP));
         mc.getNetworkHandler().sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.STOP_DESTROY_BLOCK, targetPos, Direction.UP));
         mc.player.swingHand(Hand.MAIN_HAND);
-        delayTicks = 4; stage = Stage.WAIT_BREAK;
+    }
+
+    /**
+     * WAIT_BREAK. The break packets sent once by executeBreakIce are not enough on
+     * their own: the ice is still there on the next tick, so keep re-sending them
+     * until it breaks. The whole wait is bounded by break-timeout, because otherwise
+     * the state spun until water appeared and hung forever whenever the ice never
+     * broke (wrong tool, silk touch, another player breaking it first) or broke
+     * into plain air instead of exposing water.
+     */
+    private void checkBreak() {
+        BlockState state = mc.world.getBlockState(targetPos);
+        if (state.getBlock() == Blocks.ICE) {
+            if (rotate.get())
+                Rotations.rotate(Rotations.getYaw(Vec3d.ofCenter(targetPos)), Rotations.getPitch(Vec3d.ofCenter(targetPos)), -100, () -> {
+                });
+            sendBreakPackets();
+        } else if (state.getBlock() == Blocks.WATER) {
+            // Ice is gone and did its job, clear the wait counter and hand over.
+            breakWaitTicks = 0;
+            breakWaitStep = 0;
+            checkWater();
+            return;
+        }
+
+        // Still ice, or ice already gone with no water yet: keep the bounded wait
+        // running, and give up once the budget is spent. The budget is in ticks, but
+        // this runs once per delay rather than once per tick, so charge the wait the
+        // delay it just spent plus the tick this check itself ran on. Counting calls
+        // instead stretched the real wait to roughly three times break-timeout.
+        breakWaitTicks += breakWaitStep + 1;
+        if (breakWaitTicks > breakTimeout.get()) {
+            info("§cNo water after " + breakTimeout.get() + " ticks, skipping this spot.");
+            abortCycle();
+            return;
+        }
+        breakWaitStep = 2;
+        delayTicks = 2;
+    }
+
+    /**
+     * Abandons the current placement cycle without touching the placed-block count.
+     */
+    private void abortCycle() {
+        InvUtils.swapBack();
+        stage = Stage.IDLE;
+        targetPos = supportBlockPos = null;
+        breakWaitTicks = 0;
+        breakWaitStep = 0;
     }
 
     private void checkWater() {

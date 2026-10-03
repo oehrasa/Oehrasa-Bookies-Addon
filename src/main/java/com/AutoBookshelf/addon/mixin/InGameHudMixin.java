@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.mixin;
 
 import com.AutoBookshelf.addon.modules.GetPreview;
+import com.AutoBookshelf.addon.modules.MapartNamer;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
@@ -18,7 +19,7 @@ public class InGameHudMixin {
     @Inject(method = "renderHotbar", at = @At("TAIL"))
     private void onRenderHotbar(DrawContext context, RenderTickCounter tickCounter, CallbackInfo ci) {
         GetPreview module = Modules.get().get(GetPreview.class);
-        if (module == null || !module.isActive()) return;
+        MapartNamer mapart = Modules.get().get(MapartNamer.class);
 
         MinecraftClient mc = MinecraftClient.getInstance();
         PlayerEntity player = mc.player;
@@ -33,7 +34,12 @@ public class InGameHudMixin {
             int posX = center - 90 + i * 20 + 2;
             ItemStack stack = player.getInventory().getStack(i);
             if (stack.isEmpty()) continue;
-            module.renderBundleOverlay(context, posX, hotbarY, stack);
+            if (module != null && module.isActive()) {
+                module.renderBundleOverlay(context, posX, hotbarY, stack);
+            }
+            if (mapart != null && mapart.isActive()) {
+                mapart.renderIndexOverlay(context, posX, hotbarY, stack);
+            }
         }
         // optional offhand
     }

@@ -149,6 +149,7 @@ public class ContainerPeek extends Module {
     private PeekStyle lastStyle = style.get();
 
     private PreviewData currentPreview = null;
+    private final Vector3d previewVec = new Vector3d();   // reused per frame by onRender2D
 
     public static final ThreadLocal<Boolean> IS_RENDERING = ThreadLocal.withInitial(() -> false);
 
@@ -165,7 +166,7 @@ public class ContainerPeek extends Module {
         List<ItemStack> stacks,
         int itemsPerRow,
         float itemScale,
-        Map<Integer, Item> dominantItems,
+        Map<Integer, ItemStack> dominantItems,
         PeekStyle style
     ) {}
 
@@ -227,9 +228,10 @@ public class ContainerPeek extends Module {
 
             BlockHitResult hit = (BlockHitResult) mc.crosshairTarget;
             BlockPos pos = hit.getBlockPos();
-            BlockPos canonicalPos = getCanonicalChestPos(pos);
             if (pos.equals(lastTargetedPos) && !shulkerSettingChanged && !styleChanged) return;
             lastTargetedPos = pos;
+
+            BlockPos canonicalPos = getCanonicalChestPos(pos);
 
             double dist = Math.sqrt(mc.player.squaredDistanceTo(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5));
             if (dist > maxDistance.get()) {
@@ -330,7 +332,7 @@ public class ContainerPeek extends Module {
         List<ItemStack> stacks = container.getItemStacks();
         String title = container.getCustomName() != null ? container.getCustomName() : container.getContainerType();
 
-        Map<Integer, Item> dominantMap = new HashMap<>();
+        Map<Integer, ItemStack> dominantMap = new HashMap<>();
 
         if (shulkerIconPreview.get()) {
             for (Map.Entry<Integer, String> entry : container.getDominantItems().entrySet()) {
@@ -338,7 +340,7 @@ public class ContainerPeek extends Module {
                 if (id == null) continue;
                 Item item = Registries.ITEM.get(id);
                 if (item != null) {
-                    dominantMap.put(entry.getKey(), item);
+                    dominantMap.put(entry.getKey(), new ItemStack(item));
                 }
             }
         }
@@ -351,15 +353,15 @@ public class ContainerPeek extends Module {
     private void buildEntityPreview(Entity entity, List<ItemStack> stacks, String type) {
         String title = type != null ? type : "container";
         BlockPos pos = entity.getBlockPos();
-        Map<Integer, Item> dominantMap = computeDominantMap(stacks);
+        Map<Integer, ItemStack> dominantMap = computeDominantMap(stacks);
         buildPreview(pos, title, stacks, false, dominantMap);
     }
 
-    private Map<Integer, Item> computeDominantMap(List<ItemStack> stacks) {
+    private Map<Integer, ItemStack> computeDominantMap(List<ItemStack> stacks) {
         if (!shulkerIconPreview.get()) return Collections.emptyMap();
-        Map<Integer, Item> map = new HashMap<>();
+        Map<Integer, ItemStack> map = new HashMap<>();
         for (int i = 0; i < stacks.size(); i++) {
-            Item dominant = getDominantShulkerItem(stacks.get(i));
+            ItemStack dominant = getDominantShulkerItem(stacks.get(i));
             if (dominant != null) {
                 map.put(i, dominant);
             }
@@ -368,7 +370,7 @@ public class ContainerPeek extends Module {
     }
 
     @Nullable
-    private Item getDominantShulkerItem(ItemStack stack) {
+    private ItemStack getDominantShulkerItem(ItemStack stack) {
         if (!(stack.getItem() instanceof BlockItem bi && bi.getBlock() instanceof ShulkerBoxBlock)) return null;
         ContainerComponent container = stack.get(DataComponentTypes.CONTAINER);
         if (container == null) return null;
@@ -377,12 +379,12 @@ public class ContainerPeek extends Module {
         if (counts.isEmpty()) return null;
         return counts.entrySet().stream()
             .max(Map.Entry.comparingByValue())
-            .map(Map.Entry::getKey)
+            .map(e -> new ItemStack(e.getKey()))
             .orElse(null);
     }
 
     private void buildPreview(BlockPos pos, String title, List<ItemStack> stacks, boolean isShulker,
-                              Map<Integer, Item> dominantMap) {
+                              Map<Integer, ItemStack> dominantMap) {
         int itemsPerRow = maxItemsPerRow.get();
         int total = stacks.size();
         int pad = 2;
@@ -485,12 +487,12 @@ public class ContainerPeek extends Module {
                 RenderUtils.drawItem(context, stack, x + 1, y + 1, 1.0f, true, null, false);
             }
 
-            Item dominant = preview.dominantItems.get(i);
+            ItemStack dominant = preview.dominantItems.get(i);
             if (dominant != null) {
                 int border = 1;
                 int overlaySize = SLOT_SIZE - 2 * border;
                 float overlayScale = overlaySize / 16.0f;
-                RenderUtils.drawItem(context, new ItemStack(dominant), x + border, y + border, overlayScale, false, null, false);
+                RenderUtils.drawItem(context, dominant, x + border, y + border, overlayScale, false, null, false);
             }
         }
 
@@ -518,7 +520,8 @@ public class ContainerPeek extends Module {
         DrawContext context = event.drawContext;
         if (context == null) return;
 
-        Vector3d vec = new Vector3d(preview.pos.getX() + 0.5, preview.pos.getY() + 0.5, preview.pos.getZ() + 0.5);
+        Vector3d vec = previewVec;
+        vec.set(preview.pos.getX() + 0.5, preview.pos.getY() + 0.5, preview.pos.getZ() + 0.5);
         if (!NametagUtils.to2D(vec, 1.0)) return;
 
         if (preview.style == PeekStyle.Container) {
@@ -569,24 +572,25 @@ public class ContainerPeek extends Module {
         int itemStartX = panelX + pad;
         int itemStartY = textY + pad;
         float itemScale = preview.itemScale;
+        int iconSizeVal = iconSize.get();
 
         for (int i = 0; i < preview.stacks.size(); i++) {
             int col = i % preview.itemsPerRow;
             int row = i / preview.itemsPerRow;
-            int x = itemStartX + col * (iconSize.get() + pad);
-            int y = itemStartY + row * (iconSize.get() + pad);
+            int x = itemStartX + col * (iconSizeVal + pad);
+            int y = itemStartY + row * (iconSizeVal + pad);
 
             RenderUtils.drawItem(event.drawContext, preview.stacks.get(i), x, y, itemScale, true, null, false);
 
-            Item dominant = preview.dominantItems.get(i);
+            ItemStack dominant = preview.dominantItems.get(i);
             if (dominant != null) {
                 int border = 1;
-                int overlaySize = iconSize.get() - 2 * border;
+                int overlaySize = iconSizeVal - 2 * border;
                 float overlayScale = overlaySize / 16.0f;
                 int overlayX = x + border;
                 int overlayY = y + border;
 
-                RenderUtils.drawItem(event.drawContext, new ItemStack(dominant), overlayX, overlayY, overlayScale, false, null, false);
+                RenderUtils.drawItem(event.drawContext, dominant, overlayX, overlayY, overlayScale, false, null, false);
             }
         }
 

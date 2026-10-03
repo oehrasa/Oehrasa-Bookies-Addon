@@ -28,6 +28,7 @@ import net.minecraft.item.BowItem;
 import net.minecraft.item.Items;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
 
@@ -86,17 +87,38 @@ public class PzH2000 extends Module {
 
     private final Setting<Boolean> artilleryMode = sgArtillery.add(new BoolSetting.Builder()
         .name("artillery-mode")
-        .description("Allow lofted trajectories that can hit targets behind obstructions or beyond flat range, instead of only shallow direct shots.")
+        .description("Allow lofted trajectories that can hit targets behind obstructions or beyond flat range, instead of direct shots.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Double> angleStep = sgArtillery.add(new DoubleSetting.Builder()
         .name("angle-step")
-        .description("Degree increment used when scanning candidate pitch angles, both for the local refinement window and the brute-force fallback.")
+        .description("Base degree increment used when scanning candidate pitch angles. Used as reference for adaptive stepping.")
         .defaultValue(1.0)
         .range(0.1, 5.0)
         .sliderRange(0.1, 5.0)
+        .build()
+    );
+
+    private final Setting<Boolean> adaptiveAngleStep = sgArtillery.add(new BoolSetting.Builder()
+        .name("adaptive-angle-step")
+        .description("Automatically scale angle-step by distance: smaller steps at long range for precision, larger at close range for speed.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> refinePitch = sgArtillery.add(new BoolSetting.Builder()
+        .name("refine-pitch")
+        .description("After the angle sweep, refine the winning pitch with a continuous golden-section search across the two neighboring grid points.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> hitboxTargeting = sgArtillery.add(new BoolSetting.Builder()
+        .name("hitbox-targeting")
+        .description("Aim at the target's full hitbox instead of its center point.")
+        .defaultValue(false)
         .build()
     );
 
@@ -112,7 +134,7 @@ public class PzH2000 extends Module {
     private final Setting<Double> hitTolerance = sgArtillery.add(new DoubleSetting.Builder()
         .name("hit-tolerance")
         .description("Maximum acceptable miss distance (blocks) for a candidate arc to be considered a hit.")
-        .defaultValue(1.0)
+        .defaultValue(0.5)
         .range(0.2, 3.0)
         .sliderRange(0.2, 3.0)
         .build()
@@ -144,8 +166,8 @@ public class PzH2000 extends Module {
 
     private final Setting<Boolean> autoFire = sgAutoFire.add(new BoolSetting.Builder()
         .name("auto-fire")
-        .description("Automatically draws and releases the bow the instant the CURRENT charge produces a valid, confirmed solution, instead of requiring you to hold right-click.")
-        .defaultValue(false)
+        .description("Automatically draws and releases the bow the instant the current charge produces a valid, confirmed solution.")
+        .defaultValue(true)
         .build()
     );
 
@@ -171,7 +193,7 @@ public class PzH2000 extends Module {
 
     private final Setting<Double> powerMargin = sgAutoFire.add(new DoubleSetting.Builder()
         .name("power-margin")
-        .description("Multiplier applied over the analytic minimum speed required to reach the target. 1.0 is a fragile knife-edge lofted shot with only one possible angle; going above 1.0 unlocks a flatter, faster, more predictable direct-arc option and gives the drag-correction step room to work. The shot is only accepted once the CURRENT draw's speed clears this margin (or max charge is reached) — higher = flatter/faster shots, but costs more charge time.")
+        .description("Multiplier applied over the analytic minimum speed required to reach the target.")
         .defaultValue(1.15)
         .range(1.0, 1.5)
         .sliderRange(1.0, 1.5)
@@ -182,7 +204,7 @@ public class PzH2000 extends Module {
 
     private final Setting<Boolean> selfCorrect = sgSelfCorrect.add(new BoolSetting.Builder()
         .name("self-correct")
-        .description("Tracks real fired arrows and nudges future aim based on observed bias. Only corrects a consistent offset (e.g. the wiki-documented rightward drift) — cannot reduce Minecraft's inherent per-shot randomness.")
+        .description("Tracks real fired arrows and nudges future aim based on observed bias. Only corrects a consistent offset.")
         .defaultValue(true)
         .build()
     );
@@ -207,18 +229,36 @@ public class PzH2000 extends Module {
         .build()
     );
 
+    private final Setting<Boolean> adaptiveLearningRate = sgSelfCorrect.add(new BoolSetting.Builder()
+        .name("adaptive-learning-rate")
+        .description("Automatically reduce learning-rate when shot variance is high (noisy/unlucky shots). Prevents overcorrection from lucky/unlucky shots.")
+        .visible(selfCorrect::get)
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Double> maxErrorVariance = sgSelfCorrect.add(new DoubleSetting.Builder()
+        .name("max-error-variance")
+        .description("Maximum expected error variance (degrees^2). When observed variance approaches this, learning-rate scales toward zero. Higher = more tolerant.")
+        .visible(() -> selfCorrect.get() && adaptiveLearningRate.get())
+        .defaultValue(4.0)
+        .range(0.5, 20.0)
+        .sliderRange(0.5, 20.0)
+        .build()
+    );
+
     private final SettingGroup sgBracketing = settings.createGroup("Bracketing");
 
     private final Setting<Boolean> bracketing = sgBracketing.add(new BoolSetting.Builder()
         .name("bracketing")
-        .description("Between shots at the same target, walk the aim further in the direction of the last correction as long as each shot is landing closer than the one before — and drop the walked-in trim the instant a shot lands worse, going back to a fresh calculation. This is on top of, and faster-adapting than, the slow global bias above. Since bow shots have inherent random spread, an 'improvement' isn't always a real signal — that's why the trim is discarded on any regression rather than trusted indefinitely.")
+        .description("Between shots at the same target, walk the aim further in the direction of the last correction as long as each shot is landing closer than before.")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Double> bracketRate = sgBracketing.add(new DoubleSetting.Builder()
         .name("bracket-rate")
-        .description("How aggressively the trim walks toward the correction while shots keep improving. Higher than the global learning rate on purpose — meant to converge fast within a single engagement, not accumulate slowly across many.")
+        .description("How aggressively the trim walks toward the correction while shots keep improving. Higher than the global learning rate on purpose.")
         .visible(bracketing::get)
         .defaultValue(0.5)
         .range(0.05, 1.0)
@@ -231,14 +271,14 @@ public class PzH2000 extends Module {
         .description("Cap on the walked-in trim, in degrees, separate from the global max-correction cap.")
         .visible(bracketing::get)
         .defaultValue(3.0)
-        .range(0.5, 10.0)
-        .sliderRange(0.5, 10.0)
+        .range(0.5, 15.0)
+        .sliderRange(0.5, 15.0)
         .build()
     );
 
     private final Setting<Integer> noSolutionAbortTicks = sgArtillery.add(new IntSetting.Builder()
         .name("no-solution-abort-ticks")
-        .description("If NO charge level up to max-charge-ticks can reach the target for this many consecutive ticks, cancel the draw instead of releasing it blind. Prevents wasting arrows on geometrically impossible shots, e.g. a wall directly in front that no angle can clear. This does not trigger just because the current charge isn't high enough yet — that's normal mid-draw.")
+        .description("If NO charge level up to max-charge-ticks can reach the target for this many ticks, cancel the draw instead of releasing it to prevent wasting arrows.")
         .defaultValue(3)
         .min(1)
         .sliderRange(1, 10)
@@ -274,10 +314,24 @@ public class PzH2000 extends Module {
     private double yawBias = 0;
     private double pitchBias = 0;
 
+    // Adaptive learning rate: track the spread of shot errors around their
+    // running mean to scale the learning rate down when shots are noisy (high
+    // variance = lucky/unlucky shots, not real bias). Variance of a constantly
+    // deflected series stays low (the mean tracks the deflection) even when the
+    // errors are large, so the learning rate stays high to converge the bias out.
+    private double yawErrorMean = 0;
+    private double pitchErrorMean = 0;
+    private double yawErrorVariance = 0;
+    private double pitchErrorVariance = 0;
+    private static final double VARIANCE_SMOOTHING = 0.9; // EMA factor for variance
+
+    // True when auto-fire is the one holding the use key down. Prevents
+    // the no-bow guard from cancelling a manual eat/drink/other item use.
+    private boolean autoFireHoldsUseKey = false;
+
     // Blocked-target safety: once a target is confirmed unreachable at every
-    // achievable charge level (no arc clears the obstruction, e.g. a wall
+    // achievable charge level (no arc clears the obstruction, or a wall
     // directly in front), stop drawing and stop re-searching every tick
-    // instead of eventually releasing blind.
     private int consecutiveNoSolutionTicks = 0;
     private Integer blockedTargetId = null;
     private int blockedRecheckCooldown = 0;
@@ -292,6 +346,7 @@ public class PzH2000 extends Module {
     private boolean feasibleCached = false;
     private static final int FEASIBILITY_COARSE_SAMPLES = 10;
     private static final int TARGET_FEASIBILITY_CACHE_TICKS = 20;
+    private static final int REFINE_ITERATIONS = 12;
 
     // Bracketing: a faster, per-engagement trim layered on top of the slow
     // global bias. Walked further in the corrective direction while shots keep
@@ -301,19 +356,23 @@ public class PzH2000 extends Module {
     private double lastShotErrorMagnitude = Double.MAX_VALUE;
     private Integer lastShotTargetId = null;
 
-    // Bow/arrow physics constants, confirmed against the Minecraft wiki's Arrow
-    // page: velocity is multiplied by 0.99 each tick (air drag), and 0.05 is
-    // subtracted from the y-velocity each tick (gravity). These must exactly
-    // match what simulateArc() uses below, since that's the only place
-    // trajectories are solved. The same GRAVITY constant also drives the
-    // analytic (drag-free) closed-form solver used to pick charge/pitch before
-    // simulation ever runs, drag is treated there as a small correction to be
-    // refined out locally, not modeled in closed form.
+    // The constants below match the vanilla implementation of PersistentProjectileEntity.tick()
+    // > each in-flight tick, in this exact order,
+    //   1. position += velocity,
+    //   2. if not in water: velocity *= 0.99 (air drag; the water branch instead multiplies by
+    //      getDragInWater() == 0.6 BEFORE the move, hence water shots are not modeled here),
+    //   3. velocity.y -= 0.05 (getGravity()).
+    // simulateArc() must stay in step with that order, since it is the only place trajectories
+    // are solved. Don't "optimize" the recurrence order as Meteor's simulator applies drag/gravity
+    // in a differently-ordered recurrence that does NOT match vanilla. The same gravity constant
+    // also drives the analytic (drag-free) closed-form solver used to pick charge/pitch before
+    // simulation ever runs; drag is treated there as a small correction to be refined out locally,
+    // not modelled in closed form.
     private static final double DRAG = 0.99;
     private static final double GRAVITY = 0.05;
 
     public PzH2000() {
-        super(Addon.CATEGORY2, "PzH-2000", "It can fire shells at a high velocity aided by a laser rangefinder");
+        super(Addon.CATEGORY2, "PzH-2000", "With a bow and this, It can fire shells at a high velocity aided by a laser rangefinder");
     }
 
     @Override
@@ -327,16 +386,25 @@ public class PzH2000 extends Module {
         pendingTargetRef = null;
         trackedArrow = null;
         wasUsingItemLastTick = false;
+        // Release the auto-fire key before clearing the flag, otherwise the
+        // release check sees false and the key stays pressed.
+        if (mc.player != null && autoFireHoldsUseKey) {
+            mc.options.useKey.setPressed(false);
+        }
+        autoFireHoldsUseKey = false;
         consecutiveNoSolutionTicks = 0;
         blockedTargetId = null;
         blockedRecheckCooldown = 0;
         bracketTrimYaw = 0;
         bracketTrimPitch = 0;
+        yawErrorMean = 0;
+        pitchErrorMean = 0;
+        yawErrorVariance = 0;
+        pitchErrorVariance = 0;
         lastShotErrorMagnitude = Double.MAX_VALUE;
         lastShotTargetId = null;
         // Note: yawBias/pitchBias intentionally not reset, they represent a
         // learned correction for a consistent aiming offset, not per-session state.
-        if (mc.player != null) mc.options.useKey.setPressed(false);
     }
 
     @EventHandler
@@ -383,17 +451,40 @@ public class PzH2000 extends Module {
 
         boolean isUsingNow = mc.player.isUsingItem();
 
+        // Guard: auto-fire keeps the use key pressed while drawing. If the bow is no
+        // longer held (slot switched away) the module must release it immediately,
+        // otherwise it keeps spamming use/attack with whatever is selected instead.
+        // Only act if auto-fire was the one holding the key, to avoid cancelling
+        // manual item use (eating, drinking, etc.) when swapping away from the bow.
+        if (!itemInHand()) {
+            if (autoFireHoldsUseKey) {
+                if (mc.options.useKey.isPressed()) mc.options.useKey.setPressed(false);
+                // Do NOT call stopUsingItem here — the player has swapped off the bow
+                // (e.g. PacketEat swapped to food and started eating), and calling
+                // stopUsingItem would cancel that new item use. We only release the key.
+                autoFireHoldsUseKey = false;
+            }
+        }
+
         if (target == null || !itemInHand()) {
-            if (autoFire.get() && isUsingNow && itemInHand()) {
+            if (autoFireHoldsUseKey && isUsingNow && itemInHand()) {
                 mc.options.useKey.setPressed(false);
                 mc.interactionManager.stopUsingItem(mc.player);
+                autoFireHoldsUseKey = false;
             }
+            // A shot fired at a target that has since died, walked out of range, or while we
+            // swapped away from the bow still needs its outcome recorded — otherwise the
+            // self-correction silently skips every engagement that ends before the arrow lands.
+            if (selfCorrect.get() && pendingTargetRef != null) processPendingShot();
             wasUsingItemLastTick = false;
             return;
         }
 
-        Vec3d shooterPos = new Vec3d(mc.player.getX(), mc.player.getEyeY(), mc.player.getZ());
+        // Bows fire the arrow from the living entity's eye position minus 0.1
+        // (the vanilla ArrowEntity spawn offset), not the eye line itself.
+        Vec3d shooterPos = new Vec3d(mc.player.getX(), mc.player.getEyeY() - 0.1, mc.player.getZ());
         Vec3d targetPos = target.getEntityPos().add(0, target.getHeight() / 2.0, 0);
+        Box targetBox = hitboxTargeting.get() ? target.getBoundingBox() : null;
 
         // Release/pending-shot detection runs first and reads cachedSolutionFound as it stood
         // at the end of the previous tick, exactly what the arrow that just left the bow
@@ -411,6 +502,14 @@ public class PzH2000 extends Module {
         wasUsingItemLastTick = isUsingNow;
 
         boolean manualHold = mc.options.useKey.isPressed();
+
+        // If auto-fire was holding the key but is now disabled, release it
+        // so the synthetic press doesn't persist.
+        if (autoFireHoldsUseKey && !autoFire.get()) {
+            mc.options.useKey.setPressed(false);
+            autoFireHoldsUseKey = false;
+        }
+
         boolean wantsToDraw = autoFire.get() || manualHold;
 
         if (!wantsToDraw) {
@@ -421,6 +520,7 @@ public class PzH2000 extends Module {
 
         if (autoFire.get() && !isUsingNow) {
             mc.options.useKey.setPressed(true);
+            autoFireHoldsUseKey = true;
         }
 
         double relativeX = targetPos.x - shooterPos.x;
@@ -464,7 +564,7 @@ public class PzH2000 extends Module {
 
                     double previewSpeed = 3.0 * BowItem.getPullProgress(ticks);
                     List<Vec3d> previewPath = new ArrayList<>();
-                    if (findBallisticPitch(shooterPos, targetPos, yaw, previewSpeed, horizontalDist, heightDiff, previewPath, artilleryMode.get()) != null) {
+                    if (findBallisticPitch(shooterPos, targetPos, yaw, previewSpeed, horizontalDist, heightDiff, previewPath, artilleryMode.get(), targetBox) != null) {
                         feasible = true;
                         if (!cachedSolutionFound) cachedPath = previewPath;
                     }
@@ -472,7 +572,7 @@ public class PzH2000 extends Module {
                 if (!feasible && maxChargeTicks.get() != lastTicks) {
                     double previewSpeed = 3.0 * BowItem.getPullProgress(maxChargeTicks.get());
                     List<Vec3d> previewPath = new ArrayList<>();
-                    if (findBallisticPitch(shooterPos, targetPos, yaw, previewSpeed, horizontalDist, heightDiff, previewPath, artilleryMode.get()) != null) {
+                    if (findBallisticPitch(shooterPos, targetPos, yaw, previewSpeed, horizontalDist, heightDiff, previewPath, artilleryMode.get(), targetBox) != null) {
                         feasible = true;
                         if (!cachedSolutionFound) cachedPath = previewPath;
                     }
@@ -491,7 +591,7 @@ public class PzH2000 extends Module {
         Float currentPitch = null;
         List<Vec3d> currentPath = new ArrayList<>();
         if (!onCooldown && losOk && currentUseTicks >= minChargeTicks.get()) {
-            currentPitch = findBallisticPitch(shooterPos, targetPos, yaw, currentSpeed, horizontalDist, heightDiff, currentPath, artilleryMode.get());
+            currentPitch = findBallisticPitch(shooterPos, targetPos, yaw, currentSpeed, horizontalDist, heightDiff, currentPath, artilleryMode.get(), targetBox);
         }
 
         // Don't accept the bare knife-edge minimum-speed solution the instant it appears,
@@ -532,6 +632,7 @@ public class PzH2000 extends Module {
         if (autoFire.get() && isUsingNow && ready) {
             mc.interactionManager.stopUsingItem(mc.player);
             mc.options.useKey.setPressed(false);
+            autoFireHoldsUseKey = false;
         }
 
         if (selfCorrect.get() && pendingTargetRef != null) {
@@ -542,6 +643,7 @@ public class PzH2000 extends Module {
     private void abortDraw() {
         if (mc.player == null) return;
         mc.options.useKey.setPressed(false);
+        autoFireHoldsUseKey = false;
         if (!mc.player.isUsingItem()) return;
 
         int bowSlot = mc.player.getInventory().getSelectedSlot();
@@ -614,22 +716,36 @@ public class PzH2000 extends Module {
     /**
      * Compares the tracked arrow's actual final position against where we
      * predicted the target to be, and nudges the running yaw/pitch bias toward
-     * canceling out any consistent offset — such as the wiki-documented default
+     * cancelling out any consistent offset, such as the wiki default
      * rightward drift caused by the bow's model not being exactly on the eye
-     * line. This cannot reduce Minecraft's inherent per-shot Gaussian velocity
+     * line.
+     * This cannot reduce Minecraft's inherent per-shot Gaussian velocity
      * randomness (bows have inaccuracy=1); that's independent noise each shot
-     * with nothing consistent to learn from — this only removes bias, not
+     * with nothing consistent to learn from, this only removes bias, not
      * variance.
+     * <p>
+     * An arrow that never got near the target region -> a wall stop well short,
+     * or a drop that fell out early is not recorded, otherwise a single
+     * obstructed shot would turn into a giant degree error, slam the bias
+     * against its cap, and push every later shot hard to the side.
      */
     private void recordShotOutcome(Vec3d actualFinalPos) {
         if (pendingTargetPos == null || pendingShooterPos == null) return;
 
         Vec3d toTarget = pendingTargetPos.subtract(pendingShooterPos);
-        Vec3d toActual = actualFinalPos.subtract(pendingShooterPos);
         double dist = toTarget.length();
         if (dist < 1e-3) return;
 
+        Vec3d toActual = actualFinalPos.subtract(pendingShooterPos);
         Vec3d forward = toTarget.normalize();
+        // Ignore shots that fell short of the target region (walls, premature
+        // ground hits): only progress TOWARD the target past ~85% of the way
+        // counts as a real outcome to learn from. A lofted arrow hitting an
+        // overhead obstruction near the shooter can have a large toActual.length()
+        // but near-zero forward progress; we check the projection instead.
+        double progress = toActual.dotProduct(forward);
+        if (progress < dist * 0.85) return;
+
         Vec3d worldUp = new Vec3d(0, 1, 0);
         Vec3d right = forward.crossProduct(worldUp).normalize();
         Vec3d up = right.crossProduct(forward).normalize();
@@ -641,9 +757,30 @@ public class PzH2000 extends Module {
         double yawErrorDeg = Math.toDegrees(Math.atan2(lateralError, dist));
         double pitchErrorDeg = Math.toDegrees(Math.atan2(verticalError, dist));
 
+        // Adaptive learning rate: reduce when error variance is high (noisy shots)
+        double yawLR = learningRate.get();
+        double pitchLR = learningRate.get();
+        if (adaptiveLearningRate.get()) {
+            // Variance of the error spread around its EMA mean, not the raw
+            // mean-square error: a constant bias raises E[y], so E[y^2]-E[y]^2
+            // stays small and the learning rate stays high to absorb it.
+            yawErrorMean = VARIANCE_SMOOTHING * yawErrorMean + (1.0 - VARIANCE_SMOOTHING) * yawErrorDeg;
+            pitchErrorMean = VARIANCE_SMOOTHING * pitchErrorMean + (1.0 - VARIANCE_SMOOTHING) * pitchErrorDeg;
+            yawErrorVariance = VARIANCE_SMOOTHING * yawErrorVariance + (1.0 - VARIANCE_SMOOTHING) * yawErrorDeg * yawErrorDeg;
+            pitchErrorVariance = VARIANCE_SMOOTHING * pitchErrorVariance + (1.0 - VARIANCE_SMOOTHING) * pitchErrorDeg * pitchErrorDeg;
+
+            double maxVar = maxErrorVariance.get();
+            double yawSpread = Math.max(0.0, yawErrorVariance - yawErrorMean * yawErrorMean);
+            double pitchSpread = Math.max(0.0, pitchErrorVariance - pitchErrorMean * pitchErrorMean);
+            double yawScale = 1.0 - Math.min(1.0, yawSpread / maxVar);
+            double pitchScale = 1.0 - Math.min(1.0, pitchSpread / maxVar);
+            yawLR *= Math.max(0.1, yawScale); // floor at 10% to avoid stall
+            pitchLR *= Math.max(0.1, pitchScale);
+        }
+
         // Arrow landed right of intended -> aim further left next time, hence "-=".
-        yawBias -= learningRate.get() * yawErrorDeg;
-        pitchBias += learningRate.get() * pitchErrorDeg;
+        yawBias -= yawLR * yawErrorDeg;
+        pitchBias += pitchLR * pitchErrorDeg;
 
         double cap = maxCorrection.get();
         yawBias = Math.max(-cap, Math.min(cap, yawBias));
@@ -657,7 +794,7 @@ public class PzH2000 extends Module {
             boolean improved = sameEngagement && errorMagnitude < lastShotErrorMagnitude;
 
             if (improved) {
-                // Walking in successfully — keep nudging further the same way,
+                // Walking in successfully, keep nudging further the same way,
                 // faster than the slow global bias, same sign convention as above.
                 bracketTrimYaw -= bracketRate.get() * yawErrorDeg;
                 bracketTrimPitch += bracketRate.get() * pitchErrorDeg;
@@ -666,7 +803,7 @@ public class PzH2000 extends Module {
                 bracketTrimYaw = Math.max(-trimCap, Math.min(trimCap, bracketTrimYaw));
                 bracketTrimPitch = Math.max(-trimCap, Math.min(trimCap, bracketTrimPitch));
             } else {
-                // Regressed (or this is a new engagement) — a single "improvement"
+                // Regressed (or this is a new engagement) a single "improvement"
                 // can just be the bow's own random spread, not a real trend, so
                 // don't keep compounding on unconfirmed signal. Drop the walked-in
                 // trim and let the next shot start from a clean analytic solve.
@@ -715,25 +852,17 @@ public class PzH2000 extends Module {
     }
 
     /**
-     * allowLoft controls the angle range considered:
-     * - true (Artillery Mode on): steep angles too (-85..85), so a shot can
-     * loft over a wall or drop onto a target beyond flat range.
-     * - false (Artillery Mode off): restricted to shallow angles (-15..45).
-     * <p>
-     * Fast path: solve the drag-free closed-form ballistic equation for this
-     * exact speed, which — for any speed above the analytic minimum — yields
-     * two candidate angles (a flatter/faster "low" arc and a lofted "high"
-     * arc). Drag means the real, simulated landing point will fall a little
-     * short of the no-drag prediction, so each analytic candidate is corrected
-     * with a narrow local simulated search (a handful of angleStep increments
-     * either side) rather than trusting the closed form outright.
-     * <p>
-     * Slow path: if neither analytic candidate (after local correction) lands
-     * within tolerance — e.g. both are obstructed, or the geometry is right at
-     * the edge of what this speed can reach — fall back to the original full
-     * angle sweep as a robustness net.
+     * allowLoft selects the angle search range: Artillery Mode on enables steep
+     * angles (-85..85) so shots can arc over walls or drop onto distant targets,
+     * while off restricts to shallow angles (-15..45). The solver first tries a
+     * fast analytic path, solving the drag-free ballistic equation for the exact
+     * speed, which gives two candidates (a fast low arc and a lofted high arc)
+     * then refines each with a narrow local simulation since drag pulls the real
+     * impact point short of the ideal prediction. If neither corrected candidate
+     * lands within tolerance (example: both are obstructed or at the edge of reach),
+     * a full angle sweep runs as a fallback safety net.
      */
-    private Float findBallisticPitch(Vec3d shooterPos, Vec3d targetPos, double yaw, double speed, double d, double dy, List<Vec3d> outPath, boolean allowLoft) {
+    private Float findBallisticPitch(Vec3d shooterPos, Vec3d targetPos, double yaw, double speed, double d, double dy, List<Vec3d> outPath, boolean allowLoft, Box targetBox) {
         double targetDist3D = DistanceUtil.distance(shooterPos, targetPos);
 
         double minPitch = allowLoft ? -85.0 : -15.0;
@@ -753,25 +882,29 @@ public class PzH2000 extends Module {
                 double pitchLow = -Math.toDegrees(Math.atan(tanLow));
                 double pitchHigh = -Math.toDegrees(Math.atan(tanHigh));
 
-                // Prefer the flatter/faster low arc first — shorter flight time,
+                // Prefer the flatter/faster low arc first which is shorter flight time,
                 // less drag exposure, matches the existing "shortest ticks wins"
                 // philosophy below.
-                refineAround(pitchLow, minPitch, maxPitch, shooterPos, yaw, speed, targetPos, targetDist3D, best);
+                refineAround(pitchLow, minPitch, maxPitch, shooterPos, yaw, speed, targetPos, targetDist3D, best, targetBox);
                 if (!(best.found && best.ticks <= 1)) {
-                    refineAround(pitchHigh, minPitch, maxPitch, shooterPos, yaw, speed, targetPos, targetDist3D, best);
+                    refineAround(pitchHigh, minPitch, maxPitch, shooterPos, yaw, speed, targetPos, targetDist3D, best, targetBox);
                 }
             }
         }
 
         if (best.found) {
+            if (refinePitch.get())
+                refinePitchAround(best.pitch, pitchStep(d), minPitch, maxPitch, shooterPos, yaw, speed, targetPos, targetDist3D, best, targetBox);
             outPath.addAll(best.path);
             return (float) best.pitch;
         }
 
         // Slow path fallback: full brute-force sweep, same as before.
-        bruteForceScan(minPitch, maxPitch, shooterPos, yaw, speed, targetPos, targetDist3D, best);
+        bruteForceScan(minPitch, maxPitch, shooterPos, yaw, speed, targetPos, targetDist3D, best, targetBox);
 
         if (best.found) {
+            if (refinePitch.get())
+                refinePitchAround(best.pitch, pitchStep(d), minPitch, maxPitch, shooterPos, yaw, speed, targetPos, targetDist3D, best, targetBox);
             outPath.addAll(best.path);
             return (float) best.pitch;
         }
@@ -779,19 +912,89 @@ public class PzH2000 extends Module {
     }
 
     /**
+     * Closes the sub-grid gap left by the discrete angle sweep. The sweep can
+     * only land a shot within ~range·tan(step/2) of the true arc, which shows
+     * up as consistent near-hits/overshoots; a golden-section search over the
+     * two neighbor cells walks the miss to (near) zero with a modest number of
+     * extra simulations. The winner replaces best only if it actually improves
+     * on the sampled candidate.
+     */
+    private void refinePitchAround(double centerPitch, double step, double minPitch, double maxPitch, Vec3d shooterPos, double yaw, double speed, Vec3d targetPos, double targetDist3D, Best best, Box targetBox) {
+        double lo = Math.max(minPitch, centerPitch - step);
+        double hi = Math.min(maxPitch, centerPitch + step);
+        if (hi - lo < 1e-4) return;
+
+        final double invPhi = (Math.sqrt(5.0) - 1.0) / 2.0;
+        List<Vec3d> scratch = new ArrayList<>();
+
+        double x1 = hi - invPhi * (hi - lo);
+        double x2 = lo + invPhi * (hi - lo);
+        ArcResult r1 = evaluatePitch(x1, shooterPos, yaw, speed, targetPos, targetDist3D, scratch, targetBox);
+        ArcResult r2 = evaluatePitch(x2, shooterPos, yaw, speed, targetPos, targetDist3D, scratch, targetBox);
+        double f1 = r1 == null ? Double.MAX_VALUE : r1.missDistance();
+        double f2 = r2 == null ? Double.MAX_VALUE : r2.missDistance();
+
+        for (int i = 0; i < REFINE_ITERATIONS; i++) {
+            if (f1 < f2) {
+                hi = x2;
+                x2 = x1;
+                f2 = f1;
+                x1 = hi - invPhi * (hi - lo);
+                ArcResult r = evaluatePitch(x1, shooterPos, yaw, speed, targetPos, targetDist3D, scratch, targetBox);
+                f1 = r == null ? Double.MAX_VALUE : r.missDistance();
+            } else {
+                lo = x1;
+                x1 = x2;
+                f1 = f2;
+                x2 = lo + invPhi * (hi - lo);
+                ArcResult r = evaluatePitch(x2, shooterPos, yaw, speed, targetPos, targetDist3D, scratch, targetBox);
+                f2 = r == null ? Double.MAX_VALUE : r.missDistance();
+            }
+        }
+
+        double pitch = f1 <= f2 ? x1 : x2;
+        double miss = Math.min(f1, f2);
+        if (miss >= best.miss) return;
+
+        List<Vec3d> path = new ArrayList<>();
+        ArcResult result = evaluatePitch(pitch, shooterPos, yaw, speed, targetPos, targetDist3D, path, targetBox);
+        if (result == null || result.missDistance() > hitTolerance.get()) return;
+
+        best.found = true;
+        best.pitch = pitch;
+        best.miss = result.missDistance();
+        best.ticks = result.ticksToClosestApproach();
+        best.path = path;
+    }
+
+    /**
      * Mutable best-candidate accumulator shared across the analytic and brute-force passes.
+     * Accuracy-first: among candidates that cleared hitTolerance, the one with the smallest
+     * simulated miss wins. Flight time only breaks a tie when two arcs miss by virtually the
+     * same amount (CLOSENESS_EPSILON), because the bow's per-shot random inaccuracy compounds
+     * into more drift on longer flights. Pitched candidates at angleStep granularity (default 1.0)
+     * routinely differ in miss by 0.5+ blocks within the refine window, so preferring the
+     * fastest arc outright systematically aims up to a full block off-center.
      */
     private static final class Best {
+        private static final double CLOSENESS_EPSILON = 0.05;
+
         boolean found;
         double pitch;
         int ticks = Integer.MAX_VALUE;
+        double miss = Double.MAX_VALUE;
         List<Vec3d> path;
 
         void consider(double candidatePitch, ArcResult result, List<Vec3d> path) {
-            if (result.ticksToClosestApproach() < ticks) {
+            double candidateMiss = result.missDistance();
+            int candidateTicks = result.ticksToClosestApproach();
+            if (!found
+                || candidateMiss < miss - CLOSENESS_EPSILON
+                || (Math.abs(candidateMiss - miss) <= CLOSENESS_EPSILON && candidateTicks < ticks)) {
                 found = true;
                 pitch = candidatePitch;
-                ticks = result.ticksToClosestApproach();
+                ticks = candidateTicks;
+                miss = candidateMiss;
                 this.path = path;
             }
         }
@@ -800,44 +1003,61 @@ public class PzH2000 extends Module {
     /**
      * Simulates a narrow window of angles (±4°, in angleStep increments) around an analytic guess.
      */
-    private void refineAround(double centerPitch, double minPitch, double maxPitch, Vec3d shooterPos, double yaw, double speed, Vec3d targetPos, double targetDist3D, Best best) {
+    private void refineAround(double centerPitch, double minPitch, double maxPitch, Vec3d shooterPos, double yaw, double speed, Vec3d targetPos, double targetDist3D, Best best, Box targetBox) {
         double window = 4.0;
         double from = Math.max(minPitch, centerPitch - window);
         double to = Math.min(maxPitch, centerPitch + window);
-        scanRange(from, to, shooterPos, yaw, speed, targetPos, targetDist3D, best);
+        scanRange(from, to, shooterPos, yaw, speed, targetPos, targetDist3D, best, targetBox);
     }
 
-    private void bruteForceScan(double minPitch, double maxPitch, Vec3d shooterPos, double yaw, double speed, Vec3d targetPos, double targetDist3D, Best best) {
-        scanRange(minPitch, maxPitch, shooterPos, yaw, speed, targetPos, targetDist3D, best);
+    private void bruteForceScan(double minPitch, double maxPitch, Vec3d shooterPos, double yaw, double speed, Vec3d targetPos, double targetDist3D, Best best, Box targetBox) {
+        scanRange(minPitch, maxPitch, shooterPos, yaw, speed, targetPos, targetDist3D, best, targetBox);
     }
 
-    // Among all candidates that land within tolerance, prefer the one with the
-    // shortest flight time — not just the smallest miss distance. Bows have
-    // inaccuracy=1 per the wiki (random Gaussian noise added to launch
-    // velocity), and that noise compounds into more positional drift the
-    // longer the arrow is in flight. A flatter, faster shot that still hits
-    // is inherently less exposed to that randomness than a slower, longer
-    // lofted one with a marginally smaller simulated miss.
-    private void scanRange(double minPitch, double maxPitch, Vec3d shooterPos, double yaw, double speed, Vec3d targetPos, double targetDist3D, Best best) {
-        double yawRad = Math.toRadians(yaw);
-        double dirX = -Math.sin(yawRad);
-        double dirZ = Math.cos(yawRad);
+    // Among all candidates that land within tolerance, prefer the most accurate
+    // one (smallest simulated miss); only fall back to the shortest flight time
+    // as a tie-break, since bows have inaccuracy=1 per the wiki (random Gaussian
+    // noise added to launch velocity) and that noise compounds into more
+    // positional drift the longer the arrow is in flight.
+    private void scanRange(double minPitch, double maxPitch, Vec3d shooterPos, double yaw, double speed, Vec3d targetPos, double targetDist3D, Best best, Box targetBox) {
+        double horizontalDist = DistanceUtil.distanceXZ(shooterPos.x, shooterPos.z, targetPos.x, targetPos.z);
+        double step = pitchStep(horizontalDist);
 
-        for (double pitchDeg = minPitch; pitchDeg <= maxPitch; pitchDeg += angleStep.get()) {
-            double pitchRad = Math.toRadians(pitchDeg);
-            double horizontalSpeed = speed * Math.cos(pitchRad);
-            Vec3d velocity = new Vec3d(
-                dirX * horizontalSpeed,
-                -speed * Math.sin(pitchRad),
-                dirZ * horizontalSpeed
-            );
-
+        for (double pitchDeg = minPitch; pitchDeg <= maxPitch; pitchDeg += step) {
             List<Vec3d> path = new ArrayList<>();
-            ArcResult result = simulateArc(shooterPos, velocity, targetPos, targetDist3D, path);
+            ArcResult result = evaluatePitch(pitchDeg, shooterPos, yaw, speed, targetPos, targetDist3D, path, targetBox);
             if (result == null || result.missDistance() > hitTolerance.get()) continue;
 
             best.consider(pitchDeg, result, path);
         }
+    }
+
+    /**
+     * Adaptive sweep step: at 50 blocks reference distance and above, step =
+     * angleStep. Closer = larger step (faster), farther = smaller (precision).
+     */
+    private double pitchStep(double horizontalDist) {
+        double step = angleStep.get();
+        if (adaptiveAngleStep.get() && horizontalDist > 1.0) {
+            step = Math.max(0.25, Math.min(2.0, angleStep.get() * (50.0 / horizontalDist)));
+        }
+        return step;
+    }
+
+    /**
+     * Simulates one candidate pitch angle; pathOut may be null to skip building
+     * the path (probes), null result means the arc is blocked before the target.
+     */
+    private ArcResult evaluatePitch(double pitchDeg, Vec3d shooterPos, double yaw, double speed, Vec3d targetPos, double targetDist3D, List<Vec3d> pathOut, Box targetBox) {
+        double pitchRad = Math.toRadians(pitchDeg);
+        double yawRad = Math.toRadians(yaw);
+        double horizontalSpeed = speed * Math.cos(pitchRad);
+        Vec3d velocity = new Vec3d(
+            -Math.sin(yawRad) * horizontalSpeed,
+            -speed * Math.sin(pitchRad),
+            Math.cos(yawRad) * horizontalSpeed
+        );
+        return simulateArc(shooterPos, velocity, targetPos, targetDist3D, pathOut, targetBox);
     }
 
     private record ArcResult(double missDistance, int ticksToClosestApproach) {
@@ -853,11 +1073,12 @@ public class PzH2000 extends Module {
      * horizontal (X/Z) distance. A flat shot aimed straight at a target standing
      * behind a wall travels in a near-straight line toward the target's X/Z
      * coordinates, so it hits the wall at almost the same horizontal position as
-     * the target — a horizontal-only check would wrongly treat that as "reaching"
+     * the target.
+     * a horizontal-only check would wrongly treat that as "reaching"
      * the target. Comparing true 3D distance correctly recognizes the wall is
      * physically closer to the shooter than the target is, and rejects the shot.
      */
-    private ArcResult simulateArc(Vec3d startPos, Vec3d startVel, Vec3d targetPos, double targetDist3D, List<Vec3d> outPath) {
+    private ArcResult simulateArc(Vec3d startPos, Vec3d startVel, Vec3d targetPos, double targetDist3D, List<Vec3d> outPath, Box targetBox) {
         Vec3d pos = startPos;
         Vec3d vel = startVel;
         double bestMiss = Double.MAX_VALUE;
@@ -877,13 +1098,13 @@ public class PzH2000 extends Module {
             if (blockHit.getType() != HitResult.Type.MISS) {
                 outPath.add(blockHit.getPos());
                 double distToBlock3D = DistanceUtil.distance(blockHit.getPos(), startPos);
-                double missAtBlock = DistanceUtil.distance(blockHit.getPos(), targetPos);
+                double missAtBlock = distanceToTarget(blockHit.getPos(), targetPos, targetBox);
                 if (distToBlock3D < targetDist3D - hitTolerance.get()) return null;
                 boolean blockIsBest = missAtBlock < bestMiss;
                 return new ArcResult(Math.min(bestMiss, missAtBlock), blockIsBest ? i : bestMissTick);
             }
 
-            double miss = DistanceUtil.distance(next, targetPos);
+            double miss = distanceToTarget(next, targetPos, targetBox);
             if (miss < bestMiss) {
                 bestMiss = miss;
                 bestMissTick = i;
@@ -898,6 +1119,20 @@ public class PzH2000 extends Module {
         }
 
         return new ArcResult(bestMiss, bestMissTick);
+    }
+
+    /**
+     * Distance from a point to the aim target: the center point when hitbox
+     * targeting is off, or 0 inside the entity's bounding box (the point has
+     * reached the box) and otherwise the distance to the box surface.
+     */
+    private double distanceToTarget(Vec3d point, Vec3d targetPos, Box targetBox) {
+        if (targetBox == null) return DistanceUtil.distance(point, targetPos);
+
+        double dx = Math.max(0.0, Math.max(targetBox.minX - point.x, point.x - targetBox.maxX));
+        double dy = Math.max(0.0, Math.max(targetBox.minY - point.y, point.y - targetBox.maxY));
+        double dz = Math.max(0.0, Math.max(targetBox.minZ - point.z, point.z - targetBox.maxZ));
+        return Math.sqrt(dx * dx + dy * dy + dz * dz);
     }
 
     @Override

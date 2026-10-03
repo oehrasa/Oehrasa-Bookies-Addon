@@ -203,7 +203,7 @@ public class PlatformBuilder extends Module {
 
     private final Setting<Boolean> preventFallOffEdges = sgBaritone.add(new BoolSetting.Builder()
         .name("prevent-fall-off-edges")
-        .description("Forces Baritone to sneak near edges/ledges while pathing here, instead of assuming an external 'safewalk' mechanic (a separate mod feature we don't have) prevents fall damage. Leave this on unless you specifically have a safewalk mod loaded.")
+        .description("Forces Baritone to sneak near edges/ledges while pathing here, instead of assuming an external 'safewalk'.")
         .defaultValue(true)
         .visible(useBaritone::get)
         .build()
@@ -211,7 +211,7 @@ public class PlatformBuilder extends Module {
 
     private final Setting<Integer> allowedFallHeight = sgBaritone.add(new IntSetting.Builder()
         .name("allowed-fall-height")
-        .description("Maximum fall height (in blocks) Baritone is allowed to path through. Keep this low (0-3) so it won't take a route that drops it off the platform's edge.")
+        .description("Maximum fall height (in blocks) Baritone is allowed to path through. Keep this low (0-3).")
         .defaultValue(0)
         .min(0)
         .max(20)
@@ -316,7 +316,7 @@ public class PlatformBuilder extends Module {
 
     private final Setting<Integer> restockResumeDelay = sgRestock.add(new IntSetting.Builder()
         .name("resume-delay")
-        .description("Ticks to wait after a successful restock before resuming placement, so the hotbar swap back to your build material fully settles first.")
+        .description("Ticks to wait after a successful restock before resuming placement.")
         .defaultValue(6)
         .min(0)
         .max(40)
@@ -346,6 +346,15 @@ public class PlatformBuilder extends Module {
 
     private final HashSet<BlockPos> pendingPlacements = new HashSet<>();
 
+    private static final int RESTOCK_CHECK_INTERVAL = 20;
+
+    private int restockCheckTimer = 0;
+    private int cachedBuildSlot = -1;
+
+    private List<BlockPos> cachedFlatArea;
+    private int cachedFlatAreaY = Integer.MIN_VALUE;
+    private boolean cachedFlatAreaValid = false;
+
     private int delay = 0;
     private boolean buildStarted = false;
 
@@ -373,6 +382,9 @@ public class PlatformBuilder extends Module {
         overrodeAssumeSafeWalk = false;
         overrodeMaxFallHeight = false;
         restockCooldown = 0;
+        restockCheckTimer = 0;
+        cachedBuildSlot = -1;
+        invalidateFlatArea();
         collectingDroppedShulker = false;
         pendingShulkerItem = null;
         shulkerCollectTimeout = 0;
@@ -409,6 +421,8 @@ public class PlatformBuilder extends Module {
         }
         restockEngine.reset();
         restockCooldown = 0;
+        cachedBuildSlot = -1;
+        invalidateFlatArea();
         collectingDroppedShulker = false;
         pendingShulkerItem = null;
         shulkerCollectTimeout = 0;
@@ -444,6 +458,7 @@ public class PlatformBuilder extends Module {
         }
 
         AreaSelector.Result result = areaSelector.handleClick(pos);
+        invalidateFlatArea();
         switch (result) {
             case POS1_SET -> {
                 yLevel.set(pos.getY());
@@ -482,6 +497,7 @@ public class PlatformBuilder extends Module {
 
         if (resetSelectionKey.get().isPressed()) {
             areaSelector.reset();
+            invalidateFlatArea();
             if (buildStarted) {
                 cancelBuild("§ePlatform selection reset.");
             } else {
@@ -518,14 +534,23 @@ public class PlatformBuilder extends Module {
         if (restockCooldown > 0) {
             restockCooldown--;
             return;
-        } else if (autoRestock.get() && !allowedBlocks.get().isEmpty() && needsMaterialRestock()) {
-            // Pause any in-flight Baritone movement before handing control to the
-            // restock sequence, so it doesn't fight the walk-to-placement logic below.
-            if (baritone != null) baritone.getPathingBehavior().cancelEverything();
-            waitingForBaritone = false;
-            currentTargetPos = null;
-            restockEngine.start(pickRestockItem(), buildRestockConfig());
-            return;
+        }
+
+        if (autoRestock.get() && !allowedBlocks.get().isEmpty()) {
+            if (restockCheckTimer > 0) {
+                restockCheckTimer--;
+            } else {
+                restockCheckTimer = RESTOCK_CHECK_INTERVAL;
+                if (needsMaterialRestock()) {
+                    // Pause any in-flight Baritone movement before handing control to the
+                    // restock sequence, so it doesn't fight the walk-to-placement logic below.
+                    if (baritone != null) baritone.getPathingBehavior().cancelEverything();
+                    waitingForBaritone = false;
+                    currentTargetPos = null;
+                    restockEngine.start(pickRestockItem(), buildRestockConfig());
+                    return;
+                }
+            }
         }
 
         // If we're mid-pathfind, wait for Baritone to either arrive or put us
@@ -595,9 +620,8 @@ public class PlatformBuilder extends Module {
             delay = delayAfterPlacement.get();
         }
 
-        int targetY = yLevel.get();
         boolean allPlaced = true;
-        for (BlockPos pos : areaSelector.getFlatArea(targetY)) {
+        for (BlockPos pos : getFlatAreaCached()) {
             // A position is still “needed” if it's air/liquid/replaceable
             // AND it hasn't just been placed this tick (pending).
             if (needsBlock(mc.world.getBlockState(pos)) && !pendingPlacements.contains(pos)) {
@@ -624,6 +648,8 @@ public class PlatformBuilder extends Module {
         currentTargetPos = null;
         pendingPlacements.clear();
         stuckTicks = 0;
+        cachedBuildSlot = -1;
+        invalidateFlatArea();
         if (restockEngine.isActive()) {
             restockEngine.restoreOriginalSlotIfNeeded();
             restockEngine.reset();
@@ -646,13 +672,12 @@ public class PlatformBuilder extends Module {
     }
 
     private BlockPos findBaritoneEdgeSafeGoal() {
-        int targetY = yLevel.get();
         BlockPos playerPos = mc.player.getBlockPos();
 
         BlockPos best = null;
         double bestDist = Double.MAX_VALUE;
 
-        for (BlockPos pos : areaSelector.getFlatArea(targetY)) {
+        for (BlockPos pos : getFlatAreaCached()) {
             if (pendingPlacements.contains(pos)) continue;
             if (!needsBlock(mc.world.getBlockState(pos))) continue;
 
@@ -676,7 +701,7 @@ public class PlatformBuilder extends Module {
         BlockState state = mc.world.getBlockState(pos);
         if (!needsBlock(state)) return false;
 
-        FindItemResult item = InvUtils.findInHotbar(this::isAllowedStack);
+        FindItemResult item = findBuildBlockInHotbar();
         if (!item.found()) return false;
 
         boolean ok = BlockUtils.place(pos, item, rotate.get(), 50, true, true);
@@ -711,7 +736,7 @@ public class PlatformBuilder extends Module {
         }
 
         List<BlockPos> positions = new ArrayList<>();
-        for (BlockPos pos : areaSelector.getFlatArea(targetY)) {
+        for (BlockPos pos : getFlatAreaCached()) {
             if (!PlayerUtils.isWithinReach(pos)) continue;
             if (pendingPlacements.contains(pos)) continue;
             if (!needsBlock(mc.world.getBlockState(pos))) continue;
@@ -719,6 +744,37 @@ public class PlatformBuilder extends Module {
         }
 
         return positions.toArray(new BlockPos[0]);
+    }
+
+    private FindItemResult findBuildBlockInHotbar() {
+        if (cachedBuildSlot != -1) {
+            ItemStack stack = mc.player.getInventory().getStack(cachedBuildSlot);
+            if (isAllowedStack(stack)) {
+                return new FindItemResult(cachedBuildSlot, stack.getCount());
+            }
+            cachedBuildSlot = -1;
+        }
+
+        FindItemResult item = InvUtils.findInHotbar(this::isAllowedStack);
+        if (item.found()) cachedBuildSlot = item.slot();
+        return item;
+    }
+
+    /**
+     * Selection flattened to the current yLevel, memoized until the selection
+     * or the build level changes (both invalidate / mismatch and recompute).
+     */
+    private List<BlockPos> getFlatAreaCached() {
+        int targetY = yLevel.get();
+        if (cachedFlatAreaValid && cachedFlatAreaY == targetY) return cachedFlatArea;
+        cachedFlatArea = areaSelector.getFlatArea(targetY);
+        cachedFlatAreaY = targetY;
+        cachedFlatAreaValid = true;
+        return cachedFlatArea;
+    }
+
+    private void invalidateFlatArea() {
+        cachedFlatAreaValid = false;
     }
 
     private boolean isAllowedStack(ItemStack stack) {
@@ -781,7 +837,7 @@ public class PlatformBuilder extends Module {
 
     private ShulkerRestockEngine.RestockConfig buildRestockConfig() {
         List<BlockPos> footprint = new ArrayList<>();
-        for (BlockPos pos : areaSelector.getFlatArea(yLevel.get())) {
+        for (BlockPos pos : getFlatAreaCached()) {
             footprint.add(pos);
         }
 

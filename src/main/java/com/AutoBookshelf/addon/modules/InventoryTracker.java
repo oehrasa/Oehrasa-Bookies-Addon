@@ -84,8 +84,8 @@ public class InventoryTracker extends Module {
         .description("Maximum distance to render the tracked inventory grid.")
         .defaultValue(24)
         .min(1)
-        .max(64)
-        .sliderRange(1, 64)
+        .max(128)
+        .sliderRange(1, 128)
         .build()
     );
 

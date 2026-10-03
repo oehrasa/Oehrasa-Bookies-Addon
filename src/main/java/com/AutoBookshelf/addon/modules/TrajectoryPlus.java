@@ -236,6 +236,17 @@ public class TrajectoryPlus extends Module {
     private final Pool<Vector3d> vec3s = new Pool<>(Vector3d::new);
     private final List<Path> paths = new ArrayList<>();
 
+    /**
+     * Rendering snapshot cache. Simulating trajectories (up to simulationSteps
+     * steps per path, once per entity) is the dominant per-frame cost, so the
+     * computed paths are snapshotted and only re-simulated every
+     * SIM_REFRESH_FRAMES frames. The cached snapshots keep rendering every
+     * frame, so the lines stay continuous between refreshes.
+     */
+    private static final int SIM_REFRESH_FRAMES = 3;
+    private int simRefreshCounter = 0;
+    private final List<CachedPath> cachedPaths = new ArrayList<>();
+
     // Breadcrumb ("behind") trails for already-fired projectiles, keyed by entity UUID.
     private final Map<UUID, List<Vector3d>> firedTrails = new ConcurrentHashMap<>();
 
@@ -253,6 +264,14 @@ public class TrajectoryPlus extends Module {
     @Override
     public void onDeactivate() {
         firedTrails.clear();
+        cachedPaths.clear();
+        simRefreshCounter = 0;
+    }
+
+    @Override
+    public void onActivate() {
+        cachedPaths.clear();
+        simRefreshCounter = 0;
     }
 
     private boolean itemFilter(Item item) {
@@ -355,19 +374,20 @@ public class TrajectoryPlus extends Module {
     private static final double SHULKER_DRAG = 0.99;
     private static final int SHULKER_MAX_SIMULATION_TICKS = 200;
 
-    private void renderShulkerBulletPrediction(Render3DEvent event, Entity shulkerBullet, SettingColor color) {
+    private CachedPath simulateShulkerBullet(Entity shulkerBullet) {
         int maxTicks = Math.min(
             simulationSteps.get() > 0 ? simulationSteps.get() : 500,
             SHULKER_MAX_SIMULATION_TICKS
         );
 
-        List<Vec3d> points = new ArrayList<>();
+        CachedPath cp = new CachedPath();
+        cp.isShulker = true;
+        cp.color = new SettingColor(existingProjectileColor.get());
+        cp.lastPoint = new Vector3d(shulkerBullet.getX(), shulkerBullet.getY(), shulkerBullet.getZ());
+
         Vec3d currentPos = shulkerBullet.getEntityPos();
         Vec3d currentVel = shulkerBullet.getVelocity();
-        points.add(currentPos);
-
-        BlockPos hitBlockPos = null;
-        Entity hitEntity = null;
+        cp.points.add(new Vector3d(currentPos.x, currentPos.y, currentPos.z));
 
         List<LivingEntity> candidates = getNearbyLivingEntities(currentPos, currentVel, shulkerBullet);
 
@@ -377,8 +397,8 @@ public class TrajectoryPlus extends Module {
 
             EntityHitResult entityHit = findEntityHit(currentPos, nextPos, candidates);
             if (entityHit != null) {
-                points.add(entityHit.getPos());
-                hitEntity = entityHit.getEntity();
+                cp.points.add(new Vector3d(entityHit.getPos().x, entityHit.getPos().y, entityHit.getPos().z));
+                cp.collidingEntities.add(entityHit.getEntity());
                 break;
             }
 
@@ -387,33 +407,106 @@ public class TrajectoryPlus extends Module {
             ));
 
             if (blockHit.getType() != HitResult.Type.MISS) {
-                points.add(blockHit.getPos());
-                hitBlockPos = blockHit.getBlockPos();
+                cp.points.add(new Vector3d(blockHit.getPos().x, blockHit.getPos().y, blockHit.getPos().z));
+                cp.hitBlockPos = blockHit.getBlockPos();
                 break;
             }
 
             currentPos = nextPos;
-            points.add(currentPos);
+            cp.points.add(new Vector3d(currentPos.x, currentPos.y, currentPos.z));
         }
 
-        SettingColor pathColor = (hitEntity != null && renderEntityHighlight.get()) ? entityHighlightColor.get() : color;
+        return cp;
+    }
+
+    private void renderShulkerCached(Render3DEvent event, CachedPath cp) {
+        SettingColor color = (!cp.collidingEntities.isEmpty() && renderEntityHighlight.get()) ? entityHighlightColor.get() : cp.color;
 
         if (renderTrailAhead.get()) {
-            int maxIndex = Math.min(points.size() - 1, aheadTrailLength.get());
+            int maxIndex = Math.min(cp.points.size() - 1, aheadTrailLength.get());
             for (int i = 0; i < maxIndex; i++) {
-                Vec3d a = points.get(i), b = points.get(i + 1);
-                event.renderer.line(a.x, a.y, a.z, b.x, b.y, b.z, pathColor);
+                Vector3d a = cp.points.get(i), b = cp.points.get(i + 1);
+                event.renderer.line(a.x, a.y, a.z, b.x, b.y, b.z, color);
             }
         }
 
-        if (hitBlockPos != null && renderFrameBox.get()) {
-            event.renderer.box(hitBlockPos, frameBoxColor.get(), frameBoxColor.get(), shapeMode.get(), 0);
+        if (cp.hitBlockPos != null && renderFrameBox.get()) {
+            event.renderer.box(cp.hitBlockPos, frameBoxColor.get(), frameBoxColor.get(), shapeMode.get(), 0);
         }
 
-        if (hitEntity != null && renderEntityHighlight.get()) {
-            Box box = hitEntity.getBoundingBox();
+        if (renderEntityHighlight.get() && !cp.collidingEntities.isEmpty()) {
+            Box box = cp.collidingEntities.get(0).getBoundingBox();
             event.renderer.box(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ,
                 entityHighlightColor.get(), entityHighlightColor.get(), entityShapeMode.get(), 0);
+        }
+    }
+
+    private CachedPath snapshot(Path p, SettingColor ownerColor) {
+        CachedPath cp = new CachedPath();
+        for (Vector3d pt : p.points) cp.points.add(new Vector3d(pt));
+        cp.hitQuad = p.hitQuad;
+        cp.hitQuadHorizontal = p.hitQuadHorizontal;
+        cp.hitQuadX1 = p.hitQuadX1;
+        cp.hitQuadY1 = p.hitQuadY1;
+        cp.hitQuadZ1 = p.hitQuadZ1;
+        cp.hitQuadX2 = p.hitQuadX2;
+        cp.hitQuadY2 = p.hitQuadY2;
+        cp.hitQuadZ2 = p.hitQuadZ2;
+        cp.hitBlockPos = p.hitBlockPos;
+        cp.collidingEntities.addAll(p.collidingEntities);
+        cp.lastPoint = p.lastPoint != null ? new Vector3d(p.lastPoint) : null;
+        cp.start = p.start;
+        cp.drawPositionBoxes = true;
+        cp.color = new SettingColor(ownerColor.r, ownerColor.g, ownerColor.b, ownerColor.a);
+        return cp;
+    }
+
+    private void renderCached(CachedPath cp, Render3DEvent event) {
+        // Render "ahead" trail
+        if (renderTrailAhead.get()) {
+            int maxIndex = Math.min(cp.points.size(), cp.start + aheadTrailLength.get());
+            Vector3d previous = cp.lastPoint;
+            for (int i = cp.start; i < maxIndex; i++) { // was `i < points.size()`
+                Vector3d point = cp.points.get(i);
+
+                if (previous != null) {
+                    event.renderer.line(previous.x, previous.y, previous.z, point.x, point.y, point.z, cp.color);
+                    if (cp.drawPositionBoxes && renderPositionBox.get()) {
+                        event.renderer.box(
+                            point.x - positionBoxSize.get(), point.y - positionBoxSize.get(), point.z - positionBoxSize.get(),
+                            point.x + positionBoxSize.get(), point.y + positionBoxSize.get(), point.z + positionBoxSize.get(),
+                            positionSideColor.get(), positionLineColor.get(), shapeMode.get(), 0
+                        );
+                    }
+                }
+
+                previous = point;
+            }
+        }
+
+        // Render hit quad + optional frame box
+        if (cp.hitQuad) {
+            if (cp.hitQuadHorizontal)
+                event.renderer.sideHorizontal(cp.hitQuadX1, cp.hitQuadY1, cp.hitQuadZ1, cp.hitQuadX1 + 0.5, cp.hitQuadZ1 + 0.5, sideColor.get(), cp.color, shapeMode.get());
+            else
+                event.renderer.sideVertical(cp.hitQuadX1, cp.hitQuadY1, cp.hitQuadZ1, cp.hitQuadX2, cp.hitQuadY2, cp.hitQuadZ2, sideColor.get(), cp.color, shapeMode.get());
+        }
+
+        if (renderFrameBox.get() && cp.hitBlockPos != null) {
+            event.renderer.box(cp.hitBlockPos, frameBoxColor.get(), frameBoxColor.get(), shapeMode.get(), 0);
+        }
+
+        // Render highlighted colliding entities
+        SettingColor entityColor = renderEntityHighlight.get() ? entityHighlightColor.get() : cp.color;
+        ShapeMode entityMode = renderEntityHighlight.get() ? entityShapeMode.get() : shapeMode.get();
+
+        for (Entity collidingEntity : cp.collidingEntities) {
+            double x = (collidingEntity.getX() - collidingEntity.lastX) * event.tickDelta;
+            double y = (collidingEntity.getY() - collidingEntity.lastY) * event.tickDelta;
+            double z = (collidingEntity.getZ() - collidingEntity.lastZ) * event.tickDelta;
+
+            Box box = collidingEntity.getBoundingBox();
+            event.renderer.box(x + box.minX, y + box.minY, z + box.minZ, x + box.maxX, y + box.maxY, z + box.maxZ, entityColor, entityColor, entityMode, 0);
         }
     }
 
@@ -464,11 +557,17 @@ public class TrajectoryPlus extends Module {
 
         float tickDelta = mc.world.getTickManager().isFrozen() ? 1 : event.tickDelta;
 
-        for (PlayerEntity player : mc.world.getPlayers()) {
-            if (!otherPlayers.get() && player != mc.player) continue;
+        boolean recompute = ++simRefreshCounter >= SIM_REFRESH_FRAMES;
+        if (recompute) {
+            simRefreshCounter = 0;
+            cachedPaths.clear();
 
-            calculatePath(player, tickDelta);
-            for (Path path : paths) path.render(event, lineColor.get());
+            for (PlayerEntity player : mc.world.getPlayers()) {
+                if (!otherPlayers.get() && player != mc.player) continue;
+
+                calculatePath(player, tickDelta);
+                for (Path path : paths) cachedPaths.add(snapshot(path, lineColor.get()));
+            }
         }
 
         if (firedProjectiles.get()) {
@@ -482,16 +581,44 @@ public class TrajectoryPlus extends Module {
                 updateBreadcrumb(entity);
                 if (renderTrailBehind.get()) renderBreadcrumb(event, entity);
 
-                if (isShulkerBullet) {
-                    renderShulkerBulletPrediction(event, entity, existingProjectileColor.get());
-                } else {
-                    calculateFiredPath(entity, tickDelta);
-                    for (Path path : paths) path.render(event, existingProjectileColor.get());
+                if (recompute) {
+                    if (isShulkerBullet) {
+                        cachedPaths.add(simulateShulkerBullet(entity));
+                    } else {
+                        calculateFiredPath(entity, tickDelta);
+                        for (Path path : paths) cachedPaths.add(snapshot(path, existingProjectileColor.get()));
+                    }
                 }
             }
 
             pruneBreadcrumbs();
         }
+
+        for (CachedPath cp : cachedPaths) {
+            if (cp.isShulker) {
+                renderShulkerCached(event, cp);
+            } else {
+                renderCached(cp, event);
+            }
+        }
+    }
+
+    /**
+     * Immutable-enough render snapshot of one simulated trajectory, shared
+     * between refresh frames so the lines render continuously without
+     * re-running the (expensive) simulation each frame.
+     */
+    private static class CachedPath {
+        private final List<Vector3d> points = new ArrayList<>();
+        private boolean hitQuad, hitQuadHorizontal;
+        private double hitQuadX1, hitQuadY1, hitQuadZ1, hitQuadX2, hitQuadY2, hitQuadZ2;
+        private BlockPos hitBlockPos;
+        private final List<Entity> collidingEntities = new ArrayList<>();
+        private Vector3d lastPoint;
+        private int start;
+        private boolean drawPositionBoxes;
+        private boolean isShulker;
+        private SettingColor color = new SettingColor();
     }
 
     private class Path {
@@ -597,54 +724,6 @@ public class TrajectoryPlus extends Module {
 
         public void ignoreFirstTicks() {
             start = points.size() <= TrajectoryPlus.this.ignoreFirstTicks.get() ? 0 : TrajectoryPlus.this.ignoreFirstTicks.get();
-        }
-
-        public void render(Render3DEvent event, SettingColor color) {
-            // Render "ahead" trail
-            if (renderTrailAhead.get()) {
-                int maxIndex = Math.min(points.size(), start + TrajectoryPlus.this.aheadTrailLength.get());
-                for (int i = start; i < maxIndex; i++) { // was `i < points.size()`
-                    Vector3d point = points.get(i);
-
-                    if (lastPoint != null) {
-                        event.renderer.line(lastPoint.x, lastPoint.y, lastPoint.z, point.x, point.y, point.z, color);
-                        if (renderPositionBox.get()) {
-                            event.renderer.box(
-                                point.x - positionBoxSize.get(), point.y - positionBoxSize.get(), point.z - positionBoxSize.get(),
-                                point.x + positionBoxSize.get(), point.y + positionBoxSize.get(), point.z + positionBoxSize.get(),
-                                positionSideColor.get(), positionLineColor.get(), shapeMode.get(), 0
-                            );
-                        }
-                    }
-
-                    lastPoint = point;
-                }
-            }
-
-            // Render hit quad + optional frame box
-            if (hitQuad) {
-                if (hitQuadHorizontal)
-                    event.renderer.sideHorizontal(hitQuadX1, hitQuadY1, hitQuadZ1, hitQuadX1 + 0.5, hitQuadZ1 + 0.5, sideColor.get(), color, shapeMode.get());
-                else
-                    event.renderer.sideVertical(hitQuadX1, hitQuadY1, hitQuadZ1, hitQuadX2, hitQuadY2, hitQuadZ2, sideColor.get(), color, shapeMode.get());
-
-                if (renderFrameBox.get() && hitBlockPos != null) {
-                    event.renderer.box(hitBlockPos, frameBoxColor.get(), frameBoxColor.get(), shapeMode.get(), 0);
-                }
-            }
-
-            // Render highlighted colliding entities
-            SettingColor entityColor = renderEntityHighlight.get() ? entityHighlightColor.get() : color;
-            ShapeMode entityMode = renderEntityHighlight.get() ? entityShapeMode.get() : shapeMode.get();
-
-            for (Entity collidingEntity : collidingEntities) {
-                double x = (collidingEntity.getX() - collidingEntity.lastX) * event.tickDelta;
-                double y = (collidingEntity.getY() - collidingEntity.lastY) * event.tickDelta;
-                double z = (collidingEntity.getZ() - collidingEntity.lastZ) * event.tickDelta;
-
-                Box box = collidingEntity.getBoundingBox();
-                event.renderer.box(x + box.minX, y + box.minY, z + box.minZ, x + box.maxX, y + box.maxY, z + box.maxZ, entityColor, entityColor, entityMode, 0);
-            }
         }
     }
 }

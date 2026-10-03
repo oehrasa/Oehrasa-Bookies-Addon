@@ -13,9 +13,12 @@ import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.screen.slot.SlotActionType;
+import net.minecraft.util.math.MathHelper;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public class ThrowEmptyShulkers extends Module {
 
@@ -54,10 +57,9 @@ public class ThrowEmptyShulkers extends Module {
         .build()
     );
 
-    // Rotation mode (silent = client-side only, normal = sends packets)
     private final Setting<RotationMode> rotationMode = sgThrow.add(new EnumSetting.Builder<RotationMode>()
         .name("rotation-mode")
-        .description("Normal: sends rotation packets (server sees you turn). Silent: client‑side only (no packets).")
+        .description("Both send rotation packets. Silent keeps your camera where it is, Normal turns your camera too.")
         .defaultValue(RotationMode.Silent)
         .build()
     );
@@ -65,7 +67,7 @@ public class ThrowEmptyShulkers extends Module {
     // Disable rotation entirely
     private final Setting<Boolean> enableRotation = sgThrow.add(new BoolSetting.Builder()
         .name("enable-rotation")
-        .description("Completely disable any rotation (yaw/pitch changes) – throws without moving your camera.")
+        .description("Turn this off to throw without rotating at all, regardless of the offsets below.")
         .defaultValue(true)
         .build()
     );
@@ -117,12 +119,21 @@ public class ThrowEmptyShulkers extends Module {
     private ThrowState throwState = ThrowState.IDLE;
     private BatchState batchState = BatchState.IDLE;
 
+    private static final int ROTATION_PRIORITY = 50;
+    private static final int ROTATION_TIMEOUT_TICKS = 5;
+    private static final float ROTATION_SETTLE_TOLERANCE = 1.0f;
+
     private int tickTimer = 0;
     private float savedYaw = 0;
     private float savedPitch = 0;
+    private float targetYaw = 0;
+    private float targetPitch = 0;
+    private boolean rotateRequested = false;
+    private int rotateTicks = 0;
     private int pendingSlot = -1;
     private final List<Integer> pendingSlots = new ArrayList<>();
     private int batchIndex = 0;
+    private Set<Item> scanFilter = null;
 
     public ThrowEmptyShulkers() {
         super(Addon.CATEGORY2, "Throw-Shulkers", "Automatically throws shulker boxes based on their contents.");
@@ -133,6 +144,13 @@ public class ThrowEmptyShulkers extends Module {
         throwState = ThrowState.IDLE;
         batchState = BatchState.IDLE;
         tickTimer = 0;
+        savedYaw = 0;
+        savedPitch = 0;
+        targetYaw = 0;
+        targetPitch = 0;
+        rotateRequested = false;
+        rotateTicks = 0;
+        scanFilter = null;
         pendingSlot = -1;
         pendingSlots.clear();
         batchIndex = 0;
@@ -152,18 +170,31 @@ public class ThrowEmptyShulkers extends Module {
 
     // Rotation helper using Rotations.rotate
     private void applyRotation(float yaw, float pitch) {
-        if (!enableRotation.get()) return; // no rotation at all
-        boolean silent = (rotationMode.get() == RotationMode.Silent);
-        Rotations.rotate(yaw, pitch, 50, silent, null);
+        if (!enableRotation.get()) return;
+        Rotations.rotate(yaw, pitch, ROTATION_PRIORITY, rotationMode.get() == RotationMode.Normal, null);
+    }
+
+    private boolean rotationSettled() {
+        if (rotateTicks < 1) return false;
+        if (rotateTicks >= ROTATION_TIMEOUT_TICKS) return true;
+        return Math.abs(MathHelper.wrapDegrees(Rotations.serverYaw - targetYaw)) <= ROTATION_SETTLE_TOLERANCE
+            && Math.abs(Rotations.serverPitch - targetPitch) <= ROTATION_SETTLE_TOLERANCE;
     }
 
     private void tickSingleMode() {
         switch (throwState) {
             case ROTATING -> {
-                savedYaw = mc.player.getYaw();
-                savedPitch = mc.player.getPitch();
-                applyRotation(savedYaw + yaw.get().floatValue(), savedPitch + pitch.get().floatValue());
-                throwState = ThrowState.THROWING;
+                if (!rotateRequested) {
+                    savedYaw = mc.player.getYaw();
+                    savedPitch = mc.player.getPitch();
+                    targetYaw = savedYaw + yaw.get().floatValue();
+                    targetPitch = savedPitch + pitch.get().floatValue();
+                    rotateRequested = true;
+                    rotateTicks = 0;
+                }
+                applyRotation(targetYaw, targetPitch);
+                rotateTicks++;
+                if (rotationSettled()) throwState = ThrowState.THROWING;
             }
             case THROWING -> {
                 executeDrop(pendingSlot);
@@ -173,10 +204,12 @@ public class ThrowEmptyShulkers extends Module {
             case RESTORING -> {
                 applyRotation(savedYaw, savedPitch);
                 throwState = ThrowState.IDLE;
+                rotateRequested = false;
                 tickTimer = delay.get();
             }
             case IDLE -> {
                 if (tickTimer > 0) { tickTimer--; return; }
+                beginScan();
                 int endSlot = hotbarOnly.get() ? 9 : mc.player.getInventory().size();
                 for (int i = 0; i < endSlot; i++) {
                     if (shouldThrow(mc.player.getInventory().getStack(i))) {
@@ -198,13 +231,23 @@ public class ThrowEmptyShulkers extends Module {
     private void tickBatchMode() {
         switch (batchState) {
             case ROTATING -> {
-                savedYaw = mc.player.getYaw();
-                savedPitch = mc.player.getPitch();
-                applyRotation(savedYaw + yaw.get().floatValue(), savedPitch + pitch.get().floatValue());
-                batchIndex = 0;
-                batchState = BatchState.THROWING_BATCH;
+                if (!rotateRequested) {
+                    savedYaw = mc.player.getYaw();
+                    savedPitch = mc.player.getPitch();
+                    targetYaw = savedYaw + yaw.get().floatValue();
+                    targetPitch = savedPitch + pitch.get().floatValue();
+                    rotateRequested = true;
+                    rotateTicks = 0;
+                }
+                applyRotation(targetYaw, targetPitch);
+                rotateTicks++;
+                if (rotationSettled()) {
+                    batchIndex = 0;
+                    batchState = BatchState.THROWING_BATCH;
+                }
             }
             case THROWING_BATCH -> {
+                if (rotateRequested) applyRotation(targetYaw, targetPitch);
                 if (tickTimer > 0) { tickTimer--; return; }
                 if (batchIndex < pendingSlots.size()) {
                     int slot = pendingSlots.get(batchIndex);
@@ -214,8 +257,8 @@ public class ThrowEmptyShulkers extends Module {
                     batchIndex++;
                     tickTimer = delay.get();
                 } else {
-                    batchState = enableRotation.get() ? BatchState.RESTORING : BatchState.IDLE;
-                    if (!enableRotation.get()) {
+                    batchState = rotateRequested ? BatchState.RESTORING : BatchState.IDLE;
+                    if (!rotateRequested) {
                         pendingSlots.clear();
                         batchIndex = 0;
                         tickTimer = delay.get();
@@ -227,11 +270,13 @@ public class ThrowEmptyShulkers extends Module {
                 pendingSlots.clear();
                 batchIndex = 0;
                 batchState = BatchState.IDLE;
+                rotateRequested = false;
                 tickTimer = delay.get();
             }
             case IDLE -> {
                 if (tickTimer > 0) { tickTimer--; return; }
                 pendingSlots.clear();
+                beginScan();
                 int endSlot = hotbarOnly.get() ? 9 : mc.player.getInventory().size();
                 for (int i = 0; i < endSlot; i++) {
                     if (shouldThrow(mc.player.getInventory().getStack(i))) {
@@ -251,6 +296,10 @@ public class ThrowEmptyShulkers extends Module {
     }
 
     // Filter
+    private void beginScan() {
+        scanFilter = new HashSet<>(filterItems.get());
+    }
+
     private boolean shouldThrow(ItemStack stack) {
         if (stack.isEmpty()) return false;
         if (!(stack.getItem() instanceof BlockItem blockItem)) return false;
@@ -258,10 +307,10 @@ public class ThrowEmptyShulkers extends Module {
 
         if (emptyOnly.get()) return isShulkerEmpty(stack);
 
-        List<Item> items = filterItems.get();
-        if (items.isEmpty()) return true;
+        if (filterItems.get().isEmpty()) return true;
+        if (scanFilter == null) beginScan();
 
-        boolean containsFilteredItem = shulkerContainsAny(stack, items);
+        boolean containsFilteredItem = shulkerContainsAny(stack, scanFilter);
         return switch (filterMode.get()) {
             case WHITELIST -> !containsFilteredItem;
             case BLACKLIST -> containsFilteredItem;
@@ -271,13 +320,14 @@ public class ThrowEmptyShulkers extends Module {
     private boolean isShulkerEmpty(ItemStack stack) {
         ContainerComponent container = stack.get(DataComponentTypes.CONTAINER);
         if (container == null) return true;
+        if (container == ContainerComponent.DEFAULT) return true;
         for (ItemStack stored : container.iterateNonEmpty()) {
             if (!stored.isEmpty()) return false;
         }
         return true;
     }
 
-    private boolean shulkerContainsAny(ItemStack shulker, List<Item> items) {
+    private boolean shulkerContainsAny(ItemStack shulker, Set<Item> items) {
         ContainerComponent container = shulker.get(DataComponentTypes.CONTAINER);
         if (container == null) return false;
         for (ItemStack stored : container.iterateNonEmpty()) {

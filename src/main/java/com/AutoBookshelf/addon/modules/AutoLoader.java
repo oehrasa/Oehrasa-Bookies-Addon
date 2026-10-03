@@ -761,25 +761,43 @@ public class AutoLoader extends Module {
 
     /**
      * True if at least one item in the container could be moved into the player
-     * inventory right now: either a free slot beyond the ones keepFreeSlots()
-     * reserves for picking up the broken container, or a partial stack the item
-     * can merge into without consuming a new slot.
+     * inventory right now without ever dropping the empty-slot count below
+     * keepFreeSlots(). A quick-move of a single container slot consumes at most
+     * one empty player slot, so any spare slot beyond the reserve is always
+     * safe; when only the reserve is left, the move is only safe if the whole
+     * stack merges into existing partial stacks and needs no new slot. Just
+     * "some partial stack has room" is not enough: its overflow would eat the
+     * reserved slot.
      */
     private boolean hasRoomForContents(ScreenHandler handler) {
+        int empty = countEmptyPlayerSlots();
+        int keepFree = keepFreeSlots();
         for (int i = 0; i < 27; i++) {
             ItemStack stack = handler.getSlot(i).getStack();
             if (stack.isEmpty()) continue;
 
-            if (countEmptyPlayerSlots() > keepFreeSlots()) return true;
+            if (empty > keepFree) return true;
 
-            for (int p = 0; p < 36; p++) {
-                ItemStack playerStack = mc.player.getInventory().getStack(p);
-                if (playerStack.isEmpty()) continue;
-                if (playerStack.getCount() < playerStack.getMaxCount()
-                    && ItemStack.areItemsAndComponentsEqual(stack, playerStack)) {
-                    return true;
-                }
-            }
+            if (fitsEntirelyIntoPartials(stack)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * True if the stack's full count can be absorbed by matching partial stacks
+     * currently in the player inventory, so a quick-move of it consumes no
+     * empty slot.
+     */
+    private boolean fitsEntirelyIntoPartials(ItemStack stack) {
+        int remaining = stack.getCount();
+        for (int p = 0; p < 36; p++) {
+            ItemStack playerStack = mc.player.getInventory().getStack(p);
+            if (playerStack.isEmpty()) continue;
+            if (!ItemStack.areItemsAndComponentsEqual(stack, playerStack)) continue;
+            int room = playerStack.getMaxCount() - playerStack.getCount();
+            if (room <= 0) continue;
+            remaining -= room;
+            if (remaining <= 0) return true;
         }
         return false;
     }

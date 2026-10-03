@@ -7,6 +7,7 @@ import net.minecraft.client.gl.RenderPipelines;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.input.CharInput;
 import net.minecraft.client.input.KeyInput;
+import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.MathHelper;
 import org.lwjgl.glfw.GLFW;
@@ -53,6 +54,7 @@ public class LiveWindow {
         this.x = (int) (Math.random() * (LivemessageGui.screenWidth - this.w));
         this.y = (int) (Math.random() * (LivemessageGui.screenHeight - this.h));
         this.fontRenderer = this.mc.textRenderer;
+        GuiUtil.clearVisualLayoutCache();
         this.primaryColor = this.mc.player != null
             ? GuiUtil.getWindowColor(this.mc.player.getUuid())
             : GuiUtil.getSingleRGB(128);
@@ -64,11 +66,15 @@ public class LiveWindow {
     }
 
     protected void drawText(DrawContext context, String text, int x, int y, int color, boolean shadow) {
+        context.drawText(this.fontRenderer, GuiUtil.bidiDisplayText(this.fontRenderer, text), x, y, GuiUtil.fade(color), shadow);
+    }
+
+    protected void drawText(DrawContext context, Text text, int x, int y, int color, boolean shadow) {
         context.drawText(this.fontRenderer, text, x, y, GuiUtil.fade(color), shadow);
     }
 
     protected int getTextWidth(String text) {
-        return this.fontRenderer.getWidth(text);
+        return this.fontRenderer.getWidth(GuiUtil.bidiDisplayText(this.fontRenderer, text));
     }
 
     protected int getTextHeight() {
@@ -192,6 +198,7 @@ public class LiveWindow {
     public void preDrawWindow(DrawContext context) {
         if (this.fontRenderer == null) {
             this.fontRenderer = this.mc.textRenderer;
+            GuiUtil.clearVisualLayoutCache();
         }
 
         if (this.x + this.w > LivemessageGui.screenWidth) {

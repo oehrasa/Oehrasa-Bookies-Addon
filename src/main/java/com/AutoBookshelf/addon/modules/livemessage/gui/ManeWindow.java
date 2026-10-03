@@ -222,6 +222,7 @@ public class ManeWindow extends LiveWindow {
         int displaySize = Math.round(32.0F + progress * 224.0F);
         int displayX = Math.round(x - progress * 32.0F);
         int displayY = Math.round(y - progress * 32.0F);
+        if (this.mc.getNetworkHandler() == null) return;
         PlayerListEntry entry = this.mc.getNetworkHandler().getPlayerListEntry(uuid);
         if (entry != null) {
             PlayerSkinDrawer.draw(context, entry.getSkinTextures(), displayX, displayY, displaySize, GuiUtil.fade(-1));
@@ -413,11 +414,12 @@ public class ManeWindow extends LiveWindow {
         Friends friends = Friends.get();
         EnemyManager enemyManager = EnemyManager.get();
         Map<UUID, String> onlinePlayers = new HashMap<>();
-        if (MinecraftClient.getInstance().getNetworkHandler() != null) {
-            for (PlayerListEntry entry : MinecraftClient.getInstance().getNetworkHandler().getPlayerList()) {
+        MinecraftClient minecraft = MinecraftClient.getInstance();
+        if (minecraft.getNetworkHandler() != null && minecraft.player != null) {
+            for (PlayerListEntry entry : minecraft.getNetworkHandler().getPlayerList()) {
                 GameProfile gameProfile = entry.getProfile();
                 UUID uuid = gameProfile.id();
-                if (!uuid.equals(MinecraftClient.getInstance().player.getUuid())) {
+                if (!uuid.equals(minecraft.player.getUuid())) {
                     onlinePlayers.put(uuid, gameProfile.name());
                 }
             }

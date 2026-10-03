@@ -398,6 +398,10 @@ public class NeboM extends HudElement {
     }
 
     private SkinTextures getSkinTextures(PlayerEntity player) {
+        // Bounded cache: players leave servers / the world changes continually across sessions
+        if (headTextureCache.size() > 256) {
+            headTextureCache.clear();
+        }
         return headTextureCache.computeIfAbsent(player.getUuid(), uuid -> {
             if (mc.getNetworkHandler() == null) return null;
             PlayerListEntry entry = mc.getNetworkHandler().getPlayerListEntry(uuid);
@@ -418,15 +422,28 @@ public class NeboM extends HudElement {
         return true;
     }
 
+    // The world player scan + sort is done at most once per half-second and reused by both
+    // tick() (width measurement) and render() (per-frame drawing); entity data besides
+    // position rarely changes faster than that, and distance is re-measured at draw time.
+    private long lastPlayerScanMs = 0L;
+    private static final long PLAYER_SCAN_INTERVAL_MS = 500L;
+    private final List<PlayerEntity> cachedPlayers = new ArrayList<>();
+
     private List<PlayerEntity> getNearbyPlayers() {
-        players.clear();
-        double maxDistSq = maxDistance.get() * maxDistance.get();
-        for (PlayerEntity player : mc.world.getPlayers()) {
-            if (player.squaredDistanceTo(mc.player) <= maxDistSq) players.add(player);
+        long now = System.currentTimeMillis();
+        if (now - lastPlayerScanMs >= PLAYER_SCAN_INTERVAL_MS) {
+            lastPlayerScanMs = now;
+            players.clear();
+            double maxDistSq = maxDistance.get() * maxDistance.get();
+            for (PlayerEntity player : mc.world.getPlayers()) {
+                if (player.squaredDistanceTo(mc.player) <= maxDistSq) players.add(player);
+            }
+            players.sort(Comparator.comparingDouble(p -> p.squaredDistanceTo(mc.player)));
+            if (players.size() > limit.get()) players.subList(limit.get(), players.size()).clear();
+            cachedPlayers.clear();
+            cachedPlayers.addAll(players);
         }
-        players.sort(Comparator.comparingDouble(p -> p.squaredDistanceTo(mc.player)));
-        if (players.size() > limit.get()) players.subList(limit.get(), players.size()).clear();
-        return players;
+        return cachedPlayers;
     }
 
     // Finds the closest player to a world position, used for packets (entity spawn, block event)

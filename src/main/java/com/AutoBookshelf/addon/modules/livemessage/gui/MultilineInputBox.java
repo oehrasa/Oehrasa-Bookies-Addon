@@ -129,6 +129,16 @@ public class MultilineInputBox {
         }
     }
 
+    public void insertCodePoint(int codePoint) {
+        this.deleteSelection();
+        if (this.text.length() >= this.maxTotalLength) return;
+        String s = new String(Character.toChars(codePoint));
+        this.text.insert(this.cursor, s);
+        this.cursor += s.length();
+        this.modCount++;
+        this.resetBlink();
+    }
+
     public void insertChar(char c) {
         this.deleteSelection();
         if (this.text.length() >= this.maxTotalLength) return;
@@ -145,8 +155,9 @@ public class MultilineInputBox {
     public void backspace() {
         if (this.deleteSelection()) return;
         if (this.cursor > 0) {
-            this.text.deleteCharAt(this.cursor - 1);
-            this.cursor--;
+            int remove = previousCharLength(this.text, this.cursor);
+            this.text.delete(this.cursor - remove, this.cursor);
+            this.cursor -= remove;
             this.modCount++;
             this.resetBlink();
         }
@@ -155,33 +166,62 @@ public class MultilineInputBox {
     public void delete() {
         if (this.deleteSelection()) return;
         if (this.cursor < this.text.length()) {
-            this.text.deleteCharAt(this.cursor);
+            int remove = nextCharLength(this.text, this.cursor);
+            this.text.delete(this.cursor, this.cursor + remove);
             this.modCount++;
             this.resetBlink();
         }
     }
 
+    /**
+     * Removes the exact logical range [start, end). Used where a wholesale replace
+     * must match a computed substring, e.g. tab-autocomplete's word swap.
+     */
+    public void deleteRange(int start, int end) {
+        int lo = Math.max(0, Math.min(this.text.length(), Math.min(start, end)));
+        int hi = Math.max(0, Math.min(this.text.length(), Math.max(start, end)));
+        this.text.delete(lo, hi);
+        this.cursor = lo;
+        this.selectionAnchor = -1;
+        this.modCount++;
+        this.resetBlink();
+    }
+
+    // Length of the code point ending just before pos (1 or 2 UTF-16 chars).
+    private static int previousCharLength(CharSequence s, int pos) {
+        if (pos >= 2 && Character.isLowSurrogate(s.charAt(pos - 1)) && Character.isHighSurrogate(s.charAt(pos - 2))) return 2;
+        return 1;
+    }
+
+    // Length of the code point starting at pos (1 or 2 UTF-16 chars).
+    private static int nextCharLength(CharSequence s, int pos) {
+        if (pos < s.length() - 1 && Character.isHighSurrogate(s.charAt(pos)) && Character.isLowSurrogate(s.charAt(pos + 1))) return 2;
+        return 1;
+    }
+
     public void insertText(String text) {
         if (text == null || text.isEmpty()) return;
         this.deleteSelection();
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
+        for (int i = 0; i < text.length(); ) {
+            int cp = text.codePointAt(i);
             // Accept literal newlines from pasted multi-line clipboard content, skip \r
             // (Windows clipboard often carries \r\n; \n alone is enough for our line model)
-            if (c == '\r') continue;
-            this.insertChar(c);
+            if (cp != '\r') {
+                this.insertCodePoint(cp);
+            }
+            i += Character.charCount(cp);
         }
     }
 
     public void moveLeft() {
         this.beginMove();
-        if (this.cursor > 0) this.cursor--;
+        if (this.cursor > 0) this.cursor -= previousCharLength(this.text, this.cursor);
         this.resetBlink();
     }
 
     public void moveRight() {
         this.beginMove();
-        if (this.cursor < this.text.length()) this.cursor++;
+        if (this.cursor < this.text.length()) this.cursor += nextCharLength(this.text, this.cursor);
         this.resetBlink();
     }
 
@@ -260,18 +300,8 @@ public class MultilineInputBox {
 
         List<Segment> segs = this.wrapSegments(renderer, maxWidth);
         Segment seg = segs.get(MathHelper.clamp(lineIndex, 0, segs.size() - 1));
-        this.cursor = MathHelper.clamp(seg.startOffset + columnAtPixel(renderer, seg.text, pixelX), 0, this.text.length());
+        this.cursor = MathHelper.clamp(seg.startOffset + GuiUtil.columnAtPixel(renderer, seg.text, pixelX, false), 0, this.text.length());
         this.resetBlink();
-    }
-
-    private static int columnAtPixel(TextRenderer renderer, String line, int pixelX) {
-        if (pixelX <= 0 || line.isEmpty()) return 0;
-        for (int i = 1; i <= line.length(); i++) {
-            int before = renderer.getWidth(line.substring(0, i - 1));
-            int after = renderer.getWidth(line.substring(0, i));
-            if (pixelX < (before + after) / 2) return i - 1;
-        }
-        return line.length();
     }
 
     /**

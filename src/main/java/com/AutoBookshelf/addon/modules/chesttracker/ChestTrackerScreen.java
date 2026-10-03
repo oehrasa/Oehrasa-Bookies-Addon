@@ -146,14 +146,23 @@ public class ChestTrackerScreen extends Screen {
         switch (module.getSortMode()) {
             case COUNT_DESC -> allItems.sort((a, b) -> Integer.compare(b.count, a.count));
             case COUNT_ASC  -> allItems.sort((a, b) -> Integer.compare(a.count, b.count));
-            case NAME_ASC   -> allItems.sort((a, b) -> a.item.getName().getString().compareToIgnoreCase(b.item.getName().getString()));
-            case NAME_DESC  -> allItems.sort((a, b) -> b.item.getName().getString().compareToIgnoreCase(a.item.getName().getString()));
+            case NAME_ASC -> allItems.sort((a, b) -> a.sortName.compareToIgnoreCase(b.sortName));
+            case NAME_DESC -> allItems.sort((a, b) -> b.sortName.compareToIgnoreCase(a.sortName));
             case DISTANCE -> {
                 if (client.player == null) break;
                 Vec3d playerPos = client.player.getEntityPos();
+                // Single pass over the tracked containers instead of a per-item
+                // scan: compute each container's distance once and keep the
+                // minimum per item.
                 distanceCache.clear();
-                for (ItemEntry entry : allItems) {
-                    distanceCache.put(entry.item, getClosestContainerDistance(entry.item, playerPos, dimensionContainers));
+                for (TrackedContainer container : dimensionContainers) {
+                    BlockPos pos = container.getPosition();
+                    double dist = Math.sqrt(playerPos.squaredDistanceTo(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5));
+                    for (Map.Entry<String, Integer> entry : container.getItems().entrySet()) {
+                        Identifier id = Identifier.tryParse(entry.getKey());
+                        if (id == null || !Registries.ITEM.containsId(id)) continue;
+                        distanceCache.merge(Registries.ITEM.get(id), dist, Math::min);
+                    }
                 }
                 allItems.sort((a, b) -> Double.compare(
                     distanceCache.getOrDefault(a.item, Double.MAX_VALUE),
@@ -170,7 +179,7 @@ public class ChestTrackerScreen extends Screen {
         } else {
             String query = searchQuery.toLowerCase();
             filteredItems = allItems.stream()
-                .filter(entry -> entry.item.getName().getString().toLowerCase().contains(query))
+                .filter(entry -> entry.sortName.toLowerCase().contains(query))
                 .collect(Collectors.toList());
         }
         int rows = (int) Math.ceil(filteredItems.size() / (double) ITEMS_PER_ROW);
@@ -248,7 +257,7 @@ public class ChestTrackerScreen extends Screen {
             "§l§eChest Tracker §r§7- " + dimName,
             this.width / 2,
             8,
-            0xFFFFFF
+            0xFFFFFFFF
         );
         searchField.render(context, mouseX, mouseY, delta);
         clearSearchButton.visible = !searchQuery.isEmpty();
@@ -488,6 +497,14 @@ public class ChestTrackerScreen extends Screen {
     private static class ItemEntry {
         final Item item;
         final int count;
-        ItemEntry(Item item, int count) { this.item = item; this.count = count; }
+        // Precomputed once per entry so NAME sorting / search filtering don't
+        // rebuild the display name Text on every comparison.
+        final String sortName;
+
+        ItemEntry(Item item, int count) {
+            this.item = item;
+            this.count = count;
+            this.sortName = item.getName().getString();
+        }
     }
 }

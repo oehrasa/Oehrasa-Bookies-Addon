@@ -16,6 +16,9 @@ import net.minecraft.entity.Entity;
 import net.minecraft.entity.TntEntity;
 import org.joml.Vector3d;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * made by cqb13
  */
@@ -128,18 +131,40 @@ public class TntFuseEsp extends Module {
         super(Addon.CATEGORY2, "Tnt-Fuse-Esp", "Shows the fuse time of lit tnt.");
     }
 
+    private static final int SCAN_INTERVAL = 20; // frames between lit-TNT rescans
+    private final List<TntEntity> tntCache = new ArrayList<>();
+    private int frameCounter = SCAN_INTERVAL;
+
     public boolean shouldHideFlashing() {
         return hideTntFlashing.get();
     }
 
+    @Override
+    public void onDeactivate() {
+        tntCache.clear();
+        frameCounter = SCAN_INTERVAL;
+    }
+
     @EventHandler
     private void onRender3D(Render3DEvent event) {
-        if (mc.world == null || mc.player == null || !showTntFuse.get()) {
+        if (mc.world == null || mc.player == null) return;
+
+        // Refresh regardless of which render layers are enabled so the cached list
+        // stays warm for both the 3D boxes and the 2D fuse text.
+        if (++frameCounter >= SCAN_INTERVAL) {
+            frameCounter = 0;
+            tntCache.clear();
+            for (Entity entity : mc.world.getEntities()) {
+                if (entity instanceof TntEntity tnt) tntCache.add(tnt);
+            }
+        }
+
+        if (!showTntFuse.get()) {
             return;
         }
 
-        for (Entity entity : mc.world.getEntities()) {
-            if (!(entity instanceof TntEntity tntEntity)) {
+        for (TntEntity tntEntity : tntCache) {
+            if (tntEntity.isRemoved()) {
                 continue;
             }
 
@@ -148,9 +173,9 @@ public class TntFuseEsp extends Module {
             Color sideColor = new Color(color.r, color.g, color.b, sideOpacity.get());
             Color lineColor = new Color(color.r, color.g, color.b, lineOpacity.get());
 
-            event.renderer.box(entity.getX() - .5, entity.getY(), entity.getZ() - .5, entity.getX() + 0.5,
-                entity.getY() + 1,
-                entity.getZ() + 0.5, sideColor, lineColor, shapeMode.get(), 0);
+            event.renderer.box(tntEntity.getX() - .5, tntEntity.getY(), tntEntity.getZ() - .5, tntEntity.getX() + 0.5,
+                tntEntity.getY() + 1,
+                tntEntity.getZ() + 0.5, sideColor, lineColor, shapeMode.get(), 0);
         }
     }
 
@@ -160,20 +185,20 @@ public class TntFuseEsp extends Module {
             return;
         }
 
-        for (Entity entity : mc.world.getEntities()) {
-            if (!(entity instanceof TntEntity tntEntity)) {
+        for (TntEntity tntEntity : tntCache) {
+            if (tntEntity.isRemoved()) {
                 continue;
             }
 
-            if (PlayerUtils.isWithin(entity.getEntityPos(), (double) nearDistance.get()) && hideWhenNear.get()) {
+            if (PlayerUtils.isWithin(tntEntity.getEntityPos(), (double) nearDistance.get()) && hideWhenNear.get()) {
                 continue;
             }
 
-            if (!PlayerUtils.isWithin(entity.getEntityPos(), (double) farDistance.get()) && hideWhenFar.get()) {
+            if (!PlayerUtils.isWithin(tntEntity.getEntityPos(), (double) farDistance.get()) && hideWhenFar.get()) {
                 continue;
             }
 
-            Vector3d vec3 = new Vector3d(entity.getX(), entity.getY() + 0.5, entity.getZ());
+            Vector3d vec3 = new Vector3d(tntEntity.getX(), tntEntity.getY() + 0.5, tntEntity.getZ());
 
             if (NametagUtils.to2D(vec3, textScale.get())) {
                 NametagUtils.begin(vec3);

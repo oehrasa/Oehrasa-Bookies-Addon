@@ -9,12 +9,12 @@ import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.Block;
-import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.block.AbstractFireBlock;
+import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.item.Items;
+import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.registry.tag.BlockTags;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
@@ -79,7 +79,7 @@ public class BLU27BNapalm extends Module {
     private Direction targetFace;
 
     public BLU27BNapalm() {
-        super(Addon.CATEGORY, "BLU-27/B-Napalm", "I love the smell of Napalm in the morning, Commit some trolling against the Vietnamese");
+        super(Addon.CATEGORY, "BLU-27/B-Napalm", "Burns any flammable blocks nearby with flint and steel, I love the smell of Napalm in the morning, Commit some trolling against the Vietnamese");
     }
 
     @EventHandler
@@ -94,12 +94,13 @@ public class BLU27BNapalm extends Module {
         if (extinguishFire.get()) {
             BlockPos playerPos = mc.player.getBlockPos();
             int radius = (int) Math.ceil(range.get());
+            double rangeVal = range.get();
             int blocksPerTick = 5;
             for (int dx = -radius; dx <= radius; dx++) {
                 for (int dy = -radius; dy <= radius; dy++) {
                     for (int dz = -radius; dz <= radius; dz++) {
                         BlockPos pos = playerPos.add(dx, dy, dz);
-                        if (PlayerUtils.distanceTo(pos) > range.get()) continue;
+                        if (PlayerUtils.distanceTo(pos) > rangeVal) continue;
 
                         BlockState state = mc.world.getBlockState(pos);
                         if (state.getBlock() != Blocks.FIRE && !(state.getBlock() instanceof AbstractFireBlock)) continue;
@@ -131,18 +132,19 @@ public class BLU27BNapalm extends Module {
         double bestDist = Double.MAX_VALUE;
 
         // Ignite mode
+        double rangeVal = range.get();
         for (int dx = -radius; dx <= radius; dx++) {
             for (int dy = -radius; dy <= radius; dy++) {
                 for (int dz = -radius; dz <= radius; dz++) {
                     BlockPos pos = playerPos.add(dx, dy, dz);
                     double dist = PlayerUtils.distanceTo(pos);
-                    if (dist > range.get()) continue;
+                    if (dist > rangeVal) continue;
 
                     BlockState state = mc.world.getBlockState(pos);
                     if (state.isAir()) continue;
+                    if (!PlayerUtils.isWithinReach(pos)) continue;
 
                     Direction face = getAnyIgnitionFace(pos, state);
-                    if (!PlayerUtils.isWithinReach(pos)) continue;
                     if (face != null) {
                         if (random.nextInt(100) >= igniteChance.get()) continue;
 

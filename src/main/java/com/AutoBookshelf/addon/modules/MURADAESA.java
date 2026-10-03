@@ -39,6 +39,11 @@ public class MURADAESA extends Module {
         CONFIRM_PLAYER_RADIUS_BLOCKS * CONFIRM_PLAYER_RADIUS_BLOCKS;
     private static final long RECENT_EVENT_WINDOW_MS = 2500L;
     private static final long STATE_CACHE_TTL_MS = 120000L;
+    // Rebuild throttles: expire/resync state at most once per CLEANUP_INTERVAL_TICKS
+    // and re-filter/re-sort pings for render at most once per RENDER_SORT_INTERVAL
+    // frames, so idle ticks don't walk the full ping/state maps every frame.
+    private static final int CLEANUP_INTERVAL_TICKS = 10;
+    private static final int RENDER_SORT_INTERVAL = 3;
 
     // Burst-suppression: if a resync/anti-xray correction slams a region with
     // many block updates in a short window, that's not a player.
@@ -141,6 +146,9 @@ public class MURADAESA extends Module {
     private final Map<Long, AESAPing> pings = new ConcurrentHashMap<>();
     private final Map<Long, CachedState> knownStates = new ConcurrentHashMap<>();
     private final ConcurrentLinkedDeque<RecentEvent> recentEvents = new ConcurrentLinkedDeque<>();
+    private int cleanupTickCounter = 0;
+    private int renderSortCounter = 0;
+    private List<AESAPing> sortedRenderCache = null;
 
     public MURADAESA() {
         super(Addon.CATEGORY2, "MURAD-AESA",
@@ -152,6 +160,7 @@ public class MURADAESA extends Module {
         pings.clear();
         knownStates.clear();
         recentEvents.clear();
+        sortedRenderCache = null;
     }
 
     @EventHandler
@@ -405,12 +414,15 @@ public class MURADAESA extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
+        if (cleanupTickCounter++ % CLEANUP_INTERVAL_TICKS != 0) return;
+
         long now = System.currentTimeMillis();
 
         long lifetimeMs = markerLifetimeSec.get() * 1000L;
+        boolean onlyBeyond = onlyBeyondPlayerEspRange.get();
         pings.entrySet().removeIf(entry -> {
             AESAPing ping = entry.getValue();
-            return now - ping.lastUpdateMs > lifetimeMs || shouldRevokePing(ping);
+            return now - ping.lastUpdateMs > lifetimeMs || shouldRevokePing(ping, onlyBeyond);
         });
 
         pruneRecentEvents(now);
@@ -423,13 +435,15 @@ public class MURADAESA extends Module {
         if (mc.player == null || pings.isEmpty())
             return;
 
-        List<AESAPing> sorted = new ArrayList<>(pings.values()).stream()
-            .filter(p -> isInAllowedRange(p.pos))
-            .sorted(Comparator.comparingLong((AESAPing p) -> p.lastUpdateMs).reversed())
-            .limit(maxMarkers.get())
-            .toList();
+        if (sortedRenderCache == null || renderSortCounter++ % RENDER_SORT_INTERVAL == 0) {
+            sortedRenderCache = new ArrayList<>(pings.values()).stream()
+                .filter(p -> isInAllowedRange(p.pos))
+                .sorted(Comparator.comparingLong((AESAPing p) -> p.lastUpdateMs).reversed())
+                .limit(maxMarkers.get())
+                .toList();
+        }
 
-        for (AESAPing ping : sorted) {
+        for (AESAPing ping : sortedRenderCache) {
             SettingColor color = getColorForKind(ping.lastKind);
             if (tracerFlash.get())
                 color = flashColor(color);
@@ -482,11 +496,11 @@ public class MURADAESA extends Module {
         return isBeyondPlayerEspRange(pos);
     }
 
-    private boolean shouldRevokePing(AESAPing ping) {
+    private boolean shouldRevokePing(AESAPing ping, boolean onlyBeyond) {
         if (ping == null || ping.pos == null || mc.player == null || mc.world == null)
             return false;
 
-        if (!onlyBeyondPlayerEspRange.get())
+        if (!onlyBeyond)
             return false;
 
         if (isBeyondPlayerEspRange(ping.pos))

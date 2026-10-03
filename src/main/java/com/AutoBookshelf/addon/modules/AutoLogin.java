@@ -1,35 +1,35 @@
 package com.AutoBookshelf.addon.modules;
 
-import meteordevelopment.meteorclient.systems.modules.Category;
-
-import java.io.File;
-import java.io.IOException;
-import java.io.FileReader;
-import java.io.BufferedReader;
-import net.minecraft.text.Text;
-
-import meteordevelopment.meteorclient.utils.Utils;
-import meteordevelopment.meteorclient.utils.player.ChatUtils;
-import meteordevelopment.meteorclient.utils.player.Rotations;
-
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.Utils;
+import meteordevelopment.meteorclient.utils.player.ChatUtils;
+import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
-
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.ChiseledBookshelfBlock;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.state.property.Properties;
+import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
-import net.minecraft.screen.slot.SlotActionType;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 public class AutoLogin extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -106,6 +106,13 @@ public class AutoLogin extends Module {
     private int bookSlot = -1;
     private boolean didSwap = false;
     private int timeout = 0;
+    // Inventory slots that were empty right before the take: the server inserts the
+    // extracted book into the first empty slot, so the book is the written book that
+    // appears in one of these. Matching on "empty before -> written now" identifies
+    // the actual take and never a pre-existing book.
+    private List<Integer> emptySlotsBefore = new ArrayList<>();
+    private final int[] writtenBookCountsBefore = new int[36];
+    private int stageRetries = 0;
 
     public AutoLogin(Category cat) {
         super(cat, "Auto-Login", "Automatically logs in your account via file Data.");
@@ -171,6 +178,13 @@ public class AutoLogin extends Module {
         bookStage = 0;
         bookDelayTicks = 0;
         timeout = 0;
+        stageRetries = 0;
+        emptySlotsBefore = new ArrayList<>();
+        for (int i = 0; i < 36; i++) {
+            ItemStack stack = mc.player.getInventory().getStack(i);
+            if (stack.isEmpty()) emptySlotsBefore.add(i);
+            writtenBookCountsBefore[i] = stack.isOf(Items.WRITTEN_BOOK) ? stack.getCount() : 0;
+        }
         onBookInHand = onBookInHandCallback;
         onBookReturned = onBookReturnedCallback;
 
@@ -205,8 +219,14 @@ public class AutoLogin extends Module {
                 bookStage = 1;
             }
             case 1 -> {
-                bookSlot = findBookInInventory();
+                bookSlot = findExtractedBook();
+                // The inventory sync can trail the take click by a few ticks; re-scan a
+                // few times before giving up so the read is never a pre-existing book.
                 if (bookSlot == -1) {
+                    if (++stageRetries < 3) {
+                        bookDelayTicks = 5;
+                        return;
+                    }
                     sendMessage("§cFailed to locate extracted book in inventory!");
                     cleanupBook();
                     return;
@@ -272,12 +292,18 @@ public class AutoLogin extends Module {
         });
     }
 
-    private int findBookInInventory() {
+    private int findExtractedBook() {
+        // The extracted book is the written book sitting in a slot that was empty before
+        // the take click, or a written book that the take merged into an existing stack
+        // (count increased). Anything already in the inventory before is ignored on purpose,
+        // so the callback always reads the book that actually came out of the shelf.
+        for (int slot : emptySlotsBefore) {
+            ItemStack stack = mc.player.getInventory().getStack(slot);
+            if (stack.isOf(Items.WRITTEN_BOOK) && !stack.isEmpty()) return slot;
+        }
         for (int i = 0; i < 36; i++) {
             ItemStack stack = mc.player.getInventory().getStack(i);
-            if (stack.isOf(Items.WRITTEN_BOOK) && !stack.isEmpty()) {
-                return i;
-            }
+            if (stack.isOf(Items.WRITTEN_BOOK) && stack.getCount() > writtenBookCountsBefore[i]) return i;
         }
         return -1;
     }
@@ -292,6 +318,9 @@ public class AutoLogin extends Module {
         bookSlot = -1;
         didSwap = false;
         timeout = 0;
+        stageRetries = 0;
+        emptySlotsBefore.clear();
+        Arrays.fill(writtenBookCountsBefore, 0);
     }
 
     public void cancelBookExtraction() {

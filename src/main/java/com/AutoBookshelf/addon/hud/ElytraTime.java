@@ -26,6 +26,8 @@ public class ElytraTime extends HudElement {
     );
 
     private String displayText = "Efly: 0h 0m 0s Dura: 0";
+    private long lastCalcMs = 0L;
+    private static final long CALC_INTERVAL_MS = 500L;
 
     public ElytraTime() {
         super(INFO);
@@ -35,27 +37,27 @@ public class ElytraTime extends HudElement {
      * Reads the Unbreaking level directly from the item's enchantments.
      * Falls back to 0 if the item has no enchantments or no Unbreaking.
      */
-    private int getUnbreakingLevel(ItemStack stack) {
+    private static final Identifier UNBREAKING_ID = Enchantments.UNBREAKING.getValue();
+
+    private static int getUnbreakingLevel(ItemStack stack) {
         if (stack == null || stack.isEmpty()) return 0;
         ItemEnchantmentsComponent ench = stack.getOrDefault(
             DataComponentTypes.ENCHANTMENTS,
             ItemEnchantmentsComponent.DEFAULT
         );
-        Identifier unbreakingId = Enchantments.UNBREAKING.getValue();
-        return ench.getEnchantmentEntries().stream()
-            .filter(entry -> entry.getKey().getKey()
-                .map(key -> key.getValue().equals(unbreakingId))
-                .orElse(false))
-            .map(Object2IntMap.Entry::getIntValue)
-            .findFirst()
-            .orElse(0);
+        for (Object2IntMap.Entry<RegistryEntry<net.minecraft.enchantment.Enchantment>> entry : ench.getEnchantmentEntries()) {
+            if (entry.getKey().getKey().map(key -> key.getValue().equals(UNBREAKING_ID)).orElse(false)) {
+                return entry.getIntValue();
+            }
+        }
+        return 0;
     }
 
-    private int getUnbreakingMultiplier(ItemStack elytra) {
+    private static int getUnbreakingMultiplier(ItemStack elytra) {
         return getUnbreakingLevel(elytra) + 1;
     }
 
-    private int getTimeRemaining(ItemStack elytra) {
+    private static int getTimeRemaining(ItemStack elytra) {
         if (elytra == null || elytra.isEmpty()) return 0;
         int multiplier = getUnbreakingMultiplier(elytra);
         return (elytra.getMaxDamage() - elytra.getDamage()) * multiplier - 1;
@@ -116,7 +118,11 @@ public class ElytraTime extends HudElement {
 
     @Override
     public void render(HudRenderer renderer) {
-        calculateElytraTime();
+        long now = System.currentTimeMillis();
+        if (now - lastCalcMs >= CALC_INTERVAL_MS) {
+            lastCalcMs = now;
+            calculateElytraTime();
+        }
         setSize(renderer.textWidth(displayText, true), renderer.textHeight(true));
         renderer.text(displayText, x, y, Color.WHITE, true);
     }

@@ -212,7 +212,7 @@ public class SculkRange extends Module {
 
     private final Setting<Boolean> showActivationPower = sgExperimental.add(new BoolSetting.Builder()
         .name("show-activation-power")
-        .description("When a sensor activates, show its synced power/signal-strength value above it. Calibrated sensors also show their exact triggering frequency, or the precise sound-matched event when one is found.")
+        .description("When a sensor activates, show its synced redstone power/signal-strength value above it.")
         .defaultValue(false)
         .build());
 
@@ -288,6 +288,12 @@ public class SculkRange extends Module {
     private volatile ExecutorService workerThread;
     private boolean selectKeyWasDown;
     private long tickCounter;
+
+    // Snapshot of the settings that shape generated spheres; rebuildAllSpheres skips
+    // regeneration when neither actually changed, since the onChanged handlers can
+    // fire more than once for the same value.
+    private int lastGradation = -1;
+    private int lastShriekerRange = -1;
 
     private enum SensorType {
         CALIBRATED, NORMAL, SHRIEKER
@@ -610,10 +616,18 @@ public class SculkRange extends Module {
 
     /**
      * Rebuilds every sensor's raw shell then recomputes all exposed-block sets.
+     * Skipped entirely unless a sphere-affecting setting actually changed; spheres
+     * otherwise stay cached and are only rebuilt when the sensor set itself changes.
      */
     private void rebuildAllSpheres() {
+        int g = gradation.get();
+        int s = shriekerRange.get();
+        if (g == lastGradation && s == lastShriekerRange) return;
+        lastGradation = g;
+        lastShriekerRange = s;
+
         if (sensors.isEmpty()) return;
-        for (SensorData s : sensors) s.sphereBlocks = generateSphere(s.pos, s.range());
+        for (SensorData sensor : sensors) sensor.sphereBlocks = generateSphere(sensor.pos, sensor.range());
         rebuildAllExposedBlocks();
     }
 

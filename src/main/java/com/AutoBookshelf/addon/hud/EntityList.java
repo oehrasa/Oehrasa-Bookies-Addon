@@ -216,29 +216,26 @@ public class EntityList extends HudElement {
         super(INFO);
     }
 
-    @Override
-    public void render(HudRenderer renderer) {
-        // lol
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc.world == null || mc.player == null) {
-            if (isInEditor()) {
-                String title = "Entity List";
-                double titleWidth = renderer.textWidth(title, textShadow.get(), textScale.get());
-                double titleHeight = renderer.textHeight(textShadow.get(), textScale.get());
-                setSize(titleWidth, titleHeight);
+    // The world entity scan + aggregation is the expensive part; it can't change faster than
+    // entity movement/item pickup, so recompute it at most every 250ms and re-render the cached
+    // line list every frame. Colors/names from settings are stable object references, safe to hold.
+    private long lastEntityScanMs = 0L;
+    private static final long ENTITY_SCAN_INTERVAL_MS = 250L;
+    private final List<Line> cachedEntityLines = new ArrayList<>();
 
-                if (background.get()) renderer.quad(x, y, getWidth(), getHeight(), backgroundColor.get());
-                double drawX = x + box.alignX(getWidth(), titleWidth, alignment.get());
-                renderer.text(title, drawX, y, titleColor.get(), textShadow.get(), textScale.get());
-            }
+    private void refreshEntities(HudRenderer renderer, MinecraftClient mc) {
+        long now = System.currentTimeMillis();
+        if (now - lastEntityScanMs < ENTITY_SCAN_INTERVAL_MS) {
             return;
         }
+        lastEntityScanMs = now;
 
         Map<String, Aggregated> map = new HashMap<>();
+        double maxDistSq = maxDistance.get() * maxDistance.get();
         for (Entity entity : mc.world.getEntities()) {
             if (entity == mc.player) continue;
-            double distance = DistanceUtil.distance(entity, mc.player, includeYLevel.get());
-            if (distance > maxDistance.get()) continue;
+            double distanceSq = DistanceUtil.distanceSq(entity, mc.player, includeYLevel.get());
+            if (distanceSq > maxDistSq) continue;
 
             // Classify into exactly one category, most specific first.
             boolean isRocket = entity instanceof FireworkRocketEntity;
@@ -257,6 +254,7 @@ public class EntityList extends HudElement {
             if (isVehicle && !showVehicles.get()) continue;
             if (isOther && !showOther.get()) continue;
 
+            double distance = Math.sqrt(distanceSq);
             String name = getEntityName(entity);
             SettingColor color = getEntityColor(entity, isRocket, isItem, isPlayer, isMob, isProjectile, isVehicle);
             Aggregated agg = map.get(name);
@@ -281,13 +279,10 @@ public class EntityList extends HudElement {
             }
         }
 
-        double textHeight = renderer.textHeight(textShadow.get(), textScale.get());
-        double spacing = 2;
-
         // Build the display text/width for every aggregated entry up front, since sorting by
         // Length needs the final rendered text (name + count + distance suffix), not just the
         // raw entity name.
-        List<Line> entityLines = new ArrayList<>();
+        cachedEntityLines.clear();
         for (Aggregated agg : map.values()) {
             String text = agg.name;
             if (agg.count > 1) {
@@ -297,7 +292,7 @@ public class EntityList extends HudElement {
                 text += " (" + (int) agg.minDist + "m)";
             }
             double textWidth = renderer.textWidth(text, textShadow.get(), textScale.get());
-            entityLines.add(new Line(text, agg.color, textWidth, agg.minDist));
+            cachedEntityLines.add(new Line(text, agg.color, textWidth, agg.minDist));
         }
 
         switch (sortMode.get()) {
@@ -305,10 +300,34 @@ public class EntityList extends HudElement {
             // code units, which misrepresents entities with non-ASCII/wide-glyph names (and any
             // future locale-translated names) relative to the actual on-screen size of the
             // name + count + distance suffix.
-            case Distance -> entityLines.sort(Comparator.comparingDouble(Line::minDist));
-            case Length -> entityLines.sort(Comparator.comparingDouble(Line::width).reversed());
-            case Name -> entityLines.sort(Comparator.comparing(Line::text, String.CASE_INSENSITIVE_ORDER));
+            case Distance -> cachedEntityLines.sort(Comparator.comparingDouble(Line::minDist));
+            case Length -> cachedEntityLines.sort(Comparator.comparingDouble(Line::width).reversed());
+            case Name -> cachedEntityLines.sort(Comparator.comparing(Line::text, String.CASE_INSENSITIVE_ORDER));
         }
+    }
+
+    @Override
+    public void render(HudRenderer renderer) {
+        // lol
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc.world == null || mc.player == null) {
+            if (isInEditor()) {
+                String title = "Entity List";
+                double titleWidth = renderer.textWidth(title, textShadow.get(), textScale.get());
+                double titleHeight = renderer.textHeight(textShadow.get(), textScale.get());
+                setSize(titleWidth, titleHeight);
+
+                if (background.get()) renderer.quad(x, y, getWidth(), getHeight(), backgroundColor.get());
+                double drawX = x + box.alignX(getWidth(), titleWidth, alignment.get());
+                renderer.text(title, drawX, y, titleColor.get(), textShadow.get(), textScale.get());
+            }
+            return;
+        }
+
+        refreshEntities(renderer, mc);
+
+        double textHeight = renderer.textHeight(textShadow.get(), textScale.get());
+        double spacing = 2;
 
         List<Line> lines = new ArrayList<>();
         double maxWidth = 0;
@@ -322,11 +341,11 @@ public class EntityList extends HudElement {
             totalHeight += textHeight + spacing;
         }
 
-        for (Line line : entityLines) {
+        for (Line line : cachedEntityLines) {
             maxWidth = Math.max(maxWidth, line.width());
             totalHeight += textHeight + spacing;
         }
-        lines.addAll(entityLines);
+        lines.addAll(cachedEntityLines);
 
         setSize(maxWidth, Math.max(0, totalHeight - spacing));
 

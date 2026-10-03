@@ -1,5 +1,11 @@
 package com.AutoBookshelf.addon.utils;
 
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
+import meteordevelopment.meteorclient.renderer.text.TextRenderer;
+import meteordevelopment.meteorclient.utils.render.NametagUtils;
+import meteordevelopment.meteorclient.utils.render.color.Color;
+import net.minecraft.block.BlockState;
+import net.minecraft.block.Blocks;
 import net.minecraft.client.gui.screen.ingame.BookScreen;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.WritableBookContentComponent;
@@ -7,8 +13,14 @@ import net.minecraft.component.type.WrittenBookContentComponent;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.state.property.Properties;
 import net.minecraft.text.RawFilteredPair;
 import net.minecraft.text.Text;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
+import net.minecraft.util.math.Vec3d;
+import org.joml.Vector3d;
 
 import java.util.*;
 import java.util.function.Consumer;
@@ -57,10 +69,21 @@ public class BookUtils {
 
     public static ItemStack getHeldBook(PlayerEntity player) {
         ItemStack mainHand = player.getMainHandStack();
-        if (checkHeldBook(mainHand) != null) return mainHand;
+        if (isBook(mainHand)) return mainHand;
         ItemStack offHand = player.getOffHandStack();
-        if (checkHeldBook(offHand) != null) return offHand;
+        if (isBook(offHand)) return offHand;
         return null;
+    }
+
+    /**
+     * Cheap validity check (type + content component present) that avoids decoding the
+     * page list; getHeldBook uses this so the heavy pages build happens exactly once,
+     * in the caller's own checkHeldBook() on the returned stack.
+     */
+    private static boolean isBook(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return false;
+        return (stack.isOf(Items.WRITTEN_BOOK) && stack.get(DataComponentTypes.WRITTEN_BOOK_CONTENT) != null)
+            || (stack.isOf(Items.WRITABLE_BOOK) && stack.get(DataComponentTypes.WRITABLE_BOOK_CONTENT) != null);
     }
 
     public static String escapePercent(String input) {
@@ -364,5 +387,138 @@ public class BookUtils {
         }
         if (out.isEmpty()) out.add(line);
         return out;
+    }
+
+    /**
+     * Maps a hit on a chiseled bookshelf face to a slot index (0-5). Returns -1 if the
+     * hit isn't on a chiseled bookshelf or the facing has no front face. This mirrors the
+     * shelf geometry used by BookshelfFiller's placement, so hovered slots and placed
+     * slots always agree.
+     */
+    public static int getSlotFromHit(BlockHitResult hit) {
+        BlockPos pos = hit.getBlockPos();
+        BlockState state = mc.world.getBlockState(pos);
+        if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) return -1;
+
+        Direction facing = state.get(Properties.HORIZONTAL_FACING);
+        // Only the front face has slots; hits on the sides, back, top or bottom are not a shelf slot.
+        if (hit.getSide() != facing) return -1;
+        Vec3d hitPos = hit.getPos();
+        Vec3d relative = hitPos.subtract(pos.getX(), pos.getY(), pos.getZ());
+
+        double u, v;
+        switch (facing) {
+            case NORTH -> {
+                u = 1 - relative.x;
+                v = relative.y;
+            }
+            case SOUTH -> {
+                u = relative.x;
+                v = relative.y;
+            }
+            case WEST -> {
+                u = relative.z;
+                v = relative.y;
+            }
+            case EAST -> {
+                u = 1 - relative.z;
+                v = relative.y;
+            }
+            default -> {
+                return -1;
+            }
+        }
+
+        u = Math.max(0, Math.min(1, u));
+        v = Math.max(0, Math.min(1, v));
+
+        int col;
+        if (u < 0.375) col = 0;
+        else if (u < 0.6875) col = 1;
+        else col = 2;
+
+        int row = v >= 0.5 ? 0 : 1;
+
+        return col + row * 3;
+    }
+
+    /**
+     * Hit point in front of the given shelf slot, used both for clicking a slot
+     * (extract/place) and for anchoring hover text above it.
+     */
+    public static Vec3d getSlotHitVec(BlockPos pos, Direction facing, int slot) {
+        double x = 0, y = 0;
+
+        switch (slot) {
+            case 0 -> {
+                x = -0.25;
+                y = 0.25;
+            }
+            case 1 -> {
+                x = 0.0;
+                y = 0.25;
+            }
+            case 2 -> {
+                x = 0.25;
+                y = 0.25;
+            }
+            case 3 -> {
+                x = -0.25;
+                y = -0.25;
+            }
+            case 4 -> {
+                x = 0.0;
+                y = -0.25;
+            }
+            case 5 -> {
+                x = 0.25;
+                y = -0.25;
+            }
+        }
+
+        Vec3d center = Vec3d.ofCenter(pos);
+
+        return switch (facing) {
+            case NORTH -> center.add(-x, y, -0.5);
+            case SOUTH -> center.add(x, y, 0.5);
+            case WEST -> center.add(-0.5, y, x);
+            case EAST -> center.add(0.5, y, -x);
+            default -> center;
+        };
+    }
+
+    /**
+     * Renders the given book title (+ author) as a nametag anchored above a shelf
+     * slot. Shared by BookshelfFiller's registered-slot hover and ShelfCommand's
+     * read-slot hover; returns true if the text was actually drawn on screen.
+     */
+    public static boolean renderSlotHover(Render2DEvent event, BlockPos pos, Direction facing, int slot,
+                                          String title, String author, double scale, Color titleColor, Color authorColor) {
+        if (title == null || title.isEmpty()) return false;
+        if (mc.world == null || mc.player == null) return false;
+
+        Vec3d anchor = getSlotHitVec(pos, facing, slot).add(0, 0.35, 0);
+        Vector3d vec3 = new Vector3d(anchor.x, anchor.y, anchor.z);
+        if (!NametagUtils.to2D(vec3, scale)) return false;
+
+        NametagUtils.begin(vec3, event.drawContext);
+        TextRenderer.get().begin(1, false, true);
+
+        double lineHeight = TextRenderer.get().getHeight();
+        double titleWidth = TextRenderer.get().getWidth(title);
+
+        if (author != null && !author.isEmpty()) {
+            String authorText = "by " + author;
+            double authorWidth = TextRenderer.get().getWidth(authorText);
+            TextRenderer.get().render(authorText, -authorWidth / 2, 1, authorColor, true);
+            TextRenderer.get().render(title, -titleWidth / 2, -lineHeight - 1, titleColor, true);
+        } else {
+            TextRenderer.get().render(title, -titleWidth / 2, -lineHeight / 2, titleColor, true);
+        }
+
+        TextRenderer.get().end();
+        NametagUtils.end(event.drawContext);
+
+        return true;
     }
 }

@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.mixin;
 
 import com.AutoBookshelf.addon.modules.GetPreview;
+import com.AutoBookshelf.addon.modules.MapartNamer;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
@@ -23,6 +24,11 @@ public abstract class HandledScreenMixin extends Screen {
         GetPreview bundleModule = Modules.get().get(GetPreview.class);
         if (bundleModule != null && bundleModule.isActive()) {
             bundleModule.renderBundleOverlay(context, slot.x, slot.y, slot.getStack());
+        }
+
+        MapartNamer mapart = Modules.get().get(MapartNamer.class);
+        if (mapart != null && mapart.isActive()) {
+            mapart.renderIndexOverlay(context, slot.x, slot.y, slot.getStack());
         }
     }
 }
