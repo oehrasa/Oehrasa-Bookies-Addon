@@ -13,6 +13,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class InventoryScreenMixin {
     @Inject(method = "extractRenderState", at = @At("TAIL"))
     private void onRenderTail(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta, CallbackInfo ci) {
-        MeteorClient.EVENT_BUS.post(ScreenRenderEvent.get(graphics, delta));
+        MeteorClient.EVENT_BUS.post(ScreenRenderEvent.get(graphics, delta, mouseX, mouseY));
     }
 }

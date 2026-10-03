@@ -1,6 +1,12 @@
 package com.AutoBookshelf.addon.utils;
 
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
+import meteordevelopment.meteorclient.renderer.text.TextRenderer;
+import meteordevelopment.meteorclient.utils.render.NametagUtils;
+import meteordevelopment.meteorclient.utils.render.color.Color;
 import net.minecraft.client.gui.screens.inventory.BookViewScreen;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.network.Filterable;
@@ -9,6 +15,12 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.WritableBookContent;
 import net.minecraft.world.item.component.WrittenBookContent;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
+import org.joml.Vector3d;
 
 import java.util.*;
 import java.util.function.Consumer;
@@ -30,20 +42,30 @@ public class BookUtils {
      */
     public static boolean deobfuscate = true;
 
+    /**
+     * Upper bound on a single sanitized chat line, to bound layout cost.
+     */
+    private static final int MAX_CHAT_LINE_CHARS = 1000;
+
+    /**
+     * Upper bound on a slot-hover nametag, which is a single on-screen line.
+     */
+    private static final int MAX_NAMETAG_CHARS = 48;
+
     public static BookContent checkHeldBook(ItemStack stack) {
         if (stack == null || stack.isEmpty()) return null;
 
         if (stack.is(Items.WRITTEN_BOOK)) {
             WrittenBookContent c = stack.get(DataComponents.WRITTEN_BOOK_CONTENT);
             if (c == null) return null;
-            List<String> pages = c.pages().stream().map(page -> page.raw()).map(Component::getString).toList();
-            return new BookContent(BookType.WRITTEN, c.title().raw(), c.author(), c.generation(), pages);
+            List<String> pages = c.getPages(true).stream().map(Component::getString).toList();
+            return new BookContent(BookType.WRITTEN, c.title().get(true), c.author(), c.generation(), pages);
         }
 
         if (stack.is(Items.WRITABLE_BOOK)) {
             WritableBookContent c = stack.get(DataComponents.WRITABLE_BOOK_CONTENT);
             if (c == null) return null;
-            List<String> pages = c.pages().stream().map(Filterable::raw).toList();
+            List<String> pages = c.getPages(true).toList();
             return new BookContent(BookType.WRITABLE, null, null, -1, pages);
         }
 
@@ -57,10 +79,93 @@ public class BookUtils {
 
     public static ItemStack getHeldBook(Player player) {
         ItemStack mainHand = player.getMainHandItem();
-        if (checkHeldBook(mainHand) != null) return mainHand;
+        if (isBook(mainHand)) return mainHand;
         ItemStack offHand = player.getOffhandItem();
-        if (checkHeldBook(offHand) != null) return offHand;
+        if (isBook(offHand)) return offHand;
         return null;
+    }
+
+    /**
+     * Cheap validity check (type + content component present) that avoids decoding the
+     * page list; getHeldBook uses this so the heavy pages build happens exactly once,
+     * in the caller's own checkHeldBook() on the returned stack.
+     */
+    private static boolean isBook(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return false;
+        return (stack.is(Items.WRITTEN_BOOK) && stack.get(DataComponents.WRITTEN_BOOK_CONTENT) != null)
+            || (stack.is(Items.WRITABLE_BOOK) && stack.get(DataComponents.WRITABLE_BOOK_CONTENT) != null);
+    }
+
+    /**
+     * Makes untrusted book text safe to hand to the chat renderer.
+     *
+     * <p>Book contents come from the server and from anvil NBT, so a title, author
+     * or page can contain anything: ISO control characters, zero-width and bidi
+     * override characters, and unpaired surrogates from malformed UTF-16. The 26.1.2
+     * chat pipeline reshapes text with a bidirectional shaper that walks code
+     * points, and those characters can stall that walk and freeze the client
+     * instead of merely rendering oddly.
+     *
+     * <p>Newlines/tabs become spaces, everything unsafe is dropped, and the result
+     * is length-capped so a pathological page cannot blow up the layout cost.
+     */
+    public static String sanitizeForChat(String input) {
+        if (input == null || input.isEmpty()) return "";
+        if (input.length() > MAX_CHAT_LINE_CHARS) input = input.substring(0, MAX_CHAT_LINE_CHARS);
+
+        StringBuilder sb = new StringBuilder(input.length());
+        for (int i = 0; i < input.length(); ) {
+            int cp = input.codePointAt(i);
+            i += Character.charCount(cp);
+
+            if (cp == '\n' || cp == '\r' || cp == '\t') {
+                sb.append(' ');
+                continue;
+            }
+            // A surrogate pair was already combined above, so anything left in this
+            // range is an unpaired surrogate: drop it.
+            if (cp >= 0xD800 && cp <= 0xDFFF) continue;
+            if (cp == 0x7F || Character.isISOControl(cp)) continue;
+            if (isUnsafeLayoutChar(cp)) continue;
+
+            sb.appendCodePoint(cp);
+        }
+        return sb.toString().trim();
+    }
+
+    /**
+     * Zero-width, bidirectional and other invisible formatting characters. They
+     * carry no meaning in a chat message and are the usual cause of the chat
+     * shaper looping or laying text out over an unbounded width.
+     */
+    /**
+     * Caps untrusted book text to a nametag-sized run of whole code points. The cut
+     * avoids splitting a surrogate pair, which would reintroduce the unpaired
+     * surrogate that {@link #sanitizeForChat(String)} just removed.
+     */
+    private static String truncateForNametag(String text) {
+        if (text.length() <= MAX_NAMETAG_CHARS) return text;
+        int end = MAX_NAMETAG_CHARS;
+        if (Character.isHighSurrogate(text.charAt(end - 1))) end--;
+        return text.substring(0, end) + "...";
+    }
+
+    private static boolean isUnsafeLayoutChar(int cp) {
+        return cp == 0x00AD            // soft hyphen
+            || cp == 0x200B || cp == 0x200C || cp == 0x200D   // zero width space / non-joiner / joiner
+            || cp == 0x200E || cp == 0x200F                   // LTR / RTL mark
+            || (cp >= 0x202A && cp <= 0x202E)                  // bidi embedding / override
+            || (cp >= 0x2060 && cp <= 0x2064)                  // word joiner + invisible operators
+            || (cp >= 0x2066 && cp <= 0x2069)                  // bidi isolates
+            || cp == 0xFEFF;                                  // zero width no-break space
+    }
+
+    /**
+     * Wraps a chat consumer so every line these printers emit is sanitized first.
+     * Used as a single choke point so no untrusted book character can reach chat.
+     */
+    private static Consumer<String> chatSink(Consumer<String> out) {
+        return line -> out.accept(sanitizeForChat(line));
     }
 
     public static String escapePercent(String input) {
@@ -132,6 +237,7 @@ public class BookUtils {
 
     // Chat output.
     public static void printBookInfo(BookContent content, Consumer<String> out) {
+        Consumer<String> sink = chatSink(out);
         int totalChars = 0, totalWords = 0, emptyPages = 0;
         for (String text : content.pages()) {
             if (text.trim().isEmpty()) emptyPages++;
@@ -139,66 +245,69 @@ public class BookUtils {
             totalWords += countWords(text);
         }
 
-        out.accept("§6=== Book Info ===");
+        sink.accept("§6=== Book Info ===");
         if (content.type() == BookType.WRITTEN) {
-            out.accept("§7Title: §f" + escapePercent(content.title()));
+            sink.accept("§7Title: §f" + escapePercent(content.title()));
             String author = content.author();
-            out.accept("§7Author: §f" + (author != null && !author.isEmpty() ? escapePercent(author) : "Unknown"));
-            out.accept("§7Generation: §f" + getGenerationText(content.generation()));
+            sink.accept("§7Author: §f" + (author != null && !author.isEmpty() ? escapePercent(author) : "Unknown"));
+            sink.accept("§7Generation: §f" + getGenerationText(content.generation()));
         } else {
-            out.accept("§7Unsigned book (book and quill)");
+            sink.accept("§7Unsigned book (book and quill)");
         }
-        out.accept("§7Pages: §f" + content.pages().size() + " §7(§f" + emptyPages + " §7empty)");
-        out.accept("§7Characters: §f" + addCommas(totalChars));
-        out.accept("§7Words: §f" + addCommas(totalWords));
-        out.accept("§6================");
+        sink.accept("§7Pages: §f" + content.pages().size() + " §7(§f" + emptyPages + " §7empty)");
+        sink.accept("§7Characters: §f" + addCommas(totalChars));
+        sink.accept("§7Words: §f" + addCommas(totalWords));
+        sink.accept("§6================");
 
         int pagesToShow = Math.min(3, content.pages().size());
         for (int i = 0; i < pagesToShow; i++) {
             String p = content.pages().get(i).replace("\n", " ").replace("\r", " ");
             p = stripObfuscation(escapePercent(p));
             if (p.length() > 150) p = p.substring(0, 150) + "...";
-            out.accept("§7Page " + (i + 1) + ": §f" + p);
+            sink.accept("§7Page " + (i + 1) + ": §f" + p);
         }
         if (content.pages().size() > pagesToShow) {
-            out.accept("§7... and §f" + (content.pages().size() - pagesToShow) + " §7more page(s)");
+            sink.accept("§7... and §f" + (content.pages().size() - pagesToShow) + " §7more page(s)");
         }
     }
 
     public static void printSearch(BookContent content, String word, Consumer<String> out) {
+        Consumer<String> sink = chatSink(out);
         List<Integer> found = new ArrayList<>();
         for (int i = 0; i < content.pages().size(); i++) {
             if (content.pages().get(i).toLowerCase().contains(word.toLowerCase())) found.add(i + 1);
         }
         String escaped = escapePercent(word);
         if (found.isEmpty()) {
-            out.accept("§cNo pages found containing: §f" + escaped);
+            sink.accept("§cNo pages found containing: §f" + escaped);
         } else {
-            out.accept("§aFound §f" + found.size() + " §apage(s) containing §f'" + escaped + "§f':");
-            for (int page : found) out.accept("§7  Page §f" + page);
+            sink.accept("§aFound §f" + found.size() + " §apage(s) containing §f'" + escaped + "§f':");
+            for (int page : found) sink.accept("§7  Page §f" + page);
         }
     }
 
     public static void printPage(BookContent content, int pageNum, Consumer<String> out) {
+        Consumer<String> sink = chatSink(out);
         if (pageNum < 1 || pageNum > content.pages().size()) {
-            out.accept("§cPage " + pageNum + " doesn't exist, the book has " + content.pages().size() + " pages");
+            sink.accept("§cPage " + pageNum + " doesn't exist, the book has " + content.pages().size() + " pages");
             return;
         }
         String text = stripObfuscation(escapePercent(content.pages().get(pageNum - 1)));
-        out.accept("§6=== Page " + pageNum + " of " + content.pages().size() + " ===");
+        sink.accept("§6=== Page " + pageNum + " of " + content.pages().size() + " ===");
         for (String line : text.split("\n")) {
             if (line.length() > 60) {
                 for (int i = 0; i < line.length(); i += 60) {
-                    out.accept("§f" + line.substring(i, Math.min(i + 60, line.length())));
+                    sink.accept("§f" + line.substring(i, Math.min(i + 60, line.length())));
                 }
             } else {
-                out.accept("§f" + line);
+                sink.accept("§f" + line);
             }
         }
-        out.accept("§6====================");
+        sink.accept("§6====================");
     }
 
     public static void printStats(BookContent content, Consumer<String> out) {
+        Consumer<String> sink = chatSink(out);
         int totalChars = 0, totalWords = 0, emptyPages = 0, longestPage = 0, shortestPage = Integer.MAX_VALUE;
         Map<String, Integer> freq = new HashMap<>();
         String mostCommon = "";
@@ -233,24 +342,24 @@ public class BookUtils {
         double avgSyllablesPerWord = totalWords > 0 ? (double) totalChars / totalWords / 3.5 : 1.0;
         double readingLevel = Math.max(1, Math.min(20, 0.39 * 15.0 + 11.8 * avgSyllablesPerWord - 15.59));
 
-        out.accept("§6=== Book Statistics ===");
+        sink.accept("§6=== Book Statistics ===");
         if (content.type() == BookType.WRITTEN) {
-            out.accept("§7Title: §f" + escapePercent(content.title()));
+            sink.accept("§7Title: §f" + escapePercent(content.title()));
             String author = content.author();
-            out.accept("§7Author: §f" + (author != null && !author.isEmpty() ? escapePercent(author) : "Unknown"));
-            out.accept("§7Generation: §f" + getGenerationText(content.generation()));
+            sink.accept("§7Author: §f" + (author != null && !author.isEmpty() ? escapePercent(author) : "Unknown"));
+            sink.accept("§7Generation: §f" + getGenerationText(content.generation()));
         } else {
-            out.accept("§7Unsigned book (book and quill)");
+            sink.accept("§7Unsigned book (book and quill)");
         }
-        out.accept("§7Pages: §f" + content.pages().size() + " §7(§f" + emptyPages + " §7empty)");
-        out.accept("§7Characters: §f" + addCommas(totalChars));
-        out.accept("§7Words: §f" + addCommas(totalWords));
-        out.accept("§7Longest Page: §f" + longestPage + " §7chars");
-        out.accept("§7Shortest Page: §f" + shortestPage + " §7chars");
-        out.accept("§7Reading Time: §f" + readingTime);
-        out.accept("§7Reading Level: §f" + formatDecimal(readingLevel) + " §7(" + getReadingLevelDescription((int) readingLevel) + ")");
-        if (!mostCommon.isEmpty()) out.accept("§7Most Common Word: §f" + mostCommon + " §7(x§f" + mostCommonCount + "§7)");
-        out.accept("§6=========================");
+        sink.accept("§7Pages: §f" + content.pages().size() + " §7(§f" + emptyPages + " §7empty)");
+        sink.accept("§7Characters: §f" + addCommas(totalChars));
+        sink.accept("§7Words: §f" + addCommas(totalWords));
+        sink.accept("§7Longest Page: §f" + longestPage + " §7chars");
+        sink.accept("§7Shortest Page: §f" + shortestPage + " §7chars");
+        sink.accept("§7Reading Time: §f" + readingTime);
+        sink.accept("§7Reading Level: §f" + formatDecimal(readingLevel) + " §7(" + getReadingLevelDescription((int) readingLevel) + ")");
+        if (!mostCommon.isEmpty()) sink.accept("§7Most Common Word: §f" + mostCommon + " §7(x§f" + mostCommonCount + "§7)");
+        sink.accept("§6=========================");
     }
 
     // GUI
@@ -301,9 +410,12 @@ public class BookUtils {
 
     private static String truncateTitle(String title) {
         if (title == null || title.isEmpty()) return "Book";
-        int codePoints = title.codePointCount(0, title.length());
-        if (codePoints <= MAX_WRITTEN_BOOK_TITLE_CHARS) return title;
-        return title.substring(0, title.offsetByCodePoints(0, MAX_WRITTEN_BOOK_TITLE_CHARS));
+        // The packet codec counts UTF-16 chars, not code points, so a 32-emoji title would
+        // measure 64 and be rejected. Truncate on length(), then step back off a split pair.
+        if (title.length() <= MAX_WRITTEN_BOOK_TITLE_CHARS) return title;
+        int end = MAX_WRITTEN_BOOK_TITLE_CHARS;
+        if (Character.isHighSurrogate(title.charAt(end - 1))) end--;
+        return title.substring(0, end);
     }
 
     private static List<String> reflowPages(List<String> texts, int maxCharsPerPage) {
@@ -356,7 +468,14 @@ public class BookUtils {
         List<String> out = new ArrayList<>();
         int start = 0;
         while (start < line.length()) {
-            int end = Math.min(line.length(), start + maxChars);
+            int remaining = line.length() - start;
+            // The rest already fits: take it whole rather than looking for a break that
+            // isn't needed, which would split a fitting final chunk into two lines.
+            if (remaining <= maxChars) {
+                out.add(line.substring(start));
+                break;
+            }
+            int end = start + maxChars;
             int space = line.lastIndexOf(' ', end);
             if (space > start) end = space;
             out.add(line.substring(start, end));
@@ -364,5 +483,148 @@ public class BookUtils {
         }
         if (out.isEmpty()) out.add(line);
         return out;
+    }
+
+    /**
+     * Maps a hit on a chiseled bookshelf face to a slot index (0-5). Returns -1 if the
+     * hit isn't on a chiseled bookshelf or the facing has no front face. This mirrors the
+     * shelf geometry used by BookshelfFiller's placement, so hovered slots and placed
+     * slots always agree.
+     */
+    public static int getSlotFromHit(BlockHitResult hit) {
+        BlockPos pos = hit.getBlockPos();
+        BlockState state = mc.level.getBlockState(pos);
+        if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) return -1;
+
+        Direction facing = state.getValue(BlockStateProperties.HORIZONTAL_FACING);
+        // Only the front face has slots; hits on the sides, back, top or bottom are not a shelf slot.
+        if (hit.getDirection() != facing) return -1;
+        Vec3 hitPos = hit.getLocation();
+        Vec3 relative = hitPos.subtract(pos.getX(), pos.getY(), pos.getZ());
+
+        double u, v;
+        switch (facing) {
+            case NORTH -> {
+                u = 1 - relative.x;
+                v = relative.y;
+            }
+            case SOUTH -> {
+                u = relative.x;
+                v = relative.y;
+            }
+            case WEST -> {
+                u = relative.z;
+                v = relative.y;
+            }
+            case EAST -> {
+                u = 1 - relative.z;
+                v = relative.y;
+            }
+            default -> {
+                return -1;
+            }
+        }
+
+        u = Math.max(0, Math.min(1, u));
+        v = Math.max(0, Math.min(1, v));
+
+        int col;
+        if (u < 0.375) col = 0;
+        else if (u < 0.6875) col = 1;
+        else col = 2;
+
+        int row = v >= 0.5 ? 0 : 1;
+
+        return col + row * 3;
+    }
+
+    /**
+     * Hit point in front of the given shelf slot, used both for clicking a slot
+     * (extract/place) and for anchoring hover text above it.
+     */
+    public static Vec3 getSlotHitVec(BlockPos pos, Direction facing, int slot) {
+        double x = 0, y = 0;
+
+        switch (slot) {
+            case 0 -> {
+                x = -0.25;
+                y = 0.25;
+            }
+            case 1 -> {
+                x = 0.0;
+                y = 0.25;
+            }
+            case 2 -> {
+                x = 0.25;
+                y = 0.25;
+            }
+            case 3 -> {
+                x = -0.25;
+                y = -0.25;
+            }
+            case 4 -> {
+                x = 0.0;
+                y = -0.25;
+            }
+            case 5 -> {
+                x = 0.25;
+                y = -0.25;
+            }
+        }
+
+        Vec3 center = Vec3.atCenterOf(pos);
+
+        return switch (facing) {
+            case NORTH -> center.add(-x, y, -0.5);
+            case SOUTH -> center.add(x, y, 0.5);
+            case WEST -> center.add(-0.5, y, x);
+            case EAST -> center.add(0.5, y, -x);
+            default -> center;
+        };
+    }
+
+    /**
+     * Renders the given book title (+ author) as a nametag anchored above a shelf
+     * slot. Shared by BookshelfFiller's registered-slot hover and ShelfCommand's
+     * read-slot hover; returns true if the text was actually drawn on screen.
+     */
+    public static boolean renderSlotHover(Render2DEvent event, BlockPos pos, Direction facing, int slot,
+                                          String title, String author, double scale, Color titleColor, Color authorColor) {
+        if (title == null || title.isEmpty()) return false;
+        if (mc.level == null || mc.player == null) return false;
+
+        // Book titles and authors are untrusted: they arrive from the server or from
+        // anvil NBT. The chat printers already route through sanitizeForChat(), but the
+        // nametag goes straight into the text renderer, and 26.1.2 reshapes text with
+        // a code-point bidi walk that stalls on control / bidi / unpaired-surrogate
+        // characters. Since this runs on every frame the shelf is in view, an
+        // unsanitized title freezes the client instead of merely rendering oddly.
+        String safeTitle = truncateForNametag(sanitizeForChat(title));
+        if (safeTitle.isEmpty()) return false;
+        String safeAuthor = author == null ? "" : truncateForNametag(sanitizeForChat(author));
+
+        Vec3 anchor = getSlotHitVec(pos, facing, slot).add(0, 0.35, 0);
+        Vector3d vec3 = new Vector3d(anchor.x, anchor.y, anchor.z);
+        if (!NametagUtils.to2D(vec3, scale)) return false;
+
+        NametagUtils.begin(vec3, event.graphics);
+        TextRenderer.get().begin(event.graphics, 1, false, true);
+
+        double lineHeight = TextRenderer.get().getHeight();
+        double titleWidth = TextRenderer.get().getWidth(safeTitle);
+
+        if (!safeAuthor.isEmpty()) {
+            String authorText = "by " + safeAuthor;
+            double authorWidth = TextRenderer.get().getWidth(authorText);
+            TextRenderer.get().render(authorText, -authorWidth / 2, 1, authorColor, true);
+            TextRenderer.get().render(safeTitle, -titleWidth / 2, -lineHeight - 1, titleColor, true);
+        } else {
+            TextRenderer.get().render(safeTitle, -titleWidth / 2, -lineHeight / 2, titleColor, true);
+        }
+
+        TextRenderer.get().end();
+        NametagUtils.end(event.graphics);
+
+        return true;
     }
 }

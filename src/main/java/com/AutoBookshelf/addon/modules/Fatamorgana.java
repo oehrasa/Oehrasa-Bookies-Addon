@@ -154,7 +154,7 @@ public class Fatamorgana extends Module {
 
     private final Setting<Integer> depositSettleDelay = sgDeposit.add(new IntSetting.Builder()
         .name("deposit-settle-delay")
-        .description("Ticks to wait after the container GUI opens before evaluating deposit/close logic, to let the initial inventory sync packet arrive. Prevents the container being closed immediately (before anything is deposited) because slots briefly read as empty.")
+        .description("Ticks to wait after the container GUI opens before evaluating deposit/close logic, to let the initial inventory sync packet arrive.")
         .defaultValue(3)
         .min(0)
         .sliderMax(10)
@@ -272,13 +272,13 @@ public class Fatamorgana extends Module {
 
             int containerFilled = 0;
             for (int i = 0; i < containerSlots; i++) {
-                if (handler.getSlot(i).hasItem()) containerFilled++;
+                if (!handler.getSlot(i).getItem().isEmpty()) containerFilled++;
             }
 
             int playerDepositSlots = 0;
             for (int i = containerSlots; i < containerSlots + 4 * 9; i++) {
                 Slot slot = handler.getSlot(i);
-                if (slot.hasItem() && isDepositItem(slot.getItem())) playerDepositSlots++;
+                if (!slot.getItem().isEmpty() && isDepositItem(slot.getItem())) playerDepositSlots++;
             }
 
             info("Container opened. container-filled-slots=%d/%d, player-deposit-slots-seen=%d, settle-delay=%d ticks",
@@ -288,12 +288,21 @@ public class Fatamorgana extends Module {
         }
     }
 
+    private int searchTickCounter = 0;
+    private static final int SEARCH_INTERVAL = 10;
+
     private void doSearching() {
         pruneCompletedTargets();
 
         // Idle guard: don't bother searching/rotating/opening anything if we
         // couldn't deposit even if we found a target.
         if (requireDepositItems.get() && !hasAnyDepositItem()) return;
+
+        // findNearestBarrel scans a ~(2*range)^3 cube of block states, which is
+        // wasteful to redo every tick while idling with nothing found. Throttle
+        // the search to once per SEARCH_INTERVAL ticks; ~0.5s discovery latency
+        // is irrelevant for manually positioned barrels and minecarts.
+        if (searchTickCounter++ % SEARCH_INTERVAL != 0) return;
 
         Entity entityTarget = findNearestChestMinecart(range.get());
         if (entityTarget != null) {
@@ -390,7 +399,8 @@ public class Fatamorgana extends Module {
 
     private void interactEntityTarget(Entity target) {
         if (mc.player == null || mc.gameMode == null || !target.isAlive()) return;
-        mc.gameMode.interact(mc.player, target, new EntityHitResult(target), InteractionHand.MAIN_HAND);
+        EntityHitResult hit = new EntityHitResult(target, target.position());
+        mc.gameMode.interact(mc.player, target, hit, InteractionHand.MAIN_HAND);
         mc.player.swing(InteractionHand.MAIN_HAND);
     }
 
@@ -415,7 +425,7 @@ public class Fatamorgana extends Module {
 
         // Settle window: give the server's inventory-contents sync packet
         // time to arrive before trusting slot contents for full/empty
-        // decisions. Without this, a freshly opened ScreenHandler can read
+        // decisions. Without this, a freshly opened AbstractContainerMenu can read
         // every slot as empty for a tick or two, which previously caused
         // autoClose to fire before a single item was ever deposited.
         if (depositSettleTicks < depositSettleDelay.get()) {
@@ -435,7 +445,7 @@ public class Fatamorgana extends Module {
         boolean playerHasDepositItems = false;
         for (int i = SlotUtils.indexToId(SlotUtils.MAIN_START); i < SlotUtils.indexToId(SlotUtils.MAIN_START) + 4 * 9; i++) {
             Slot slot = mc.player.containerMenu.getSlot(i);
-            if (slot.hasItem() && isDepositItem(slot.getItem())) {
+            if (!slot.getItem().isEmpty() && isDepositItem(slot.getItem())) {
                 playerHasDepositItems = true;
                 break;
             }
@@ -448,7 +458,7 @@ public class Fatamorgana extends Module {
 
         boolean containerHasEmptySlots = false;
         for (int i = 0; i < SlotUtils.indexToId(SlotUtils.MAIN_START); i++) {
-            if (!mc.player.containerMenu.getSlot(i).hasItem()) {
+            if (mc.player.containerMenu.getSlot(i).getItem().isEmpty()) {
                 containerHasEmptySlots = true;
                 break;
             }
@@ -464,7 +474,7 @@ public class Fatamorgana extends Module {
             if (moved >= depositRate.get()) break;
 
             Slot slot = mc.player.containerMenu.getSlot(i);
-            if (!slot.hasItem() || !isDepositItem(slot.getItem())) continue;
+            if (!!slot.getItem().isEmpty() || !isDepositItem(slot.getItem())) continue;
 
             InvUtils.shiftClick().slotId(i);
             moved++;
@@ -518,7 +528,7 @@ public class Fatamorgana extends Module {
     private boolean isContainerFullOfDepositItems() {
         for (int i = 0; i < SlotUtils.indexToId(SlotUtils.MAIN_START); i++) {
             Slot slot = mc.player.containerMenu.getSlot(i);
-            if (!slot.hasItem() || !isDepositItem(slot.getItem())) return false;
+            if (!!slot.getItem().isEmpty() || !isDepositItem(slot.getItem())) return false;
         }
         return true;
     }
@@ -666,11 +676,11 @@ public class Fatamorgana extends Module {
     }
 
     private void sendResyncPacket() {
-        if (mc.player == null || mc.player.connection == null) return;
+        if (mc.player == null || mc.getConnection() == null) return;
 
         AbstractContainerMenu handler = mc.player.containerMenu;
         Int2ObjectMap<HashedStack> modifiedStacks = new Int2ObjectOpenHashMap<>();
-        mc.player.connection.send(new ServerboundContainerClickPacket(
+        mc.getConnection().send(new ServerboundContainerClickPacket(
             handler.containerId,
             handler.getStateId(),
             (short) -1,

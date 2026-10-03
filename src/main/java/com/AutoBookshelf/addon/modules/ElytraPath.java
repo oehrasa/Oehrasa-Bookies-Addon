@@ -18,6 +18,8 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.*;
+
 public class ElytraPath extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
@@ -184,6 +186,30 @@ public class ElytraPath extends Module {
      */
     private Vec3 smoothedVelocity = Vec3.ZERO;
 
+    /**
+     * Path invalidation is content-based, not frame-count based. Each
+     * mc.level.raycast per segment is the dominant per-frame cost (up to
+     * predictionTicks raycasts per path), so the simulated segments are cached
+     * and only re-simulated when an input they depend on actually changes: the
+     * horizontal heading (direction + magnitude) deviating,
+     */
+    private static final double HEADING_CHANGE_RATIO = 0.0025; // ≈4° at constant speed
+
+    /**
+     * Per-player path state, so each gliding player renders their own segments/impact.
+     */
+    private static final class PathCache {
+        boolean initialized = false;
+        BlockPos impact = null;
+        Vec3 origin = Vec3.ZERO;
+        Vec3 dir = Vec3.ZERO; // cached horizontal step (direction + magnitude)
+        double vertY = 0.0;     // cached rawVel.y used for the vertical indicator
+        int configSig = 0;      // settings fingerprint the cached segments were built from
+        final List<Segment> segments = new ArrayList<>();
+    }
+
+    private final Map<UUID, PathCache> pathCaches = new HashMap<>();
+
     public ElytraPath() {
         super(Addon.CATEGORY, "Elytra-Path",
             "Shows your elytra flight path to destination with smooth movement. Better luck next time, Pilots.");
@@ -192,6 +218,7 @@ public class ElytraPath extends Module {
     @Override
     public void onActivate() {
         smoothedVelocity = Vec3.ZERO;
+        pathCaches.clear();
     }
 
     @EventHandler
@@ -202,45 +229,120 @@ public class ElytraPath extends Module {
         renderPlayerPath(event, mc.player);
 
         if (renderOtherPlayers.get()) {
+            Set<UUID> present = new HashSet<>();
+            present.add(mc.player.getUUID());
             for (Player player : mc.level.players()) {
                 if (player == mc.player) continue;
+                present.add(player.getUUID());
                 renderPlayerPath(event, player);
             }
+            // Drop cached state for players no longer present so it doesn't accumulate forever.
+            pathCaches.keySet().removeIf(uuid -> !present.contains(uuid));
         }
     }
 
     private void renderPlayerPath(Render3DEvent event, Player player) {
         ItemStack chest = player.getItemBySlot(EquipmentSlot.CHEST);
+        UUID uuid = player.getUUID();
 
         if (chest.getItem() != Items.ELYTRA || !player.isFallFlying()) {
-            if (player == mc.player) smoothedVelocity = Vec3.ZERO;
+            if (player == mc.player) {
+                smoothedVelocity = Vec3.ZERO;
+            }
+            pathCaches.remove(uuid);
             return;
         }
+
+        PathCache cache = pathCaches.computeIfAbsent(uuid, k -> new PathCache());
 
         Vec3 startPos = computeStartPos(player);
         Vec3 rawVel = player.getDeltaMovement();
         Vec3 hDir = computeHorizontalDirection(player, rawVel);
 
-        // Main horizontal path (single pass: compute and render together)
-        drawPath(event, startPos, hDir, false);
-
-        // Vertical indicator
-        if (showVerticalIndicators.get() && Math.abs(rawVel.y) > 0.02) {
-            Vec3 vertDir = new Vec3(0, rawVel.y, 0);
-            SettingColor c = rawVel.y > 0 ? ascendColor.get() : descendColor.get();
-            drawPath(event, startPos, vertDir, true, c);
+        int configSig = configSignature();
+        double stepSq = Math.max(hDir.lengthSqr(), 1e-4);
+        if (!cache.initialized
+            || cache.configSig != configSig
+            || headingChanged(cache.dir, hDir)
+            || Math.abs(rawVel.y - cache.vertY) > 0.02
+            || startPos.distanceToSqr(cache.origin) > stepSq) {
+            simulatePath(cache, startPos, hDir, rawVel);
+            cache.origin = startPos;
+            cache.dir = hDir;
+            cache.vertY = rawVel.y;
+            cache.configSig = configSig;
+            cache.initialized = true;
         }
+
+        renderCachedPath(event, cache, startPos.subtract(cache.origin));
     }
 
     /**
-     * Draws the horizontal path using the current colorMode.
+     * Fingerprint of the settings that shape the cached segments. A change in
+     * any of them (color mode/palette, stop-at-block, tick count, vertical
+     * indicator colors) must re-simulate, even if heading and speed are steady.
      */
-    private void drawPath(Render3DEvent event, Vec3 start, Vec3 step, boolean isVertical) {
-        drawPath(event, start, step, isVertical, null);
+    private int configSignature() {
+        int h = 1;
+        h = 31 * h + predictionTicks.get();
+        h = 31 * h + colorMode.get().ordinal();
+        h = 31 * h + stopAtBlock.get().hashCode();
+        h = 31 * h + showVerticalIndicators.get().hashCode();
+        h = 31 * h + lineColor.get().r;
+        h = 31 * h + lineColor.get().g;
+        h = 31 * h + lineColor.get().b;
+        h = 31 * h + lineColor.get().a;
+        h = 31 * h + gradientStart.get().r;
+        h = 31 * h + gradientStart.get().g;
+        h = 31 * h + gradientStart.get().b;
+        h = 31 * h + gradientStart.get().a;
+        h = 31 * h + gradientEnd.get().r;
+        h = 31 * h + gradientEnd.get().g;
+        h = 31 * h + gradientEnd.get().b;
+        h = 31 * h + gradientEnd.get().a;
+        h = 31 * h + ascendColor.get().r;
+        h = 31 * h + ascendColor.get().g;
+        h = 31 * h + ascendColor.get().b;
+        h = 31 * h + ascendColor.get().a;
+        h = 31 * h + descendColor.get().r;
+        h = 31 * h + descendColor.get().g;
+        h = 31 * h + descendColor.get().b;
+        h = 31 * h + descendColor.get().a;
+        return h;
     }
 
-    private void drawPath(Render3DEvent event, Vec3 start, Vec3 step,
-                          boolean isVertical, SettingColor overrideColor) {
+    /**
+     * True when the cached step vector no longer matches the current one. Both a
+     * heading change and a speed change invalidate, keeping the cached segments
+     * faithful in direction and per-tick length. The comparison is relative, so
+     * small frame-to-frame drift (velocity smoothing, lateral motion) reuses the
+     * cache while any real steering recomputes it.
+     */
+    private static boolean headingChanged(Vec3 cached, Vec3 current) {
+        double lenSq = cached.lengthSqr();
+        if (lenSq <= 1e-8) return current.lengthSqr() > 1e-8;
+        return current.distanceToSqr(cached) > HEADING_CHANGE_RATIO * lenSq;
+    }
+
+    /**
+     * Recomputes the horizontal path (and optionally the vertical indicator)
+     * into the given player's segment cache. Only called when the path inputs
+     * actually changed (see renderPlayerPath), not per frame.
+     */
+    private void simulatePath(PathCache cache, Vec3 startPos, Vec3 hDir, Vec3 rawVel) {
+        cache.segments.clear();
+        cache.impact = null;
+
+        simulateIntoCache(cache, startPos, hDir, false, null);
+
+        if (showVerticalIndicators.get() && Math.abs(rawVel.y) > 0.02) {
+            Vec3 vertDir = new Vec3(0, rawVel.y, 0);
+            SettingColor c = rawVel.y > 0 ? ascendColor.get() : descendColor.get();
+            simulateIntoCache(cache, startPos, vertDir, true, c);
+        }
+    }
+
+    private void simulateIntoCache(PathCache cache, Vec3 start, Vec3 step, boolean isVertical, SettingColor overrideColor) {
         final int maxTicks = predictionTicks.get();
         final ColorMode mode = colorMode.get();
 
@@ -261,23 +363,51 @@ public class ElytraPath extends Module {
                 BlockHitResult hit = raytraceBlock(prevPos, nextPos);
                 if (hit != null) {
                     // Render the final partial segment up to the hit surface
-                    renderSegment(event, prevPos, hit.getLocation(),
+                    appendSegment(cache, prevPos, hit.getLocation(),
                         segmentColor(overrideColor, mode, solid, fade, gStart, gEnd, i, maxT));
                     impactHit = hit;
                     break;
                 }
             }
 
-            renderSegment(event, prevPos, nextPos,
+            appendSegment(cache, prevPos, nextPos,
                 segmentColor(overrideColor, mode, solid, fade, gStart, gEnd, i, maxT));
 
             prevPos = nextPos;
         }
 
-        if (renderImpactBox.get() && impactHit != null) {
-            BlockPos bp = impactHit.getBlockPos();
-            event.renderer.box(bp, impactBoxColor.get(), impactBoxColor.get(), impactBoxShape.get(), 0);
+        // The horizontal pass owns the impact box whenever it hits one; the vertical
+        // indicator must not overwrite the block the flight path itself will hit. But
+        // the horizontal step is a flat line at eye level, so in open air it rarely
+        // hits anything while the descending vertical pass always reaches the ground.
+        // Let the vertical pass supply the impact only as a fallback when the horizontal
+        // pass found none, otherwise the box never renders on an unobstructed glide.
+        if (impactHit != null && (!isVertical || cache.impact == null)) {
+            cache.impact = impactHit.getBlockPos();
         }
+    }
+
+    // segmentColor() returns the mutated scratchColor for Fade/Gradient, so the
+    // colour must be copied when storing into the cache; the copy only happens on
+    // the throttled recompute, not per frame.
+    private void appendSegment(PathCache cache, Vec3 p1, Vec3 p2, SettingColor color) {
+        cache.segments.add(new Segment(p1, p2, new SettingColor(color.r, color.g, color.b, color.a)));
+    }
+
+    private void renderCachedPath(Render3DEvent event, PathCache cache, Vec3 offset) {
+        for (Segment segment : cache.segments) {
+            event.renderer.line(
+                segment.a.x + offset.x, segment.a.y + offset.y, segment.a.z + offset.z,
+                segment.b.x + offset.x, segment.b.y + offset.y, segment.b.z + offset.z,
+                segment.color);
+        }
+
+        if (renderImpactBox.get() && cache.impact != null) {
+            event.renderer.box(cache.impact, impactBoxColor.get(), impactBoxColor.get(), impactBoxShape.get(), 0);
+        }
+    }
+
+    private record Segment(Vec3 a, Vec3 b, SettingColor color) {
     }
 
     private SettingColor segmentColor(SettingColor override,
@@ -315,15 +445,11 @@ public class ElytraPath extends Module {
         }
     }
 
-    private void renderSegment(Render3DEvent event, Vec3 p1, Vec3 p2, SettingColor color) {
-        event.renderer.line(p1.x, p1.y, p1.z, p2.x, p2.y, p2.z, color);
-    }
-
     private Vec3 computeStartPos(Player player) {
         if (player == mc.player && startFromCrosshair.get()) {
             return new Vec3(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z);
         }
-        Vec3 eye = player.position().add(0, player.getEyeHeight(player.getPose()), 0);
+        Vec3 eye = player.position().add(0, player.getEyeHeight(), 0);
         return eye.add(0, startOffset.get(), 0);
     }
 
@@ -345,7 +471,7 @@ public class ElytraPath extends Module {
         }
 
         // Idle: project forward vector at configured speed
-        Vec3 forward = player.getViewVector(1.0F);
+        Vec3 forward = player.getLookAngle();
         return new Vec3(forward.x * idleSpeed.get(), 0.0, forward.z * idleSpeed.get());
     }
 

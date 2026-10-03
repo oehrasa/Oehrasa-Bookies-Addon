@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 
@@ -46,7 +47,9 @@ public class ChestTrackerDataV2 {
     // places: the debounced background executor, the "Save Data" button, and
     // world-leave. and without this, two of them landing at once could
     // interleave writes to the same temp file.
-    private final Object fileWriteLock = new Object();
+    // A ReentrantLock (not a monitor) so the client-thread inline path can
+    // time out on it instead of blocking indefinitely behind a stuck writer.
+    private final ReentrantLock fileWriteLock = new ReentrantLock();
 
     private final AtomicInteger pendingContainerSaves = new AtomicInteger(0);
 
@@ -55,6 +58,23 @@ public class ChestTrackerDataV2 {
     private final AtomicLong dataVersion = new AtomicLong(0);
 
     private static final long SAVE_DEBOUNCE_MS = 2000;
+
+    /**
+     * How long a synchronous save waits for the background save thread before
+     * writing inline. Kept equal to SAVE_INLINE_LOCK_TIMEOUT_SECONDS: every caller
+     * of saveDataSync() is on the client thread (deactivate, world-leave, the manual
+     * save button), so waiting far longer than the inline path's own lock budget
+     * would freeze the game for many seconds before even reaching the fallback
+     * that exists precisely to avoid freezing it.
+     */
+    private static final long SAVE_SYNC_TIMEOUT_SECONDS = 2;
+
+    /**
+     * How long the last-resort inline save waits for the data lock. Deliberately
+     * short: this runs on the client thread (typically while disconnecting), so a
+     * writer that is genuinely stuck must not be able to freeze the game.
+     */
+    private static final long SAVE_INLINE_LOCK_TIMEOUT_SECONDS = 2;
     private final ScheduledExecutorService saveExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "ChestTracker-Save");
         t.setDaemon(true);
@@ -94,7 +114,9 @@ public class ChestTrackerDataV2 {
     private void flushIfDirty() {
         if (!dirty) return;
         dirty = false;
-        saveData();
+        // Already running on saveExecutor, call directly instead of submitting
+        // another task, so this can't queue behind a save submitted after it.
+        snapshotAndWrite();
     }
 
     public void trackContainer(BlockPos pos, String dimension, String containerType, List<ItemStack> contents) {
@@ -202,7 +224,12 @@ public class ChestTrackerDataV2 {
         return saveFailures;
     }
 
-    public void saveData() {
+    /**
+     * Builds the snapshot and writes it, both on the executor thread, so the
+     * build order and the write order can never diverge between overlapping
+     * saveData()/saveDataSync()/flushIfDirty() calls.
+     */
+    private void snapshotAndWrite() {
         JsonObject root;
         try {
             root = buildSnapshotJson();
@@ -214,9 +241,87 @@ public class ChestTrackerDataV2 {
         writeJsonToFile(root);
     }
 
+    public void saveData() {
+        saveExecutor.submit(this::snapshotAndWrite);
+    }
+
+    /**
+     * Same as saveData() but blocks until write is flushed, for callers that
+     * must know the data is on disk (module deactivate, world-leave, manual save).
+     */
+    public void saveDataSync() {
+        // A pending debounced save is redundant once we write the full snapshot below.
+        ScheduledFuture<?> pending = pendingSave;
+        if (pending != null) pending.cancel(false);
+
+        try {
+            saveExecutor.submit(this::snapshotAndWrite).get(SAVE_SYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            saveFailures++;
+            LOGGER.error("Save interrupted while waiting for write", e);
+        } catch (ExecutionException e) {
+            saveFailures++;
+            LOGGER.error("Failed to save data (attempt {})", saveFailures, e);
+        } catch (TimeoutException e) {
+            // The save thread is blocked or backed up (typically a writer holding
+            // the data lock while the world tears down). Don't drop the save on
+            // the floor: write it here, with a bounded lock wait so a stuck
+            // writer can't freeze the client thread either.
+            saveFailures++;
+            LOGGER.warn("Save thread busy after {}s, writing inline (attempt {})", SAVE_SYNC_TIMEOUT_SECONDS, saveFailures);
+            writeSnapshotInline();
+        }
+    }
+
+    /**
+     * Last-resort save: builds and writes a snapshot on the calling thread,
+     * giving up if the data lock cannot be acquired promptly.
+     */
+    private void writeSnapshotInline() {
+        boolean locked = false;
+        boolean writeLocked = false;
+        try {
+            locked = lock.readLock().tryLock(SAVE_INLINE_LOCK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!locked) {
+                LOGGER.error("Gave up saving chest tracker data: data lock still held after {}s", SAVE_INLINE_LOCK_TIMEOUT_SECONDS);
+                return;
+            }
+            // The data lock bounds the snapshot build, but a background writer
+            // can still hold the file lock. Time out on that too, otherwise
+            // this client-thread path blocks behind it and freezes the game.
+            writeLocked = fileWriteLock.tryLock(SAVE_INLINE_LOCK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!writeLocked) {
+                LOGGER.error("Gave up saving chest tracker data: file lock still held after {}s", SAVE_INLINE_LOCK_TIMEOUT_SECONDS);
+                return;
+            }
+            writeJsonToFile(buildSnapshotJsonLocked());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            LOGGER.error("Interrupted while saving chest tracker data inline", e);
+        } catch (Exception e) {
+            saveFailures++;
+            LOGGER.error("Failed to save data inline (attempt {})", saveFailures, e);
+        } finally {
+            if (writeLocked) fileWriteLock.unlock();
+            if (locked) lock.readLock().unlock();
+        }
+    }
+
     private JsonObject buildSnapshotJson() {
         lock.readLock().lock();
         try {
+            return buildSnapshotJsonLocked();
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Caller must already hold the data lock (read is enough).
+     */
+    private JsonObject buildSnapshotJsonLocked() {
+        {
             JsonObject root = new JsonObject();
             root.addProperty("version", CURRENT_VERSION);
             root.addProperty("saveTime", System.currentTimeMillis());
@@ -230,38 +335,38 @@ public class ChestTrackerDataV2 {
             }
             root.add("dimensions", dimensions);
             return root;
-        } finally {
-            lock.readLock().unlock();
         }
     }
 
     /**
-     * Writes a previously-built snapshot to disk. Synchronized on
-     * fileWriteLock (not the data lock) so this can run on the background
-     * save-executor thread and, separately, on the main thread (manual
-     * "Save Data" button, world-leave) without two saves stomping on the
-     * same temp file if they overlap.
+     * Writes a previously-built snapshot to disk. Runs on the single background
+     * save-executor thread, or on the client thread from the inline last-resort
+     * path (which already holds the file lock via tryLock). Held on
+     * fileWriteLock (not the data lock) so the debounced flush, manual
+     * "Save Data" button, and world-leave saves don't stomp on the same temp
+     * file if they overlap.
      */
     private void writeJsonToFile(JsonObject root) {
-        synchronized (fileWriteLock) {
-            try {
-                try (Writer writer = new OutputStreamWriter(new FileOutputStream(tempFile), StandardCharsets.UTF_8)) {
-                    GSON.toJson(root, writer);
-                }
-                if (dataFile.exists() && dataFile.length() > 0) {
-                    Files.copy(dataFile.toPath(), backupFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                }
-                Files.move(tempFile.toPath(), dataFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                lastSaveTime = System.currentTimeMillis();
-                saveFailures = 0;
-                pendingContainerSaves.set(0);
-            } catch (Exception e) {
-                saveFailures++;
-                LOGGER.error("Failed to save data (attempt {})", saveFailures, e);
-                if (saveFailures > 3) {
-                    LOGGER.error("Multiple save failures, data may be lost!");
-                }
+        fileWriteLock.lock();
+        try {
+            try (Writer writer = new OutputStreamWriter(new FileOutputStream(tempFile), StandardCharsets.UTF_8)) {
+                GSON.toJson(root, writer);
             }
+            if (dataFile.exists() && dataFile.length() > 0) {
+                Files.copy(dataFile.toPath(), backupFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            }
+            Files.move(tempFile.toPath(), dataFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            lastSaveTime = System.currentTimeMillis();
+            saveFailures = 0;
+            pendingContainerSaves.set(0);
+        } catch (Exception e) {
+            saveFailures++;
+            LOGGER.error("Failed to save data (attempt {})", saveFailures, e);
+            if (saveFailures > 3) {
+                LOGGER.error("Multiple save failures, data may be lost!");
+            }
+        } finally {
+            fileWriteLock.unlock();
         }
     }
 

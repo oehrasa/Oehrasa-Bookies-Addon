@@ -213,7 +213,7 @@ public class SculkRange extends Module {
 
     private final Setting<Boolean> showActivationPower = sgExperimental.add(new BoolSetting.Builder()
         .name("show-activation-power")
-        .description("When a sensor activates, show its synced power/signal-strength value above it. Calibrated sensors also show their exact triggering frequency, or the precise sound-matched event when one is found.")
+        .description("When a sensor activates, show its synced redstone power/signal-strength value above it.")
         .defaultValue(false)
         .build());
 
@@ -261,13 +261,13 @@ public class SculkRange extends Module {
 
     /**
      * Sound -> exact game event it corresponds to. The frequency of each event
-     * is taken from vanilla itself (VibrationSystem.getGameEventFrequency), so a sound label
+     * is taken from vanilla itself (Vibrations.getFrequency), so a sound label
      * is only ever accepted when it matches the frequency the sensor actually
      * reported (its blockstate POWER). Without that check, the module used to
      * show whatever labelled sound happened to be nearest to an activating
      * sensor
      */
-    private record SoundEventInfo(Holder<GameEvent> event, String label) {
+    private record SoundEventInfo(Holder<net.minecraft.world.level.gameevent.GameEvent> event, String label) {
     }
 
     private static final Map<Identifier, SoundEventInfo> SOUND_EVENTS = Map.of(
@@ -289,6 +289,12 @@ public class SculkRange extends Module {
     private volatile ExecutorService workerThread;
     private boolean selectKeyWasDown;
     private long tickCounter;
+
+    // Snapshot of the settings that shape generated spheres; rebuildAllSpheres skips
+    // regeneration when neither actually changed, since the onChanged handlers can
+    // fire more than once for the same value.
+    private int lastGradation = -1;
+    private int lastShriekerRange = -1;
 
     private enum SensorType {
         CALIBRATED, NORMAL, SHRIEKER
@@ -429,15 +435,19 @@ public class SculkRange extends Module {
     private void onPacketReceive(PacketEvent.Receive event) {
         if (!isActive() || mc.level == null) return;
 
-        mc.execute(() -> {
-            if (event.packet instanceof ClientboundSoundPacket packet) {
-                recordSound(packet.getSound().value().location(),
-                    BlockPos.containing(packet.getX(), packet.getY(), packet.getZ()));
-            } else if (event.packet instanceof ClientboundSoundEntityPacket packet) {
-                Entity entity = mc.level.getEntity(packet.getId());
-                if (entity != null) recordSound(packet.getSound().value().location(), entity.blockPosition());
-            }
-        });
+        if (event.packet instanceof ClientboundSoundPacket packet) {
+            BlockPos pos = BlockPos.containing(packet.getX(), packet.getY(), packet.getZ());
+            Identifier soundId = packet.getSound().value().location();
+            mc.execute(() -> recordSound(soundId, pos));
+        } else if (event.packet instanceof ClientboundSoundEntityPacket packet) {
+            Identifier soundId = packet.getSound().value().location();
+            int id = packet.getId();
+            mc.execute(() -> {
+                if (mc.level == null) return;
+                Entity entity = mc.level.getEntity(id);
+                if (entity != null) recordSound(soundId, entity.blockPosition());
+            });
+        }
     }
 
     private void recordSound(Identifier soundId, BlockPos pos) {
@@ -613,10 +623,18 @@ public class SculkRange extends Module {
 
     /**
      * Rebuilds every sensor's raw shell then recomputes all exposed-block sets.
+     * Skipped entirely unless a sphere-affecting setting actually changed; spheres
+     * otherwise stay cached and are only rebuilt when the sensor set itself changes.
      */
     private void rebuildAllSpheres() {
+        int g = gradation.get();
+        int s = shriekerRange.get();
+        if (g == lastGradation && s == lastShriekerRange) return;
+        lastGradation = g;
+        lastShriekerRange = s;
+
         if (sensors.isEmpty()) return;
-        for (SensorData s : sensors) s.sphereBlocks = generateSphere(s.pos, s.range());
+        for (SensorData sensor : sensors) sensor.sphereBlocks = generateSphere(sensor.pos, sensor.range());
         rebuildAllExposedBlocks();
     }
 

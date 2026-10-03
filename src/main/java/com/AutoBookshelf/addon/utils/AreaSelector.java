@@ -213,7 +213,7 @@ public class AreaSelector {
         return pos2.getZ() >= pos1.getZ();
     }
 
-    public AABB getBoundingBox() {
+    public AABB getBoundingAABB() {
         if (!hasCompleteSelection()) return null;
         return new AABB(minX(), minY(), minZ(), maxX() + 1, maxY() + 1, maxZ() + 1);
     }
@@ -221,7 +221,7 @@ public class AreaSelector {
     /**
      * Bounding box flattened to a single Y-slice (for platform-style previews).
      */
-    public AABB getFlatBoundingBox(int y) {
+    public AABB getFlatBoundingAABB(int y) {
         if (!hasCompleteSelection()) return null;
         return new AABB(minX(), y, minZ(), maxX() + 1, y + 1, maxZ() + 1);
     }
@@ -233,11 +233,13 @@ public class AreaSelector {
         List<BlockPos> list = new ArrayList<>();
         if (!hasCompleteSelection()) return list;
 
-        for (int y = minY(); y <= maxY(); y++) {
-            for (int x = minX(); x <= maxX(); x++) {
-                for (int z = minZ(); z <= maxZ(); z++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    if (matches.test(pos)) list.add(pos);
+        int minX = minX(), maxX = maxX(), minY = minY(), maxY = maxY(), minZ = minZ(), maxZ = maxZ();
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        for (int y = minY; y <= maxY; y++) {
+            for (int x = minX; x <= maxX; x++) {
+                for (int z = minZ; z <= maxZ; z++) {
+                    pos.set(x, y, z);
+                    if (matches.test(pos)) list.add(pos.immutable());
                 }
             }
         }
@@ -251,9 +253,12 @@ public class AreaSelector {
         List<BlockPos> list = new ArrayList<>();
         if (!hasCompleteSelection()) return list;
 
-        for (int x = minX(); x <= maxX(); x++) {
-            for (int z = minZ(); z <= maxZ(); z++) {
-                list.add(new BlockPos(x, y, z));
+        int minX = minX(), maxX = maxX(), minZ = minZ(), maxZ = maxZ();
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                pos.set(x, y, z);
+                list.add(pos.immutable());
             }
         }
         return list;
@@ -272,7 +277,7 @@ public class AreaSelector {
             event.renderer.box(pos2, pos2Color.get(), pos2Color.get(), ShapeMode.Both, 0);
         }
 
-        AABB box = getBoundingBox();
+        AABB box = getBoundingAABB();
         if (box != null) {
             event.renderer.box(box, sideColor.get(), lineColor.get(), ShapeMode.Both, 0);
         }
@@ -296,7 +301,7 @@ public class AreaSelector {
             event.renderer.box(flatPos2, pos2Color.get(), pos2Color.get(), ShapeMode.Both, 0);
         }
 
-        AABB box = getFlatBoundingBox(flattenedY);
+        AABB box = getFlatBoundingAABB(flattenedY);
         if (box != null) {
             event.renderer.box(box, sideColor.get(), lineColor.get(), ShapeMode.Both, 0);
         }

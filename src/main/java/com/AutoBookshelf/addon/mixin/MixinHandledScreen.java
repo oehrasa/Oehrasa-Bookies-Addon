@@ -26,7 +26,7 @@ public abstract class MixinHandledScreen extends Screen {
 
     @Inject(method = "extractContents", at = @At("TAIL"))       // render() was renamed
     private void onRenderTail(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta, CallbackInfo ci) {
-        MeteorClient.EVENT_BUS.post(ScreenRenderEvent.get(context, delta));
+        MeteorClient.EVENT_BUS.post(ScreenRenderEvent.get(context, delta, mouseX, mouseY));
     }
 
     @Inject(method = "mouseClicked", at = @At("HEAD"))

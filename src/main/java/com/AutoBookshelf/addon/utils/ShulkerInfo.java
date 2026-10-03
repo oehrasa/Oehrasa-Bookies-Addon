@@ -4,16 +4,13 @@ import com.AutoBookshelf.addon.modules.InventoryInfo;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.item.BlockItem;
-import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ItemStackTemplate;
 import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 public record ShulkerInfo(String name, Type type, int color, int slot, List<ItemStack> stacks) {
 
@@ -33,14 +30,25 @@ public record ShulkerInfo(String name, Type type, int color, int slot, List<Item
         Type type = Modules.get().get(InventoryInfo.class).compact.get() ? Type.COMPACT : Type.FULL;
 
         if (type == Type.COMPACT) {
-            Map<Item, Integer> merged = new LinkedHashMap<>();
+            // Merge stacks that are the same item AND have identical components
+            // so merged stacks keep their component data (custom names, book
+            // author/pages, enchantments, damage, etc.) for the tooltip.
+            List<ItemStack> merged = new ArrayList<>();
             for (ItemStack item : items) {
-                merged.merge(item.getItem(), item.getCount(), Integer::sum);
+                ItemStack rep = null;
+                for (ItemStack candidate : merged) {
+                    if (ItemStack.isSameItemSameComponents(candidate, item)) {
+                        rep = candidate;
+                        break;
+                    }
+                }
+                if (rep == null) {
+                    merged.add(item.copy());
+                } else {
+                    rep.setCount(rep.getCount() + item.getCount());
+                }
             }
-            items.clear();
-            for (Map.Entry<Item, Integer> entry : merged.entrySet()) {
-                items.add(new ItemStack(entry.getKey(), entry.getValue()));
-            }
+            items = merged;
         } else {
             while (items.size() < 27) items.add(ItemStack.EMPTY);
         }

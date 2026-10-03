@@ -6,6 +6,7 @@ import meteordevelopment.meteorclient.gui.widgets.containers.WVerticalList;
 import meteordevelopment.meteorclient.gui.widgets.input.WTextBox;
 import meteordevelopment.meteorclient.gui.widgets.pressable.WButton;
 import meteordevelopment.meteorclient.gui.widgets.pressable.WCheckbox;
+import meteordevelopment.meteorclient.utils.Utils;
 
 import java.util.*;
 import java.util.function.Consumer;
@@ -13,9 +14,8 @@ import java.util.function.Consumer;
 // Lets the player search/browse the remote manifest
 // and pick one or more books to queue for import.
 public class RemoteBookSelectScreen extends WindowScreen {
-    private static final int TITLE_LABEL_MAX_CHARS = 60;
     private static final int FILE_LABEL_MAX_CHARS = 48;
-    private static final int AUTHOR_LABEL_MAX_CHARS = 32;
+    private static final String ELLIPSIS = "…";
     // Leading spaces on the author line
     private static final String AUTHOR_INDENT = "    ";
 
@@ -124,7 +124,11 @@ public class RemoteBookSelectScreen extends WindowScreen {
             BookEntry entry = matched.get(i);
             visible.add(entry); // this entry passed the filter, so it's currently rendered
 
-            listContainer.add(theme.label("(" + (i + 1) + ") " + truncate(entry.displayTitle(), TITLE_LABEL_MAX_CHARS))).expandX();
+            // Title rows are multi-line labels: they word-wrap at the window budget
+            // instead of ellipsizing, so long titles (and titles that contain a
+            // literal newline from the manifest) keep their full text instead of
+            // overflowing one line past the screen edge.
+            listContainer.add(theme.label("(" + (i + 1) + ") " + entry.displayTitle(), false, labelMaxWidth() / theme.scale(1))).expandX();
             listContainer.add(theme.horizontalSeparator()).expandX();
 
             var fileRow = listContainer.add(theme.horizontalList()).expandX().widget();
@@ -133,7 +137,7 @@ public class RemoteBookSelectScreen extends WindowScreen {
             fileRow.add(theme.label(truncate(fileNameOf(entry), FILE_LABEL_MAX_CHARS)));
 
             if (entry.hasAuthor()) {
-                listContainer.add(theme.label(AUTHOR_INDENT + "by " + truncate(entry.author, AUTHOR_LABEL_MAX_CHARS))).expandX();
+                listContainer.add(theme.label(fit(AUTHOR_INDENT + "by " + entry.author, labelMaxWidth()))).expandX();
             }
 
             if (i < matched.size() - 1) {
@@ -153,9 +157,36 @@ public class RemoteBookSelectScreen extends WindowScreen {
         return s == null ? "" : s;
     }
 
-    // Caps displayed text length
+    // Row text budget. The window sizes to its content, so a budget based on the
+    // whole screen never binds: cap it to a paragraph width and only shrink
+    // further on tiny windows. Title rows word-wrap against this via the multi
+    // label; author rows ellipsize against it via fit(). This also stops a long
+    // title from stretching the window to fill the screen.
+    private double labelMaxWidth() {
+        return Math.min(Utils.getWindowWidth() - theme.scale(48), theme.scale(360));
+    }
+
+    // Character cap for the checkbox row, which is short by design.
     private static String truncate(String text, int maxChars) {
         if (text == null) return "";
-        return text.length() <= maxChars ? text : text.substring(0, maxChars - 1) + "…";
+        return text.length() <= maxChars ? text : text.substring(0, maxChars - 1) + ELLIPSIS;
+    }
+
+    // Width-aware ellipsis: trims only when the rendered text would overflow
+    // maxWidthPx, using the theme's actual measured glyph width. Unlike the old
+    // character-count cap, narrow glyphs (i, l, spaces) no longer get cut before
+    // they run out of room.
+    private String fit(String text, double maxWidthPx) {
+        if (text == null || text.isEmpty()) return "";
+        if (theme.textWidth(text) <= maxWidthPx) return text;
+
+        double ellWidth = theme.textWidth(ELLIPSIS);
+        int lo = 0, hi = text.length();
+        while (lo < hi) {
+            int mid = (lo + hi + 1) >>> 1;
+            if (theme.textWidth(text.substring(0, mid)) + ellWidth <= maxWidthPx) lo = mid;
+            else hi = mid - 1;
+        }
+        return text.substring(0, lo) + ELLIPSIS;
     }
 }

@@ -1,26 +1,27 @@
 package com.AutoBookshelf.addon.modules;
 
+import baritone.api.BaritoneAPI;
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
-import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
-import meteordevelopment.meteorclient.utils.player.SlotUtils;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.inventory.ContainerInput;
-import net.minecraft.world.item.BoneMealItem;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.BonemealableBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
-import baritone.api.BaritoneAPI;
+
 import java.util.*;
 
 public class AutoMoss extends Module {
@@ -217,6 +218,22 @@ public class AutoMoss extends Module {
     private final Map<BlockPos, Integer> recentlyUsedMoss = new HashMap<>();
     private int placeMossTimer = 0;   // cooldown between placing seed moss blocks
 
+    // The cube scans below (findTargets / isMossInRange) walk every block in a
+    // ~range^3 volume, including a world raycast per cell from findTargets' LOS
+    // check. Moss spreads slowly and the player barely moves between ticks, so
+    // cache the results and refresh once at least SCAN_INTERVAL ticks have passed.
+    // Freshness is measured in world ticks so the schedule keeps advancing even
+    // while delayTimer skips the rest of onTick.
+    private static final int SCAN_INTERVAL = 10;
+    private long lastTargetScanTick = Long.MIN_VALUE + SCAN_INTERVAL;
+    private List<BlockPos> cachedMossTargets = null;
+    private List<BlockPos> cachedTreeCandidates = null;
+    private BlockPos lastTargetScanOrigin = null;
+    private long lastMossScanTick = Long.MIN_VALUE + SCAN_INTERVAL;
+    private boolean cachedMossInRange = false;
+    private BlockPos lastMossScanOrigin = null;
+    private ClientLevel lastCachedWorld = null;
+
     // Baritone roaming state
     private boolean baritoneRunning = false;
     private BlockPos currentGotoTarget = null;
@@ -236,15 +253,29 @@ public class AutoMoss extends Module {
         gotoRestartCooldown = 0;
         baritoneStallTicks = 0;
         visitedColumns.clear();
+        invalidateScanCaches();
     }
 
     @Override
     public void onDeactivate() {
-        if (baritoneRunning) {
-            if (mc.player != null) mc.player.connection.sendCommand("stop");
-            baritoneRunning = false;
-        }
+        stopBaritone();
         visitedColumns.clear();
+        invalidateScanCaches();
+    }
+
+    /**
+     * Drops cached targets / moss-presence and resets their schedule so the next
+     * call rescans from the player's current position in the current world.
+     */
+    private void invalidateScanCaches() {
+        cachedMossTargets = null;
+        cachedTreeCandidates = null;
+        cachedMossInRange = false;
+        lastTargetScanTick = Long.MIN_VALUE + SCAN_INTERVAL;
+        lastMossScanTick = Long.MIN_VALUE + SCAN_INTERVAL;
+        lastTargetScanOrigin = null;
+        lastMossScanOrigin = null;
+        lastCachedWorld = null;
     }
 
     @EventHandler
@@ -254,6 +285,13 @@ public class AutoMoss extends Module {
             return;
         }
         if (mc.player == null || mc.level == null) return;
+
+        // Cached positions are world-relative; drop them if the world swaps
+        // (dimension change / respawn) while the module stays active.
+        if (mc.level != lastCachedWorld) {
+            invalidateScanCaches();
+            lastCachedWorld = mc.level;
+        }
 
         if (roamEnabled.get()) {
             boolean pathing = BaritoneAPI.getProvider().getPrimaryBaritone()
@@ -275,7 +313,7 @@ public class AutoMoss extends Module {
                     gotoRestartCooldown--;
                 } else {
                     // Only start roaming if there is no moss within range (and seeding is either off or on cooldown)
-                    if (!isMossInRange() && (placeMoss.get() ? placeMossTimer <= 0 : true)) {
+                    if (!mossInRange() && (placeMoss.get() ? placeMossTimer <= 0 : true)) {
                         startBaritoneGoto();
                     }
                 }
@@ -284,7 +322,7 @@ public class AutoMoss extends Module {
 
         // Moss seeding (before regular bonemealing)
         if (placeMossTimer > 0) placeMossTimer--;
-        if (placeMoss.get() && !isMossInRange() && placeMossTimer <= 0) {
+        if (placeMoss.get() && !mossInRange() && placeMossTimer <= 0) {
             trySeedMoss();
         }
 
@@ -296,21 +334,23 @@ public class AutoMoss extends Module {
         if (boneMealSlot == -1) return;
 
         int uses = 0;
-        List<BlockPos> targets = findTargets();
+        List<BlockPos> targets = scanTargets();
 
         for (BlockPos blockPos : targets) {
             if (uses >= maxUsesPerTick.get()) break;
 
             BlockState state = mc.level.getBlockState(blockPos);
             Block block = state.getBlock();
-            String blockName = block.getDescriptionId().toLowerCase();
+            boolean isMoss = BuiltInRegistries.BLOCK.getKey(block).getPath().contains("moss_block");
 
             // Skip moss blocks on cooldown
-            if (blockName.contains("moss_block") && recentlyUsedMoss.containsKey(blockPos)) {
+            if (isMoss && recentlyUsedMoss.containsKey(blockPos)) {
                 continue;
             }
 
-            if (BoneMealItem.growCrop(mc.player.getInventory().getItem(boneMealSlot), mc.level, blockPos)) {
+            boolean applied = block instanceof BonemealableBlock bonemealable
+                && bonemealable.isValidBonemealTarget(mc.level, blockPos, state);
+            if (applied) {
                 Vec3 hitPos = new Vec3(blockPos.getX() + 0.5, blockPos.getY() + 0.5, blockPos.getZ() + 0.5);
                 BlockHitResult hit = new BlockHitResult(hitPos, Direction.UP, blockPos, false);
 
@@ -322,7 +362,7 @@ public class AutoMoss extends Module {
                 mc.player.getInventory().setSelectedSlot(prevSelectedSlot);
 
                 // Add moss blocks to cooldown map
-                if (blockName.contains("moss_block")) {
+                if (isMoss) {
                     recentlyUsedMoss.put(new BlockPos(blockPos), mossSpreadCooldown.get());
                 }
 
@@ -333,7 +373,7 @@ public class AutoMoss extends Module {
     }
 
     private void startBaritoneGoto() {
-        if (mc.player == null) return;
+        if (mc.player == null || mc.getConnection() == null) return;
 
         BlockPos surface = pickRoamTarget();
         if (surface == null) {
@@ -345,16 +385,20 @@ public class AutoMoss extends Module {
         BlockPos stand = surface.above();
         currentGotoTarget = stand;
 
-        mc.player.connection.sendChat("#goto " + stand.getX() + " " + stand.getY() + " " + stand.getZ());
+        mc.getConnection().sendChat("#goto " + stand.getX() + " " + stand.getY() + " " + stand.getZ());
         baritoneRunning = true;
         baritoneStallTicks = 0;
     }
 
     private void stopBaritone() {
-        if (baritoneRunning && mc.player != null) {
-            mc.player.connection.sendCommand("stop");
-            baritoneRunning = false;
-        }
+        if (!baritoneRunning) return;
+
+        // Cancel through Baritone's own API. Sending a "stop" chat command does
+        // not reach Baritone at all: it goes to the server as an unknown
+        // command, so the path kept running while baritoneRunning claimed it had
+        // stopped. Matches AutoBeacon/PlatformBuilder.
+        BaritoneAPI.getProvider().getPrimaryBaritone().getPathingBehavior().cancelEverything();
+        baritoneRunning = false;
     }
 
     /**
@@ -437,7 +481,7 @@ public class AutoMoss extends Module {
             BlockState st = mc.level.getBlockState(pos.above(dy));
             if (st.isAir()) continue;
             if (!st.getFluidState().isEmpty()) continue;
-            String n = st.getBlock().getDescriptionId().toLowerCase();
+            String n = BuiltInRegistries.BLOCK.getKey(st.getBlock()).getPath().toLowerCase();
             boolean passable = n.contains("grass") || n.contains("fern") || n.contains("flower")
                 || n.contains("vine") || n.contains("sapling") || n.contains("moss_carpet")
                 || n.contains("snow") || n.contains("leaves");
@@ -474,7 +518,47 @@ public class AutoMoss extends Module {
         }
     }
 
-    private List<BlockPos> findTargets() {
+    private List<BlockPos> scanTargets() {
+        // Refresh the scan when it goes stale or when the player moved to a new
+        // block (the scan is relative to the player's position).
+        long tick = mc.level.getGameTime();
+        BlockPos origin = mc.player.blockPosition();
+        if ((cachedMossTargets == null && cachedTreeCandidates == null)
+            || tick >= lastTargetScanTick + SCAN_INTERVAL
+            || !origin.equals(lastTargetScanOrigin)) {
+            cachedMossTargets = findMossTargets();
+            cachedTreeCandidates = findTreeCandidates();
+            lastTargetScanTick = tick;
+            lastTargetScanOrigin = origin;
+        }
+
+        // Tree is only grown randomly per action; the candidate list never caches
+        // the treeChance / azaleaTreeFraction draws.
+        List<BlockPos> targets = new ArrayList<>(cachedMossTargets);
+        for (BlockPos pos : cachedTreeCandidates) {
+            String n = BuiltInRegistries.BLOCK.getKey(mc.level.getBlockState(pos).getBlock()).getPath().toLowerCase();
+            boolean isAzalea = n.contains("azalea") && !n.contains("tree");
+            if (isAzalea) {
+                if (mc.level.getRandom().nextInt(10) < azaleaTreeFraction.get()) targets.add(pos);
+            } else if (mc.level.getRandom().nextInt(100) < treeChance.get()) {
+                targets.add(pos);
+            }
+        }
+        return targets;
+    }
+
+    private boolean mossInRange() {
+        long tick = mc.level.getGameTime();
+        BlockPos origin = mc.player.blockPosition();
+        if (tick >= lastMossScanTick + SCAN_INTERVAL || !origin.equals(lastMossScanOrigin)) {
+            cachedMossInRange = isMossInRange();
+            lastMossScanTick = tick;
+            lastMossScanOrigin = origin;
+        }
+        return cachedMossInRange;
+    }
+
+    private List<BlockPos> findMossTargets() {
         List<BlockPos> targets = new ArrayList<>();
         if (mc.player == null || mc.level == null) return targets;
 
@@ -488,32 +572,9 @@ public class AutoMoss extends Module {
                     if (pos.distSqr(playerPos) > rangeSq) continue;
                     if (!hasLineOfSight(pos)) continue;
 
-                    BlockState state = mc.level.getBlockState(pos);
-                    Block block = state.getBlock();
-                    String blockName = block.getDescriptionId().toLowerCase();
-
-                    // Check for tree growables if make-trees is enabled
-                    if (makeTrees.get()) {
-                        boolean isAzalea = blockName.contains("azalea") && !blockName.contains("tree");
-                        boolean isSapling = blockName.contains("sapling");
-
-                        if (isAzalea || isSapling) {
-                            if (isAzalea) {
-                                // Use the azalea tree fraction
-                                if (mc.level.getRandom().nextInt(10) < azaleaTreeFraction.get())
-                                    targets.add(pos);
-                            } else {
-                                if (mc.level.getRandom().nextInt(100) < treeChance.get())
-                                    targets.add(pos);
-                            }
-                            continue;
-                        }
-                    }
-
                     // Check for moss blocks with valid neighbours and sky access
-                    boolean isMoss = blockName.contains("moss_block");
-                    if (isMoss && hasValidNeighbor(pos)) {
-                        // sky access and obstruction checks
+                    String n = BuiltInRegistries.BLOCK.getKey(mc.level.getBlockState(pos).getBlock()).getPath().toLowerCase();
+                    if (n.contains("moss_block") && hasValidNeighbor(pos)) {
                         if (requireSkyAccess.get() && !hasSkyAccess(pos)) continue;
                         if (avoidObstruction.get() && isObstructedAbove(pos)) continue;
                         targets.add(pos);
@@ -524,12 +585,36 @@ public class AutoMoss extends Module {
         return targets;
     }
 
+    private List<BlockPos> findTreeCandidates() {
+        List<BlockPos> candidates = new ArrayList<>();
+        if (mc.player == null || mc.level == null || !makeTrees.get()) return candidates;
+
+        double rangeSq = range.get() * range.get();
+        BlockPos playerPos = mc.player.blockPosition();
+
+        for (int x = (int) -range.get(); x <= range.get(); x++) {
+            for (int y = (int) -range.get(); y <= range.get(); y++) {
+                for (int z = (int) -range.get(); z <= range.get(); z++) {
+                    BlockPos pos = playerPos.offset(x, y, z);
+                    if (pos.distSqr(playerPos) > rangeSq) continue;
+                    if (!hasLineOfSight(pos)) continue;
+
+                    // Collect azaleas and saplings; randomness is applied per action.
+                    String n = BuiltInRegistries.BLOCK.getKey(mc.level.getBlockState(pos).getBlock()).getPath().toLowerCase();
+                    boolean isAzalea = n.contains("azalea") && !n.contains("tree");
+                    if (isAzalea || n.contains("sapling")) candidates.add(pos);
+                }
+            }
+        }
+        return candidates;
+    }
+
     private boolean hasValidNeighbor(BlockPos pos) {
         for (Direction dir : Direction.values()) {
             BlockPos neighborPos = pos.relative(dir);
             BlockState neighborState = mc.level.getBlockState(neighborPos);
             Block neighborBlock = neighborState.getBlock();
-            String blockName = neighborBlock.getDescriptionId().toLowerCase();
+            String blockName = BuiltInRegistries.BLOCK.getKey(neighborBlock).getPath().toLowerCase();
 
             // Skip if the neighbour is in our exclusion list
             if (blockName.contains("azalea") ||
@@ -547,7 +632,7 @@ public class AutoMoss extends Module {
     private boolean isObstructedAbove(BlockPos pos) {
         BlockState above = mc.level.getBlockState(pos.above());
         if (!above.getFluidState().isEmpty()) return true;
-        String n = above.getBlock().getDescriptionId().toLowerCase();
+        String n = BuiltInRegistries.BLOCK.getKey(above.getBlock()).getPath().toLowerCase();
         return n.contains("torch") || n.contains("lantern") || n.contains("sign")
             || n.contains("lava") || n.contains("water");
     }
@@ -564,7 +649,7 @@ public class AutoMoss extends Module {
             if (state.isAir()) continue;
             if (!state.getFluidState().isEmpty()) return false;
             // Vegetation that doesn't block light/sky is okay
-            String n = state.getBlock().getDescriptionId().toLowerCase();
+            String n = BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath().toLowerCase();
             if (n.contains("grass") || n.contains("fern") || n.contains("flower")
                 || n.contains("vine") || n.contains("sapling") || n.contains("moss_carpet")
                 || n.contains("snow") || n.contains("leaves")) continue;
@@ -597,7 +682,7 @@ public class AutoMoss extends Module {
                 for (int z = -r; z <= r; z++) {
                     BlockPos pos = origin.offset(x, y, z);
                     if (pos.distSqr(origin) > rangeSq) continue;
-                    if (mc.level.getBlockState(pos).getBlock().getDescriptionId()
+                    if (BuiltInRegistries.BLOCK.getKey(mc.level.getBlockState(pos).getBlock()).getPath()
                         .toLowerCase().contains("moss_block")) return true;
                 }
             }
@@ -674,6 +759,12 @@ public class AutoMoss extends Module {
 
         mc.player.getInventory().setSelectedSlot(prevSlot);
         placeMossTimer = placeMossDelay.get();
+
+        // Note the successful placement in the cache so the next mossInRange()
+        // checks don't keep returning the stale false (and place a second seed)
+        // until the next scheduled rescan.
+        cachedMossInRange = true;
+        lastMossScanTick = mc.level.getGameTime();
     }
 
     private int findMossBlockSlot() {
@@ -684,8 +775,14 @@ public class AutoMoss extends Module {
         }
         // If inventory allow, move one to hotbar
         if (inventoryAllow.get()) {
+            int mossInInv = -1;
             for (int i = 9; i < 36; i++) {
-                if (mc.player.getInventory().getItem(i).getItem() != Items.BONE_MEAL) continue;
+                if (mc.player.getInventory().getItem(i).getItem() == Items.MOSS_BLOCK) {
+                    mossInInv = i;
+                    break;
+                }
+            }
+            if (mossInInv != -1) {
                 int emptySlot = -1;
                 for (int j = 0; j < 9; j++) {
                     if (mc.player.getInventory().getItem(j).isEmpty()) {
@@ -693,20 +790,13 @@ public class AutoMoss extends Module {
                         break;
                     }
                 }
-                if (emptySlot == -1) emptySlot = 0;
-
-                int slotId = SlotUtils.indexToId(i);
-                mc.gameMode.handleContainerInput(
-                    mc.player.inventoryMenu.containerId,
-                    slotId,
-                    emptySlot,
-                    ContainerInput.SWAP,
-                    mc.player
-                );
-                return emptySlot;
+                if (emptySlot != -1) {
+                    mc.gameMode.handleContainerInput(0, mossInInv, emptySlot, ContainerInput.SWAP, mc.player);
+                    return emptySlot;
+                }
             }
         }
-        return 0;
+        return -1;
     }
 
     private int findBoneMealSlot() {
@@ -717,26 +807,15 @@ public class AutoMoss extends Module {
         if (inventoryAllow.get()) {
             for (int i = 9; i < 36; i++) {
                 if (mc.player.getInventory().getItem(i).getItem() != Items.BONE_MEAL) continue;
-                int emptySlot = -1;
                 for (int j = 0; j < 9; j++) {
                     if (mc.player.getInventory().getItem(j).isEmpty()) {
-                        emptySlot = j;
-                        break;
+                        mc.gameMode.handleContainerInput(0, i, j, ContainerInput.SWAP, mc.player);
+                        return j;
                     }
                 }
-                if (emptySlot == -1) emptySlot = 0;
-
-                int slotId = SlotUtils.indexToId(i);
-                mc.gameMode.handleContainerInput(
-                    mc.player.inventoryMenu.containerId,
-                    slotId,
-                    emptySlot,
-                    ContainerInput.SWAP,
-                    mc.player
-                );
-                return emptySlot;
+                break;
             }
         }
-        return 0;
+        return -1;
     }
 }

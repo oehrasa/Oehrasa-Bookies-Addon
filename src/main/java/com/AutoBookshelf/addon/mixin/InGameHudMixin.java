@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.mixin;
 
 import com.AutoBookshelf.addon.modules.GetPreview;
+import com.AutoBookshelf.addon.modules.MapartNamer;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
@@ -17,8 +18,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class InGameHudMixin {
     @Inject(method = "extractRenderState", at = @At("TAIL"))
     private void onExtractRenderState(GuiGraphicsExtractor graphics, DeltaTracker deltaTracker, CallbackInfo ci) {
+        MapartNamer mapart = Modules.get().get(MapartNamer.class);
         GetPreview module = Modules.get().get(GetPreview.class);
-        if (module == null || !module.isActive()) return;
+        // Both overlays live in the same hotbar loop, so only bail out when neither
+        // module has anything to draw.
+        if ((module == null || !module.isActive()) && (mapart == null || !mapart.isActive())) return;
 
         Minecraft mc = Minecraft.getInstance();
         Player player = mc.player;
@@ -33,7 +37,12 @@ public class InGameHudMixin {
             int posX = center - 90 + i * 20 + 2;
             ItemStack stack = player.getInventory().getItem(i);
             if (stack.isEmpty()) continue;
-            module.renderBundleOverlay(graphics, posX, hotbarY, stack);
+            if (module != null && module.isActive()) {
+                module.renderBundleOverlay(graphics, posX, hotbarY, stack);
+            }
+            if (mapart != null && mapart.isActive()) {
+                mapart.renderIndexOverlay(graphics, posX, hotbarY, stack);
+            }
         }
     }
 }

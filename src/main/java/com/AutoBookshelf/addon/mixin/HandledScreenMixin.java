@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.mixin;
 
 import com.AutoBookshelf.addon.modules.GetPreview;
+import com.AutoBookshelf.addon.modules.MapartNamer;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
@@ -20,6 +21,11 @@ public abstract class HandledScreenMixin extends Screen {
 
     @Inject(method = "extractSlot", at = @At("TAIL"))
     private void onExtractSlotTail(GuiGraphicsExtractor graphics, Slot slot, int mouseX, int mouseY, CallbackInfo ci) {
+        MapartNamer mapart = Modules.get().get(MapartNamer.class);
+        if (mapart != null && mapart.isActive()) {
+            mapart.renderIndexOverlay(graphics, slot.x, slot.y, slot.getItem());
+        }
+
         GetPreview bundleModule = Modules.get().get(GetPreview.class);
         if (bundleModule != null && bundleModule.isActive()) {
             bundleModule.renderBundleOverlay(graphics, slot.x, slot.y, slot.getItem());

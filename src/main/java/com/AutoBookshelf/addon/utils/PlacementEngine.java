@@ -7,6 +7,7 @@ import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
@@ -18,16 +19,29 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
  * avoidance, and the "reserve room for a second container" variant used by
  * AutoLoader's double-enderchest mode.
  * <p>
- * Stateless aside from the MinecraftClient reference, callers own their own
- * failedPositions list, settings, etc. and pass them in per call.
+ * Stateless aside from the Minecraft reference and a reusable HashSet that
+ * mirrors the caller's failedPositions for the duration of one findPlacement call;
+ * callers still own their own lists, settings, etc. and pass them in per call.
  */
 public class PlacementEngine {
+    /**
+     * Reusable mirror of the caller's failed-positions list so per-candidate
+     * membership checks stay O(1). Refilled at the start of every findPlacement
+     * call; never mutated outside one call.
+     */
+    private final HashSet<BlockPos> failedPositionsSet = new HashSet<>();
+
     public BlockPos findPlacement(int range, boolean airPlace, boolean preferSolidBlock,
                                   List<BlockPos> failedPositions, boolean requireSecondSlot) {
-        BlockPos pp = mc.player.blockPosition();
-        Direction facing = mc.player.getDirection();
+        var player = mc.player;
+        BlockPos pp = player.blockPosition();
+        Direction facing = player.getDirection();
         double rangeSq = (double) range * range;
-        Vec3 playerPos = mc.player.position();
+        Vec3 playerPos = player.position();
+        AABB playerAABB = player.getBoundingBox();
+
+        failedPositionsSet.clear();
+        failedPositionsSet.addAll(failedPositions);
 
         List<BlockPos> cands = new ArrayList<>();
         if (requireSecondSlot) {
@@ -64,23 +78,23 @@ public class PlacementEngine {
 
         cands.removeIf(pos -> !isWithinWorldHeight(pos));
         // Closest candidates first; ties keep their original (front-biased) order.
-        cands.sort(Comparator.comparingDouble(pos -> Vec3.atCenterOf(pos).distanceToSqr(playerPos)));
+        cands.sort(Comparator.comparingDouble(pos -> centerDistSq(pos, playerPos)));
 
         if (requireSecondSlot) {
             // A "valid" first spot that's boxed in on its left
             if (airPlace && preferSolidBlock) {
                 for (BlockPos pos : cands) {
-                    if (Vec3.atCenterOf(pos).distanceToSqr(playerPos) > rangeSq) continue;
-                    if (!validSolidPos(pos) || intersectsPlayer(pos) || failedPositions.contains(pos)) continue;
+                    if (centerDistSq(pos, playerPos) > rangeSq) continue;
+                    if (!validSolidPos(pos) || intersectsPlayer(pos, playerAABB) || failedPositionsSet.contains(pos)) continue;
                     if (hasRoomForSecond(pp, pos)) return pos;
                 }
             }
             for (BlockPos pos : cands) {
-                if (Vec3.atCenterOf(pos).distanceToSqr(playerPos) > rangeSq) continue;
+                if (centerDistSq(pos, playerPos) > rangeSq) continue;
 
                 boolean primaryValid = airPlace
-                    ? (spaceAbove(pos) && canPlaceAt(pos, failedPositions))
-                    : (validSolidPos(pos) && !intersectsPlayer(pos) && !failedPositions.contains(pos));
+                    ? (spaceAbove(pos) && canPlaceAt(pos, playerAABB))
+                    : (validSolidPos(pos) && !intersectsPlayer(pos, playerAABB) && !failedPositionsSet.contains(pos));
                 if (!primaryValid) continue;
                 if (hasRoomForSecond(pp, pos)) return pos;
             }
@@ -92,21 +106,21 @@ public class PlacementEngine {
 
         if (airPlace && preferSolidBlock) {
             for (BlockPos pos : cands) {
-                if (Vec3.atCenterOf(pos).distanceToSqr(playerPos) > rangeSq) continue;
+                if (centerDistSq(pos, playerPos) > rangeSq) continue;
                 // this used to return on validSolidPos(pos) alone, skipping the
                 // intersectsPlayer/failedPositions checks every other branch applies.
                 // That could hand back a spot inside the player's own hitbox, or one
                 // already recorded as a previous failure.
-                if (intersectsPlayer(pos) || failedPositions.contains(pos)) continue;
+                if (intersectsPlayer(pos, playerAABB) || failedPositionsSet.contains(pos)) continue;
                 if (validSolidPos(pos)) return pos;
             }
         }
         for (BlockPos pos : cands) {
-            if (Vec3.atCenterOf(pos).distanceToSqr(playerPos) > rangeSq) continue;
+            if (centerDistSq(pos, playerPos) > rangeSq) continue;
             if (airPlace) {
-                if (spaceAbove(pos) && canPlaceAt(pos, failedPositions)) return pos;
+                if (spaceAbove(pos) && canPlaceAt(pos, playerAABB)) return pos;
             } else {
-                if (validSolidPos(pos) && !intersectsPlayer(pos) && !failedPositions.contains(pos)) return pos;
+                if (validSolidPos(pos) && !intersectsPlayer(pos, playerAABB) && !failedPositionsSet.contains(pos)) return pos;
             }
         }
 
@@ -129,7 +143,7 @@ public class PlacementEngine {
     }
 
     public boolean isValidSecondPos(BlockPos firstPos, BlockPos pos, Direction faceDir) {
-        Vec3 hitPoint = Vec3.atCenterOf(firstPos).add(Vec3.atLowerCornerOf(faceDir.getUnitVec3i()).scale(0.5));
+        Vec3 hitPoint = Vec3.atCenterOf(firstPos).add(faceDir.getStepX() * 0.5, faceDir.getStepY() * 0.5, faceDir.getStepZ() * 0.5);
         return mc.player.position().distanceToSqr(hitPoint) <= 25.0
             && isReplaceableOrAir(pos)
             && isReplaceableOrAir(pos.above());
@@ -141,9 +155,27 @@ public class PlacementEngine {
     }
 
     public boolean intersectsPlayer(BlockPos pos) {
-        AABB playerBox = mc.player.getBoundingBox();
-        AABB blockBox = new AABB(pos);
-        return playerBox.intersects(blockBox);
+        AABB playerAABB = mc.player.getBoundingBox();
+        AABB blockAABB = new AABB(pos);
+        return playerAABB.intersects(blockAABB);
+    }
+
+    private boolean intersectsPlayer(BlockPos pos, AABB playerAABB) {
+        double x = pos.getX(), y = pos.getY(), z = pos.getZ();
+        return playerAABB.minX < x + 1.0 && playerAABB.maxX > x
+            && playerAABB.minY < y + 1.0 && playerAABB.maxY > y
+            && playerAABB.minZ < z + 1.0 && playerAABB.maxZ > z;
+    }
+
+    private boolean canPlaceAt(BlockPos pos, AABB playerAABB) {
+        return isReplaceableOrAir(pos) && !intersectsPlayer(pos, playerAABB) && !failedPositionsSet.contains(pos);
+    }
+
+    private static double centerDistSq(BlockPos pos, Vec3 playerPos) {
+        double dx = (pos.getX() + 0.5) - playerPos.x;
+        double dy = (pos.getY() + 0.5) - playerPos.y;
+        double dz = (pos.getZ() + 0.5) - playerPos.z;
+        return dx * dx + dy * dy + dz * dz;
     }
 
     private boolean isWithinWorldHeight(BlockPos pos) {
@@ -161,7 +193,7 @@ public class PlacementEngine {
     public boolean validSolidPos(BlockPos pos) {
         return isReplaceableOrAir(pos)
             && isReplaceableOrAir(pos.above())
-            && mc.level.getBlockState(pos.below()).isRedstoneConductor(mc.level, pos.below());
+            && mc.level.getBlockState(pos.below()).canOcclude();
     }
 
     public Direction horizontalDirectionBetween(BlockPos from, BlockPos to) {

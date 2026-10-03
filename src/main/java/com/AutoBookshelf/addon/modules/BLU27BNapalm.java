@@ -11,7 +11,6 @@ import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionHand;
@@ -94,19 +93,20 @@ public class BLU27BNapalm extends Module {
         if (extinguishFire.get()) {
             BlockPos playerPos = mc.player.blockPosition();
             int radius = (int) Math.ceil(range.get());
+            double rangeVal = range.get();
             int blocksPerTick = 5;
             for (int dx = -radius; dx <= radius; dx++) {
                 for (int dy = -radius; dy <= radius; dy++) {
                     for (int dz = -radius; dz <= radius; dz++) {
                         BlockPos pos = playerPos.offset(dx, dy, dz);
-                        if (PlayerUtils.distanceTo(pos) > range.get()) continue;
+                        if (PlayerUtils.distanceTo(pos) > rangeVal) continue;
 
                         BlockState state = mc.level.getBlockState(pos);
                         if (state.getBlock() != Blocks.FIRE && !(state.getBlock() instanceof BaseFireBlock)) continue;
 
-                        mc.getConnection().send(new ServerboundPlayerActionPacket(ServerboundPlayerActionPacket.Action.START_DESTROY_BLOCK, pos, Direction.UP));
+                        mc.gameMode.startDestroyBlock(pos, Direction.UP);
                         mc.player.swing(InteractionHand.MAIN_HAND);
-                        mc.getConnection().send(new ServerboundPlayerActionPacket(ServerboundPlayerActionPacket.Action.STOP_DESTROY_BLOCK, pos, Direction.UP));
+                        mc.gameMode.continueDestroyBlock(pos, Direction.UP);
 
                         if (--blocksPerTick <= 0) return;
                     }
@@ -131,18 +131,19 @@ public class BLU27BNapalm extends Module {
         double bestDist = Double.MAX_VALUE;
 
         // Ignite mode
+        double rangeVal = range.get();
         for (int dx = -radius; dx <= radius; dx++) {
             for (int dy = -radius; dy <= radius; dy++) {
                 for (int dz = -radius; dz <= radius; dz++) {
                     BlockPos pos = playerPos.offset(dx, dy, dz);
                     double dist = PlayerUtils.distanceTo(pos);
-                    if (dist > range.get()) continue;
+                    if (dist > rangeVal) continue;
 
                     BlockState state = mc.level.getBlockState(pos);
                     if (state.isAir()) continue;
+                    if (!PlayerUtils.isWithinReach(pos)) continue;
 
                     Direction face = getAnyIgnitionFace(pos, state);
-                    if (!PlayerUtils.isWithinReach(pos)) continue;
                     if (face != null) {
                         if (random.nextInt(100) >= igniteChance.get()) continue;
 
@@ -235,7 +236,7 @@ public class BLU27BNapalm extends Module {
         if (targetPos == null || targetFace == null) return;
 
         BlockHitResult hit = new BlockHitResult(
-            Vec3.atCenterOf(targetPos).add(Vec3.atLowerCornerOf(targetFace.getUnitVec3i()).scale(0.5)),
+            Vec3.atCenterOf(targetPos).add(targetFace.getStepX() * 0.5, targetFace.getStepY() * 0.5, targetFace.getStepZ() * 0.5),
             targetFace,
             targetPos,
             false

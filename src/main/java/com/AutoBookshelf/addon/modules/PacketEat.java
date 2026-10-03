@@ -16,12 +16,14 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
+import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BiPredicate;
@@ -97,16 +99,6 @@ public class PacketEat extends Module {
         .build()
     );
 
-    private final Setting<Integer> resumeDelay = sgAutoEat.add(new IntSetting.Builder()
-        .name("resume-delay")
-        .description("Extra ticks to keep paused modules paused after an eat cycle ends.")
-        .defaultValue(4)
-        .range(0, 40)
-        .sliderRange(0, 20)
-        .visible(autoEat::get)
-        .build()
-    );
-
     private final Setting<Boolean> pauseBaritone = sgAutoEat.add(new BoolSetting.Builder()
         .name("pause-baritone")
         .description("Pauses Baritone pathfinding while eating.")
@@ -127,6 +119,24 @@ public class PacketEat extends Module {
         .name("confirm-finish")
         .description("Only end a cycle on an actual server-confirmed stack-count drop (or the timeout).")
         .defaultValue(true)
+        .visible(autoEat::get)
+        .build()
+    );
+
+    private final Setting<Boolean> suppressActions = sgAutoEat.add(new BoolSetting.Builder()
+        .name("suppress-packet-actions")
+        .description("While an eat cycle is active, cancel block-placement packets from third-party mods. Mining and attacking are never suppressed.")
+        .defaultValue(false)
+        .visible(autoEat::get)
+        .build()
+    );
+
+    private final Setting<Integer> resumeDelay = sgAutoEat.add(new IntSetting.Builder()
+        .name("resume-delay")
+        .description("Extra ticks to keep paused modules paused after an eat cycle ends.")
+        .defaultValue(4)
+        .range(0, 40)
+        .sliderRange(0, 20)
         .visible(autoEat::get)
         .build()
     );
@@ -221,7 +231,6 @@ public class PacketEat extends Module {
 
     private int eatSlot = -1;
     private int prevSlot = -1;
-
     private int eatStackCountAtStart = -1;
     private boolean eatFoodAlwaysEat = false;
 
@@ -238,6 +247,7 @@ public class PacketEat extends Module {
 
     // Emergency-mode state
     private boolean emergencyActive = false;
+    private boolean emergencyBlocking = false;
     private final List<Class<? extends Module>> emergencyPausedAura = new ArrayList<>();
     private boolean emergencyPausedBaritone = false;
     private final List<Class<? extends Module>> emergencyPausedInteractions = new ArrayList<>();
@@ -255,8 +265,9 @@ public class PacketEat extends Module {
     @Override
     public void onDeactivate() {
         if (autoEating) stopAutoEating();
-        if (emergencyActive) stopEmergency();
+        if (emergencyBlocking) stopEmergency();
         emergencyActive = false;
+        emergencyBlocking = false;
         // Force-resolve any pending deferred resume so disabling the module
         // never leaves the paused auras off.
         resumeAuras();
@@ -270,10 +281,8 @@ public class PacketEat extends Module {
         var player = mc.player;
         if (player == null) return;
 
-        // Manual de-sync: resend the use packet every tick
-
         if (deSync.get() && !autoEating && player.isUsingItem()) {
-            var activeStack = player.getUseItem();
+            var activeStack = player.getActiveItem();
             if (activeStack.get(DataComponents.FOOD) != null) {
                 InteractionHand hand = player.getUsedItemHand();
                 player.connection.send(
@@ -302,33 +311,38 @@ public class PacketEat extends Module {
 
         if (noRelease.get() && event.packet instanceof ServerboundPlayerActionPacket packet) {
             if (packet.getAction() == ServerboundPlayerActionPacket.Action.RELEASE_USE_ITEM) {
-                var activeStack = player.getUseItem();
+                var activeStack = player.getActiveItem();
                 if (activeStack.get(DataComponents.FOOD) != null) {
                     event.cancel();
                 }
             }
         }
+
+        // Third-party mods (Litematica printers) cannot be paused like modules,
+        // so cancel their block placement while a cycle is actually chewing on
+        // food. Mining is never suppressed, and nothing is cancelled at all when
+        // there's no food left in the eat slot to recover from, so the cycle
+        // can't lock the player out of digging or attacking.
+        if (suppressActions.get() && autoEating
+            && eatSlot != -1 && getFoodComponent(player, eatSlot) != null
+            && event.packet instanceof ServerboundUseItemOnPacket) {
+            event.cancel();
+        }
     }
 
     private void handleAutoEat(LocalPlayer player) {
-        boolean wasEmergency = emergencyActive;
+        boolean wasBlocking = emergencyBlocking;
         emergencyActive = emergencyMode.get() && player.getHealth() <= emergencyHealth.get() * 2;
 
-        if (emergencyActive && !wasEmergency) startEmergency();
-        else if (!emergencyActive && wasEmergency) stopEmergency();
+        // Engage the "drop placing modules" state only while there is actually
+        // food to force-eat. Critically low with no food is just critically low —
+        // nothing to recover from
+        emergencyBlocking = emergencyActive && findSlot(player, true) != -1;
 
-        // While critical, forcibly release the interaction keys so nothing can
-        // keep using/placing while we try to get a bite in.
-        if (emergencyActive) interruptCurrentAction(player);
+        if (emergencyBlocking && !wasBlocking) startEmergency();
+        else if (!emergencyBlocking && wasBlocking) stopEmergency();
 
-        // Phase 1: actively in an eat cycle
         if (autoEating) {
-            if (eatStackCountAtStart != -1 && getStackCount(player, eatSlot) < eatStackCountAtStart) {
-                stopAutoEating();
-                postEatCooldown = computeCooldown();
-                return;
-            }
-
             eatTicks++;
 
             // De-sync spam is only meaningful on the direct-packet path. If we're
@@ -341,25 +355,50 @@ public class PacketEat extends Module {
                 );
             }
 
-            boolean minTicksReached = eatTicks >= eatDuration;
-            boolean timedOut = eatTicks >= eatDuration + CONFIRM_TIMEOUT_TICKS;
+            int count = getStackCount(player, eatSlot);
+            boolean stackConsumed = eatStackCountAtStart != -1 && count < eatStackCountAtStart;
+            boolean noFood = count <= 0 || getFoodComponent(player, eatSlot) == null;
+            boolean duringBite = !stackConsumed;
 
-            // Emergency: stop at the minimum usable duration, don't wait for
-            // server confirmation or the always-eat spam cooldown.
-            boolean readyToStop = minTicksReached && (!confirmFinish.get() || emergencyActive);
+            if (stackConsumed) eatStackCountAtStart = count;
 
-            if (readyToStop || timedOut) {
+            // AutoEat-style stat guard: end a cycle only once hunger/health actually
+            // recovered (and, with confirm-finish, only after the bite that restored
+            // them completed server-side), when the food ran out, or when the attempt
+            // timed out without making progress. Never swap the hotbar back earlier.
+            boolean recovered = !belowThreshold(player);
+            // Use at least HOTBAR_EAT_TICKS as the base so offhand cycles also get
+            // enough time to finish and be confirmed before the timeout fires.
+            int minEatDuration = Math.max(eatDuration, HOTBAR_EAT_TICKS);
+            boolean timedOut = duringBite && eatTicks >= minEatDuration + CONFIRM_TIMEOUT_TICKS;
+
+            boolean readyToStop = noFood || timedOut;
+            if (!emergencyActive && recovered && (stackConsumed || !confirmFinish.get())) {
+                readyToStop = true;
+            }
+
+            if (readyToStop) {
                 stopAutoEating();
                 postEatCooldown = computeCooldown();
+                return;
+            }
+
+            // A bite finished and more food is still needed -> chain-eat the next
+            // item in the stack from the same slot, without leaving it.
+            if (stackConsumed) {
+                eatTicks = 0;
+                useSelectedFood(player);
             }
             return;
         }
 
         // Deferred resume buffer: keep the paused modules off for resume-delay
-        // ticks after the cycle ends. Skipped while an emergency is active, which
-        // chain-eats and holds its own pause union.
+        // ticks after the cycle ends. Skipped while an emergency is actively
+        // blocking, which chain-eats and holds its own pause union. Must be
+        // emergencyBlocking, not emergencyActive: otherwise low health with no
+        // food freezes the countdown forever and the auras never resume.
         if (resumeDelayTicks > 0) {
-            if (!emergencyActive) {
+            if (!emergencyBlocking) {
                 resumeDelayTicks--;
                 if (resumeDelayTicks == 0) resumeAuras();
             }
@@ -383,11 +422,15 @@ public class PacketEat extends Module {
         int slot = findSlot(player, emergencyActive);
         if (slot == -1) return;
 
+        // Only interrupt the current action when we're actually about to bite
+        // into something
+        if (emergencyActive) interruptCurrentAction(player);
+
         eatSlot = slot;
-        startAutoEating(player, emergencyActive);
+        startAutoEating(player);
     }
 
-    private void startAutoEating(LocalPlayer player, boolean emergency) {
+    private void startAutoEating(LocalPlayer player) {
         // Pause combat auras
         wasAura.clear();
         if (pauseAuras.get()) {
@@ -432,27 +475,25 @@ public class PacketEat extends Module {
         // Decide method once per cycle, based on actual screen state right now.
         eatingViaScreenClick = mc.gui.screen() != null;
 
+        autoEating = true;
+        eatTicks = 0;
+
+        useSelectedFood(player);
+    }
+
+    // Kicks off (or re-kicks) the eat using the same mechanism this cycle chose:
+    // the screen-open fallback goes through the real input/raycast pipeline, which
+    // is why the crosshair override above is needed for that branch; anything else
+    // sends the raw interact packet on the eat slot.
+    private void useSelectedFood(LocalPlayer player) {
         if (eatingViaScreenClick) {
-            // Screen-open fallback: goes through the real input/raycast pipeline,
-            // which is why the crosshair override above is needed for this branch.
             Utils.rightClick();
-        } else if (emergency) {
-            // Emergency path: direct packet on a free hotbar slot; the interaction
-            // keys were already released in handleAutoEat so there is no conflict.
-            InteractionHand hand = eatSlot == SlotUtils.OFFHAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
-            player.connection.send(
-                new ServerboundUseItemPacket(hand, 0, player.getYRot(), player.getXRot())
-            );
         } else {
-            // Default, efficient path: raw packet, no raycast/crosshair involvement.
             InteractionHand hand = eatSlot == SlotUtils.OFFHAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
             player.connection.send(
                 new ServerboundUseItemPacket(hand, 0, player.getYRot(), player.getXRot())
             );
         }
-
-        autoEating = true;
-        eatTicks = 0;
     }
 
     private void stopAutoEating() {
@@ -470,19 +511,25 @@ public class PacketEat extends Module {
         eatStackCountAtStart = -1;
         eatingViaScreenClick = false;
 
-        // Defer the resume. While an emergency is active the resume is handled by
-        // stopEmergency() (which resumes the union, ours + the routine's), so we
-        // leave wasAura populated for it. Otherwise hold the paused modules off for
-        // resume-delay ticks so the final bite isn't interrupted.
-        resumeDelayTicks = emergencyActive ? 0 : resumeDelay.get();
+        // Defer the resume. While an emergency is actively blocking, the resume is
+        // handled by stopEmergency() (which resumes the union, ours + the
+        // routine's), so we leave wasAura populated for it. Otherwise hold the
+        // paused modules off for resume-delay ticks so the final bite isn't
+        // interrupted. Gate on emergencyBlocking, not emergencyActive: with low
+        // health but no food to eat, no emergency ever started, so nothing will
+        // ever call stopEmergency() to resume for us.
+        resumeDelayTicks = emergencyBlocking ? 0 : resumeDelay.get();
     }
 
     private void resumeAuras() {
         resumeDelayTicks = 0;
 
-        // Resume auras. Skipped while an emergency is active, where
-        // stopEmergency() owns the union resume.
-        if (pauseAuras.get() && !emergencyActive) {
+        // Resume auras. Skipped while an emergency is actively blocking, where
+        // stopEmergency() owns the union resume. emergencyActive alone is not
+        // enough: that flag is also true when there is no food to eat, and in
+        // that case no emergency started, so this resume must still run or the
+        // auras/Baritone stay paused for good.
+        if (pauseAuras.get() && !emergencyBlocking) {
             for (Class<? extends Module> klass : AURAS) {
                 Module module = Modules.get().get(klass);
                 if (wasAura.contains(klass) && !module.isActive()) {
@@ -493,17 +540,19 @@ public class PacketEat extends Module {
         wasAura.clear();
 
         // Resume Baritone
-        if (pauseBaritone.get() && wasBaritone && !emergencyActive) {
+        if (pauseBaritone.get() && wasBaritone && !emergencyBlocking) {
             wasBaritone = false;
             PathManagers.get().resume();
         }
     }
 
     private void interruptCurrentAction(LocalPlayer player) {
+        // Target only item use / placement: drop the use key and cancel any
+        // in-progress item interaction so nothing keeps building while we bite.
+        // The attack key and block-breaking progress are deliberately left
+        // untouched — mining must never be suppressed by this module.
         mc.options.keyUse.setDown(false);
-        mc.options.keyAttack.setDown(false);
-        mc.gameMode.stopDestroyBlock();
-        if (player.isUsingItem()) player.stopUsingItem();
+        if (player.isUsingItem()) player.releaseUsingItem();
     }
 
     private void startEmergency() {
@@ -599,7 +648,6 @@ public class PacketEat extends Module {
         int bestSlot = -1;
         int bestNutrition = -1;
 
-        // Hotbar (slots 0-8)
         for (int i = 0; i < 9; i++) {
             ItemStack stack = player.getInventory().getItem(i);
             Item item = stack.getItem();
@@ -614,7 +662,6 @@ public class PacketEat extends Module {
             }
         }
 
-        // Offhand
         Item offItem = player.getOffhandItem().getItem();
         FoodProperties offFood = offItem.components().get(DataComponents.FOOD);
 
@@ -633,16 +680,20 @@ public class PacketEat extends Module {
         return bestSlot;
     }
 
-    private boolean shouldEat(LocalPlayer player) {
+    private boolean belowThreshold(LocalPlayer player) {
         boolean health = player.getHealth() <= healthThreshold.get();
         boolean hunger = player.getFoodData().getFoodLevel() <= hungerThreshold.get();
-        if (!thresholdMode.get().test(health, hunger)) {
+        return thresholdMode.get().test(health, hunger);
+    }
+
+    private boolean shouldEat(LocalPlayer player) {
+        if (!belowThreshold(player)) {
             // Both stats have recovered above their thresholds, so the client is
             // no longer lagging behind a meal. Clear the anti-double-eat latch:
             // leaving it set would make the next cycle compare against this healed
             // baseline and stall in Both mode, where health rarely drops below it
             // at the same time hunger does.
-            if (!health && !hunger && lastCycleHealth != -1) {
+            if (lastCycleHealth != -1) {
                 lastCycleHealth = -1;
                 lastCycleHunger = -1;
             }

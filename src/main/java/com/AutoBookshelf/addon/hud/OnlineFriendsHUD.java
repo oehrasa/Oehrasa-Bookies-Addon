@@ -11,6 +11,7 @@ import meteordevelopment.meteorclient.systems.hud.HudElementInfo;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import net.minecraft.client.multiplayer.PlayerInfo;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -23,6 +24,16 @@ public class OnlineFriendsHUD extends HudElement {
         "Displays online friends from your friend list.",
         OnlineFriendsHUD::new
     );
+
+    private static final SettingColor NO_FRIENDS_COLOR = new SettingColor(255, 0, 0);
+    private static final SettingColor FRIENDS_COLOR = new SettingColor(0, 255, 0);
+
+    // The tab-list scan happens at most once per second; friend presence can't change faster
+    // than that and re-scanning per frame is pure waste.
+    private long lastRefreshMs = 0L;
+    private static final long REFRESH_INTERVAL_MS = 1000L;
+    private final List<String> cachedOnlineFriends = new ArrayList<>();
+    private boolean hasCachedFriends = false;
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
@@ -74,8 +85,7 @@ public class OnlineFriendsHUD extends HudElement {
         }
 
         // Red color for "No Friends Online"
-        SettingColor redColor = new SettingColor(255, 0, 0);
-        renderer.text(title, x, y, redColor, true);
+        renderer.text(title, x, y, NO_FRIENDS_COLOR, true);
     }
 
     private void renderFriendsList(HudRenderer renderer, List<String> onlineFriends) {
@@ -102,12 +112,7 @@ public class OnlineFriendsHUD extends HudElement {
         }
 
         // Title color based on friends status
-        SettingColor titleColor;
-        if (onlineFriends.isEmpty()) {
-            titleColor = new SettingColor(255, 0, 0); // Red for "No Friends Online"
-        } else {
-            titleColor = new SettingColor(0, 255, 0); // Green for "Online Friends"
-        }
+        SettingColor titleColor = onlineFriends.isEmpty() ? NO_FRIENDS_COLOR : FRIENDS_COLOR;
 
         // Render title
         renderer.text(title, x, y, titleColor, true);
@@ -121,9 +126,15 @@ public class OnlineFriendsHUD extends HudElement {
     }
 
     private List<String> getOnlineFriends() {
-        List<String> onlineFriends = new ArrayList<>();
+        long now = System.currentTimeMillis();
+        if (hasCachedFriends && now - lastRefreshMs < REFRESH_INTERVAL_MS) {
+            return cachedOnlineFriends;
+        }
+        lastRefreshMs = now;
+        hasCachedFriends = true;
+        cachedOnlineFriends.clear();
 
-        if (mc.getConnection() == null || mc.player == null) return onlineFriends;
+        if (mc.getConnection() == null || mc.player == null) return cachedOnlineFriends;
 
         // Get our own player name to exclude it
         String ourPlayerName = mc.player.getName().getString();
@@ -133,10 +144,10 @@ public class OnlineFriendsHUD extends HudElement {
 
             // Skip ourselves and only include friends
             if (!playerName.equals(ourPlayerName) && Friends.get().isFriend(player)) {
-                onlineFriends.add(playerName);
+                cachedOnlineFriends.add(playerName);
             }
         }
 
-        return onlineFriends;
+        return cachedOnlineFriends;
     }
 }

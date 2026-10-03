@@ -5,6 +5,8 @@ import com.AutoBookshelf.addon.utils.DistanceUtil;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
+import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
+import meteordevelopment.meteorclient.events.world.ChunkDataEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.Renderer3D;
 import meteordevelopment.meteorclient.settings.*;
@@ -29,8 +31,10 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BeaconBlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.ConduitBlockEntity;
-import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -81,6 +85,30 @@ public class BlockRadius extends Module {
         .build()
     );
 
+    private final Setting<Boolean> mergeOverlappingRods = sgGeneral.add(new BoolSetting.Builder()
+        .name("merge-overlapping-rods")
+        .description("Draws the union of same-height lightning rod footprints as one region instead of one box per rod.")
+        .defaultValue(true)
+        .visible(showLightningRods::get)
+        .build()
+    );
+
+    private final Setting<Boolean> excludeInactiveBeacons = sgGeneral.add(new BoolSetting.Builder()
+        .name("exclude-inactive-beacons")
+        .description("Hides beacons that have a valid pyramid but is blocked by an opaque block above.")
+        .defaultValue(true)
+        .visible(showBeacons::get)
+        .build()
+    );
+
+    private final Setting<Boolean> excludeInactiveRods = sgGeneral.add(new BoolSetting.Builder()
+        .name("exclude-inactive-rod")
+        .description("Hides lightning rods that cannot redirect lightning because their tip is covered by a block above.")
+        .defaultValue(true)
+        .visible(showLightningRods::get)
+        .build()
+    );
+
     private final Setting<Integer> updateInterval = sgGeneral.add(new IntSetting.Builder()
         .name("update-interval")
         .description("How often (in ticks) blocks/wardens/creakings are rescanned. Raise for better performance.")
@@ -121,19 +149,74 @@ public class BlockRadius extends Module {
         .build()
     );
 
+    private final Setting<Boolean> beaconLevelColors = sgRender.add(new BoolSetting.Builder()
+        .name("beacon-level-colors")
+        .description("Colors each beacon box by pyramid level using the per-level color settings below.")
+        .defaultValue(true)
+        .visible(showBeacons::get)
+        .onChanged(v -> updateBeaconPalette())
+        .build()
+    );
+
+    private final Setting<Integer> beaconFillAlpha = sgRender.add(new IntSetting.Builder()
+        .name("beacon-fill-alpha")
+        .description("Opacity of the level-colored beacon fill (the reference renderer uses 0.15 alpha = 38).")
+        .defaultValue(38)
+        .range(0, 255)
+        .visible(() -> beaconLevelColors.get() && showBeacons.get())
+        .onChanged(v -> updateBeaconPalette())
+        .build()
+    );
+
+    private final Setting<SettingColor> beaconLevelColor1 = sgRender.add(new ColorSetting.Builder()
+        .name("beacon-level-1-color")
+        .description("Color for level 1 beacon ranges.")
+        .defaultValue(new SettingColor(255, 255, 255, 38))
+        .visible(() -> beaconLevelColors.get() && showBeacons.get())
+        .onChanged(v -> updateBeaconPalette())
+        .build()
+    );
+
+    private final Setting<SettingColor> beaconLevelColor2 = sgRender.add(new ColorSetting.Builder()
+        .name("beacon-level-2-color")
+        .description("Color for level 2 beacon ranges.")
+        .defaultValue(new SettingColor(102, 204, 255, 38))
+        .visible(() -> beaconLevelColors.get() && showBeacons.get())
+        .onChanged(v -> updateBeaconPalette())
+        .build()
+    );
+
+    private final Setting<SettingColor> beaconLevelColor3 = sgRender.add(new ColorSetting.Builder()
+        .name("beacon-level-3-color")
+        .description("Color for level 3 beacon ranges.")
+        .defaultValue(new SettingColor(102, 255, 128, 38))
+        .visible(() -> beaconLevelColors.get() && showBeacons.get())
+        .onChanged(v -> updateBeaconPalette())
+        .build()
+    );
+
+    private final Setting<SettingColor> beaconLevelColor4 = sgRender.add(new ColorSetting.Builder()
+        .name("beacon-level-4-color")
+        .description("Color for level 4 beacon ranges.")
+        .defaultValue(new SettingColor(255, 217, 77, 38))
+        .visible(() -> beaconLevelColors.get() && showBeacons.get())
+        .onChanged(v -> updateBeaconPalette())
+        .build()
+    );
+
     private final Setting<SettingColor> beaconSideColor = sgRender.add(new ColorSetting.Builder()
         .name("beacon-side-color")
-        .description("Side color of beacon range boxes.")
+        .description("Side color of beacon range boxes (used when beacon-level-colors is off).")
         .defaultValue(new SettingColor(0, 255, 255, 60))
-        .visible(() -> shapeMode.get().sides() && showBeacons.get())
+        .visible(() -> !beaconLevelColors.get() && shapeMode.get().sides() && showBeacons.get())
         .build()
     );
 
     private final Setting<SettingColor> beaconLineColor = sgRender.add(new ColorSetting.Builder()
         .name("beacon-line-color")
-        .description("Line color of beacon range boxes.")
+        .description("Line color of beacon range boxes (used when beacon-level-colors is off).")
         .defaultValue(new SettingColor(0, 255, 255, 255))
-        .visible(() -> shapeMode.get().lines() && showBeacons.get())
+        .visible(() -> !beaconLevelColors.get() && shapeMode.get().lines() && showBeacons.get())
         .build()
     );
 
@@ -370,6 +453,27 @@ public class BlockRadius extends Module {
     // separation for any number of mobs without needing a fixed palette.
     private static final double GOLDEN_ANGLE = 137.50776;
 
+    // Cached SettingColors built from the per-level colour settings; rebuilt whenever a
+    // level colour, the fill alpha, or the toggle changes, or on each throttled beacon scan,
+    // so onRender allocates nothing per frame. Index i corresponds to pyramid level i+1.
+    private final SettingColor[] beaconLevelSides = new SettingColor[4];
+    private final SettingColor[] beaconLevelLines = new SettingColor[4];
+
+    private void updateBeaconPalette() {
+        int alpha = beaconFillAlpha.get();
+        SettingColor[] src = {
+            beaconLevelColor1.get(),
+            beaconLevelColor2.get(),
+            beaconLevelColor3.get(),
+            beaconLevelColor4.get()
+        };
+        for (int i = 0; i < src.length; i++) {
+            SettingColor c = src[i];
+            beaconLevelSides[i] = new SettingColor(c.r, c.g, c.b, alpha);
+            beaconLevelLines[i] = new SettingColor(c.r, c.g, c.b, 255);
+        }
+    }
+
     /**
      * An axis-aligned bounding box used for all flat footprints and beacon cubes.
      */
@@ -457,6 +561,14 @@ public class BlockRadius extends Module {
      */
     private final BlockPos.MutableBlockPos scanPos = new BlockPos.MutableBlockPos();
 
+    /**
+     * LevelChunk-local lightning-rod cell cache keyed by packed chunk coordinates. Rebuilt
+     * only when a chunk is first scanned or a rod block update touches it, so the
+     * per-interval scan never re-reads every section cell.
+     */
+    private final Map<Long, List<int[]>> rodCellCache = new HashMap<>();
+    private ClientLevel lastRodCacheWorld = null;
+
     private int tickCounter = 0;
 
     public BlockRadius() {
@@ -482,6 +594,7 @@ public class BlockRadius extends Module {
         conduitDatas.clear();
         creakingLinks.clear();
         creakingColorCounter = 0;
+        rodCellCache.clear();
         wardens.clear();
         lastAnger.clear();
         attackExpiry.clear();
@@ -502,9 +615,29 @@ public class BlockRadius extends Module {
         scanWardens();
     }
 
+    @EventHandler
+    private void onBlockUpdate(BlockUpdateEvent event) {
+        // Keep the lightning-rod chunk cache fresh; only rod block changes touch it.
+        if (LIGHTNING_ROD_VARIANTS.contains(event.newState.getBlock())
+            || LIGHTNING_ROD_VARIANTS.contains(event.oldState.getBlock())) {
+            BlockPos pos = event.pos;
+            rodCellCache.remove(packChunk(pos.getX() >> 4, pos.getZ() >> 4));
+        }
+    }
+
+    @EventHandler
+    private void onChunkData(ChunkDataEvent event) {
+        // A full chunk resend (e.g. on re-join or data refresh) doesn't raise a
+        // BlockUpdateEvent, so drop the cached rod list of that chunk to avoid
+        // keeping stale entries until the chunk next leaves the search radius.
+        rodCellCache.remove(packChunk(event.chunk().getPos().x(), event.chunk().getPos().z()));
+    }
+
     private void scanBeacons() {
         beaconBoxes.clear();
         if (!showBeacons.get()) return;
+
+        if (beaconLevelColors.get()) updateBeaconPalette();
 
         for (BlockEntity be : Utils.blockEntities()) {
             if (!(be instanceof BeaconBlockEntity)) continue;
@@ -513,10 +646,14 @@ public class BlockRadius extends Module {
             int level = getBeaconLevel(pos);
             if (level < 1) continue;
 
+            // A beacon is only actually active if its beam isn't blocked by an opaque
+            // block above it (bedrock doesn't block beams, so Nether-ceiling beacons still work).
+            if (excludeInactiveBeacons.get() && isBeaconBeamBlocked(pos)) continue;
+
             double range = 10 + (level * 10);
             RangeBox box = new RangeBox(
                 pos.getX() - range, pos.getY() - range, pos.getZ() - range,
-                pos.getX() + range, pos.getY() + range, pos.getZ() + range
+                pos.getX() + range + 1, pos.getY() + range + 1, pos.getZ() + range + 1
             );
             box.level = level;
             beaconBoxes.add(box);
@@ -566,11 +703,38 @@ public class BlockRadius extends Module {
             b == Blocks.NETHERITE_BLOCK;
     }
 
+    /**
+     * Matches vanilla: a beacon is deactivated (no beam, no effects) when its
+     * beam intersects any fully opaque block above it; bedrock is the one
+     * exception so beacons work below the Nether ceiling.
+     */
+    private boolean isBeaconBeamBlocked(BlockPos beaconPos) {
+        int x = beaconPos.getX();
+        int z = beaconPos.getZ();
+        int topY = mc.level.getMinY() + mc.level.getHeight();
+        for (int y = beaconPos.getY() + 1; y < topY; y++) {
+            scanPos.set(x, y, z);
+            BlockState state = mc.level.getBlockState(scanPos);
+            if (state.getBlock() != Blocks.BEDROCK && state.getLightDampening() >= 15) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void scanLightningRods() {
         lightningRodBoxes.clear();
-        if (!showLightningRods.get()) return;
+        if (!showLightningRods.get()) {
+            rodCellCache.clear();
+            return;
+        }
 
         ClientLevel world = mc.level;
+        if (world != lastRodCacheWorld) {
+            rodCellCache.clear();
+            lastRodCacheWorld = world;
+        }
+
         BlockPos playerPos = mc.player.blockPosition();
         int centerChunkX = playerPos.getX() >> 4;
         int centerChunkZ = playerPos.getZ() >> 4;
@@ -578,44 +742,257 @@ public class BlockRadius extends Module {
         double range = lightningRodRange.get();
         int bottomY = world.getMinY();
 
+        // Rod boxes further than maxRenderDistance from the camera are never rendered,
+        // so a rod more than range + maxRenderDistance away from the player can't
+        // possibly render; such rods and chunks are skipped before any work is done.
+        double maxDist = maxRenderDistance.get();
+        double maxDistSq = maxDist * maxDist;
+
+        // Collected rod centers {x, y, z}, used to build either per-rod boxes or
+        // the merged union footprint.
+        List<int[]> rods = new ArrayList<>();
+
+        Set<Long> currentChunks = new HashSet<>();
         for (int dx = -radius; dx <= radius; dx++) {
             for (int dz = -radius; dz <= radius; dz++) {
                 int chunkX = centerChunkX + dx;
                 int chunkZ = centerChunkZ + dz;
+                long chunkKey = packChunk(chunkX, chunkZ);
 
-                if (!world.getChunkSource().hasChunk(chunkX, chunkZ)) continue;
+                if (!world.isLoaded(new BlockPos(chunkX << 4, bottomY, chunkZ << 4))) {
+                    rodCellCache.remove(chunkKey);
+                    continue;
+                }
 
-                ChunkAccess chunk = world.getChunk(chunkX, chunkZ);
-                LevelChunkSection[] sections = chunk.getSections();
+                currentChunks.add(chunkKey);
 
-                // Iterate every section
-                for (int s = 0; s < sections.length; s++) {
-                    LevelChunkSection section = sections[s];
-                    if (section.hasOnlyAir()) continue; // skip fully-air sections fast
+                // Cheap whole-chunk cull using the squared distance to the chunk's
+                // nearest corner, so far chunks never touch a single section.
+                long chunkStartX = (long) chunkX << 4;
+                long chunkStartZ = (long) chunkZ << 4;
+                double chunkDx = Math.max(0, Math.abs(playerPos.getX() - chunkStartX) - 16 - range);
+                double chunkDz = Math.max(0, Math.abs(playerPos.getZ() - chunkStartZ) - 16 - range);
+                if (chunkDx * chunkDx + chunkDz * chunkDz > maxDistSq) continue;
 
-                    int sectionBaseY = bottomY + (s << 4);
+                List<int[]> cached = rodCellCache.get(chunkKey);
+                if (cached == null) {
+                    cached = scanChunkForLightningRods(chunkX, chunkZ, bottomY);
+                    rodCellCache.put(chunkKey, cached);
+                }
 
-                    for (int lx = 0; lx < 16; lx++) {
-                        for (int lz = 0; lz < 16; lz++) {
-                            for (int ly = 0; ly < 16; ly++) {
-                                if (!LIGHTNING_ROD_VARIANTS.contains(section.getBlockState(lx, ly, lz).getBlock()))
-                                    continue;
+                for (int[] rod : cached) {
+                    double px = Math.max(0, Math.abs(rod[0] - playerPos.getX()) - range);
+                    double pz = Math.max(0, Math.abs(rod[2] - playerPos.getZ()) - range);
+                    if (px * px + pz * pz > maxDistSq) continue;
+                    rods.add(rod);
+                }
+            }
+        }
 
-                                int worldX = (chunkX << 4) + lx;
-                                int worldY = sectionBaseY + ly;
-                                int worldZ = (chunkZ << 4) + lz;
+        // Drop cached chunks we no longer search so the cache stays bounded.
+        rodCellCache.keySet().removeIf(key -> !currentChunks.contains(key));
 
-                                // minY = bottom face of rod block, maxY = top face.
-                                lightningRodBoxes.add(new RangeBox(
-                                    worldX - range, worldY, worldZ - range,
-                                    worldX + range, worldY + 1.0, worldZ + range
-                                ));
-                            }
-                        }
+        // Vanilla only redirects lightning to a rod whose tip is the highest block
+        // of its column, so a rod with anything on top of it is dead weight.
+        if (excludeInactiveRods.get()) rods.removeIf(rod -> !isLightningRodActive(rod));
+
+        if (mergeOverlappingRods.get()) {
+            mergeRodFootprints(rods, range);
+        } else {
+            for (int[] rod : rods) {
+                // Same extent convention as beacons: range each way plus the rod
+                // block itself (+1), so boxes center on the block footprint.
+                lightningRodBoxes.add(new RangeBox(
+                    rod[0] - range, rod[1], rod[2] - range,
+                    rod[0] + range + 1, rod[1] + 1.0, rod[2] + range + 1
+                ));
+            }
+        }
+    }
+
+    /**
+     * vanilla's ServerWorld.getLightningRodPos: a rod only works while it
+     * is the topmost block of its column (world-surface heightmap), so any
+     * non-air block directly above its tip renders it inactive.
+     *
+     * @param rod rod centre {x, y, z}
+     */
+    private boolean isLightningRodActive(int[] rod) {
+        return rod[1] == mc.level.getHeight(Heightmap.Types.WORLD_SURFACE, rod[0], rod[2]) - 1;
+    }
+
+    /**
+     * Unions same-height rod footprints into a single region drawn once, so
+     * overlapping rods render flat instead of stacking their fill opacity.
+     * Rods whose Y differs never share a volume (each box is one block tall),
+     * so they are grouped by Y and processed as an XZ interval merge.
+     *
+     * @param rods rod centers {x, y, z} sorted by Y, then X, then Z
+     */
+    private void mergeRodFootprints(List<int[]> rods, double range) {
+        if (rods.isEmpty()) return;
+
+        rods.sort((a, b) -> {
+            if (a[1] != b[1]) return Integer.compare(a[1], b[1]);
+            if (a[0] != b[0]) return Integer.compare(a[0], b[0]);
+            return Integer.compare(a[2], b[2]);
+        });
+
+        int n = rods.size();
+        int i = 0;
+        while (i < n) {
+            int y = rods.get(i)[1];
+            int j = i;
+            while (j < n && rods.get(j)[1] == y) j++;
+            unionSquareFootprint(rods, i, j, range, y);
+            i = j;
+        }
+    }
+
+    /**
+     * Merges the XZ squares of the {@code [from, to)} rods (all at block height
+     * {@code y}) into the minimal set of flat 1-block-tall boxes covering
+     * exactly the union. Each rod's square spans {@code [c-range, c+range+1]} on
+     * both axes (same extent convention as the unmerged rod and beacon boxes), so
+     * edges sit at every {@code c ± range} and {@code c ± range + 1}. Z
+     * breakpoints are every rod's square edge; the set of covering rods is
+     * constant between two consecutive breakpoints, so each Z slab has one merged
+     * {@code [x-range, x+range+1]} interval list. Consecutive slabs with the same
+     * interval list (rods in a column or grid) are coalesced into a single box so
+     * no interior outlines or faces appear. A lone rod therefore stays a single
+     * box over {@code [z-range, z+range+1]}, matching the unmerged extent.
+     */
+    private void unionSquareFootprint(List<int[]> rods, int from, int to, double range, int y) {
+        // Z breakpoints: every rod square starts at z - range and ends at z + range + 1.
+        TreeSet<Double> zBreakpoints = new TreeSet<>();
+        for (int k = from; k < to; k++) {
+            int[] rod = rods.get(k);
+            zBreakpoints.add(rod[2] - range);
+            zBreakpoints.add(rod[2] + range + 1);
+        }
+
+        // Two reusable interval lists; each holds {lo, hi} for one slab so the
+        // merge below never allocates beyond them.
+        List<double[]> prevIntervals = new ArrayList<>();
+        List<double[]> intervals = new ArrayList<>();
+        double slabStartZ = 0;
+        Double prevZ = null;
+
+        for (double z : zBreakpoints) {
+            if (prevZ == null) {
+                slabStartZ = z;
+                prevZ = z;
+                continue;
+            }
+
+            // Midpoint of the slab [prevZ, z]: the covering rod set is constant across it.
+            double midZ = (prevZ + z) / 2;
+
+            intervals.clear();
+            double curLo = 0;
+            double curHi = 0;
+            boolean open = false;
+
+            // Interval-merge over the X-sorted rods in this Y group: each rod whose
+            // square covers the slab contributes one [x-range, x+range+1] interval.
+            for (int k = from; k < to; k++) {
+                int[] rod = rods.get(k);
+                // midZ never lands exactly on a square edge (breakpoints are the edges).
+                if (midZ <= rod[2] - range || midZ >= rod[2] + range + 1) continue;
+
+                double lo = rod[0] - range;
+                double hi = rod[0] + range + 1;
+                if (!open) {
+                    curLo = lo;
+                    curHi = hi;
+                    open = true;
+                } else if (lo > curHi) {
+                    intervals.add(new double[]{curLo, curHi});
+                    curLo = lo;
+                    curHi = hi;
+                } else if (hi > curHi) {
+                    curHi = hi;
+                }
+            }
+            if (open) {
+                intervals.add(new double[]{curLo, curHi});
+            }
+
+            if (open) {
+                if (!prevIntervals.isEmpty() && !sameIntervals(prevIntervals, intervals)) {
+                    // Interval list changed: flush the coalesced slab [slabStartZ, prevZ].
+                    emitIntervalBoxes(prevIntervals, y, slabStartZ, prevZ);
+                    slabStartZ = prevZ;
+                }
+
+                // The current slab becomes the previous one; reuse the freed list.
+                List<double[]> tmp = prevIntervals;
+                prevIntervals = intervals;
+                intervals = tmp;
+            } else if (!prevIntervals.isEmpty()) {
+                // Gap with no covering rods: flush, and the next region starts at z.
+                emitIntervalBoxes(prevIntervals, y, slabStartZ, prevZ);
+                prevIntervals.clear();
+                slabStartZ = z;
+            }
+
+            prevZ = z;
+        }
+
+        if (!prevIntervals.isEmpty()) {
+            emitIntervalBoxes(prevIntervals, y, slabStartZ, prevZ);
+        }
+    }
+
+    /**
+     * Emits one flat box per merged X interval spanning Z range
+     * {@code [zFrom, zTo]} at block height {@code y}.
+     */
+    private void emitIntervalBoxes(List<double[]> intervals, int y, double zFrom, double zTo) {
+        for (double[] interval : intervals) {
+            lightningRodBoxes.add(new RangeBox(interval[0], y, zFrom, interval[1], y + 1.0, zTo));
+        }
+    }
+
+    private boolean sameIntervals(List<double[]> a, List<double[]> b) {
+        if (a.size() != b.size()) return false;
+        for (int i = 0; i < a.size(); i++) {
+            double[] ia = a.get(i);
+            double[] ib = b.get(i);
+            if (ia[0] != ib[0] || ia[1] != ib[1]) return false;
+        }
+        return true;
+    }
+
+    private List<int[]> scanChunkForLightningRods(int chunkX, int chunkZ, int bottomY) {
+        List<int[]> rods = new ArrayList<>();
+        LevelChunk chunk = mc.level.getChunk(chunkX, chunkZ);
+        LevelChunkSection[] sections = chunk.getSections();
+
+        // Iterate every section
+        for (int s = 0; s < sections.length; s++) {
+            LevelChunkSection section = sections[s];
+            if (section.hasOnlyAir()) continue; // skip fully-air sections fast
+
+            int sectionBaseY = bottomY + (s << 4);
+
+            for (int lx = 0; lx < 16; lx++) {
+                for (int lz = 0; lz < 16; lz++) {
+                    for (int ly = 0; ly < 16; ly++) {
+                        if (!LIGHTNING_ROD_VARIANTS.contains(section.getBlockState(lx, ly, lz).getBlock()))
+                            continue;
+
+                        rods.add(new int[]{(chunkX << 4) + lx, sectionBaseY + ly, (chunkZ << 4) + lz});
                     }
                 }
             }
         }
+
+        return rods;
+    }
+
+    private static long packChunk(int chunkX, int chunkZ) {
+        return (long) chunkX << 32 | (chunkZ & 0xFFFFFFFFL);
     }
 
     private void scanConduits() {
@@ -789,13 +1166,24 @@ public class BlockRadius extends Module {
 
         // Beacons
         if (showBeacons.get()) {
+            boolean useLevelColors = beaconLevelColors.get();
             for (RangeBox box : beaconBoxes) {
                 if (!box.render) continue;
                 if (box.distanceSq(cam) > maxDistSq) continue;
+                SettingColor side = beaconSideColor.get();
+                SettingColor line = beaconLineColor.get();
+                if (useLevelColors && box.level >= 1 && box.level <= beaconLevelSides.length) {
+                    SettingColor s = beaconLevelSides[box.level - 1];
+                    SettingColor l = beaconLevelLines[box.level - 1];
+                    if (s != null) {
+                        side = s;
+                        line = l;
+                    }
+                }
                 renderBox(event.renderer,
                     box.minX, box.minY, box.minZ,
                     box.maxX, box.maxY, box.maxZ,
-                    beaconSideColor.get(), beaconLineColor.get());
+                    side, line);
             }
         }
 
@@ -900,13 +1288,21 @@ public class BlockRadius extends Module {
                 Vec3 lerpedPos = w.getPosition(event.tickDelta);
                 AABB lerped = w.getBoundingBox().move(lerpedPos.subtract(w.position()));
 
+                // Derive from the synced client anger value (the same `anger`
+                // used for the trend indicator) rather than
+                // warden.getAngerLevel(): that reads angerManagement's
+                // *server-side* active anger, which is not what the client has
+                // synced, so the two disagree for a non-hostile warden.
                 AngerLevel angriness = AngerLevel.byAnger(anger);
 
                 WardenState state = classifyWarden(warden, anger, angriness);
                 SettingColor color = state.baseColor();
 
-                boolean sonicCharge = warden.sonicBoomAnimationState.isStarted();
-                boolean attackAnim = warden.attackAnimationState.isStarted();
+                // 26.1.2's AnimationState dropped isRunning(); isStarted() is the public
+                // equivalent (it checks the startTick sentinel, unlike getTimeInMillis
+                // which is >0 on any unstarted state once tickDelta is nonzero).
+                boolean sonicCharge = isAnimationPlaying(warden.sonicBoomAnimationState);
+                boolean attackAnim = isAnimationPlaying(warden.attackAnimationState);
                 boolean imminent = sonicCharge || attackAnim;
 
                 if (imminent)
@@ -1018,6 +1414,10 @@ public class BlockRadius extends Module {
                 // ignore per-entity errors
             }
         }
+    }
+
+    private boolean isAnimationPlaying(net.minecraft.world.entity.AnimationState state) {
+        return state.isStarted();
     }
 
     private WardenState classifyWarden(Warden warden, int anger, AngerLevel angriness) {

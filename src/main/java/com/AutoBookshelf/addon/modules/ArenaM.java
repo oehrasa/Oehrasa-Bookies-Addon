@@ -1,5 +1,5 @@
 package com.AutoBookshelf.addon.modules;
-// V3
+// V4
 
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
@@ -15,6 +15,8 @@ import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.client.multiplayer.PlayerInfo;
+import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.projectile.Projectile;
@@ -125,7 +127,14 @@ public class ArenaM extends Module {
 
     private final Setting<Boolean> ignoreLanded = sgThreats.add(new BoolSetting.Builder()
         .name("ignore-landed")
-        .description("Ignore projectiles that are already stuck/landed (near-zero velocity). Mainly matters with intercept-non-target on, since that setting skips the normal moving-towards-you filter that would otherwise exclude them.")
+        .description("Ignore projectiles that are already stuck/landed (near-zero velocity). Mainly matters with intercept-non-target on,")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> prioritySoonest = sgThreats.add(new BoolSetting.Builder()
+        .name("priority-soonest")
+        .description("Tiebreak equally close threats by which arrives soonest instead of raw distance.")
         .defaultValue(true)
         .build()
     );
@@ -133,6 +142,13 @@ public class ArenaM extends Module {
     private final Setting<Boolean> quickSwap = sgGeneral.add(new BoolSetting.Builder()
         .name("quick-swap")
         .description("Swaps to the wind charge by simulating hotbar key presses instead of inventory clicks. May get flagged by anticheats.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Boolean> instantThrow = sgGeneral.add(new BoolSetting.Builder()
+        .name("instant-throw")
+        .description("Skip the smooth rotation and throw immediately at the calculated angle. Faster reaction but anticheat-sensitive.")
         .defaultValue(false)
         .build()
     );
@@ -169,7 +185,7 @@ public class ArenaM extends Module {
 
     private final Setting<SettingColor> confirmedHitColor = sgRender.add(new ColorSetting.Builder()
         .name("confirmed-hit-color")
-        .description("Color of the box drawn where the thrown wind charge's real hitbox is confirmed to touch the threat's real hitbox. Unlike threat-color/intercept-color (which are drawn from the prediction), this only shows up on an actual confirmed collision, so it's the ground truth to compare the prediction against.")
+        .description("Color of the box drawn where the thrown wind charge's real hitbox is confirmed to touch the threat's real hitbox.")
         .defaultValue(new SettingColor(80, 255, 80, 130))
         .visible(debugRender::get)
         .build()
@@ -187,6 +203,7 @@ public class ArenaM extends Module {
     private static final double WIND_SPEED = 1.5;        // blocks/tick
     private static final double WIND_HALF_SIZE = 0.25;
     private static final double SAFETY_MARGIN = 1.5;     // threats that miss by more than this are ignored
+    private static final double SOONEST_WINDOW = 1.5;    // threats within this distance band are tiebroken by arrival time
     private static final int MAX_LEAD = 30;              // max ticks the wind charge is simulated for
     private static final int DETECTION_TICKS = MAX_LEAD; // full simulation horizon
     private static final double MIN_THREAT_SPEED_SQ = 0.0025; // below this, treat as landed/stuck
@@ -211,10 +228,18 @@ public class ArenaM extends Module {
     private record Solution(Vec3 direction, int ticksToImpact) {
     }
 
+    private static final int MAX_AIM_TICKS = 100;   // safety net if the rotate callback never fires
+
     private Stage stage = Stage.IDLE;
     private int cooldownTimer = 0;
+    private int aimTicks = 0;
     private Threat lastTarget;
     private Solution lastSolution;
+    private Threat aimingTarget;
+    private boolean pendingShotCancelled;
+    private int preSlot = -1;
+    private int preSwapSlot = -1;   // charge's slot when pre-slotting via quick-swap; -1 = plain select-swap
+    private net.minecraft.world.item.Item expectedPreSwapItem = null; // item preSlotWindCharge left in preSwapSlot, for safe reversal
 
     private final Set<Integer> preThrowChargeIds = new HashSet<>();
     private boolean awaitingChargeSpawn = false;
@@ -225,10 +250,15 @@ public class ArenaM extends Module {
     private AABB confirmedHitBox;
     private int confirmedHitTimer = 0;
 
+    // Reused instead of allocating a fresh simulator per threat every tick.
+    // set(entity) fully re-initializes per call.
+    private final ProjectileEntitySimulator threatSimulator = new ProjectileEntitySimulator();
+
     // Latency estimates, split by throw mode since quick-swap and normal
     // swap almost certainly have different real spawn delays.
     private double avgLatencyNormal = 1.0;    // seeded conservatively until measured
     private double avgLatencyQuickSwap = 1.0;
+    private boolean latencySeeded = false;
     private int minLatencyNormal = Integer.MAX_VALUE, maxLatencyNormal = Integer.MIN_VALUE;
     private int minLatencyQuickSwap = Integer.MAX_VALUE, maxLatencyQuickSwap = Integer.MIN_VALUE;
     private boolean trackedUsedQuickSwap;
@@ -257,10 +287,16 @@ public class ArenaM extends Module {
     }
 
     private void resetState() {
+        restorePreSlot();
         stage = Stage.IDLE;
         cooldownTimer = 0;
+        aimTicks = 0;
         lastTarget = null;
         lastSolution = null;
+        aimingTarget = null;
+        pendingShotCancelled = false;
+        preSlot = -1;
+        preSwapSlot = -1;
         awaitingChargeSpawn = false;
         spawnSearchTimer = 0;
         trackedCharge = null;
@@ -278,50 +314,196 @@ public class ArenaM extends Module {
         // Cheap no-op when nothing was just thrown (see updateChargeTracking()).
         updateChargeTracking();
 
-        if (stage == Stage.COOLDOWN) {
-            if (cooldownTimer > 0) {
-                cooldownTimer--;
-                return;
-            }
-            stage = Stage.IDLE;
+        Vec3 eyePos = mc.player.getEyePosition();
+
+        if (stage == Stage.AIMING) {
+            if (cooldownTimer > 0) cooldownTimer--;
+            tickAiming(eyePos);
+            return;
         }
 
-        if (stage == Stage.AIMING) return;
-
-        Vec3 eyePos = mc.player.getEyePosition();
+        if (stage == Stage.COOLDOWN) {
+            if (cooldownTimer > 0) cooldownTimer--;
+            if (cooldownTimer > 0) return;
+            stage = Stage.IDLE;
+        }
 
         // 1. Detection
         Threat target = findMostDangerousThreat(eyePos);
         if (target == null) return;
 
-        // 2. Interception solution
+        // 2.-3. Solve, then execute (or abandon through the aiming loop).
+        beginAim(target, eyePos);
+    }
+
+    /**
+     * Called every tick while a smooth rotation is in flight. A2: if the pending
+     * threat disappeared or can no longer be intercepted, drop the shot (the
+     * rotate callback will notice pendingShotCancelled and not throw).
+     */
+    private void tickAiming(Vec3 eyePos) {
+        // Safety net: if another module superseded our rotation, the callback may
+        // never fire. Don't sit in AIMING forever with the charge still slotted.
+        if (++aimTicks > MAX_AIM_TICKS) {
+            abortAim();
+            return;
+        }
+
+        if (aimingTarget == null || aimingTarget.entity().isRemoved()) {
+            abortAim();
+            return;
+        }
+
+        Threat fresh = simulateThreat(aimingTarget.entity(), eyePos);
+        if (fresh == null || solveIntercept(fresh, eyePos) == null) {
+            abortAim();
+        }
+    }
+
+    /**
+     * Drop a pending aim and return to IDLE, restoring the pre-slotted slot.
+     */
+    private void abortAim() {
+        pendingShotCancelled = true;
+        aimingTarget = null;
+        cooldownTimer = 0;
+        stage = Stage.IDLE;
+        restorePreSlot();
+    }
+
+    private void beginAim(Threat target, Vec3 eyePos) {
         Solution solution = solveIntercept(target, eyePos);
-        if (solution == null) return;
+        if (solution == null || pathIntersectsSelf(eyePos, solution.direction())) return;
 
-        // Safety: abort if the shot would clip our own hitbox
-        if (pathIntersectsSelf(eyePos, solution.direction())) return;
-
-        // Ensure we have a wind charge
         if (!findWindCharge().found()) return;
-
-        // Item cooldown check
         if (mc.player.getCooldowns().isOnCooldown(Items.WIND_CHARGE.getDefaultInstance())) return;
 
         lastTarget = target;
         lastSolution = solution;
+        aimingTarget = target;
+        pendingShotCancelled = false;
+        aimTicks = 0;
 
-        // 3. Execute: rotate, then throw via callback
+        // R1: get the wind charge in hand now so the throw, not the swap, is on the
+        // critical path after rotation completes.
+        preSlotWindCharge();
+
         float[] rot = toYawPitch(solution.direction());
         stage = Stage.AIMING;
 
+        if (instantThrow.get()) {
+            instantAimThrow(rot[0], rot[1], target, solution);
+            return;
+        }
+
         Rotations.rotate(rot[0], rot[1], rotationPriority.get(), () -> {
-            if (mc.player != null) {
-                beginChargeTracking(target.entity());
-                throwWindCharge();
+            // Abandoned mid-rotation (tickAiming), a newer aim took over, or the
+            // module was turned off.
+            if (pendingShotCancelled || aimingTarget != target || mc.player == null || mc.level == null) return;
+
+            if (cooldownTimer > 0
+                || mc.player.getCooldowns().isOnCooldown(Items.WIND_CHARGE.getDefaultInstance())) {
+                abortAim();
+                return;
             }
+
+            // A1: re-solve with the freshest threat path at throw time so the aim is
+            // current even after a long rotation.
+            Vec3 eye = mc.player.getEyePosition();
+            Threat fresh = simulateThreat(target.entity(), eye);
+            Solution s = fresh == null ? null : solveIntercept(fresh, eye);
+            if (fresh == null || s == null || pathIntersectsSelf(eye, s.direction())) {
+                lastTarget = null;
+                lastSolution = null;
+                abortAim();
+                return;
+            }
+
+            lastSolution = s;
+            beginChargeTracking(target.entity());
+            throwWindCharge();
             cooldownTimer = cooldownTicks.get();
             stage = Stage.COOLDOWN;
         });
+    }
+
+    /**
+     * R3: aim and throw in the same tick, skipping the smooth rotation entirely.
+     */
+    private void instantAimThrow(float yaw, float pitch, Threat target, Solution solution) {
+        float prevYaw = mc.player.getYRot();
+        float prevPitch = mc.player.getXRot();
+
+        mc.player.setYRot(yaw);
+        mc.player.setXRot(pitch);
+        mc.player.connection.send(new ServerboundMovePlayerPacket.Rot(
+            yaw, pitch, mc.player.onGround(), mc.player.horizontalCollision));
+
+        lastSolution = solution;
+        beginChargeTracking(target.entity());
+        try {
+            throwWindCharge();
+        } finally {
+            // Put the camera back and tell the server, otherwise vanilla thinks the
+            // rotation never changed and won't send a corrective look packet.
+            mc.player.setYRot(prevYaw);
+            mc.player.setXRot(prevPitch);
+            mc.player.connection.send(new ServerboundMovePlayerPacket.Rot(
+                prevYaw, prevPitch, mc.player.onGround(), mc.player.horizontalCollision));
+        }
+        cooldownTimer = cooldownTicks.get();
+        stage = Stage.COOLDOWN;
+    }
+
+    /**
+     * Swap the hotbar wind charge into the main hand ahead of the throw.
+     */
+    private boolean preSlotWindCharge() {
+        FindItemResult windCharge = findWindCharge();
+        if (!windCharge.found()) return false;
+        int selected = mc.player.getInventory().getSelectedSlot();
+        if (selected == windCharge.slot()) return false;
+
+        // If a previous pre-slot was never undone, clean it up before arming again
+        // so the earlier swap (stack exchange with quick-swap) gets reversed.
+        restorePreSlot();
+        preSlot = selected;
+        if (quickSwap.get()) {
+            // InvUtils.quickSwap physically exchanges stacks; remember the target so
+            // restorePreSlot can apply the same swap again to reverse it. Also record
+            // what item this leaves in preSwapSlot, so restorePreSlot can detect if
+            // something else touched that slot before we get back to it.
+            preSwapSlot = windCharge.slot();
+            expectedPreSwapItem = mc.player.getInventory().getItem(selected).getItem();
+            InvUtils.quickSwap().fromId(selected).to(windCharge.slot());
+        } else {
+            preSwapSlot = -1;
+            expectedPreSwapItem = null;
+            InvUtils.swap(windCharge.slot(), false);
+        }
+        return true;
+    }
+
+    private void restorePreSlot() {
+        if (mc.player != null && preSlot >= 0 && preSlot <= 8) {
+            if (preSwapSlot >= 0) {
+                net.minecraft.world.item.Item currentInSwapSlot = mc.player.getInventory().getItem(preSwapSlot).getItem();
+                if (currentInSwapSlot == expectedPreSwapItem) {
+                    // preSwapSlot still holds what we put there, safe to reverse.
+                    InvUtils.quickSwap().fromId(preSlot).to(preSwapSlot);
+                } else {
+                    // Something else changed that slot while we were aiming/throwing.
+                    // Reversing blindly would move an unrelated item into the wrong
+                    // slot, so don't touch inventory contents, just restore selection.
+                    InvUtils.swap(preSlot, false);
+                }
+            } else {
+                InvUtils.swap(preSlot, false);
+            }
+        }
+        preSlot = -1;
+        preSwapSlot = -1;
+        expectedPreSwapItem = null;
     }
 
     private Threat findMostDangerousThreat(Vec3 eyePos) {
@@ -345,49 +527,60 @@ public class ArenaM extends Module {
                 if (entity.getDeltaMovement().dot(fromPlayer) >= 0) continue;
             }
 
-            Vec3[] path = simulateThreatPath(entity);
-            if (path == null) continue;
+            Threat threat = simulateThreat(entity, eyePos);
+            if (threat == null) continue;
 
-            double closest = Double.MAX_VALUE;
-            int closestTick = -1;
-            for (int i = 0; i < path.length; i++) {
-                if (path[i] == null) continue;
-                double d = path[i].distanceTo(eyePos);
-                if (d < closest) {
-                    closest = d;
-                    closestTick = i;
-                }
-            }
+            if (!interceptNonTargeting.get() && threat.closestDistance() > SAFETY_MARGIN) continue;
 
-            if (!interceptNonTargeting.get() && closest > SAFETY_MARGIN) continue;
-
-            threats.add(new Threat(entity, path, closestTick, closest));
+            threats.add(threat);
         }
 
         if (threats.isEmpty()) return null;
 
-        // Sort by actual danger first (how close it comes to hitting you), and use
-        // approach-time only as a tiebreaker between similarly dangerous threats.
-        // Sorting by impactTick alone breaks down once intercept-non-target is on,
-        // since a projectile flying away from you can have its closest point occur
-        // at tick 0 (its current position) an early tick number that has nothing
-        // to do with actual danger, letting it wrongly outrank a real incoming threat.
-        threats.sort(Comparator
-            .comparingDouble(Threat::closestDistance)
-            .thenComparingInt(Threat::impactTick));
-        return threats.get(0);
+        if (prioritySoonest.get()) {
+            // A3: only threats whose closest point is within SOONEST_WINDOW of the
+            // closest overall count as tied danger; among those, pick the soonest.
+            // (A raw band-comparator is non-transitive, so pick via min instead of sort.)
+            double minDist = threats.stream().mapToDouble(Threat::closestDistance).min().orElse(0);
+            return threats.stream()
+                .filter(t -> t.closestDistance() - minDist <= SOONEST_WINDOW)
+                .min(Comparator.comparingInt(Threat::impactTick)
+                    .thenComparingDouble(Threat::closestDistance))
+                .orElse(null);
+        } else {
+            threats.sort(Comparator
+                .comparingDouble(Threat::closestDistance)
+                .thenComparingInt(Threat::impactTick));
+            return threats.get(0);
+        }
+    }
+
+    private Threat simulateThreat(Entity entity, Vec3 eyePos) {
+        Vec3[] path = simulateThreatPath(entity);
+        if (path == null) return null;
+
+        double closest = Double.MAX_VALUE;
+        int closestTick = -1;
+        for (int i = 0; i < path.length; i++) {
+            if (path[i] == null) continue;
+            double d = path[i].distanceTo(eyePos);
+            if (d < closest) {
+                closest = d;
+                closestTick = i;
+            }
+        }
+        return new Threat(entity, path, closestTick, closest);
     }
 
     private Vec3[] simulateThreatPath(Entity entity) {
-        ProjectileEntitySimulator simulator = new ProjectileEntitySimulator();
-        if (!simulator.set(entity)) return null;
+        if (!threatSimulator.set(entity)) return null;
 
         Vec3[] path = new Vec3[DETECTION_TICKS + 1];
-        path[0] = new Vec3(simulator.pos.x, simulator.pos.y, simulator.pos.z);
+        path[0] = new Vec3(threatSimulator.pos.x, threatSimulator.pos.y, threatSimulator.pos.z);
 
         for (int i = 1; i <= DETECTION_TICKS; i++) {
-            SimulationStep step = simulator.tick();
-            path[i] = new Vec3(simulator.pos.x, simulator.pos.y, simulator.pos.z);
+            SimulationStep step = threatSimulator.tick();
+            path[i] = new Vec3(threatSimulator.pos.x, threatSimulator.pos.y, threatSimulator.pos.z);
             if (step.shouldStop) break;
         }
 
@@ -450,8 +643,26 @@ public class ArenaM extends Module {
     }
 
     private int getEffectiveLatencyTicks() {
+        seedLatencyFromPing();
         double avg = quickSwap.get() ? avgLatencyQuickSwap : avgLatencyNormal;
         return (int) Math.round(Math.max(0, Math.min(avg, MAX_LEAD - 1)));
+    }
+
+    /**
+     * A4: seed the flight clock from the measured ping instead of a blind 1.0 tick.
+     */
+    private void seedLatencyFromPing() {
+        if (latencySeeded) return;
+        latencySeeded = true;
+        int ping = 0;
+        if (mc.getConnection() != null && mc.player != null) {
+            PlayerInfo entry = mc.getConnection().getPlayerInfo(mc.player.getUUID());
+            if (entry != null) ping = entry.getLatency();
+        }
+        // Seed as a full round trip (a spawn must come back to this client), 50 ms per tick.
+        double seed = Math.min(10.0, Math.max(1.0, ping / 50.0));
+        avgLatencyNormal = seed;
+        avgLatencyQuickSwap = seed;
     }
 
     private AABB windBoxAt(Vec3 pos) {
@@ -492,17 +703,32 @@ public class ArenaM extends Module {
 
     private void throwWindCharge() {
         FindItemResult windCharge = findWindCharge();
-        if (!windCharge.found()) return;
+        if (!windCharge.found()) {
+            // The charge vanished mid-aim: undo any pre-slot so the hotbar is ours again.
+            restorePreSlot();
+            return;
+        }
 
         int selectedSlot = mc.player.getInventory().getSelectedSlot();
         int itemSlot = windCharge.slot();
+
+        // A wind charge already in the main hand (from preSlotWindCharge, or a
+        // second stack elsewhere causing findInHotbar to return a different slot
+        // than the one we pre-slotted) is still the pre-slotted case
+        boolean mainHandIsCharge = mc.player.getMainHandItem().getItem() == Items.WIND_CHARGE;
+        if (itemSlot == selectedSlot || (preSlot >= 0 && mainHandIsCharge)) {
+            // Pre-slotted (R1): no swap needed, just sling it and restore the old slot.
+            mc.gameMode.useItem(mc.player, InteractionHand.MAIN_HAND);
+            restorePreSlot();
+            return;
+        }
 
         if (quickSwap.get()) {
             InvUtils.quickSwap().fromId(selectedSlot).to(itemSlot);
             mc.gameMode.useItem(mc.player, InteractionHand.MAIN_HAND);
             InvUtils.quickSwap().fromId(selectedSlot).to(itemSlot);
         } else {
-            InvUtils.swap(itemSlot, false);
+            InvUtils.swap(itemSlot, true);
             mc.gameMode.useItem(mc.player, InteractionHand.MAIN_HAND);
             InvUtils.swapBack();
         }

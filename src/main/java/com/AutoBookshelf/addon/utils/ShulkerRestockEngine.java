@@ -20,6 +20,7 @@ import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -60,7 +61,7 @@ public class ShulkerRestockEngine {
 
     // Bounded wait times for each confirmation state, in client ticks. These
     // exist because sending a packet is not confirmation that the server
-    // acted on it - every WAIT_FOR_* state polls the actual world/UI state
+    // acted on it every WAIT_FOR_* state polls the actual world/UI state
     // each tick instead of just assuming success after a fixed delay.
     private static final int PLACEMENT_TIMEOUT_TICKS = 20;
     private static final int OPEN_TIMEOUT_TICKS = 20;
@@ -95,6 +96,13 @@ public class ShulkerRestockEngine {
      */
     private final List<BlockPos> failedPositions = new ArrayList<>();
 
+    /**
+     * Reused scratch list combining failed placement positions with the config's
+     * excluded positions; avoid+alloc is per placement attempt, this just keeps
+     * the ArrayList allocation from being repeated.
+     */
+    private final List<BlockPos> avoidScratch = new ArrayList<>();
+
     public ShulkerRestockEngine(Minecraft mc, PlacementEngine placementEngine, RestockCallback callback) {
         this.mc = mc;
         this.placementEngine = placementEngine;
@@ -126,9 +134,7 @@ public class ShulkerRestockEngine {
     /**
      * True if, on the most recently completed attempt, every stack of the target
      * item was taken out of the shulker before it was broken. False means the
-     * box was broken (or left placed) while still holding leftover contents -
-     * callers that break-after-fill should treat that dropped box as worth
-     * chasing down, unlike a fully-emptied one.
+     * box was broken (or left placed) while still holding leftover contents
      */
     public boolean wasShulkerFullyEmptied() {
         return shulkerFullyEmptied;
@@ -191,7 +197,7 @@ public class ShulkerRestockEngine {
             ItemContainerContents container = stack.get(DataComponents.CONTAINER);
             if (container == null) continue;
             for (ItemStackTemplate content : container.nonEmptyItems()) {
-                if (content.is(currentTargetItem)) {
+                if (content.item().value() == currentTargetItem) {
                     shulkerSlot = i;
                     break;
                 }
@@ -228,7 +234,7 @@ public class ShulkerRestockEngine {
             }
             // Single atomic swap
             mc.gameMode.handleContainerInput(
-                mc.player.inventoryMenu.containerId,
+                mc.player.containerMenu.containerId,
                 shulkerSlot,
                 targetSlot,
                 ContainerInput.SWAP,
@@ -246,9 +252,11 @@ public class ShulkerRestockEngine {
         }
 
         mc.player.getInventory().setSelectedSlot(shulkerSlot);
-        mc.player.connection.send(new ServerboundSetCarriedItemPacket(shulkerSlot));
+        mc.getConnection().send(new ServerboundSetCarriedItemPacket(shulkerSlot));
 
-        List<BlockPos> avoid = new ArrayList<>(failedPositions);
+        List<BlockPos> avoid = avoidScratch;
+        avoid.clear();
+        avoid.addAll(failedPositions);
         avoid.addAll(config.excludedPositions());
 
         BlockPos placePos = placementEngine.findPlacement(
@@ -261,7 +269,7 @@ public class ShulkerRestockEngine {
         placedShulkerPos = placePos;
         Vec3 hitVec = Vec3.atCenterOf(placePos);
 
-        // Placement is always top-face: we click Direction.UP on placePos.down()
+        // Placement is always top-face: we click Direction.UP on placePos.below()
         // (or, in air-place mode, simulate that same click via the offhand-swap
         // trick). There is no side-face placement path.
         if (config.airPlace()) {
@@ -270,18 +278,18 @@ public class ShulkerRestockEngine {
 
             if (config.rotate()) {
                 Rotations.rotate(Rotations.getYaw(hitVec), Rotations.getPitch(hitVec), -100, () -> {
-                    mc.player.connection.send(new ServerboundPlayerActionPacket(
+                    mc.getConnection().send(new ServerboundPlayerActionPacket(
                         ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
-                    mc.player.connection.send(new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND, hit, revision));
-                    mc.player.connection.send(new ServerboundPlayerActionPacket(
+                    mc.getConnection().send(new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND, hit, revision));
+                    mc.getConnection().send(new ServerboundPlayerActionPacket(
                         ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
                     mc.player.swing(InteractionHand.MAIN_HAND);
                 });
             } else {
-                mc.player.connection.send(new ServerboundPlayerActionPacket(
+                mc.getConnection().send(new ServerboundPlayerActionPacket(
                     ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
-                mc.player.connection.send(new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND, hit, revision));
-                mc.player.connection.send(new ServerboundPlayerActionPacket(
+                mc.getConnection().send(new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND, hit, revision));
+                mc.getConnection().send(new ServerboundPlayerActionPacket(
                     ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
                 mc.player.swing(InteractionHand.MAIN_HAND);
             }
@@ -301,8 +309,7 @@ public class ShulkerRestockEngine {
         }
 
         // Sending the interaction packet is not confirmation the server placed
-        // anything - WAIT_FOR_PLACEMENT polls the real world state for the
-        // shulker before we ever try to open it.
+        // anything
         stateTicks = 0;
         stage = Stage.WAIT_FOR_PLACEMENT;
     }
@@ -317,7 +324,7 @@ public class ShulkerRestockEngine {
         stateTicks++;
         if (stateTicks < PLACEMENT_TIMEOUT_TICKS) return;
 
-        // Timed out - the world never showed a shulker at this position.
+        // Timeout, the world never showed a shulker at this position.
         // Record it as failed so the next candidate search skips it, and try
         // again from scratch rather than waiting forever.
         failedPositions.add(placedShulkerPos);
@@ -367,7 +374,7 @@ public class ShulkerRestockEngine {
         // WAIT_FOR_PLACEMENT already confirmed a shulker sits here, so we can
         // go straight to interacting with it.
         BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf(placedShulkerPos), Direction.UP, placedShulkerPos, false);
-        mc.player.connection.send(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND, hit, 0));
+        mc.getConnection().send(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND, hit, 0));
         mc.player.swing(InteractionHand.MAIN_HAND);
 
         stateTicks = 0;
@@ -417,27 +424,46 @@ public class ShulkerRestockEngine {
         }
 
         var handler = screen.getMenu();
-        for (int i = 0; i < 27; i++) {
+        // Single pass over the 27 box slots: quick-move every matching stack while
+        // remembering if any slot kept a partial stack after its own move, instead of
+        // re-walking all 27 slots a second time to detect leftovers.
+        boolean targetStillLeft = false;
+        int i = 0;
+        while (i < 27) {
             ItemStack stack = handler.getSlot(i).getItem();
-            if (stack.getItem() == currentTargetItem) {
-                mc.gameMode.handleContainerInput(handler.containerId, i, 0, ContainerInput.QUICK_MOVE, mc.player);
-                if (countEmptyPlayerSlots() <= keepFree) break;
+            if (stack.getItem() != currentTargetItem) {
+                i++;
+                continue;
+            }
+
+            mc.gameMode.handleContainerInput(handler.containerId, i, 0, ContainerInput.QUICK_MOVE, mc.player);
+            // A quick-move can leave a partial stack behind in this slot.
+            if (handler.getSlot(i).getItem().getItem() == currentTargetItem) targetStillLeft = true;
+
+            // Re-check the real inventory rather than assuming this quick-move
+            // consumed an empty slot.
+            if (countEmptyPlayerSlots() <= keepFree) break;
+            i++;
+        }
+
+        // Broke out with a full inventory before reaching the end: the slots after the
+        // last quick-move were never touched, so any of them still holding the target
+        // means we stopped short even though that last move drained its own slot.
+        if (!targetStillLeft && i < 27) {
+            for (int j = i + 1; j < 27; j++) {
+                if (handler.getSlot(j).getItem().getItem() == currentTargetItem) {
+                    targetStillLeft = true;
+                    break;
+                }
             }
         }
 
-        // Any target-item slot in the shulker still holding a stack after the loop
-        // above means we stopped short of fully emptying it (either genuinely out
-        // of inventory room, or - previously - due to the miscounted early exit).
-        // Record that so the caller can tell a "fully emptied" success apart from
-        // a "still has contents" one and decide whether to bother chasing down
-        // the dropped box after it's broken.
-        shulkerFullyEmptied = true;
-        for (int i = 0; i < 27; i++) {
-            if (handler.getSlot(i).getItem().getItem() == currentTargetItem) {
-                shulkerFullyEmptied = false;
-                break;
-            }
-        }
+        // If any target-item slot in the shulker still holds a stack we stopped short
+        // of fully emptying it (either genuinely out of inventory room, or - previously -
+        // due to the miscounted early exit). Record that so the caller can tell a
+        // "fully emptied" success apart from a "still has contents" one and decide
+        // whether to bother chasing down the dropped box after it's broken.
+        shulkerFullyEmptied = !targetStillLeft;
 
         mc.player.closeContainer();
         stage = Stage.CLOSE_SHULKER;
@@ -486,7 +512,7 @@ public class ShulkerRestockEngine {
 
     private void startBreak() {
         if (mc.level.getBlockState(placedShulkerPos).isAir()) {
-            // Already gone somehow (e.g. something else broke it) - nothing to do.
+            // Already gone somehow (something else broke it) nothing to do.
             succeed();
             return;
         }
@@ -502,7 +528,7 @@ public class ShulkerRestockEngine {
             if (pickSlot != -1) {
                 preBreakSlot = mc.player.getInventory().getSelectedSlot();
                 mc.player.getInventory().setSelectedSlot(pickSlot);
-                mc.player.connection.send(new ServerboundSetCarriedItemPacket(pickSlot));
+                mc.getConnection().send(new ServerboundSetCarriedItemPacket(pickSlot));
                 pickaxeEquipped = true;
             }
         }
@@ -517,10 +543,6 @@ public class ShulkerRestockEngine {
             return;
         }
 
-        // Sending another breaking-progress tick is not confirmation of
-        // anything either - we keep polling the block state above every tick,
-        // and only give up once BREAK_TIMEOUT_TICKS is exceeded, instead of
-        // looping on this indefinitely (e.g. because no pickaxe was found).
         mc.gameMode.continueDestroyBlock(placedShulkerPos, Direction.UP);
         mc.player.swing(InteractionHand.MAIN_HAND);
 
@@ -545,7 +567,7 @@ public class ShulkerRestockEngine {
     private void abort(String message) {
         if (message != null) callback.onInfo(message);
         // A break attempt may have been in progress (pickaxe already swapped
-        // in) when the abort was triggered - restore it before the original
+        // in) when the abort was triggered, restore it before the original
         // slot, same ordering succeed() uses.
         restorePickaxeSlot();
         restoreOriginalSlot();

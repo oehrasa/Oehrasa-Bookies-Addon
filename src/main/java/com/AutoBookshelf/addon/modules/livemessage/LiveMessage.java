@@ -23,13 +23,12 @@ import net.minecraft.client.multiplayer.PlayerInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 
 public class LiveMessage extends Module {
     public static final Logger LOG = LoggerFactory.getLogger("Livemessage");
-    public static LiveMessage INSTANCE;
+    private final Set<UUID> warnedUnsafeRecipients = new HashSet<>();
+    public static volatile LiveMessage INSTANCE;
     private final SettingGroup sgGeneral = this.settings.getDefaultGroup();
     private final SettingGroup sgNotifications = this.settings.createGroup("Notifications");
     private final SettingGroup sgPatterns = this.settings.createGroup("Patterns");
@@ -226,11 +225,27 @@ public class LiveMessage extends Module {
                 .visible(this.blockAdvertisers::get)
                 .build()
         );
+    public final Setting<Boolean> verifySenderInTab = this.sgAntiSpam
+        .add(
+            new meteordevelopment.meteorclient.settings.BoolSetting.Builder()
+                .name("verify-sender-in-tab")
+                .description("Only treat chat lines as incoming DMs when the sender name is a valid Minecraft username and appears in the player tab list. Blocks spoofed 'From <player>:' lines posted in public chat from creating unread counts, toasts, files, and reply targets.")
+                .defaultValue(true)
+                .build()
+        );
+    public final Setting<Boolean> debugRejectedCapture = this.sgPatterns
+        .add(
+            new meteordevelopment.meteorclient.settings.BoolSetting.Builder()
+                .name("debug-rejected-capture")
+                .description("Show whisper-like chat lines (directed at you) that match no DM format in the in-game chat, so they never reach the DM system.")
+                .defaultValue(false)
+                .build()
+        );
     public final Setting<Boolean> debugCapture = this.sgPatterns
         .add(
             new meteordevelopment.meteorclient.settings.BoolSetting.Builder()
                 .name("debug-capture")
-                .description("Log matched and potential unmatched DM lines to the Meteor console. Also gates non-critical error logging.")
+                .description("Log matched/suppressed DM lines to the Meteor console. Also gates non-critical error logging.")
                 .defaultValue(false)
                 .build()
         );
@@ -346,9 +361,10 @@ public class LiveMessage extends Module {
         );
 
     private int queueScanTicks = 0;
+    private boolean openGuiOnChatKey = false;
 
     public LiveMessage() {
-        super(Addon.CATEGORY, "livemessage", "Advanced DM management system with GUI.");
+        super(Addon.CATEGORY2, "LiveMessage", "Advanced DM management system with GUI.");
         INSTANCE = this;
     }
 
@@ -356,6 +372,11 @@ public class LiveMessage extends Module {
         LivemessageUtil.initDirs();
         LivemessageUtil.reloadPatterns();
         LivemessageUtil.trimAllHistories(this.maxHistoryLines.get());
+    }
+
+    @Override
+    public void onDeactivate() {
+        this.openGuiOnChatKey = false;
     }
 
     @EventHandler
@@ -375,6 +396,7 @@ public class LiveMessage extends Module {
     @EventHandler
     private void onGameLeft(GameLeftEvent event) {
         com.AutoBookshelf.addon.modules.livemessage.util.LastSeenTracker.onDisconnect();
+        LiveSkinUtil.forceSave();
     }
 
     @EventHandler
@@ -382,7 +404,7 @@ public class LiveMessage extends Module {
         if ((Boolean) this.openOnChatKey.get()) {
             if (event.screen instanceof ChatScreen) {
                 event.cancel();
-                this.mc.gui.setScreen(new LivemessageGui());
+                this.openGuiOnChatKey = true;
             }
         }
     }
@@ -397,6 +419,11 @@ public class LiveMessage extends Module {
      */
     @EventHandler
     private void onTick(TickEvent.Post event) {
+        if (this.openGuiOnChatKey) {
+            this.openGuiOnChatKey = false;
+            this.mc.gui.setScreen(new LivemessageGui());
+        }
+
         if (!this.isActive() || this.mc.getConnection() == null) return;
 
         java.util.Set<UUID> onlineNow = new java.util.HashSet<>();
@@ -427,6 +454,16 @@ public class LiveMessage extends Module {
 
             LiveProfileCache.LiveProfile profile = LiveProfileCache.getLiveprofileFromUUID(uuid, true);
             String username = profile != null ? profile.username : QueueUtil.usernameFor(uuid);
+
+            // Never interpolate an unvalidated username into sendCommand(): it
+            // would let a crafted profile hijack the command (e.g. inject a
+            // second command via a leading '/'). Warn once per recipient.
+            if (!LivemessageUtil.isSafeUsername(username)) {
+                if (warnedUnsafeRecipients.add(uuid)) {
+                    LOG.warn("Skipping queued message for {}: unsafe username", uuid);
+                }
+                continue;
+            }
 
             ChatWindow.ChatMessage popped = QueueUtil.popOldestPending(uuid);
             if (popped == null) continue;

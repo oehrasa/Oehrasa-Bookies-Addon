@@ -352,7 +352,14 @@ public class NeboM extends HudElement {
                 double textHeight = renderer.textHeight(shadow.get(), scl);
                 int headY = (int) (y - textHeight + (textHeight - headSize.get()) / 2);
                 if (skinTextures != null) {
-                    PlayerFaceExtractor.extractRenderState(renderer.graphics, skinTextures, (int) x, headY, headSize.get(), -1);
+                    PlayerFaceExtractor.extractRenderState(
+                        renderer.graphics,
+                        skinTextures,
+                        (int) x,
+                        headY,
+                        headSize.get(),
+                        -1
+                    );
                 }
                 x += headSize.get() + 2;
             }
@@ -392,6 +399,10 @@ public class NeboM extends HudElement {
     }
 
     private PlayerSkin getSkinTextures(Player player) {
+        // Bounded cache: players leave servers / the world changes continually across sessions
+        if (headTextureCache.size() > 256) {
+            headTextureCache.clear();
+        }
         return headTextureCache.computeIfAbsent(player.getUUID(), uuid -> {
             if (mc.getConnection() == null) return null;
             PlayerInfo entry = mc.getConnection().getPlayerInfo(uuid);
@@ -412,15 +423,28 @@ public class NeboM extends HudElement {
         return true;
     }
 
+    // The world player scan + sort is done at most once per half-second and reused by both
+    // tick() (width measurement) and render() (per-frame drawing); entity data besides
+    // position rarely changes faster than that, and distance is re-measured at draw time.
+    private long lastPlayerScanMs = 0L;
+    private static final long PLAYER_SCAN_INTERVAL_MS = 500L;
+    private final List<Player> cachedPlayers = new ArrayList<>();
+
     private List<Player> getNearbyPlayers() {
-        players.clear();
-        double maxDistSq = maxDistance.get() * maxDistance.get();
-        for (Player player : mc.level.players()) {
-            if (player.distanceToSqr(mc.player) <= maxDistSq) players.add(player);
+        long now = System.currentTimeMillis();
+        if (now - lastPlayerScanMs >= PLAYER_SCAN_INTERVAL_MS) {
+            lastPlayerScanMs = now;
+            players.clear();
+            double maxDistSq = maxDistance.get() * maxDistance.get();
+            for (Player player : mc.level.players()) {
+                if (player.distanceToSqr(mc.player) <= maxDistSq) players.add(player);
+            }
+            players.sort(Comparator.comparingDouble(p -> p.distanceToSqr(mc.player)));
+            if (players.size() > limit.get()) players.subList(limit.get(), players.size()).clear();
+            cachedPlayers.clear();
+            cachedPlayers.addAll(players);
         }
-        players.sort(Comparator.comparingDouble(p -> p.distanceToSqr(mc.player)));
-        if (players.size() > limit.get()) players.subList(limit.get(), players.size()).clear();
-        return players;
+        return cachedPlayers;
     }
 
     // Finds the closest player to a world position, used for packets (entity spawn, block event)
@@ -472,7 +496,7 @@ public class NeboM extends HudElement {
 
         // Continuous item use
         if (player.isUsingItem()) {
-            ItemStack active = player.getUseItem();
+            ItemStack active = player.getActiveItem();
             if (!active.isEmpty()) {
                 Item item = active.getItem();
                 if (item instanceof BowItem || item instanceof CrossbowItem) states.add("Bow");
@@ -498,13 +522,13 @@ public class NeboM extends HudElement {
     @Nullable
     private ItemStack getActionItem(Player player, String state) {
         return switch (state) {
-            case "Bow", "Eat", "Drink" -> player.getUseItem().copy();
+            case "Bow", "Eat", "Drink" -> player.getActiveItem().copy();
             case "Crystal" -> {
                 // If using item, return the active item; else for quick crystal it's already in the state list, show crystal item.
-                if (player.isUsingItem()) yield player.getUseItem().copy();
+                if (player.isUsingItem()) yield player.getActiveItem().copy();
                 else yield new ItemStack(Items.END_CRYSTAL);
             }
-            case "Place" -> player.getUseItem().copy();
+            case "Place" -> player.getActiveItem().copy();
             case "Mining" -> player.getMainHandItem().copy();
             case "Totem" -> new ItemStack(Items.TOTEM_OF_UNDYING);
             case "Throw" -> {
@@ -536,6 +560,8 @@ public class NeboM extends HudElement {
         };
     }
 
+    // Any block that shows an "open" animation to nearby players via a block event packet.
+    // Order matters here: TrappedChestBlock extends ChestBlock, so it must be checked first.
     private boolean isContainerBlock(Block block) {
         return block instanceof TrappedChestBlock
             || block instanceof ChestBlock

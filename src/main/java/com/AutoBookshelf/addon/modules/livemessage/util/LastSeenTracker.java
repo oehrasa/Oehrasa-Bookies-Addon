@@ -14,6 +14,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import static com.AutoBookshelf.addon.modules.livemessage.LiveMessage.logError;
 
 public class LastSeenTracker {
+    private static final int MAX_ENTRIES = 2000;
+    private static final long STALE_ENTRY_MS = 90L * 24L * 60L * 60L * 1000L; // 90 days
+
     private static final Map<UUID, Long> lastSeen = new ConcurrentHashMap<>();
     private static Set<UUID> previouslyOnline = new HashSet<>();
 
@@ -43,6 +46,7 @@ public class LastSeenTracker {
         }
         previouslyOnline = currentlyOnline;
 
+        prune();
         maybeSave();
     }
 
@@ -56,6 +60,7 @@ public class LastSeenTracker {
             lastSeen.put(uuid, now);
             dirty = true;
         }
+        prune();
         previouslyOnline = new HashSet<>();
         forceSave();
     }
@@ -106,6 +111,27 @@ public class LastSeenTracker {
         long now = System.currentTimeMillis();
         if (now - lastSaveTime < SAVE_INTERVAL_MS) return;
         save();
+    }
+
+    /**
+     * Bounds the in-memory last-seen map: drops entries that haven't been seen in STALE_ENTRY_MS
+     * and trims the oldest entries once the hard cap is exceeded. Prevents a server churning
+     * through UUIDs from growing the map (and the saved file) without bound.
+     */
+    private static void prune() {
+        if (lastSeen.size() <= MAX_ENTRIES) {
+            return;
+        }
+        long cutoff = System.currentTimeMillis() - STALE_ENTRY_MS;
+        lastSeen.entrySet().removeIf(e -> e.getValue() < cutoff);
+        if (lastSeen.size() <= MAX_ENTRIES) {
+            return;
+        }
+        List<Map.Entry<UUID, Long>> oldest = new ArrayList<>(lastSeen.entrySet());
+        oldest.sort(Map.Entry.comparingByValue());
+        for (int i = 0; i < oldest.size() - MAX_ENTRIES; i++) {
+            lastSeen.remove(oldest.get(i).getKey());
+        }
     }
 
     private static void save() {

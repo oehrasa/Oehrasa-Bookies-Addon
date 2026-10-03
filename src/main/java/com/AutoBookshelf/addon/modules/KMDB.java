@@ -33,7 +33,7 @@ import java.util.List;
 
 public class KMDB extends Module {
 
-    public enum BuildMode {Wither, IronGolem, SnowGolem, CopperGolem}
+    public enum BuildMode {Wither, IronGolem, SnowGolem, CopperGolem, Creaking}
 
     private static final Direction[] AXIS_DIRECTIONS = {Direction.EAST, Direction.NORTH};
 
@@ -41,11 +41,28 @@ public class KMDB extends Module {
     private final SettingGroup sgWither = settings.createGroup("Wither Settings");
     private final SettingGroup sgPlacement = settings.createGroup("Placement");
     private final SettingGroup sgCopper = settings.createGroup("Copper Golem");
+    private final SettingGroup sgCreaking = settings.createGroup("Creaking");
 
     private final Setting<BuildMode> buildMode = sgGeneral.add(new EnumSetting.Builder<BuildMode>()
         .name("build-mode")
         .description("Which structure to build.")
         .defaultValue(BuildMode.Wither)
+        .build()
+    );
+
+    private final Setting<Direction.Axis> creakingAxis = sgCreaking.add(new EnumSetting.Builder<Direction.Axis>()
+        .name("creaking-axis")
+        .description("Axis the two pale oak logs and the creaking heart line up on. Y is a vertical pillar, X and Z are horizontal.")
+        .defaultValue(Direction.Axis.Y)
+        .visible(() -> buildMode.get() == BuildMode.Creaking)
+        .build()
+    );
+
+    private final Setting<Boolean> creakingRotate = sgCreaking.add(new BoolSetting.Builder()
+        .name("rotate")
+        .description("Rotate to face the blocks when placing them.")
+        .defaultValue(true)
+        .visible(() -> buildMode.get() == BuildMode.Creaking)
         .build()
     );
 
@@ -131,14 +148,18 @@ public class KMDB extends Module {
         .build()
     );
 
-    private final Setting<Item> pumpkinType = sgCopper.add(new ItemSetting.Builder()
-        .name("pumpkin-type")
-        .description("The carved pumpkin or jack‑o‑lantern to place on top.")
-        .defaultValue(Items.CARVED_PUMPKIN)
-        .filter(item -> item == Items.CARVED_PUMPKIN || item == Items.JACK_O_LANTERN)
-        .visible(() -> buildMode.get() == BuildMode.CopperGolem)
-        .build()
-    );
+    /**
+     * Either golem head works: a carved pumpkin or a jack o'lantern. One call so
+     * every builder accepts the same set instead of only carved pumpkins.
+     *
+     * <p>Hotbar-only (offhand, mainhand, then 0-8) on purpose: both place paths
+     * can only use a hotbar slot — BlockUtils#place bails out with false for
+     * slot &gt; 8, and airPlaceBlock feeds the slot straight to setSelectedSlot.
+     * Searching the whole inventory would find a pumpkin it then cannot place.
+     */
+    private FindItemResult findPumpkin() {
+        return InvUtils.findInHotbar(Items.CARVED_PUMPKIN, Items.JACK_O_LANTERN);
+    }
 
     private final Setting<Boolean> skipIfOccupied = sgCopper.add(new BoolSetting.Builder()
         .name("skip-if-occupied")
@@ -198,7 +219,7 @@ public class KMDB extends Module {
     private int blockTicksWaited;
 
     public KMDB() {
-        super(Addon.CATEGORY, "KMDB", "Builds Wither, Iron Golem, Snow Golem, or Copper Golem automatically.");
+        super(Addon.CATEGORY, "KMDB", "Builds Wither, Iron Golem, Snow Golem, Copper Golem, or a Creaking heart core automatically.");
     }
 
     @Override
@@ -208,6 +229,7 @@ public class KMDB extends Module {
             case IronGolem -> buildIronGolem();
             case SnowGolem -> buildSnowGolem();
             case CopperGolem -> buildCopperGolem();
+            case Creaking -> buildCreaking();
         }
         // Toggle off instantly for non Wither modes
         if (buildMode.get() != BuildMode.Wither) toggle();
@@ -229,14 +251,19 @@ public class KMDB extends Module {
         int vRadius = witherVerticalRadius.get();
         BlockPos playerPos = mc.player.blockPosition();
 
-        List<Wither> candidates = new ArrayList<>();
+        Wither best = null;
+        double bestDist = Double.MAX_VALUE;
         for (int y = -vRadius; y <= vRadius; y++) {
             for (int x = -hRadius; x <= hRadius; x++) {
                 for (int z = -hRadius; z <= hRadius; z++) {
                     BlockPos pos = playerPos.offset(x, y, z);
                     for (Direction axisDir : AXIS_DIRECTIONS) {
                         if (isValidWitherSpawn(pos, axisDir)) {
-                            candidates.add(new Wither().set(pos, axisDir));
+                            double dist = PlayerUtils.distanceTo(pos);
+                            if (dist < bestDist) {
+                                bestDist = dist;
+                                best = new Wither().set(pos, axisDir);
+                            }
                             break; // this spot works on one axis, no need to test the other
                         }
                     }
@@ -244,9 +271,7 @@ public class KMDB extends Module {
             }
         }
 
-        if (candidates.isEmpty()) return null;
-        candidates.sort(Comparator.comparingDouble(w -> PlayerUtils.distanceTo(w.foot)));
-        return candidates.get(0);
+        return best;
     }
 
     private boolean isValidWitherSpawn(BlockPos blockPos, Direction axisDirection) {
@@ -306,32 +331,79 @@ public class KMDB extends Module {
     }
 
     private List<int[]> ironGolemFootprint(Direction.Axis axis) {
-        int dx = axis == Direction.Axis.X ? 1 : 0;
-        int dz = axis == Direction.Axis.Z ? 1 : 0;
-        return List.of(
-            new int[]{0, 0, 0},
-            new int[]{0, 1, 0},
-            new int[]{-dx, 1, -dz},
-            new int[]{dx, 1, dz},
-            new int[]{0, 2, 0}
-        );
+        return axis == Direction.Axis.X ? IRON_GOLEM_FOOTPRINT_X_AXIS : IRON_GOLEM_FOOTPRINT_Z_AXIS;
     }
 
     private List<int[]> snowGolemFootprint() {
-        return List.of(
-            new int[]{0, 0, 0},
-            new int[]{0, 1, 0},
-            new int[]{0, 2, 0}
-        );
+        return SNOW_GOLEM_FOOTPRINT;
     }
 
     private List<int[]> copperGolemFootprint() {
-        return List.of(
-            new int[]{0, 0, 0},
-            new int[]{0, 1, 0}
-        );
+        return COPPER_GOLEM_FOOTPRINT;
     }
 
+    private List<int[]> creakingFootprint() {
+        return switch (creakingAxis.get()) {
+            case X -> CREAKING_FOOTPRINT_X;
+            case Z -> CREAKING_FOOTPRINT_Z;
+            default -> CREAKING_FOOTPRINT_Y;
+        };
+    }
+
+    private static final List<int[]> SNOW_GOLEM_FOOTPRINT = List.of(
+        new int[]{0, 0, 0},
+        new int[]{0, 1, 0},
+        new int[]{0, 2, 0}
+    );
+
+    private static final List<int[]> COPPER_GOLEM_FOOTPRINT = List.of(
+        new int[]{0, 0, 0},
+        new int[]{0, 1, 0}
+    );
+
+    private static final List<int[]> IRON_GOLEM_FOOTPRINT_X_AXIS = List.of(
+        new int[]{0, 0, 0},
+        new int[]{0, 1, 0},
+        new int[]{-1, 1, 0},
+        new int[]{1, 1, 0},
+        new int[]{0, 2, 0}
+    );
+
+    private static final List<int[]> IRON_GOLEM_FOOTPRINT_Z_AXIS = List.of(
+        new int[]{0, 0, 0},
+        new int[]{0, 1, 0},
+        new int[]{0, 1, -1},
+        new int[]{0, 1, 1},
+        new int[]{0, 2, 0}
+    );
+
+    /**
+     * Creaking core: two pale oak logs flanking one creaking heart, all three
+     * sharing a single axis. Y is a vertical pillar; X and Z are horizontal.
+     *
+     * <p>This 1x3 line is what actually activates a Creaking:
+     * CreakingHeartBlock#hasRequiredLogs requires the two neighbours along the
+     * heart's axis to be BlockTags.PALE_OAK_LOGS with the same axis value.
+     * The all-six-faces check (isSurroundedByLogs) only drives the idle
+     * sound, so it must NOT be applied here.
+     */
+    private static final List<int[]> CREAKING_FOOTPRINT_Y = List.of(
+        new int[]{0, 0, 0},   // log
+        new int[]{0, 1, 0},   // creaking heart
+        new int[]{0, 2, 0}    // log
+    );
+
+    private static final List<int[]> CREAKING_FOOTPRINT_X = List.of(
+        new int[]{-1, 1, 0},  // log
+        new int[]{0, 1, 0},   // creaking heart
+        new int[]{1, 1, 0}    // log
+    );
+
+    private static final List<int[]> CREAKING_FOOTPRINT_Z = List.of(
+        new int[]{0, 1, -1},  // log
+        new int[]{0, 1, 0},   // creaking heart
+        new int[]{0, 1, 1}    // log
+    );
     @EventHandler
     private void onRender(Render3DEvent event) {
         if (!renderPreview.get()) return;
@@ -385,6 +457,18 @@ public class KMDB extends Module {
                     event.renderer.box(foot.above(), golemColor.get(), golemColor.get(), shapeMode.get(), 0);    // pumpkin
                 }
             }
+            case Creaking -> {
+                BlockPos foot = findClearFootPosition(creakingFootprint(), placementSearchRadius.get());
+                if (foot != null) {
+                    List<int[]> footprint = creakingFootprint();
+                    event.renderer.box(foot.offset(footprint.get(0)[0], footprint.get(0)[1], footprint.get(0)[2]),
+                        golemColor.get(), golemColor.get(), shapeMode.get(), 0);      // log
+                    event.renderer.box(foot.offset(footprint.get(1)[0], footprint.get(1)[1], footprint.get(1)[2]),
+                        golemColor.get(), golemColor.get(), shapeMode.get(), 0);      // creaking heart
+                    event.renderer.box(foot.offset(footprint.get(2)[0], footprint.get(2)[1], footprint.get(2)[2]),
+                        golemColor.get(), golemColor.get(), shapeMode.get(), 0);      // log
+                }
+            }
         }
     }
 
@@ -397,14 +481,30 @@ public class KMDB extends Module {
     }
 
     private void airPlaceBlock(BlockPos pos, FindItemResult item) {
+        airPlaceBlock(pos, item, Direction.UP);
+    }
+
+    private void airPlaceBlock(BlockPos pos, FindItemResult item, Direction face) {
         if (!item.found()) return;
+
+        BlockHitResult bhr = new BlockHitResult(Vec3.atCenterOf(pos), face, pos, false);
+        int currentRevision = mc.player.containerMenu.getStateId();
+
+        // InvUtils.findInHotbar checks the OFFHAND FIRST and returns
+        // SlotUtils.OFFHAND (40) for it, despite the name. setSelectedSlot(40)
+        // throws IllegalArgumentException (isHotbarSlot is 0..8), and the
+        // swap dance below would move the item out from under the OFF_HAND
+        // use, so interact with the offhand directly.
+        if (item.isOffhand()) {
+            mc.player.connection.send(new ServerboundUseItemOnPacket(
+                InteractionHand.OFF_HAND, bhr, currentRevision));
+            mc.player.swing(InteractionHand.OFF_HAND);
+            return;
+        }
 
         int previousSlot = mc.player.getInventory().getSelectedSlot();
         mc.player.getInventory().setSelectedSlot(item.slot());
         mc.player.connection.send(new ServerboundSetCarriedItemPacket(item.slot()));
-
-        BlockHitResult bhr = new BlockHitResult(Vec3.atCenterOf(pos), Direction.UP, pos, false);
-        int currentRevision = mc.player.containerMenu.getStateId();
 
         mc.player.connection.send(new ServerboundPlayerActionPacket(
             ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
@@ -510,9 +610,9 @@ public class KMDB extends Module {
             error("No iron blocks in hotbar.");
             return;
         }
-        FindItemResult pumpkin = InvUtils.findInHotbar(Items.CARVED_PUMPKIN);
+        FindItemResult pumpkin = findPumpkin();
         if (!pumpkin.found()) {
-            error("No carved pumpkin in hotbar.");
+            error("No carved pumpkin or jack o'lantern in hotbar.");
             return;
         }
 
@@ -536,9 +636,9 @@ public class KMDB extends Module {
             error("No snow blocks in hotbar.");
             return;
         }
-        FindItemResult pumpkin = InvUtils.findInHotbar(Items.CARVED_PUMPKIN);
+        FindItemResult pumpkin = findPumpkin();
         if (!pumpkin.found()) {
-            error("No carved pumpkin in hotbar.");
+            error("No carved pumpkin or jack o'lantern in hotbar.");
             return;
         }
 
@@ -569,14 +669,98 @@ public class KMDB extends Module {
             error("No copper block in hotbar.");
             return;
         }
-        FindItemResult pumpkin = InvUtils.findInHotbar(pumpkinType.get());
+        FindItemResult pumpkin = findPumpkin();
         if (!pumpkin.found()) {
-            error("No suitable pumpkin in hotbar.");
+            error("No carved pumpkin or jack o'lantern in hotbar.");
             return;
         }
 
         place(foot, copper);
         place(foot.above(), pumpkin);
         info("Copper golem built.");
+    }
+
+    /**
+     * Builds the 3-block creaking core: log / creaking heart / log on one shared
+     * axis, taken from {@link #creakingAxis}.
+     *
+     * <p>Both {@code RotatedPillarBlock} and {@code CreakingHeartBlock} read
+     * their {@code AXIS} from {@code getClickedFace().getAxis()}, so the rotation
+     * of every block is forced by the face carried in the {@link BlockHitResult}
+     * that {@link #creakingPlace} ships, instead of whatever support face
+     * Minecraft would have picked on its own. Without that the horizontal X/Z
+     * layouts would place vertical (AXIS=Y) logs and the heart would never
+     * activate.
+     */
+    private void buildCreaking() {
+        BlockPos foot = findClearFootPosition(creakingFootprint(), placementSearchRadius.get());
+        if (foot == null) {
+            error("Not enough clear space for the creaking heart nearby.");
+            return;
+        }
+
+        FindItemResult heart = InvUtils.findInHotbar(Items.CREAKING_HEART);
+        if (!heart.found()) {
+            error("No creaking heart in hotbar.");
+            return;
+        }
+
+        FindItemResult log = InvUtils.findInHotbar(Items.PALE_OAK_LOG);
+        if (!log.found()) {
+            error("No pale oak logs in hotbar.");
+            return;
+        }
+
+        Direction.Axis axis = creakingAxis.get();
+        Direction face = axis == Direction.Axis.X ? Direction.EAST
+            : axis == Direction.Axis.Z ? Direction.SOUTH
+              : Direction.UP;
+
+        List<int[]> footprint = creakingFootprint();
+
+        // Footprint is always log, heart, log, so the heart sits at index 1.
+        BlockPos logPosA = foot.offset(footprint.get(0)[0], footprint.get(0)[1], footprint.get(0)[2]);
+        BlockPos heartPos = foot.offset(footprint.get(1)[0], footprint.get(1)[1], footprint.get(1)[2]);
+        BlockPos logPosB = foot.offset(footprint.get(2)[0], footprint.get(2)[1], footprint.get(2)[2]);
+
+        if (!creakingPlace(logPosA, log, face)) return;
+        if (!creakingPlace(heartPos, heart, face)) return;
+        if (!creakingPlace(logPosB, log, face)) return;
+
+        info("Creaking heart built on the " + axis.name().toLowerCase() + " axis.");
+    }
+
+    /**
+     * Places one creaking block with its rotation forced via the clicked face.
+     *
+     * <p>Meteor's {@link BlockUtils#place} picks its own support face, which
+     * unavoidably yields AXIS=Y for anything placed on the ground; this instead
+     * sends the {@link ServerboundUseItemOnPacket} directly with a fabricated
+     * {@link BlockHitResult} whose direction carries the wanted axis, after
+     * rotating the camera at it like DinoPrinter does, so the server keeps the
+     * block on the requested axis.
+     *
+     * @return true when the placeholder ought to have gone in, false on a
+     * missing item or a position that can't be replaced
+     */
+    private boolean creakingPlace(BlockPos pos, FindItemResult item, Direction face) {
+        if (!item.found()) {
+            error("Failed to place at " + pos.toShortString() + ".");
+            return false;
+        }
+
+        BlockState state = mc.level.getBlockState(pos);
+        if (!state.isAir() && !state.canBeReplaced()) {
+            error("Failed to place at " + pos.toShortString() + ".");
+            return false;
+        }
+
+        if (creakingRotate.get()) {
+            Rotations.rotate(Rotations.getYaw(pos), Rotations.getPitch(pos),
+                () -> airPlaceBlock(pos, item, face));
+        } else {
+            airPlaceBlock(pos, item, face);
+        }
+        return true;
     }
 }

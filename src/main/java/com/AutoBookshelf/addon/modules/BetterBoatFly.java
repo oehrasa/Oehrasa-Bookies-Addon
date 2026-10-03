@@ -39,7 +39,7 @@ public class BetterBoatFly extends Module {
         speed = sgGeneral.add(new DoubleSetting.Builder()
             .name("speed")
             .description("Horizontal speed in blocks per second.")
-            .defaultValue(10.0)
+            .defaultValue(19.0)
             .min(0.0)
             .sliderMax(50.0)
             .build());
@@ -47,7 +47,7 @@ public class BetterBoatFly extends Module {
         verticalSpeed = sgGeneral.add(new DoubleSetting.Builder()
             .name("vertical-speed")
             .description("Vertical speed in blocks per second.")
-            .defaultValue(6.0)
+            .defaultValue(20.0)
             .min(0.0)
             .sliderMax(20.0)
             .build());
@@ -55,7 +55,7 @@ public class BetterBoatFly extends Module {
         fallSpeed = sgGeneral.add(new DoubleSetting.Builder()
             .name("fall-speed")
             .description("How fast you fall in blocks per second.")
-            .defaultValue(0.1)
+            .defaultValue(0.0)
             .min(0.0)
             .build());
 
@@ -68,7 +68,7 @@ public class BetterBoatFly extends Module {
         autoMount = sgGeneral.add(new BoolSetting.Builder()
             .name("boat-auto-mount")
             .description("Automatically mounts the nearest boat if not already riding one.")
-            .defaultValue(false)
+            .defaultValue(true)
             .build());
 
         rotate = sgGeneral.add(new BoolSetting.Builder()
@@ -122,6 +122,12 @@ public class BetterBoatFly extends Module {
         LocalPlayer player = mc.player;
         if (player == null || player.isRemoved() || player.isPassenger()) return;
 
+        if (mountCooldown > 0) {
+            mountCooldown--;
+            return;
+        }
+
+        double mountRangeVal = mountRange.get();
         double radius = 5.0;
         AABB searchBox = player.getBoundingBox().inflate(radius);
         assert mc.level != null;
@@ -133,19 +139,15 @@ public class BetterBoatFly extends Module {
 
         for (Boat boat : boats) {
             double distSq = boat.distanceToSqr(playerPos);
-            if (distSq < nearestDistSq && PlayerUtils.isWithin(boat, mountRange.get())) {
+            if (distSq < nearestDistSq && PlayerUtils.isWithin(boat, mountRangeVal)) {
                 nearest = boat;
                 nearestDistSq = distSq;
             }
         }
 
         if (nearest != null) {
-            if (mountCooldown <= 0) {
-                interact(nearest);
-                mountCooldown = 10; // half a second between attempts
-            } else {
-                mountCooldown--;
-            }
+            interact(nearest);
+            mountCooldown = 10; // half a second between attempts
         }
     }
 
@@ -156,7 +158,7 @@ public class BetterBoatFly extends Module {
         if (rotate.get()) {
             double deltaX = boat.getX() - player.getX();
             double deltaZ = boat.getZ() - player.getZ();
-            double deltaY = boat.getY() + boat.getBbHeight() / 2.0 - (player.getY() + player.getEyeHeight());
+            double deltaY = boat.getY() + boat.getBbHeight() / 2.0 - (player.getY() + player.getEyePosition().y - player.getY());
             float yaw = (float) (Math.toDegrees(Math.atan2(deltaZ, deltaX)) - 90.0);
             float pitch = (float) Math.toDegrees(-Math.atan2(deltaY, Math.sqrt(deltaX * deltaX + deltaZ * deltaZ)));
 
@@ -166,11 +168,11 @@ public class BetterBoatFly extends Module {
         }
     }
 
-    // interactAt + interact were merged into a single interact(player, entity, location, hand)
-    // call in this Minecraft version; swing is still sent separately.
+    // Sends the position-based interact packet (interactEntityAtLocation /
+    // interactEntity merged into a single MultiPlayerGameMode#interact call)
     private void doInteract(Boat boat) {
         assert mc.gameMode != null;
-        EntityHitResult location = new EntityHitResult(boat, boat.getBoundingBox().getCenter());
+        EntityHitResult location = new EntityHitResult(boat, boat.position());
         mc.player.swing(InteractionHand.MAIN_HAND);
         mc.gameMode.interact(mc.player, boat, location, InteractionHand.MAIN_HAND);
     }

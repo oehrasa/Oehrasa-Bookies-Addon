@@ -36,13 +36,17 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 public class PortalCave extends Module {
+    private static final Logger LOGGER = LoggerFactory.getLogger("Portal-Cave");
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRender = settings.createGroup("Render");
     private final SettingGroup locationLogs = settings.createGroup("Location Logs");
@@ -77,7 +81,7 @@ public class PortalCave extends Module {
         .description("What percentage of the blocks in the portal shape that is allowed to have air blocks adjacent to it.")
         .defaultValue(15)
         .min(0)
-        .sliderRange(0,100)
+        .sliderRange(0, 100)
         .build()
     );
     public final Setting<Integer> pWidth = sgGeneral.add(new IntSetting.Builder()
@@ -85,7 +89,7 @@ public class PortalCave extends Module {
         .description("finds portals that are up to this large")
         .defaultValue(5)
         .min(4)
-        .sliderRange(4,8)
+        .sliderRange(4, 8)
         .build()
     );
     public final Setting<Integer> pHeight = sgGeneral.add(new IntSetting.Builder()
@@ -93,7 +97,7 @@ public class PortalCave extends Module {
         .description("finds portals that are up to this large")
         .defaultValue(5)
         .min(5)
-        .sliderRange(5,8)
+        .sliderRange(5, 8)
         .build()
     );
     private final Setting<Boolean> removerenderdist = sgRender.add(new BoolSetting.Builder()
@@ -107,7 +111,7 @@ public class PortalCave extends Module {
         .description("How many chunks from the character to render the portal patterns.")
         .defaultValue(32)
         .min(6)
-        .sliderRange(6,1024)
+        .sliderRange(6, 1024)
         .build()
     );
     private final Setting<Boolean> trcr = sgRender.add(new BoolSetting.Builder()
@@ -151,16 +155,16 @@ public class PortalCave extends Module {
     private final Set<ChunkPos> scannedChunks = new CopyOnWriteArraySet<>();
     private final Set<AABB> possiblePortalLocations = new CopyOnWriteArraySet<>();
     private final Set<BlockPos> loggedPortalPositions = new CopyOnWriteArraySet<>();
-    private int closestPortalX=2000000000;
-    private int closestPortalY=2000000000;
-    private int closestPortalZ=2000000000;
-    private double PortalDistance=2000000000;
+    private int closestPortalX = 2000000000;
+    private int closestPortalY = 2000000000;
+    private int closestPortalZ = 2000000000;
+    private double PortalDistance = 2000000000;
 
     private final List<PortalPattern> portalPatterns = new ArrayList<>();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     public PortalCave() {
-        super(Addon.CATEGORY2, "PortalCave", "Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in 1.13+ chunks. **May be useful for finding portal skips in the Nether**");
+        super(Addon.CATEGORY2, "Portal-Cave", "Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in 1.13+ chunks. **May be useful for finding portal skips in the Nether**");
     }
 
     @Override
@@ -168,6 +172,7 @@ public class PortalCave extends Module {
         clearChunkData();
         loadPortalPatterns();
     }
+
     private void scanTheAir(AtomicReferenceArray<LevelChunk> chunks) {
         List<ChunkPos> chunksToProcess = new ArrayList<>();
         for (int i = 0; i < chunks.length(); i++) {
@@ -184,28 +189,33 @@ public class PortalCave extends Module {
             }
         });
     }
+
     @Override
     public void onDeactivate() {
         clearChunkData();
         portalPatterns.clear();
         loggedPortalPositions.clear();
     }
+
     @EventHandler
     private void onScreenOpen(OpenScreenEvent event) {
         if (event.screen instanceof DisconnectedScreen || event.screen instanceof LevelLoadingScreen) clearChunkData();
     }
+
     @EventHandler
     private void onGameLeft(GameLeftEvent event) {
         clearChunkData();
     }
-    private void clearChunkData(){
+
+    private void clearChunkData() {
         scannedChunks.clear();
         possiblePortalLocations.clear();
-        closestPortalX=2000000000;
-        closestPortalY=2000000000;
-        closestPortalZ=2000000000;
-        PortalDistance=2000000000;
+        closestPortalX = 2000000000;
+        closestPortalY = 2000000000;
+        closestPortalZ = 2000000000;
+        PortalDistance = 2000000000;
     }
+
     @EventHandler
     private void onPreTick(TickEvent.Pre event) {
         if (mc.level == null) return;
@@ -219,24 +229,31 @@ public class PortalCave extends Module {
             }
         }
         scanTheAir(chunks);
-        if (nearesttrcr.get()){
+        if (nearesttrcr.get()) {
             try {
-                if (possiblePortalLocations.stream().toList().size() > 0) {
-                    for (int b = 0; b < possiblePortalLocations.stream().toList().size(); b++) {
-                        if (PortalDistance > Math.sqrt(Math.pow(possiblePortalLocations.stream().toList().get(b).getCenter().x-1 - mc.player.getBlockX(), 2) + Math.pow(possiblePortalLocations.stream().toList().get(b).getCenter().z-1 - mc.player.getBlockZ(), 2))) {
-                            closestPortalX = Math.round((float) possiblePortalLocations.stream().toList().get(b).getCenter().x-1);
-                            closestPortalY = Math.round((float) possiblePortalLocations.stream().toList().get(b).getCenter().y-1);
-                            closestPortalZ = Math.round((float) possiblePortalLocations.stream().toList().get(b).getCenter().z-1);
-                            PortalDistance = Math.sqrt(Math.pow(possiblePortalLocations.stream().toList().get(b).getCenter().x-1 - mc.player.getBlockX(), 2) + Math.pow(possiblePortalLocations.stream().toList().get(b).getCenter().z-1 - mc.player.getBlockZ(), 2));
-                        }
+                // Build the candidate list once instead of calling
+                // stream().toList() on every iteration (an O(n) copy each time).
+                List<AABB> candidates = new ArrayList<>(possiblePortalLocations);
+                int playerX = mc.player.getBlockX();
+                int playerZ = mc.player.getBlockZ();
+                for (int b = 0; b < candidates.size(); b++) {
+                    Vec3 center = candidates.get(b).getCenter();
+                    double dx = center.x - 1 - playerX;
+                    double dz = center.z - 1 - playerZ;
+                    double dist = Math.sqrt(dx * dx + dz * dz);
+                    if (PortalDistance > dist) {
+                        closestPortalX = Math.round((float) (center.x - 1));
+                        closestPortalY = Math.round((float) (center.y - 1));
+                        closestPortalZ = Math.round((float) (center.z - 1));
+                        PortalDistance = dist;
                     }
-                    PortalDistance = 2000000000;
                 }
+                PortalDistance = 2000000000;
             } catch (Exception e) {
                 e.printStackTrace();
             }
         }
-        if (removerenderdist.get())removeChunksOutsideRenderDistance(chunkSet);
+        if (removerenderdist.get()) removeChunksOutsideRenderDistance(chunkSet);
     }
 
     private void processChunk(LevelChunk chunk) {
@@ -259,8 +276,8 @@ public class PortalCave extends Module {
     }
 
     private void isSurroundingBlockRegAir(BlockPos bPos) {
-        BlockPos airPos=bPos.north();
-        BlockPos blockPastTheAir=bPos.north().offset(0, 0, -1);
+        BlockPos airPos = bPos.north();
+        BlockPos blockPastTheAir = bPos.north().offset(0, 0, -1);
         for (int dir = 1; dir <= 4; dir++) {
             switch (dir) {
                 case 1 -> {
@@ -280,7 +297,8 @@ public class PortalCave extends Module {
                     blockPastTheAir = bPos.east().offset(1, 0, 0);
                 }
             }
-            if (mc.level.getBlockState(airPos).getBlock() == Blocks.AIR && mc.level.getBlockState(blockPastTheAir).getBlock() != Blocks.AIR) findAirShape(airPos);
+            if (mc.level.getBlockState(airPos).getBlock() == Blocks.AIR && mc.level.getBlockState(blockPastTheAir).getBlock() != Blocks.AIR)
+                findAirShape(airPos);
         }
     }
 
@@ -302,7 +320,7 @@ public class PortalCave extends Module {
                 BlockPos bPos = new BlockPos(pos.getX() + x, pos.getY() + y, pos.getZ());
                 if (mc.level.getBlockState(bPos).getBlock() == Blocks.AIR) {
                     int nonairblockonsides = 0;
-                    BlockPos[] surroundingPositions = new BlockPos[] {
+                    BlockPos[] surroundingPositions = new BlockPos[]{
                         bPos.north(),
                         bPos.south()
                     };
@@ -311,7 +329,7 @@ public class PortalCave extends Module {
                             nonairblockonsides++;
                         }
                     }
-                    if (nonairblockonsides>=2)AirBlockPatternWEast.add(bPos);
+                    if (nonairblockonsides >= 2) AirBlockPatternWEast.add(bPos);
                     else {
                         AirBlockPatternWEastREJECT++;
                         AirBlockPatternWEast.add(bPos);
@@ -327,7 +345,7 @@ public class PortalCave extends Module {
                 BlockPos bPos = new BlockPos(pos.getX(), pos.getY() + y, pos.getZ() + z);
                 if (mc.level.getBlockState(bPos).getBlock() == Blocks.AIR) {
                     int nonairblockonsides = 0;
-                    BlockPos[] surroundingPositions = new BlockPos[] {
+                    BlockPos[] surroundingPositions = new BlockPos[]{
                         bPos.west(),
                         bPos.east()
                     };
@@ -336,7 +354,7 @@ public class PortalCave extends Module {
                             nonairblockonsides++;
                         }
                     }
-                    if (nonairblockonsides>=2)AirBlockPatternNouth.add(bPos);
+                    if (nonairblockonsides >= 2) AirBlockPatternNouth.add(bPos);
                     else {
                         AirBlockPatternNouthREJECT++;
                         AirBlockPatternNouth.add(bPos);
@@ -348,7 +366,7 @@ public class PortalCave extends Module {
             }
         }
 
-        if (((double) AirBlockPatternWEastREJECT2 / (AirBlockPatternWEast.size()-AirBlockPatternWEastREJECT)) * 100 <= nonAirPercent.get() && ((double) AirBlockPatternWEastREJECT / AirBlockPatternWEast.size()) * 100 <= percent.get()) {
+        if (((double) AirBlockPatternWEastREJECT2 / (AirBlockPatternWEast.size() - AirBlockPatternWEastREJECT)) * 100 <= nonAirPercent.get() && ((double) AirBlockPatternWEastREJECT / AirBlockPatternWEast.size()) * 100 <= percent.get()) {
             for (BlockPos block : AirBlockPatternWEast) {
                 for (int currentWidth = 4; currentWidth <= squareWidth; currentWidth++) {
                     for (int currentHeight = 5; currentHeight <= squareHeight; currentHeight++) {
@@ -392,7 +410,7 @@ public class PortalCave extends Module {
             }
         }
 
-        if (((double) AirBlockPatternNouthREJECT2 / (AirBlockPatternNouth.size()-AirBlockPatternNouthREJECT)) * 100 <= nonAirPercent.get() && ((double) AirBlockPatternNouthREJECT / AirBlockPatternNouth.size()) * 100 <= percent.get()) {
+        if (((double) AirBlockPatternNouthREJECT2 / (AirBlockPatternNouth.size() - AirBlockPatternNouthREJECT)) * 100 <= nonAirPercent.get() && ((double) AirBlockPatternNouthREJECT / AirBlockPatternNouth.size()) * 100 <= percent.get()) {
             for (BlockPos block : AirBlockPatternNouth) {
                 for (int currentWidth = 4; currentWidth <= squareWidth; currentWidth++) {
                     for (int currentHeight = 5; currentHeight <= squareHeight; currentHeight++) {
@@ -435,18 +453,19 @@ public class PortalCave extends Module {
             }
         }
     }
-    private void portalFound(AABB portalBox){
-        if (!possiblePortalLocations.contains(portalBox)){
+
+    private void portalFound(AABB portalBox) {
+        if (!possiblePortalLocations.contains(portalBox)) {
             possiblePortalLocations.add(portalBox);
             mc.execute(() -> {
                 if (displaycoords.get())
-                    ChatUtils.sendMsg(Component.nullToEmpty("Possible portal found: " + portalBox.getCenter()));
-                else if (!displaycoords.get()) ChatUtils.sendMsg(Component.nullToEmpty("Possible portal found!"));
+                    ChatUtils.sendMsg(Component.literal("Possible portal found: " + portalBox.getCenter()));
+                else if (!displaycoords.get()) ChatUtils.sendMsg(Component.literal("Possible portal found!"));
             });
-            BlockPos cp = new BlockPos(Math.round((float)portalBox.getCenter().x),Math.round((float)portalBox.getCenter().y),Math.round((float)portalBox.getCenter().z));
-            if(!loggedPortalPositions.contains(cp) && locLogging.get()){
+            BlockPos cp = new BlockPos(Math.round((float) portalBox.getCenter().x), Math.round((float) portalBox.getCenter().y), Math.round((float) portalBox.getCenter().z));
+            if (!loggedPortalPositions.contains(cp) && locLogging.get()) {
                 loggedPortalPositions.add(cp);
-                portalPatterns.add(new PortalPattern(cp.getX(),cp.getY(),cp.getZ()));
+                portalPatterns.add(new PortalPattern(cp.getX(), cp.getY(), cp.getZ()));
                 saveJson();
                 saveCsv();
             }
@@ -515,45 +534,50 @@ public class PortalCave extends Module {
             synchronized (possiblePortalLocations) {
                 if (!nearesttrcr.get()) {
                     for (AABB box : possiblePortalLocations) {
-                        BlockPos playerPos = new BlockPos(mc.player.getBlockX(), Math.round((float)box.getCenter().y()), mc.player.getBlockZ());
+                        BlockPos playerPos = new BlockPos(mc.player.getBlockX(), Math.round((float) box.getCenter().y), mc.player.getBlockZ());
                         if (box != null && playerPos.closerToCenterThan(box.getCenter(), renderDistance.get() * 16)) {
                             render(box, portalSideColor.get(), portalLineColor.get(), shapeMode.get(), event);
                         }
                     }
                 } else if (nearesttrcr.get()) {
                     for (AABB box : possiblePortalLocations) {
-                        BlockPos playerPos = new BlockPos(mc.player.getBlockX(), Math.round((float)box.getCenter().y()), mc.player.getBlockZ());
+                        BlockPos playerPos = new BlockPos(mc.player.getBlockX(), Math.round((float) box.getCenter().y), mc.player.getBlockZ());
                         if (box != null && playerPos.closerToCenterThan(box.getCenter(), renderDistance.get() * 16)) {
                             render(box, portalSideColor.get(), portalLineColor.get(), shapeMode.get(), event);
                         }
                     }
-                    render2(new AABB(new Vec3(closestPortalX, closestPortalY, closestPortalZ), new Vec3 (closestPortalX, closestPortalY, closestPortalZ)), portalSideColor.get(), portalLineColor.get(),ShapeMode.Sides, event);
+                    render2(new AABB(new Vec3(closestPortalX, closestPortalY, closestPortalZ), new Vec3(closestPortalX, closestPortalY, closestPortalZ)), portalSideColor.get(), portalLineColor.get(), ShapeMode.Sides, event);
                 }
             }
         }
     }
+
     private void render(AABB box, Color sides, Color lines, ShapeMode shapeMode, Render3DEvent event) {
-        if (trcr.get() && Math.abs(box.minX- RenderUtils.center.x)<=renderDistance.get()*16 && Math.abs(box.minZ-RenderUtils.center.z)<=renderDistance.get()*16)
+        if (trcr.get() && Math.abs(box.minX - RenderUtils.center.x) <= renderDistance.get() * 16 && Math.abs(box.minZ - RenderUtils.center.z) <= renderDistance.get() * 16)
             if (!nearesttrcr.get())
-                event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z, box.minX+0.5, box.minY+((box.maxY-box.minY)/2), box.minZ+0.5, lines);
-        event.renderer.box(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ, sides, new Color(0,0,0,0), shapeMode, 0);
+                event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z, box.minX + 0.5, box.minY + ((box.maxY - box.minY) / 2), box.minZ + 0.5, lines);
+        event.renderer.box(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ, sides, new Color(0, 0, 0, 0), shapeMode, 0);
     }
+
     private void render2(AABB box, Color sides, Color lines, ShapeMode shapeMode, Render3DEvent event) {
-        if (trcr.get() && Math.abs(box.minX-RenderUtils.center.x)<=renderDistance.get()*16 && Math.abs(box.minZ-RenderUtils.center.z)<=renderDistance.get()*16)
-            event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z, box.minX+0.5, box.minY+((box.maxY-box.minY)/2), box.minZ+0.5, lines);
-        event.renderer.box(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ, sides, new Color(0,0,0,0), shapeMode, 0);
+        if (trcr.get() && Math.abs(box.minX - RenderUtils.center.x) <= renderDistance.get() * 16 && Math.abs(box.minZ - RenderUtils.center.z) <= renderDistance.get() * 16)
+            event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z, box.minX + 0.5, box.minY + ((box.maxY - box.minY) / 2), box.minZ + 0.5, lines);
+        event.renderer.box(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ, sides, new Color(0, 0, 0, 0), shapeMode, 0);
     }
+
     private void removeChunksOutsideRenderDistance(Set<LevelChunk> worldChunks) {
         removechunksOutsideRenderDistance(scannedChunks, worldChunks);
         removeChunksOutsideRenderDistance(possiblePortalLocations, worldChunks);
     }
+
     private void removeChunksOutsideRenderDistance(Set<AABB> boxSet, Set<LevelChunk> worldChunks) {
         boxSet.removeIf(box -> {
-            BlockPos boxPos = new BlockPos((int)Math.floor(box.getCenter().x()), (int)Math.floor(box.getCenter().y()), (int)Math.floor(box.getCenter().z()));
+            BlockPos boxPos = new BlockPos((int) Math.floor(box.getCenter().x), (int) Math.floor(box.getCenter().y), (int) Math.floor(box.getCenter().z));
             assert mc.level != null;
             return !worldChunks.contains(mc.level.getChunk(boxPos));
         });
     }
+
     private void removechunksOutsideRenderDistance(Set<ChunkPos> chunkSet, Set<LevelChunk> worldChunks) {
         chunkSet.removeIf(c -> {
             assert mc.level != null;
@@ -579,6 +603,7 @@ public class PortalCave extends Module {
         fillTable(theme, table);
         return list;
     }
+
     private void fillTable(GuiTheme theme, WTable table) {
         List<PortalPattern> portalCoords = new ArrayList<>();
         for (PortalPattern p : portalPatterns) {
@@ -604,31 +629,32 @@ public class PortalCave extends Module {
             }
         }
     }
+
     private void loadPortalPatterns() {
         File file = getJsonFile();
         boolean loaded = false;
-        if(file.exists()){
-            try{
-                FileReader reader = new FileReader(file);
-                List<PortalPattern> data = GSON.fromJson(reader, new TypeToken<List<PortalPattern>>() {}.getType());
-                reader.close();
-                if(data != null){
+        if (file.exists()) {
+            try (FileReader reader = new FileReader(file)) {
+                List<PortalPattern> data = GSON.fromJson(reader, new TypeToken<List<PortalPattern>>() {
+                }.getType());
+                if (data != null) {
                     portalPatterns.addAll(data);
-                    for(PortalPattern p : data){
+                    for (PortalPattern p : data) {
                         loggedPortalPositions.add(new BlockPos(p.x, p.y, p.z));
                     }
                     loaded = true;
                 }
-            }catch(Exception ignored){}
+            } catch (Exception e) {
+                LOGGER.warn("Failed to load portal pattern JSON", e);
+            }
         }
-        if(!loaded){
+        if (!loaded) {
             file = getCsvFile();
-            if(file.exists()){
-                try{
-                    BufferedReader reader = new BufferedReader(new FileReader(file));
+            if (file.exists()) {
+                try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
                     reader.readLine();
                     String line;
-                    while((line = reader.readLine()) != null){
+                    while ((line = reader.readLine()) != null) {
                         String[] values = line.split(",");
                         PortalPattern p = new PortalPattern(
                             Integer.parseInt(values[0]),
@@ -638,51 +664,64 @@ public class PortalCave extends Module {
                         portalPatterns.add(p);
                         loggedPortalPositions.add(new BlockPos(p.x, p.y, p.z));
                     }
-                    reader.close();
-                }catch(Exception ignored){}
+                } catch (Exception e) {
+                    LOGGER.warn("Failed to load portal pattern CSV", e);
+                }
             }
         }
     }
+
     private void saveCsv() {
-        try{
+        try {
             File file = getCsvFile();
             file.getParentFile().mkdirs();
-            Writer writer = new FileWriter(file);
-            writer.write("X,Y,Z\n");
-            for(PortalPattern p : portalPatterns){
-                p.write(writer);
+            try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
+                writer.write("X,Y,Z\n");
+                for (PortalPattern p : portalPatterns) {
+                    p.write(writer);
+                }
             }
-            writer.close();
-        }catch(IOException ignored){}
+        } catch (IOException e) {
+            LOGGER.warn("Failed to save portal pattern CSV", e);
+        }
     }
+
     private void saveJson() {
-        try{
+        try {
             File file = getJsonFile();
             file.getParentFile().mkdirs();
-            Writer writer = new FileWriter(file);
-            GSON.toJson(portalPatterns, writer);
-            writer.close();
-        }catch(IOException ignored){}
+            try (Writer writer = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8)) {
+                GSON.toJson(portalPatterns, writer);
+            }
+        } catch (IOException e) {
+            LOGGER.warn("Failed to save portal pattern JSON", e);
+        }
     }
+
     private File getJsonFile() {
         return new File(new File(new File("TrouserStreak", "PortalPatterns"), Utils.getFileWorldName()), "portalpatterns.json");
     }
+
     private File getCsvFile() {
         return new File(new File(new File("TrouserStreak", "PortalPatterns"), Utils.getFileWorldName()), "portalpatterns.csv");
     }
+
     private static class PortalPattern {
         private static final StringBuilder sb = new StringBuilder();
         public int x, y, z;
+
         public PortalPattern(int x, int y, int z) {
             this.x = x;
             this.y = y;
             this.z = z;
         }
+
         public void write(Writer writer) throws IOException {
             sb.setLength(0);
             sb.append(x).append(',').append(y).append(',').append(z).append('\n');
             writer.write(sb.toString());
         }
+
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
@@ -690,6 +729,7 @@ public class PortalCave extends Module {
             PortalPattern pattern = (PortalPattern) o;
             return x == pattern.x && y == pattern.y && z == pattern.z;
         }
+
         @Override
         public int hashCode() {
             return Objects.hash(x, y, z);

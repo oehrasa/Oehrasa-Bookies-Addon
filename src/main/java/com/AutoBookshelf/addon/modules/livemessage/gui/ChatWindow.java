@@ -13,11 +13,16 @@ import meteordevelopment.meteorclient.systems.friends.Friends;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.PlayerFaceExtractor;
 import net.minecraft.client.multiplayer.PlayerInfo;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.chat.Style;
 import net.minecraft.util.Mth;
 import net.minecraft.util.Util;
 import org.lwjgl.glfw.GLFW;
 
 import java.io.*;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -38,7 +43,7 @@ public class ChatWindow extends LiveWindow {
     boolean valid;
     public LiveProfileCache.LiveProfile liveProfile;
     String msgString;
-    int maxLineLength;
+    int maxLineBytes;
     int scrollBarHeight = 50;
     int chatScrollPosition = 0;
     boolean scrolling = false;
@@ -69,6 +74,7 @@ public class ChatWindow extends LiveWindow {
     private List<ChatWindow.RenderedLine> renderedLinesCache = new ArrayList<>();
     private String pendingUrl = null;
     private long pendingUrlExpireAt = 0L;
+    private boolean warnedUnsafeRecipient = false;
     private String copyFeedbackText = null;
     private long copyFeedbackExpireAt = 0L;
     private int copyFeedbackX = 0;
@@ -82,6 +88,11 @@ public class ChatWindow extends LiveWindow {
     private long suppressEchoUntil = 0L;
     LiveSkinUtil liveSkinUtil;
     GuiUtil.QuintAnimation fullSkinAnim = new GuiUtil.QuintAnimation(600, 0.0F);
+    private static final Pattern TIME_PREFIX_PATTERN = Pattern.compile("^<\\d{1,2}:\\d{2}> ");
+    // Directional/format/zero-width and C0/C1 controls that can ride along inside a URL and make
+    // the browser resolve something other than what the user clicked (Trojan-Source style).
+    private static final Pattern URL_INVISIBLE_CHARS =
+        Pattern.compile("[\\u0000-\\u001F\\u007F-\\u009F\\u00AD\\u200B-\\u200F\\u2028-\\u202E\\u2060-\\u206F]");
     private static final Pattern URL_PATTERN = Pattern.compile("(https?://[^\\s]+|www\\.[^\\s]+)", 2);
     private static final int[] MINECRAFT_COLOR_VALUES = new int[]{
         0xFF000000, // BLACK
@@ -101,6 +112,14 @@ public class ChatWindow extends LiveWindow {
         0xFFFFFF55, // YELLOW
         0xFFFFFFFF  // WHITE
     };
+
+    // RFC 3986 unreserved + gen-delims/sub-delims + '%' that Java's URI accepts unescaped anywhere in
+    // a URL (deliberately excluding '[', ']', '^', '`', '{', '}' and the rest). Delimiters pass
+    // through untouched so a pasted link resolves to the same URL, and only what URI.create()
+    // cannot legally carry (pipes, carets, braces, non-ASCII) gets percent-escaped.
+    private static final String URL_SAFE_CHARS =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~:/?#@!$&'()*+,;=%";
+    private static final char[] URL_HEX = "0123456789ABCDEF".toCharArray();
 
     ChatWindow(UUID uuid) {
         this(LiveProfileCache.getLiveprofileFromUUID(uuid, false));
@@ -126,8 +145,10 @@ public class ChatWindow extends LiveWindow {
             this.liveSkinUtil = LiveSkinUtil.get(liveProfile.uuid);
             this.msgString = "/" + LiveMessage.INSTANCE.getPmCommand() + " " + liveProfile.username + " ";
             // Each individual queued/sent line still has to fit in one whisper command packet.
-            this.maxLineLength = Math.max(1, 256 - this.msgString.length());
-            this.inputBox.setMaxTotalLength(this.maxLineLength * 8); // room for several queued lines
+            // The budget is counted in UTF-8 bytes so CJK (3 bytes/char) lines stay within
+            // both the client's char cap and server/proxy byte caps, not just ASCII-friendly chars.
+            this.maxLineBytes = Math.max(1, 256 - GuiUtil.utf8ByteLength(this.msgString));
+            this.inputBox.setMaxTotalLength(this.maxLineBytes * 8); // room for several queued lines
             this.inputBox.setMaxVisibleSegments(MAX_VISIBLE_INPUT_LINES);
             this.inputFocused = true;
             this.scrollToBottom();
@@ -172,9 +193,14 @@ public class ChatWindow extends LiveWindow {
     }
 
     private void ignorePlayer() {
-        if (this.mc.player != null) {
-            this.mc.player.connection.sendCommand(LiveMessage.INSTANCE.getIgnoreCommand() + " " + this.liveProfile.username);
+        if (this.mc.player == null) {
+            return;
         }
+        if (!LivemessageUtil.isSafeUsername(this.liveProfile.username)) {
+            LiveMessage.LOG.warn("Refusing to /{} an unsafe player name: '{}'", LiveMessage.INSTANCE.getIgnoreCommand(), this.liveProfile.username);
+            return;
+        }
+        this.mc.player.connection.sendCommand(LiveMessage.INSTANCE.getIgnoreCommand() + " " + this.liveProfile.username);
 
         LivemessageGui.liveWindows.remove(this);
         if (!LivemessageGui.liveWindows.isEmpty()) {
@@ -183,9 +209,14 @@ public class ChatWindow extends LiveWindow {
     }
 
     private void requestTeleport() {
-        if (this.mc.player != null) {
-            this.mc.player.connection.sendCommand(LiveMessage.INSTANCE.getTpaCommand() + " " + this.liveProfile.username);
+        if (this.mc.player == null) {
+            return;
         }
+        if (!LivemessageUtil.isSafeUsername(this.liveProfile.username)) {
+            LiveMessage.LOG.warn("Refusing to /{} an unsafe player name: '{}'", LiveMessage.INSTANCE.getTpaCommand(), this.liveProfile.username);
+            return;
+        }
+        this.mc.player.connection.sendCommand(LiveMessage.INSTANCE.getTpaCommand() + " " + this.liveProfile.username);
     }
 
     public void toggleFriendEnemy() {
@@ -338,6 +369,13 @@ public class ChatWindow extends LiveWindow {
     // two consumers can never both send the same on-disk pending line
     private void flushPendingMessages() {
         if (this.pendingMessages.isEmpty() || this.mc.player == null) {
+            return;
+        }
+        if (!LivemessageUtil.isSafeUsername(this.liveProfile.username)) {
+            if (!this.warnedUnsafeRecipient) {
+                LiveMessage.LOG.warn("Skipping flush of queued message: unsafe recipient name '{}'", this.liveProfile.username);
+                this.warnedUnsafeRecipient = true;
+            }
             return;
         }
         if (WhisperRateLimiter.isOnCooldown()) {
@@ -541,8 +579,14 @@ public class ChatWindow extends LiveWindow {
         }
         if (match == null) return false;
 
-        for (int i = 0; i < partial.length(); i++) this.inputBox.backspace();
-        for (char c : match.toCharArray()) this.inputBox.insertChar(c);
+        // Exact-range swap so trail/surrogate pairs in `partial` are removed wholesale
+        // instead of one backspace per char (backspace now deletes whole code points).
+        this.inputBox.deleteRange(wordStart, cursor);
+        for (int i = 0; i < match.length(); ) {
+            int cp = match.codePointAt(i);
+            this.inputBox.insertCodePoint(cp);
+            i += Character.charCount(cp);
+        }
         this.inputBox.insertChar(' ');
         return true;
     }
@@ -553,6 +597,15 @@ public class ChatWindow extends LiveWindow {
             return;
         }
 
+        // Unsafe recipient names can never be flushed later (flushPendingMessages/
+        // flushBackgroundQueue refuse them too), so sending would be dropped and
+        // queuing would strand the message on disk forever. Keep the draft so the
+        // user can correct the recipient instead of silently losing it.
+        if (!LivemessageUtil.isSafeUsername(this.liveProfile.username)) {
+            LiveMessage.LOG.warn("Not sending message: unsafe recipient name '{}'", this.liveProfile.username);
+            return;
+        }
+
         boolean online = LivemessageUtil.checkOnlineStatus(this.liveProfile.uuid);
         boolean firstLine = true;
 
@@ -560,7 +613,7 @@ public class ChatWindow extends LiveWindow {
             String trimmedLine = rawLine.trim();
             if (trimmedLine.isEmpty()) continue;
 
-            for (String chunk : splitToFit(trimmedLine, this.maxLineLength)) {
+            for (String chunk : splitToFit(trimmedLine, this.maxLineBytes)) {
                 if (chunk.isEmpty()) continue;
 
                 if (firstLine && online && !WhisperRateLimiter.isOnCooldown()) {
@@ -579,15 +632,12 @@ public class ChatWindow extends LiveWindow {
         this.inputBox.clear();
     }
 
-    private static List<String> splitToFit(String text, int maxLen) {
+    private static List<String> splitToFit(String text, int maxBytes) {
         List<String> out = new ArrayList<>();
         String remaining = text;
 
-        while (remaining.length() > maxLen) {
-            int breakAt = remaining.lastIndexOf(' ', maxLen);
-            if (breakAt <= 0) {
-                breakAt = maxLen; // no space to break on hard cut
-            }
+        while (GuiUtil.utf8ByteLength(remaining) > maxBytes) {
+            int breakAt = lastFitBreak(remaining, maxBytes);
             out.add(remaining.substring(0, breakAt).trim());
             remaining = remaining.substring(breakAt).trim();
         }
@@ -597,6 +647,28 @@ public class ChatWindow extends LiveWindow {
         }
 
         return out;
+    }
+
+    /**
+     * Index of the last space that fits whole code points within the UTF-8 byte
+     * budget, or the code-point boundary where the budget runs out when no space
+     * fits (CJK has no spaces so hard cut at a code point, surrogate-pair safe).
+     */
+    private static int lastFitBreak(String s, int maxBytes) {
+        int lastSpace = -1;
+        int bytes = 0;
+        int i = 0;
+        for (; i < s.length(); ) {
+            int cp = s.codePointAt(i);
+            int next = i + Character.charCount(cp);
+            bytes += new String(Character.toChars(cp)).getBytes(StandardCharsets.UTF_8).length;
+            if (bytes > maxBytes) break;
+            if (s.charAt(i) == ' ') lastSpace = i;
+            i = next;
+        }
+        if (lastSpace >= 0) return lastSpace + 1;
+        if (i == 0) return Character.charCount(s.codePointAt(0)); // single oversized char, must progress
+        return i;
     }
 
     @Override
@@ -874,14 +946,39 @@ public class ChatWindow extends LiveWindow {
             || GLFW.glfwGetKey(this.mc.getWindow().handle(), GLFW.GLFW_KEY_RIGHT_CONTROL) == 1;
     }
 
+    private static String encodeUrl(String url) {
+        byte[] bytes = url.getBytes(StandardCharsets.UTF_8);
+        StringBuilder out = new StringBuilder(url.length());
+        for (byte value : bytes) {
+            int b = value & 0xFF;
+            if (URL_SAFE_CHARS.indexOf((char) b) >= 0) {
+                out.append((char) b);
+            } else {
+                out.append('%').append(URL_HEX[b >> 4]).append(URL_HEX[b & 0xF]);
+            }
+        }
+        return out.toString();
+    }
+
     private void openUrl(String url) {
         try {
-            if (!url.startsWith("http://") && !url.startsWith("https://")) {
-                url = "https://" + url;
+            String candidate = URL_INVISIBLE_CHARS.matcher(url.trim()).replaceAll("");
+            if (candidate.isEmpty() || candidate.indexOf(' ') >= 0 || candidate.indexOf('\t') >= 0
+                || candidate.indexOf('\n') >= 0 || candidate.indexOf('\r') >= 0) {
+                return;
+            }
+            String lower = candidate.toLowerCase(Locale.ROOT);
+            if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
+                candidate = "https://" + candidate;
+                lower = candidate.toLowerCase(Locale.ROOT);
+            }
+            // Never hand a non-http(s) scheme (file:, javascript:, etc.) to the OS browser.
+            if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
+                return;
             }
 
-            Util.getPlatform().openUri(url);
-            LiveMessage.LOG.info("Opening URL: {}", url);
+            Util.getPlatform().openUri(URI.create(encodeUrl(candidate)));
+            LiveMessage.LOG.info("Opening URL: {}", candidate);
         } catch (Exception e) {
             LiveMessage.logError("Failed to open URL: {}", url, e);
         }
@@ -1033,40 +1130,110 @@ public class ChatWindow extends LiveWindow {
         }
     }
 
+    // Split a leading "<HH:mm> " timestamp off and draw it as raw left-to-right text so bidi
+    // reordering of the message body (which can be base-RTL) never shuffles the digits around.
     private void drawTextWithUrls(GuiGraphicsExtractor context, String text, int x, int y, int baseColor) {
+        Matcher timestamp = TIME_PREFIX_PATTERN.matcher(text);
+        if (timestamp.find()) {
+            String prefix = timestamp.group();
+            context.text(this.fontRenderer, prefix, x, y, GuiUtil.fade(baseColor), false);
+            x += this.fontRenderer.width(prefix);
+            text = text.substring(prefix.length());
+        }
+
+        String display = GuiUtil.bidiDisplayText(this.fontRenderer, text);
+        if (display == text) {
+            this.drawTextWithUrlsLtr(context, text, x, y, baseColor);
+            return;
+        }
+        this.drawTextWithUrlsRtl(context, text, x, y, baseColor);
+    }
+
+    // LTR lines keep the previous rendering: each piece is placed at its post-bidi VISUAL offset
+    // inside the line (computed via Minecraft's own FormattedBidiReorder), so hover rects, underlines
+    // and clicks survive lines whose base direction resolves to LTR.
+    private void drawTextWithUrlsLtr(GuiGraphicsExtractor context, String text, int x, int y, int baseColor) {
         Matcher matcher = URL_PATTERN.matcher(text);
         int lastEnd = 0;
-        int currentX = x;
-
         while (matcher.find()) {
             if (matcher.start() > lastEnd) {
                 String beforeUrl = text.substring(lastEnd, matcher.start());
-                this.drawText(context, beforeUrl, currentX, y, baseColor, false);
-                currentX += this.getTextWidth(beforeUrl);
+                int[] span = GuiUtil.visualSpanForRange(this.fontRenderer, text, lastEnd, matcher.start());
+                this.drawText(context, beforeUrl, x + span[0], y, baseColor, false);
             }
 
             String url = matcher.group();
-            int urlWidth = this.getTextWidth(url);
-            boolean hovering = this.lastMouseX >= this.x + currentX
-                && this.lastMouseX <= this.x + currentX + urlWidth
+            int[] span = GuiUtil.visualSpanForRange(this.fontRenderer, text, matcher.start(), matcher.end());
+            int urlX = x + span[0];
+            int urlW = Math.max(1, span[1] - span[0]);
+            boolean hovering = this.lastMouseX >= this.x + urlX
+                && this.lastMouseX <= this.x + urlX + urlW
                 && this.lastMouseY >= this.y + y
                 && this.lastMouseY <= this.y + y + this.getTextHeight();
             int urlColor = hovering ? GuiUtil.getRGB(100, 200, 255) : GuiUtil.getRGB(85, 170, 255);
-            this.drawText(context, url, currentX, y, urlColor, true);
-            GuiUtil.drawRect(context, currentX, y + this.getTextHeight() - 1, urlWidth, 1, urlColor);
-            this.clickableLinks.add(new ChatWindow.ClickableLink(url, this.x + currentX, this.y + y, urlWidth, this.getTextHeight()));
-            currentX += urlWidth;
+            this.drawText(context, url, urlX, y, urlColor, true);
+            GuiUtil.drawRect(context, urlX, y + this.getTextHeight() - 1, urlW, 1, urlColor);
+            this.clickableLinks.add(new ChatWindow.ClickableLink(url, this.x + urlX, this.y + y, urlW, this.getTextHeight()));
             lastEnd = matcher.end();
         }
 
         if (lastEnd < text.length()) {
             String afterUrl = text.substring(lastEnd);
-            this.drawText(context, afterUrl, currentX, y, baseColor, false);
+            int[] span = GuiUtil.visualSpanForRange(this.fontRenderer, text, lastEnd, text.length());
+            this.drawText(context, afterUrl, x + span[0], y, baseColor, false);
+        }
+    }
+
+    // RTL lines cannot be drawn as separately-positioned pieces: that would hand a fresh bidi pass
+    // per piece and the whole-line layout would never match. Instead the LOGICAL text (in typing
+    // order, with per-URL colors) is passed to Minecraft's own Text pipeline, which shapes and
+    // reorders it exactly like vanilla chat - and visualSpanForRange measures the same shaped
+    // glyphs, so the URL rects overlay pixel-perfectly. URLs lose their drop-shadow as a single
+    // drawText call carries one shadow flag.
+    private void drawTextWithUrlsRtl(GuiGraphicsExtractor context, String text, int x, int y, int baseColor) {
+        Matcher matcher = URL_PATTERN.matcher(text);
+        List<ChatWindow.UrlRange> ranges = new ArrayList<>();
+        while (matcher.find()) {
+            int[] span = GuiUtil.visualSpanForRange(this.fontRenderer, text, matcher.start(), matcher.end());
+            int urlX = x + span[0];
+            int urlW = Math.max(1, span[1] - span[0]);
+            boolean hovering = this.lastMouseX >= this.x + urlX
+                && this.lastMouseX <= this.x + urlX + urlW
+                && this.lastMouseY >= this.y + y
+                && this.lastMouseY <= this.y + y + this.getTextHeight();
+            ranges.add(new ChatWindow.UrlRange(matcher.start(), matcher.end(), urlX, urlW,
+                hovering ? GuiUtil.getRGB(100, 200, 255) : GuiUtil.getRGB(85, 170, 255), matcher.group()));
         }
 
-        if (lastEnd == 0) {
-            this.drawText(context, text, x, y, baseColor, false);
+        this.drawText(context, this.colorizedText(text, ranges), x, y, baseColor, false);
+
+        for (ChatWindow.UrlRange range : ranges) {
+            GuiUtil.drawRect(context, range.x, y + this.getTextHeight() - 1, range.width, 1, range.color);
+            this.clickableLinks.add(new ChatWindow.ClickableLink(range.url, this.x + range.x, this.y + y, range.width, this.getTextHeight()));
         }
+    }
+
+    // Splits LOGICAL text into styled runs so each URL's blue applies to its own code units; the
+    // styling travels with the units through Minecraft's reordering inside the renderer.
+    private Component colorizedText(String logical, List<ChatWindow.UrlRange> ranges) {
+        MutableComponent styled = Component.empty();
+        int pos = 0;
+        for (ChatWindow.UrlRange range : ranges) {
+            if (range.start < pos || range.start >= logical.length()) {
+                continue;
+            }
+            if (range.start > pos) {
+                styled.append(Component.literal(logical.substring(pos, range.start)));
+            }
+            final int color = range.color;
+            styled.append(Component.literal(logical.substring(range.start, Math.min(range.end, logical.length())))
+                .setStyle(Style.EMPTY.withColor(color)));
+            pos = range.end;
+        }
+        if (pos < logical.length()) {
+            styled.append(Component.literal(logical.substring(pos)));
+        }
+        return styled;
     }
 
     public boolean shouldDrawBlur() {
@@ -1318,15 +1485,17 @@ public class ChatWindow extends LiveWindow {
             if (hasSelection && selEnd > segStart && selStart <= segEnd) {
                 int from = Math.max(selStart, segStart) - segStart;
                 int to = Math.min(selEnd, segEnd) - segStart;
-                int hx = boxLeft + this.getTextWidth(seg.text.substring(0, from));
-                int hw = this.getTextWidth(seg.text.substring(from, to));
-                if (selEnd > segEnd) hw += 3; // stub so a selected newline is visible
+                int hx = boxLeft + GuiUtil.caretX(this.fontRenderer, seg.text, from, false);
+                int hw = this.fontRenderer.width(seg.text.substring(from, to));
+                if (selEnd > segEnd) {
+                    hw += 3; // stub so a selected newline is visible
+                }
                 if (hw > 0) {
                     GuiUtil.drawRect(context, hx, lineY - 1, hw, INPUT_LINE_HEIGHT, GuiUtil.getRGB(60, 90, 160));
                 }
             }
 
-            this.drawText(context, seg.text, boxLeft, lineY, textColor, false);
+            context.text(this.fontRenderer, seg.text, boxLeft, lineY, GuiUtil.fade(textColor), false);
             lineY += INPUT_LINE_HEIGHT;
         }
 
@@ -1336,7 +1505,7 @@ public class ChatWindow extends LiveWindow {
                 int caretCol = this.inputBox.cursorColumnInLine(this.fontRenderer, inputWidth);
                 String lineText = caretLineIndex < segs.size() ? segs.get(caretLineIndex).text : "";
                 int clampedCol = Math.min(caretCol, lineText.length());
-                int caretX = boxLeft + this.getTextWidth(lineText.substring(0, clampedCol));
+                int caretX = boxLeft + GuiUtil.caretX(this.fontRenderer, lineText, clampedCol, false);
                 int caretY = boxTop + 2 + (caretLineIndex - start) * INPUT_LINE_HEIGHT;
                 context.fill(caretX, caretY, caretX + 1, caretY + 9, GuiUtil.fade(-1));
             }
@@ -1404,6 +1573,24 @@ public class ChatWindow extends LiveWindow {
             ChatMessage m = new ChatMessage(message, sentByMe, timestamp, myUUID);
             m.pending = pending;
             return m;
+        }
+    }
+
+    private static class UrlRange {
+        final int start;
+        final int end;
+        final int x;
+        final int width;
+        final int color;
+        final String url;
+
+        UrlRange(int start, int end, int x, int width, int color, String url) {
+            this.start = start;
+            this.end = end;
+            this.x = x;
+            this.width = width;
+            this.color = color;
+            this.url = url;
         }
     }
 
