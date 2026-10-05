@@ -389,17 +389,29 @@ public class BookshelfFiller extends Module {
     private final Setting<List<Item>> protectedItems = sgProtection.add(new ItemListSetting.Builder()
         .name("protected-items")
         .description("Items that will never be replaced (will use dedicated swap slot instead).")
-        .defaultValue(new ArrayList<>(Arrays.asList(
+        .defaultValue(defaultProtectedItems())
+        .build()
+    );
+
+    /**
+     * The default protected set. 26.2 folded the sixteen dyed shulker variants into one
+     * {@code ColorCollection}, so they are no longer addressable as named constants and
+     * have to be appended from the collection. Leaving them off would let a coloured
+     * shulker be replaced by a book mid-build, which is the exact thing this list exists
+     * to prevent.
+     */
+    private static List<Item> defaultProtectedItems() {
+        List<Item> items = new ArrayList<>(Arrays.asList(
             Items.NETHERITE_PICKAXE,
             Items.NETHERITE_AXE,
             Items.NETHERITE_SHOVEL,
             Items.NETHERITE_SWORD,
             Items.TOTEM_OF_UNDYING,
             Items.ENCHANTED_GOLDEN_APPLE,
-            Items.SHULKER_BOX
-        )))
-        .build()
-    );
+            Items.SHULKER_BOX));
+        items.addAll(Items.DYED_SHULKER_BOX.asList());
+        return items;
+    }
 
     private final Setting<Integer> dedicatedSwapSlotIndex = sgProtection.add(new IntSetting.Builder()
         .name("dedicated-swap-slot")

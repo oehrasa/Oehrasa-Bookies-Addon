@@ -342,7 +342,7 @@ public class BookImporter extends Module {
                     return;
                 }
 
-// remoteBusy stays true while the selection screen is open;
+                // remoteBusy stays true while the selection screen is open;
                 // it's cleared either by onRemoteSelectionConfirmed()
                 // finishing its download phase, or by the cancel callback
                 // below if the player closes the screen without picking anything.

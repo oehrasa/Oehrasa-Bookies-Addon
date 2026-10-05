@@ -110,7 +110,7 @@ public class HomesList extends Module {
     public final Setting<Keybind> quickSelectKey = sgQuickSelect.add(new KeybindSetting.Builder()
         .name("quick-select-key")
         .description("Hold to open the screen. Scroll to select then release to TP to highlighted home.")
-        .defaultValue(Keybind.none())
+        .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_LEFT_ALT))
         .build()
     );
 

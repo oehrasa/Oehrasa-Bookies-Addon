@@ -23,7 +23,6 @@ import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.tags.TagKey;
-import net.minecraft.world.Container;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
@@ -369,8 +368,11 @@ public class ForceAccess extends Module {
             if (posList.contains(pos)) continue;
             posList.add(pos);
 
-            if (!mc.level.getBlockState(pos).hasBlockEntity()) continue;
-            // Force-Access scope: a container, not any block entity.
+            // container() is the sole gate. It used to also be preceded by a hasBlockEntity()
+            // check, which was redundant while container() demanded an inventory Container (a
+            // chest always has one) but silently skipped every menu-only block once it did not:
+            // crafting tables and stonecutters are not block entities at all in 26.x, so
+            // CraftingBlockEntity does not even exist (only CrafterBlockEntity does).
             if (!container(pos)) continue;
 
             // A stuck lid (block on top of the chest) is mined out first, then
@@ -559,13 +561,8 @@ public class ForceAccess extends Module {
         return state.getBlock() instanceof ChestBlock
             || state.getBlock() instanceof ShulkerBoxBlock
             || state.getBlock() == Blocks.ENDER_CHEST
-            // A menu provider alone is not a container: crafting tables, anvils,
-            // enchanting tables, stonecutters, looms, cartography/smithing
-            // tables all expose getMenuProvider but hold no inventory, and would
-            // otherwise be picked as bogus hidden targets. Require an inventory
-            // block entity too (furnaces, barrels, hoppers, dispensers, ...).
-            || (state.getMenuProvider(mc.level, pos) != null
-            && mc.level.getBlockEntity(pos) instanceof Container);
+            // Any block with a menu is a valid hidden target, matching the yarn tree
+            || state.getMenuProvider(mc.level, pos) != null;
     }
 
     /**
@@ -721,7 +718,10 @@ public class ForceAccess extends Module {
     private void addSolidAbove(BlockPos pos, Deque<BlockPos> out) {
         BlockPos above = pos.above();
         BlockState state = mc.level.getBlockState(above);
-        if (!state.isSolid()) return;
+        // Match vanilla's ChestBlock.isChestBlockedAt, which tests isRedstoneConductor.
+        // isCollisionShapeFullBlock is narrower: a slab or stair on the lid blocks the chest
+        // in vanilla but read as clear here, so the open is attempted and silently fails.
+        if (!state.isRedstoneConductor(mc.level, above)) return;
         if (state.getBlock() instanceof FallingBlock) {
             addFallingLid(above, out);
         } else if (!out.contains(above)) {

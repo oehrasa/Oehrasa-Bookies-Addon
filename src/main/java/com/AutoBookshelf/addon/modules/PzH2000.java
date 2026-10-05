@@ -304,6 +304,9 @@ public class PzH2000 extends Module {
     // Self-correction: track real fired arrows to measure actual vs. predicted
     // landing point, and accumulate a small running bias correction from it.
     private final Set<Integer> knownArrowIds = new HashSet<>();
+    // Ids are server-recycled, so knownArrowIds would otherwise grow for the whole
+    // session and a reused id would permanently fail the !contains() adoption test,
+    // silently costing that shot its bias correction. Cleared per session in reset().
     private boolean wasUsingItemLastTick = false;
     private Entity pendingTargetRef;
     private Vec3 pendingTargetPos;
@@ -402,6 +405,7 @@ public class PzH2000 extends Module {
         pitchErrorMean = 0;
         yawErrorVariance = 0;
         pitchErrorVariance = 0;
+        knownArrowIds.clear();
         lastShotErrorMagnitude = Double.MAX_VALUE;
         lastShotTargetId = null;
         // Note: yawBias/pitchBias intentionally not reset, they represent a
@@ -720,7 +724,11 @@ public class PzH2000 extends Module {
         }
 
         if (trackedArrow.isRemoved() || pendingWaitTicks > simulationTicks.get() + 10) {
-            recordShotOutcome(trackedArrow.position());
+            // A timeout is not a landing. Recording the arrow's position mid-flight would
+            // feed the learner a point far short of the target and bias the next shot
+            // upward, so only a real removal (hit something, or despawned after landing)
+            // counts as an outcome. The timeout still ends the wait, it just learns nothing.
+            if (trackedArrow.isRemoved()) recordShotOutcome(trackedArrow.position());
             trackedArrow = null;
             pendingTargetRef = null;
         }

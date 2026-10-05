@@ -93,6 +93,13 @@ public class GetPreview extends Module {
         .build()
     );
 
+    public final Setting<Boolean> previewBundles = sgGeneral.add(new BoolSetting.Builder()
+        .name("preview-bundles")
+        .description("Show a preview icon on bundles.")
+        .defaultValue(true)
+        .build()
+    );
+
     public final Setting<Boolean> capacityBar = sgGeneral.add(new BoolSetting.Builder()
         .name("capacity-bar")
         .description("Draw a bar on shulker boxes showing how full they are, like vanilla bundles.")
@@ -228,7 +235,7 @@ public class GetPreview extends Module {
         }
 
         // 2. Bundles
-        if (stack.has(DataComponents.BUNDLE_CONTENTS)) {
+        if (previewBundles.get() && stack.has(DataComponents.BUNDLE_CONTENTS)) {
             renderContainerOverlay(context, x, y, stack, bundleCache, false);
         }
         // 3. Shulker boxes

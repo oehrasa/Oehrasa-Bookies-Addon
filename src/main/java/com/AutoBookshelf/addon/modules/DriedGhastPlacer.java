@@ -104,6 +104,7 @@ public class DriedGhastPlacer extends Module {
     private int delayTicks = 0;
     private int placedCount = 0;
     private int breakWaitTicks = 0;
+    private int breakWaitStep = 0;
     private Block driedGhastBlock = null;
     private int iceSlot = -1, pickSlot = -1, ghastSlot = -1;
 
@@ -120,6 +121,7 @@ public class DriedGhastPlacer extends Module {
         targetPos = supportBlockPos = null;
         delayTicks = 0;
         breakWaitTicks = 0;
+        breakWaitStep = 0;
         placedCount = 0;
         driedGhastBlock = null;
         iceSlot = pickSlot = ghastSlot = -1;
@@ -238,7 +240,7 @@ public class DriedGhastPlacer extends Module {
                     if (below.equals(playerFeet)) continue;
 
                     BlockState bs = mc.level.getBlockState(below);
-                    if (!bs.isSolid()) continue;
+                    if (!bs.isCollisionShapeFullBlock(mc.level, below)) continue;
                     if (bs.getBlock() == driedGhastBlock) continue;
 
                     targetPos = new BlockPos(pos.getX(), pos.getY(), pos.getZ());
@@ -270,6 +272,7 @@ public class DriedGhastPlacer extends Module {
         mc.gameMode.continueDestroyBlock(targetPos, Direction.UP);
         mc.player.swing(InteractionHand.MAIN_HAND);
         breakWaitTicks = 0;
+        breakWaitStep = 4;
         delayTicks = 4; stage = Stage.WAIT_BREAK;
     }
 
@@ -293,17 +296,23 @@ public class DriedGhastPlacer extends Module {
         } else if (state.getBlock() == Blocks.WATER) {
             // Ice is gone and did its job - clear the wait counter and hand over.
             breakWaitTicks = 0;
+            breakWaitStep = 0;
             checkWater();
             return;
         }
 
         // Still ice, or ice already gone with no water yet: keep the bounded wait
-        // running, and give up once the budget is spent.
-        if (++breakWaitTicks > breakTimeout.get()) {
+        // running, and give up once the budget is spent. The budget is in ticks, but
+        // this runs once per delay rather than once per tick, so charge the wait the
+        // delay it just spent plus the tick this check itself ran on. Counting calls
+        // instead stretched the real wait to roughly three times break-timeout.
+        breakWaitTicks += breakWaitStep + 1;
+        if (breakWaitTicks > breakTimeout.get()) {
             info("§cNo water after " + breakTimeout.get() + " ticks, skipping this spot.");
             abortCycle();
             return;
         }
+        breakWaitStep = 2;
         delayTicks = 2;
     }
 
@@ -315,6 +324,7 @@ public class DriedGhastPlacer extends Module {
         stage = Stage.IDLE;
         targetPos = supportBlockPos = null;
         breakWaitTicks = 0;
+        breakWaitStep = 0;
     }
 
     private void checkWater() {

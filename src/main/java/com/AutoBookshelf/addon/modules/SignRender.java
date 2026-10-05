@@ -51,6 +51,25 @@ public class SignRender extends Module {
                 .sliderRange(5, 1000)
                 .build()
         );
+    private final Setting<Boolean> stripSpecialChars = this.sgGeneral
+        .add(
+            new meteordevelopment.meteorclient.settings.BoolSetting.Builder()
+                .name("strip-special-chars")
+                .description("Strip zero-width, bidi and other invisible formatting characters from sign text.")
+                .defaultValue(false)
+                .build()
+        );
+    private final Setting<Integer> maxTextLength = this.sgGeneral
+        .add(
+            new meteordevelopment.meteorclient.settings.IntSetting.Builder()
+                .name("max-text-length")
+                .description("Maximum characters kept per sign line. 0 disables the cap. Raise this for big-text.")
+                .defaultValue(0)
+                .min(0)
+                .max(1000)
+                .sliderRange(0, 400)
+                .build()
+        );
     private final Setting<Boolean> filterEmpty = this.sgGeneral
         .add(
             new meteordevelopment.meteorclient.settings.BoolSetting.Builder()
@@ -107,7 +126,8 @@ public class SignRender extends Module {
         );
     private final Setting<Double> clusterRadius = this.sgClustering
         .add(
-            new Builder().name("cluster-radius").description("Screen distance in pixels to group signs.")
+            new Builder().name("cluster-radius")
+                .description("Screen distance in pixels to group signs.")
                 .defaultValue(100.0)
                 .min(20.0)
                 .max(500.0)
@@ -703,7 +723,18 @@ public class SignRender extends Module {
 
     private String cleanSignText(String text) {
         if (text != null && !text.isEmpty()) {
-            text = text.replaceAll("\u00a7.", "");
+            // Consume a section sign together with the code character when it really is one, so
+            // "\u00a7lbold" loses the pair rather than leaving a stray "l". The old "\u00a7." pattern
+            // ate the next character unconditionally, so a sign reading "\u00a75 diamonds" silently
+            // lost the 5. Any section sign left over is a literal one and goes on its own.
+            text = text.replaceAll("\u00a7[0-9a-fk-orA-FK-OR]", "");
+            text = text.replaceAll("\u00a7", "");
+            if (this.stripSpecialChars.get()) {
+                // Opt-in. Off by default, because these characters are load-bearing on signs written
+                // with special-character mods, and stripping them can empty a line outright - at which
+                // point extractTextLines drops it and the sign renders as background with no text.
+                text = text.replaceAll("[\\p{Cc}\\p{Cf}]", "");
+            }
             text = text.replaceAll("&[0-9a-fklmnor]", "");
             if (text.contains("{\"") || text.contains("[\"")) {
                 text = text.replaceAll("\\{\".*?\":\"(.*?)\".*?\\}", "$1");
@@ -711,12 +742,18 @@ public class SignRender extends Module {
             }
 
             text = text.replaceAll("\\{[^\\s].*?\\}", "");
-            text = text.replaceAll("[\\p{C}&&[^\\s]]", "");
             text = text.replaceAll("[\\u0000-\\u001F\\u007F-\\u009F]", "");
             text = text.replaceAll("[\\[\\]{}\"']", "");
             text = text.replaceAll("\\s+", " ").trim();
-            if (text.length() > 100) {
-                text = text.substring(0, 97) + "...";
+            int cap = this.maxTextLength.get();
+            if (cap > 0 && text.length() > cap) {
+                // Break on a code point boundary, not a char index, so a surrogate pair or a
+                // combining sequence is never cut in half and rendered as a replacement box.
+                // Clamped to zero first: cap 1 and 2 make cap - 3 negative, and substring
+                // rejects a negative bound.
+                int cut = Math.max(cap - 3, 0);
+                if (cut > 0 && Character.isHighSurrogate(text.charAt(cut - 1))) cut--;
+                text = text.substring(0, cut) + "...";
             }
 
             return text;

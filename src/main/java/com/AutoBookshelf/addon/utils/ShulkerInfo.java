@@ -3,6 +3,7 @@ package com.AutoBookshelf.addon.utils;
 import com.AutoBookshelf.addon.modules.InventoryInfo;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.util.ARGB;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ItemStackTemplate;
@@ -13,6 +14,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 public record ShulkerInfo(String name, Type type, int color, int slot, List<ItemStack> stacks) {
+
+    /**
+     * Vanilla's uncoloured shulker box, used for the base shulker and any dyed colour
+     * with no mapping.
+     */
+    private static final int SHULKER_BOX_DEFAULT = 0xff9953b0;
 
     public static ShulkerInfo create(ItemStack stack, int slot) {
         if (!(stack.getItem() instanceof BlockItem bi) || !(bi.getBlock() instanceof ShulkerBoxBlock block))
@@ -53,11 +60,22 @@ public record ShulkerInfo(String name, Type type, int color, int slot, List<Item
             while (items.size() < 27) items.add(ItemStack.EMPTY);
         }
 
-        int color = -1;
-        if (block.getColor() != null) {
-            color = block.getColor().getMapColor().col;
-        }
+        int color = shulkerColor(block);
 
         return new ShulkerInfo(stack.getHoverName().getString(), type, color, slot, items);
+    }
+
+    /**
+     * The bar colour for the grid header.
+     *
+     * <p>{@code MapColor#col} is 24 bit RGB with no alpha, so handing it to a fill
+     * straight out drew a fully transparent bar - which is why every dyed shulker came
+     * out with no header at all while the undyed one, falling back to {@code -1}, drew
+     * opaque white. Alpha has to be forced on, or the colour is lost. Vanilla does the
+     * same in {@code MapColor#calculateARGBColor}.
+     */
+    private static int shulkerColor(ShulkerBoxBlock block) {
+        if (block.getColor() == null) return SHULKER_BOX_DEFAULT;
+        return ARGB.opaque(block.getColor().getMapColor().col);
     }
 }

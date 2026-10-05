@@ -364,7 +364,7 @@ public class LiveMessage extends Module {
     private boolean openGuiOnChatKey = false;
 
     public LiveMessage() {
-        super(Addon.CATEGORY2, "LiveMessage", "Advanced DM management system with GUI.");
+        super(Addon.CATEGORY2, "Livemessage", "Advanced DM management system with GUI.");
         INSTANCE = this;
     }
 

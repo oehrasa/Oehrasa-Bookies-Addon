@@ -28,7 +28,11 @@ import java.util.*;
 
 public class InventoryInfo extends Module {
     private static final int COLOR_SEPARATOR = 0x64FFFFFF;
-    private static final int REFRESH_INTERVAL = 4;
+    /**
+     * Pixels one wheel notch moves the panel. Read by MixinHandledScreen.
+     */
+    public static final int SCROLL_STEP = 18;
+    private static final int REFRESH_INTERVAL = 2; // ticks between rebuilding caches from container
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgCustom = settings.createGroup("Customization");
@@ -72,6 +76,14 @@ public class InventoryInfo extends Module {
         .name("both-sides")
         .description("Once previews fill up the left side of the screen, continues them on the right.")
         .defaultValue(false)
+        .build()
+    );
+
+    public final Setting<SearchBarSide> searchBarSide = sgGeneral.add(new EnumSetting.Builder<SearchBarSide>()
+        .name("search-bar-side")
+        .description("Which side the search bar sits on. Right hugs the overflow column when both-sides is on.")
+        .defaultValue(SearchBarSide.Left)
+        .visible(() -> searchBar.get())
         .build()
     );
 
@@ -170,6 +182,25 @@ public class InventoryInfo extends Module {
 
     private final List<ShulkerInfo> info = new ArrayList<>();
     private int height, offset;
+
+    /**
+     * How far the flow can actually scroll, recomputed every render from the content
+     * that was placed. This one and not {@link #height} is what {@link #setOffset} clamps
+     * against: {@code height} is the panel's own extent, which the placement pass keeps
+     * inside the screen, so clamping against it pins the offset at zero and kills the
+     * wheel entirely.
+     */
+    private int scrollOverflow;
+
+    /**
+     * Last known cursor position, for the panel hit test in {@link #setOffset}.
+     */
+    private int lastMouseX = -1, lastMouseY = -1;
+
+    /**
+     * The container the refresh cycle last ran against, to catch a swap.
+     */
+    private AbstractContainerScreen<?> lastScreen;
     private Vector2f clicked;
     private ItemStack hoveredTooltip;
     private GuiGraphicsExtractor lastGraphics;
@@ -186,6 +217,14 @@ public class InventoryInfo extends Module {
     private final StringBuilder searchQuery = new StringBuilder();
     private boolean searchFocused = false;
 
+    private List<ShulkerGrid> measuredGridsCache = null;
+    private int measuredGridsColumns = -1;
+    private int measuredGridsSlotSize = -1;
+
+    // Memo for cachedScrollLimit, plus the signature it was computed from.
+    private int cachedScrollLimit = 0;
+    private String scrollLimitKey = null;
+
     private record DisplayEntry(ItemStack stack, int slot) {
     }
 
@@ -193,6 +232,18 @@ public class InventoryInfo extends Module {
     }
 
     private record PlacedGrid(ShulkerGrid grid, int x, int y) {
+    }
+
+    // The panel's hit rectangle, so the wheel handler can tell whether the cursor is
+    // actually over the panel.
+    private int panelLeft, panelRight, panelTop, panelBottom;
+
+    /**
+     * Which screen edge the search bar is anchored to.
+     */
+    private enum SearchBarSide {
+        Left,
+        Right
     }
 
     public InventoryInfo() {
@@ -214,8 +265,20 @@ public class InventoryInfo extends Module {
             info.clear();
             return;
         }
+        AbstractContainerScreen<?> screen = (AbstractContainerScreen<?>) mc.gui.screen();
+
+        // A new container has to refresh on its first tick. Carried over, the counter's
+        // phase can land anywhere within REFRESH_INTERVAL and the panel shows nothing
+        // until it happens to fire.
+        if (screen != lastScreen) {
+            lastScreen = screen;
+            refreshTickCounter = 0;
+            refresh(screen);
+            return;
+        }
+
         if (refreshTickCounter++ % REFRESH_INTERVAL != 0) return;
-        refresh((AbstractContainerScreen<?>) mc.gui.screen());
+        refresh(screen);
     }
 
     @EventHandler
@@ -230,6 +293,8 @@ public class InventoryInfo extends Module {
 
         int screenWidth = mc.getWindow().getGuiScaledWidth();
         int screenHeight = mc.getWindow().getGuiScaledHeight();
+        lastMouseX = event.mouseX;
+        lastMouseY = event.mouseY;
         hoveredTooltip = null;
         event.graphics.enableScissor(0, 0, screenWidth, screenHeight);
 
@@ -239,9 +304,35 @@ public class InventoryInfo extends Module {
         }
 
         int baseX = 2 + panelXOffset.get();
-        int baseY = 3 + offset + panelYOffset.get();
+        // Deliberately scroll-free. The placement pass applies the scroll itself, and
+        // folding it in here as well cancelled the two out, so the wheel moved nothing.
+        int baseY = 3 + panelYOffset.get();
 
-        if (searchBar.get()) baseY = renderSearchBar(event, baseX, baseY);
+        // Seed the hit rectangle here and let the layout pass widen it. The search bar
+        // sits above the grids but belongs to the panel, so the top is taken before
+        // baseY advances past it.
+        panelLeft = baseX;
+        panelRight = baseX;
+        panelTop = baseY;
+        panelBottom = baseY;
+
+        if (searchBar.get()) {
+            // Anchoring to the right mirrors the overflow column it belongs with, so a
+            // search bar never sits on the opposite edge from the panel it filters.
+            int barWidth = searchBarWidth();
+            int barX = searchBarSide.get() == SearchBarSide.Right
+                ? screenWidth - barWidth - 2
+                : baseX;
+
+            // The bar counts as part of the panel even when it is anchored to the edge
+            // opposite the grids. Without this the right-hand bar sits entirely outside
+            // the hit rectangle and scrolling with the cursor over it does nothing,
+            // while the same spot over a left-hand bar scrolls fine.
+            panelLeft = Math.min(panelLeft, barX);
+            panelRight = Math.max(panelRight, barX + barWidth);
+
+            baseY = renderSearchBar(event, barX, baseY);
+        }
 
         if (combineShulkers.get()) {
             renderCombinedGrid(event, baseX, baseY);
@@ -273,19 +364,19 @@ public class InventoryInfo extends Module {
         float scale = (isCompact ? slotSize / 16.0f : 1.0f) * iconScale.get().floatValue();
         int gap = spacing.get();
 
-        List<ShulkerGrid> grids = new ArrayList<>();
-        for (int i = 0; i < info.size(); i++) {
-            ShulkerInfo shulkerInfo = info.get(i);
-            List<ItemStack> visible = visibleStacks(i, shulkerInfo);
-            if (visible.isEmpty()) continue;
-
-            int rows = (visible.size() + columns - 1) / columns;
-            int cols = Math.min(visible.size(), columns);
-            int width = (rows > 1 ? columns : cols) * slotSize;
-            grids.add(new ShulkerGrid(shulkerInfo, visible, rows, width));
+        // Measure every grid first so the placement pass below can wrap onto a
+        // second column before the screen height runs out. Cached, because the
+        // measurement depends only on the refreshed slot data, the search filter and
+        // the layout settings, none of which change while a screen stays open.
+        List<ShulkerGrid> grids = measuredGrids(columns, slotSize);
+        if (grids.isEmpty()) {
+            height = baseY - offset;
+            setClicked(null);
+            return;
         }
 
         boolean both = bothSides.get();
+        int screenWidth = mc.getWindow().getGuiScaledWidth();
         int screenHeight = mc.getWindow().getGuiScaledHeight();
 
         List<PlacedGrid> placed = new ArrayList<>();
@@ -294,14 +385,66 @@ public class InventoryInfo extends Module {
         int columnWidth = 0;
         int maxBottom = baseY;
 
+        // When the overflow column is on, it has to be pinned to the right edge of the
+        // screen rather than appended beside the first one, the HUD's right-aligned
+        // list behaviour, so the previews stay on opposite edges of a wide screen
+        // instead of hugging the left.
+        int widestColumn = 0;
         for (ShulkerGrid grid : grids) {
+            widestColumn = Math.max(widestColumn, grid.width());
+        }
+        int rightColumnX = screenWidth - widestColumn - 2;
+
+        int maxColumns = both ? 2 : 1;
+
+        int viewportHeight = screenHeight - baseY - 2;
+        int scrollLimit = cachedScrollLimit(grids, gap, viewportHeight, maxColumns, slotSize);
+        int scrollOffset = Mth.clamp(offset, -scrollLimit, 0);
+        scrollOverflow = scrollLimit;
+
+        // Drop the grids that sit entirely above the viewport before placing anything.
+        // This is not just an optimisation: firstVisible below compensates for the grids
+        // already scrolled off, so leaving them in the flow double-counts that offset and
+        // every grid is drawn short of where it should be.
+        List<ShulkerGrid> visible = new ArrayList<>(grids.size());
+        int consumed = 0;
+        int firstVisible = 0;
+        for (ShulkerGrid grid : grids) {
+            int gh = grid.rows() * slotSize;
+            if (consumed + gh + gap > -scrollOffset) {
+                if (visible.isEmpty()) firstVisible = consumed;
+                visible.add(grid);
+            }
+            consumed += gh + gap;
+        }
+
+        // Only reachable if the limit is ever computed short of the real end of the flow.
+        // Hold the last grid at the top rather than rendering an empty panel.
+        if (visible.isEmpty() && !grids.isEmpty()) {
+            ShulkerGrid last = grids.get(grids.size() - 1);
+            visible = new ArrayList<>(grids.subList(grids.size() - 1, grids.size()));
+            firstVisible = consumed - (last.rows() * slotSize + gap);
+        }
+
+        // The first surviving grid is usually only part scrolled off, so push the flow
+        // down by the remainder. Without this the content snaps a whole grid per tick.
+        y = baseY + scrollOffset + firstVisible;
+
+        int columnCount = 1;
+        int maxRight = baseX;
+        for (ShulkerGrid grid : visible) {
             int gridHeight = grid.rows() * slotSize;
 
-            if (both && y != baseY && y + gridHeight > screenHeight - 2) {
-                // Advance from the current x, not baseX: columnWidth is reset
-                // per column, so baseX + columnWidth would drop the 3rd+ column
-                // back on top of the 2nd.
-                x = x + columnWidth + gap;
+            if (y + gridHeight > screenHeight - 2 && y > baseY) {
+                // Out of columns: stop here. The rest is reachable by scrolling, and
+                // drawing it would run off the right edge of the screen.
+                if (columnCount >= maxColumns) break;
+
+                columnCount++;
+                // Only the first overflow goes to the right edge. There is no second
+                // overflow past the cap, so there is no third column to misplace.
+                x = columnCount == 2 ? Math.max(baseX + columnWidth + gap, rightColumnX)
+                    : x + columnWidth + gap;
                 columnWidth = 0;
                 y = baseY;
             }
@@ -309,9 +452,23 @@ public class InventoryInfo extends Module {
             placed.add(new PlacedGrid(grid, x, y));
             columnWidth = Math.max(columnWidth, grid.width());
             maxBottom = Math.max(maxBottom, y + gridHeight);
+            maxRight = Math.max(maxRight, x + grid.width());
             y += gridHeight + gap;
         }
 
+        // Widen, never assign. The seed and the search bar's extents were recorded
+        // before this pass; assigning here threw them away again, which left a bar
+        // anchored to the far edge outside the hit rectangle entirely.
+        int minPlacedY = baseY;
+        for (PlacedGrid p : placed) minPlacedY = Math.min(minPlacedY, p.y());
+        panelLeft = Math.min(panelLeft, baseX);
+        panelRight = Math.max(panelRight, maxRight);
+        panelTop = Math.min(panelTop, minPlacedY);
+        panelBottom = Math.max(panelBottom, maxBottom);
+
+        // A row scrolled up under the search bar must not paint over it, raise a
+        // tooltip for a slot the user cannot see, or swallow the bar's own click.
+        int clipTop = baseY - 1;
         for (PlacedGrid p : placed) {
             ShulkerGrid grid = p.grid();
 
@@ -319,8 +476,15 @@ public class InventoryInfo extends Module {
             int endY = startY + grid.rows() * slotSize;
             int maxX = p.x() + grid.width();
 
-            drawBackground(event, p.x(), startY, maxX, endY);
-            event.graphics.fill(p.x(), startY - 1, maxX, startY, grid.info().color());
+            if (endY <= clipTop || startY >= screenHeight - 2) continue;
+
+            event.graphics.enableScissor(0, clipTop, screenWidth, screenHeight);
+
+            // Clamp to the visible band so the colour header and background of a
+            // half-scrolled grid do not bleed upwards past the panel edge.
+            int drawStart = Math.max(startY, clipTop + 1);
+            drawBackground(event, p.x(), drawStart, maxX, endY);
+            event.graphics.fill(p.x(), startY - 1, maxX, drawStart, grid.info().color());
 
             int count = 0, drawX = p.x();
             int drawY = startY;
@@ -328,10 +492,13 @@ public class InventoryInfo extends Module {
                 if (count > 0 && count % columns == 0) {
                     drawX = p.x();
                     drawY += slotSize;
+                    if (drawY >= screenHeight - 2) break;
                 }
 
                 drawScaledItem(event, stack, drawX, drawY, slotSize, scale);
-                if (isHovering(drawX, drawY, slotSize, event)) hoveredTooltip = stack;
+                if (drawY + slotSize > clipTop && isHovering(drawX, drawY, slotSize, event)) {
+                    hoveredTooltip = stack;
+                }
 
                 drawX += slotSize;
                 count++;
@@ -339,15 +506,20 @@ public class InventoryInfo extends Module {
 
             if (clicked != null
                 && clicked.x >= p.x() && clicked.x <= maxX
-                && clicked.y >= startY && clicked.y <= endY) {
+                && clicked.y >= Math.max(startY, clipTop) && clicked.y <= endY) {
                 mc.gameMode.handleContainerInput(
                     mc.player.containerMenu.containerId,
                     grid.info().slot(), 0, ContainerInput.PICKUP, mc.player);
                 setClicked(null);
             }
+
+            // enableScissor pushes and disableScissor pops a Deque, so this pair is
+            // balanced and the caller's screen-wide clip is still in place afterwards.
+            // Re-pushing it here would leak a level every frame.
+            event.graphics.disableScissor();
         }
 
-        height = maxBottom - offset;
+        height = maxBottom;
         setClicked(null);
     }
 
@@ -371,15 +543,20 @@ public class InventoryInfo extends Module {
         int columns = isCompact ? compactColumns.get() : 9;
         float scale = (isCompact ? slotSize / 16.0f : 1.0f) * iconScale.get().floatValue();
 
-        int startY = baseY;
+        int startY = baseY + offset;
         int rows = entries.isEmpty() ? 0 : (entries.size() + columns - 1) / columns;
         int cols = Math.min(entries.size(), columns);
         int maxX = baseX + (rows > 1 ? columns : cols) * slotSize;
         int y = baseY + rows * slotSize;
 
+        // Scrolled bottom edge. The background has to span exactly the rows being drawn, so it
+        // is derived from startY; using the unscrolled y gave a plate whose height no longer
+        // matched the icons sitting on it.
+        int scrolledEnd = startY + rows * slotSize;
+
         // Draw background first so icons render on top of it.
         if (!entries.isEmpty()) {
-            drawBackground(event, baseX, startY, maxX, y);
+            drawBackground(event, baseX, startY, maxX, scrolledEnd);
             event.graphics.fill(baseX, startY - 1, maxX, startY, COLOR_SEPARATOR);
         }
 
@@ -387,7 +564,10 @@ public class InventoryInfo extends Module {
             int col = i % columns;
             int row = i / columns;
             int drawX = baseX + col * slotSize;
-            int drawY = baseY + row * slotSize;
+            // From startY, not baseY: the background above is drawn from the scrolled origin,
+            // so using the unscrolled one desyncs the icons from their own backing plate (and
+            // puts hover/click hit-testing on a different row than the one being drawn).
+            int drawY = startY + row * slotSize;
 
             DisplayEntry entry = entries.get(i);
             drawScaledItem(event, entry.stack(), drawX, drawY, slotSize, scale);
@@ -403,15 +583,23 @@ public class InventoryInfo extends Module {
             }
         }
 
-        height = y - offset;
+        // The panel rectangle drives isOverPanel, so the wheel only reaches this grid when
+        // the bounds actually cover it. They were only ever grown in renderPerShulkerGrid,
+        // which left combined mode with a zero-height rect at baseY.
+        panelLeft = Math.min(panelLeft, baseX);
+        panelRight = Math.max(panelRight, maxX);
+        panelTop = Math.min(panelTop, startY);
+        panelBottom = Math.max(panelBottom, scrolledEnd);
+
+        // From the unscrolled extent: scrollOverflow is how much content there is to scroll
+        // through, independent of where the viewport currently sits.
+        height = y;
+        scrollOverflow = Math.max(y - mc.getWindow().getGuiScaledHeight(), 0);
         setClicked(null);
     }
 
     private int renderSearchBar(ScreenRenderEvent event, int baseX, int baseY) {
-        boolean isCompact = compact.get();
-        int slotSize = isCompact ? compactSlotSize.get() : 20;
-        int columns = isCompact ? compactColumns.get() : 9;
-        int barWidth = columns * slotSize;
+        int barWidth = searchBarWidth();
         int barHeight = 12;
 
         if (clicked != null && clicked.x >= baseX && clicked.x <= baseX + barWidth
@@ -588,6 +776,13 @@ public class InventoryInfo extends Module {
 
     private void rebuildRenderCaches() {
         combinedCache = null;
+        // Both of these are derived from the slices rebuilt below, so they have to go
+        // when this runs. The measured grids memoise on (columns, slotSize), neither of
+        // which changes when the container does, so a stale cache keeps the previous
+        // container's ShulkerInfo records, old contents AND a stale slot() index, which
+        // makes a click send handleContainerInput for the wrong slot.
+        measuredGridsCache = null;
+        scrollLimitKey = null;
         if (searchFilterActive()) {
             shulkerVisibleCache = null;
             return;
@@ -619,8 +814,21 @@ public class InventoryInfo extends Module {
         return offset;
     }
 
+    /**
+     * Whether a cursor position lies inside the panel's hit rectangle. The wheel is
+     * handled before the next render, so this reads the rectangle and the cursor
+     * position as of the previous frame.
+     */
+    public boolean isOverPanel(double x, double y) {
+        return x >= panelLeft && x <= panelRight && y >= panelTop && y <= panelBottom;
+    }
+
     public void setOffset(int offset) {
-        this.offset = Mth.clamp(offset, -Math.max(height - mc.getWindow().getGuiScaledHeight(), 0), 0);
+        // Only while the cursor is over the panel. Unconditionally, the wheel drove this
+        // module from anywhere on screen including over the container's own slots and
+        // every other scrollable widget on it.
+        if (!isOverPanel(lastMouseX, lastMouseY)) return;
+        this.offset = Mth.clamp(offset, -Math.max(scrollOverflow, 0), 0);
     }
 
     public void setClicked(Vector2f clicked) {
@@ -629,19 +837,159 @@ public class InventoryInfo extends Module {
 
     public void onSearchCharTyped(char chr) {
         if (!searchFocused) return;
-        if (chr >= 32 && searchQuery.length() < 32) searchQuery.append(chr);
+        if (chr >= 32 && searchQuery.length() < 32) {
+            searchQuery.append(chr);
+            invalidateSearchCaches();
+        }
     }
 
     public void onSearchKeyPressed(int keyCode) {
         if (!searchFocused) return;
         if (keyCode == GLFW.GLFW_KEY_BACKSPACE && !searchQuery.isEmpty()) {
             searchQuery.deleteCharAt(searchQuery.length() - 1);
+            invalidateSearchCaches();
+        } else if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
+            // The screen mixin cancels any key pressed while the bar has focus, so
+            // without handling it here Enter was swallowed and ESC was the only way out.
+            searchFocused = false;
         } else if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
             searchFocused = false;
         }
     }
 
+    /**
+     * The query changed outside the refresh cycle, so anything derived from the
+     * filtered slices has to be rebuilt on the next render.
+     */
+    private void invalidateSearchCaches() {
+        measuredGridsCache = null;
+        scrollLimitKey = null;
+    }
+
     public boolean isSearchFocused() {
         return searchFocused;
+    }
+
+
+    private List<ShulkerGrid> measuredGrids(int columns, int slotSize) {
+        if (measuredGridsCache != null
+            && measuredGridsColumns == columns && measuredGridsSlotSize == slotSize) {
+            return measuredGridsCache;
+        }
+
+        List<ShulkerGrid> grids = new ArrayList<>();
+        for (int i = 0; i < info.size(); i++) {
+            ShulkerInfo shulkerInfo = info.get(i);
+            List<ItemStack> visible = visibleStacks(i, shulkerInfo);
+            if (visible.isEmpty()) continue;
+
+            int rows = (visible.size() + columns - 1) / columns;
+            int cols = Math.min(visible.size(), columns);
+            int width = (rows > 1 ? columns : cols) * slotSize;
+            grids.add(new ShulkerGrid(shulkerInfo, visible, rows, width));
+        }
+
+        measuredGridsCache = grids;
+        measuredGridsColumns = columns;
+        measuredGridsSlotSize = slotSize;
+        return grids;
+    }
+
+    /**
+     * The search is linear in the flow height times the shulker count, hundreds of thousands of iterations for a
+     * full container, and none of those inputs change between frames, so recomputing
+     * it every render was the single most expensive thing in this module.
+     */
+    private int cachedScrollLimit(List<ShulkerGrid> grids, int gap, int viewportHeight, int maxColumns, int slotSize) {
+        // Height signature: the grid heights plus the settings that place them. Cheap to
+        // build, and it changes only on refresh, search, resize or a settings change.
+        StringBuilder key = new StringBuilder();
+        for (ShulkerGrid grid : grids) {
+            // Delimiter between rows and width: without it (1,18) and (11,8) both
+            // build "118," and two different layouts share one memo entry.
+            key.append(grid.rows()).append(':').append(grid.width()).append(',');
+        }
+        key.append('|').append(gap).append('|').append(viewportHeight)
+            .append('|').append(maxColumns).append('|').append(slotSize);
+
+        String signature = key.toString();
+        if (signature.equals(scrollLimitKey)) return cachedScrollLimit;
+
+        cachedScrollLimit = scrollLimitFor(grids, gap, viewportHeight, maxColumns, slotSize);
+        scrollLimitKey = signature;
+        return cachedScrollLimit;
+    }
+
+    /**
+     * Furthest the flow can scroll: the smallest offset at which the last grid
+     * becomes placeable under the same grid-boundary wrapping and column cap the
+     * placement pass uses. A flow that already fits reports 0.
+     * <p>
+     * The scan is linear rather than a binary search on purpose:
+     */
+    private int scrollLimitFor(List<ShulkerGrid> grids, int gap, int viewportHeight, int maxColumns, int slotSize) {
+        if (grids.isEmpty()) return 0;
+
+        int total = 0;
+        int[] heights = new int[grids.size()];
+        for (int i = 0; i < grids.size(); i++) {
+            heights[i] = grids.get(i).rows() * slotSize;
+            total += heights[i] + gap;
+        }
+        total -= gap;
+
+        for (int limit = 0; limit <= total; limit++) {
+            int consumed = 0;
+            int firstVisible = 0;
+            boolean anyVisible = false;
+            for (int height : heights) {
+                if (consumed + height + gap > limit) {
+                    if (!anyVisible) firstVisible = consumed;
+                    anyVisible = true;
+                }
+                consumed += height + gap;
+            }
+            if (!anyVisible) continue;
+
+            // Place the surviving grids exactly as the render pass does.
+            int y = -(limit - firstVisible);
+            int columns = 1;
+            boolean lastPlaced = false;
+            consumed = 0;
+            for (int i = 0; i < heights.length; i++) {
+                int height = heights[i];
+                if (consumed + height + gap <= limit) {
+                    consumed += height + gap;
+                    continue;
+                }
+                consumed += height + gap;
+
+                if (y + height > viewportHeight && y > 0) {
+                    if (columns >= maxColumns) break;
+                    columns++;
+                    y = 0;
+                }
+                // Whether the final grid got placed, rather than how many did. Grids
+                // scrolled off above the limit are skipped without being counted, so
+                // comparing a placed tally against the grid count can never be
+                // satisfied once anything scrolls away, and the limit then runs to the
+                // full flow height, where the render pass finds no visible grid at all
+                // and the panel goes blank.
+                if (i == heights.length - 1) lastPlaced = true;
+                y += height + gap;
+            }
+            if (lastPlaced) return limit;
+        }
+        return total;
+    }
+
+    /**
+     * Width of the search bar, matching the grid it sits above so the two line up.
+     */
+    private int searchBarWidth() {
+        boolean isCompact = compact.get();
+        int slotSize = isCompact ? compactSlotSize.get() : 20;
+        int columns = isCompact ? compactColumns.get() : 9;
+        return columns * slotSize;
     }
 }

@@ -43,7 +43,7 @@ public abstract class MixinHandledScreen extends Screen {
         if (m != null && m.isActive()) {
             double amount = Math.abs(verticalAmount) > 0.0 ? verticalAmount : horizontalAmount;
             if (amount != 0) {
-                m.setOffset((int) (m.getOffset() + Math.ceil(amount) * 18));
+                m.setOffset((int) (m.getOffset() + Math.ceil(amount) * InventoryInfo.SCROLL_STEP));
             }
         }
     }

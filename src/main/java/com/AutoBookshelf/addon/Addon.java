@@ -32,6 +32,7 @@ public class Addon extends MeteorAddon {
     @Override
     public void onInitialize() {
         LOG.info("Honey, dinner's ready, Identified AutoBookshelf Addon.");
+        com.AutoBookshelf.addon.utils.Checks.init();
 
         PayloadTypeRegistry.serverboundPlay().register(JoinPayload.TYPE, JoinPayload.CODEC);
         Systems.add(new EnemyManager());
