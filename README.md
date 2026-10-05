@@ -23,7 +23,7 @@
 Tested successfully with these mods.
 <font color="turquoise">Switch the branch repo if You want to see the other version config</font>
 
-- baritone-meteor-26.2.jar **(or baritone API Required!)**
+- baritone-meteor-26.2.jar **(or any baritone API Required!)**
 - meteor-client-26.2-20.jar **(Required!)**
 - client_maps-1.3.3.jar (Recommended for Mapart-Namer module)
 - map-in-slot-3.5.0.jar (Recommended for Mapart-Namer module)
@@ -101,7 +101,7 @@ Tested successfully with these mods.
 <details>
 <summary><b>Display of the addon</b> (in-game)</summary>
 <h1 align="left">
-  <img src="https://github.com/user-attachments/assets/a7c42328-e553-496f-930e-ffdec541314f" alt="Header Image" style="width:70%; max-width:600px;"/>
+  <img src="https://github.com/user-attachments/assets/3d967f96-7b30-4ab6-8b7e-2b54951485bf" alt="Header Image" style="width:70%; max-width:600px;"/>
 </h1>
 </details>
 
