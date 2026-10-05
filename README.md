@@ -23,7 +23,7 @@
 Tested successfully with these mods.
 <font color="turquoise">Switch the branch repo if You want to see the other version config</font>
 
-- baritone-meteor-26.1.jar **(or baritone API Required!)**
+- baritone-meteor-26.1.jar **(or any baritone API Required!)**
 - meteor-client-26.1.2-42.jar **(Required!)**
 - client_maps-1.3.2+26.1.jar (Recommended for Mapart-Namer module)
 - map-in-slot-3.5.0.jar (Recommended for Mapart-Namer module)
@@ -56,7 +56,8 @@ Tested successfully with these mods.
 12. **B36-Peacemaker** - Created this to make peace. Named after Convair B-36 Peacemaker
 13. **Block-Radius** - Renders the range of powered beacons, lightning rods, active conduits, linked creakings, and Warden ESP
 14. **Better-BoatFly** - Transforms your boat into a plane
-15. **BLU-27/B-Napalm** - I love the smell of Napalm in the morning, Commit some trolling against the Vietnamese
+15. **BLU-27/B-Napalm** - Burns any flammable blocks nearby with flint and steel, I love the smell of Napalm in the morning, Commit some trolling
+    against the Vietnamese
 16. **Bookshelf-Filler** - oeh Yuri romcom bookshelves restocker
 17. **Book-Import** - Automatically imports text files into signed books
 18. **Chest-Tracker** - Track items in containers
@@ -257,16 +258,22 @@ List of addons I used as reference(skid? mwhehe), You should check them out it's
 - **[MeteorPlusPlus](https://github.com/zychen027/MeteorPlusPlusAddon)** - PacketEat
 - **[MeteorEnemies](https://github.com/crosby-moe/MeteorEnemies)** - Enemy tab
 - **[6Bees](https://github.com/Powie69/6Bees)** - Hidden map id's tooltip, Base system, 6bees-data
+- **[Hyperglide](https://github.com/Ark223/Hyperglide)** - EasyAccess
 
 ## Contributing
 
 Open an [issue](https://github.com/oehrasa/Oehrasa-Bookies-Addon/issues) or submit a pull request.
 
-## License
+## Licensing
 
-[GNU GPLv3](LICENSE) - Free to fork and modify. Any modified or derived work
-of this code must be distributed under the same licence (GPL-3.0).
-No relicensing to proprietary/closed-source.
+This project is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.en.html).
+
+If you use **ANY** code from the source:
+
+- You must disclose the source code of your modified work and the source code you took from this project. This means you are not allowed to use code
+  from this project (even partially) in a closed-source and/or obfuscated application.
+- You must state clearly and obviously to all end users that you are using code from this project.
+- Your application must also be licensed under the same license.
 
 >## Disclaimer
 >Designed for anarchy servers like 6b6t.org. Use responsibly.
