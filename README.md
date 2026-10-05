@@ -101,7 +101,7 @@ Tested successfully with these mods.
 <details>
 <summary><b>Display of the addon</b> (in-game)</summary>
 <h1 align="left">
-  <img src="https://github.com/user-attachments/assets/a7c42328-e553-496f-930e-ffdec541314f" alt="Header Image" style="width:70%; max-width:600px;"/>
+  <img src="https://github.com/user-attachments/assets/3d967f96-7b30-4ab6-8b7e-2b54951485bf" alt="Header Image" style="width:70%; max-width:600px;"/>
 </h1>
 </details>
 
