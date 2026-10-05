@@ -305,6 +305,9 @@ public class PzH2000 extends Module {
     // Self-correction: track real fired arrows to measure actual vs. predicted
     // landing point, and accumulate a small running bias correction from it.
     private final Set<Integer> knownArrowIds = new HashSet<>();
+    // Ids are server-recycled, so knownArrowIds would otherwise grow for the whole
+    // session and a reused id would permanently fail the !contains() adoption test,
+    // silently costing that shot its bias correction. Cleared per session in reset().
     private boolean wasUsingItemLastTick = false;
     private Entity pendingTargetRef;
     private Vec3d pendingTargetPos;
@@ -333,6 +336,7 @@ public class PzH2000 extends Module {
     // achievable charge level (no arc clears the obstruction, or a wall
     // directly in front), stop drawing and stop re-searching every tick
     private int consecutiveNoSolutionTicks = 0;
+    private Integer noSolutionTargetId = null;
     private Integer blockedTargetId = null;
     private int blockedRecheckCooldown = 0;
 
@@ -393,6 +397,7 @@ public class PzH2000 extends Module {
         }
         autoFireHoldsUseKey = false;
         consecutiveNoSolutionTicks = 0;
+        noSolutionTargetId = null;
         blockedTargetId = null;
         blockedRecheckCooldown = 0;
         bracketTrimYaw = 0;
@@ -401,6 +406,7 @@ public class PzH2000 extends Module {
         pitchErrorMean = 0;
         yawErrorVariance = 0;
         pitchErrorVariance = 0;
+        knownArrowIds.clear();
         lastShotErrorMagnitude = Double.MAX_VALUE;
         lastShotTargetId = null;
         // Note: yawBias/pitchBias intentionally not reset, they represent a
@@ -615,10 +621,16 @@ public class PzH2000 extends Module {
             blockedRecheckCooldown--;
         } else if (feasible) {
             consecutiveNoSolutionTicks = 0;
+            noSolutionTargetId = null;
             blockedTargetId = null;
             blockedRecheckCooldown = 0;
         } else if (currentUseTicks >= minChargeTicks.get()) {
-            consecutiveNoSolutionTicks = sameBlockedTarget ? consecutiveNoSolutionTicks + 1 : 1;
+            // Accumulate against the target we are currently failing on, not blockedTargetId:
+            // that one is only set once the threshold trips, so using it here would reset the
+            // counter every tick and the abort would never fire.
+            boolean sameNoSolutionTarget = noSolutionTargetId != null && noSolutionTargetId == target.getId();
+            consecutiveNoSolutionTicks = sameNoSolutionTarget ? consecutiveNoSolutionTicks + 1 : 1;
+            noSolutionTargetId = target.getId();
             if (consecutiveNoSolutionTicks >= noSolutionAbortTicks.get()) {
                 if (debugNoSolution.get() && blockedTargetId == null) {
                     info("No shot solution found! target appears unreachable, aborting draw.");
@@ -694,7 +706,13 @@ public class PzH2000 extends Module {
             for (Entity e : mc.world.getEntities()) {
                 if (e instanceof ArrowEntity arrow
                     && !knownArrowIds.contains(arrow.getId())
-                    && arrow.getOwner() == mc.player) {
+                    && arrow.getOwner() == mc.player
+                    // Reject an older arrow of ours that is still in flight: only an arrow
+                    // shot from where we are shooting, and no older than the ticks we have
+                    // waited, belongs to this pending shot. Adopting a stale one would feed
+                    // its miss into the learned aim bias.
+                    && arrow.age <= pendingWaitTicks + 1
+                    && (pendingShooterPos == null || arrow.squaredDistanceTo(pendingShooterPos) <= 16.0D)) {
                     knownArrowIds.add(arrow.getId());
                     trackedArrow = arrow;
                     break;
@@ -707,7 +725,11 @@ public class PzH2000 extends Module {
         }
 
         if (trackedArrow.isRemoved() || pendingWaitTicks > simulationTicks.get() + 10) {
-            recordShotOutcome(trackedArrow.getEntityPos());
+            // A timeout is not a landing. Recording the arrow's position mid-flight would
+            // feed the learner a point far short of the target and bias the next shot
+            // upward, so only a real removal (hit something, or despawned after landing)
+            // counts as an outcome. The timeout still ends the wait, it just learns nothing.
+            if (trackedArrow.isRemoved()) recordShotOutcome(trackedArrow.getEntityPos());
             trackedArrow = null;
             pendingTargetRef = null;
         }

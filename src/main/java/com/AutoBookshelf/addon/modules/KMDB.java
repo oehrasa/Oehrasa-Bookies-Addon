@@ -874,12 +874,29 @@ public class KMDB extends Module {
      * the player until every cell is placeable rather than building something the server
      * will only half place.
      */
+    /**
+     * Whether there is something to build on, on the side this build actually hangs off.
+     *
+     * <p>Only the upside-down iron golem differs: its own "up" points down, so its base is the
+     * topmost cell and the support has to be above it. Checking below unconditionally demanded
+     * floor under a golem meant to be built from a ceiling. Every other mode and orientation
+     * sits on top of its support, which is what down() gives.
+     */
+    private boolean hasSupportAt(BlockPos pos) {
+        boolean upsideDownIron = buildMode.get() == BuildMode.IronGolem
+            && ironGolemUp() == Direction.DOWN;
+        BlockPos support = upsideDownIron ? pos.up() : pos.down();
+        BlockState state = mc.world.getBlockState(support);
+        return !state.isAir() && !state.isReplaceable();
+    }
+
     private BlockPos manualFoot(List<int[]> placedOffsets, List<int[]> relativeOffsets) {
         Direction facing = mc.player.getHorizontalFacing();
         BlockPos playerPos = mc.player.getBlockPos();
 
         for (int d = placementDistance.get(); d >= 0; d--) {
             BlockPos pos = playerPos.offset(facing, d);
+            if (!airPlace.get() && !hasSupportAt(pos)) continue;
             if (structureFits(pos, relativeOffsets) && structureWithinReach(pos, placedOffsets)) return pos;
         }
         return null;
@@ -895,10 +912,7 @@ public class KMDB extends Module {
                 for (int z = -searchRadius; z <= searchRadius; z++) {
                     BlockPos pos = preferred.add(x, y, z);
 
-                    if (!airPlace.get()) {
-                        BlockState belowState = mc.world.getBlockState(pos.down());
-                        if (belowState.isAir() || belowState.isReplaceable()) continue;
-                    }
+                    if (!airPlace.get() && !hasSupportAt(pos)) continue;
 
                     if (structureFits(pos, relativeOffsets)) candidates.add(pos);
                 }
@@ -1043,6 +1057,18 @@ public class KMDB extends Module {
 
     private void airPlaceBlock(BlockPos pos, FindItemResult item, Direction face) {
         if (!item.found()) return;
+
+        if (item.isOffhand()) {
+            // Already in the off-hand, so place straight from it. Selecting it as the carried
+            // slot throws: SlotUtils.OFFHAND is 40 and PlayerInventory.setSelectedSlot rejects
+            // anything outside the hotbar. Skipping the swap dance is also what Meteor's own
+            // BlockUtils.place does for this case.
+            mc.player.networkHandler.sendPacket(new PlayerInteractBlockC2SPacket(
+                Hand.OFF_HAND, new BlockHitResult(Vec3d.ofCenter(pos), face, pos, false),
+                mc.player.currentScreenHandler.getRevision()));
+            mc.player.swingHand(Hand.OFF_HAND);
+            return;
+        }
 
         int previousSlot = mc.player.getInventory().getSelectedSlot();
         mc.player.getInventory().setSelectedSlot(item.slot());
@@ -1297,6 +1323,12 @@ public class KMDB extends Module {
             return;
         }
 
+        // ironPositions() is already base-first, which is what every orientation needs. It is
+        // load-bearing upside down: the base is the topmost cell, resting against the ceiling
+        // that hasSupportAt requires, and the body hangs beneath it. Placing the body first
+        // would try to put a block in mid-air with nothing to click, since with air-place off
+        // BlockUtils.place needs an existing face. Base first, then the body against the
+        // base's now-solid underside.
         for (BlockPos pos : golem.ironPositions()) place(pos, iron);
         // Lastly a pumpkin, that is what triggers the spawn, and placing it over
         // an incomplete T just does nothing.

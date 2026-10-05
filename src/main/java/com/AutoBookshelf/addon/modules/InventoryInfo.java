@@ -1002,6 +1002,10 @@ public class InventoryInfo extends Module {
         if (keyCode == GLFW.GLFW_KEY_BACKSPACE && !searchQuery.isEmpty()) {
             searchQuery.deleteCharAt(searchQuery.length() - 1);
             invalidateSearchCaches();
+        } else if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
+            // The screen mixin cancels any key pressed while the bar has focus, so
+            // without handling it here Enter was swallowed and ESC was the only way out.
+            searchFocused = false;
         } else if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
             searchFocused = false;
         }

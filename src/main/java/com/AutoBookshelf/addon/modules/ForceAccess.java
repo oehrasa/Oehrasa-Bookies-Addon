@@ -666,7 +666,7 @@ public class ForceAccess extends Module {
     private void addSolidAbove(BlockPos pos, Deque<BlockPos> out) {
         BlockPos above = pos.up();
         BlockState state = mc.world.getBlockState(above);
-        if (!state.isSolidBlock(mc.world, above)) return;
+        if (!state.isFullCube(mc.world, above)) return;
         if (state.getBlock() instanceof FallingBlock) {
             addFallingLid(above, out);
         } else if (!out.contains(above)) {

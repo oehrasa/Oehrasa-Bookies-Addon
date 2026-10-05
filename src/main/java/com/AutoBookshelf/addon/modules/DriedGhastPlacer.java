@@ -236,7 +236,7 @@ public class DriedGhastPlacer extends Module {
                     if (below.equals(playerFeet)) continue;
 
                     BlockState bs = mc.world.getBlockState(below);
-                    if (!bs.isSolidBlock(mc.world, below)) continue;
+                    if (!bs.isFullCube(mc.world, below)) continue;
                     if (bs.getBlock() == driedGhastBlock) continue;
 
                     targetPos = new BlockPos(pos.getX(), pos.getY(), pos.getZ());
