@@ -337,6 +337,12 @@ public class KMDB extends Module {
         .build()
     );
 
+    private final Setting<Boolean> hitboxAware = sgGeneral.add(new BoolSetting.Builder()
+        .name("hitbox-aware")
+        .description("Refuse to build a cell that the player or a mob is standing in. Off means the module.")
+        .defaultValue(true)
+        .build()
+    );
     private final Setting<Boolean> autoToggle = sgGeneral.add(new BoolSetting.Builder()
         .name("auto-toggle")
         .description("Automatically disable after building one structure. Turn this off to build several in a row.")
@@ -826,7 +832,23 @@ public class KMDB extends Module {
         return hash;
     }
 
+    /**
+     * Whether anything is standing in the cell, so building it would intersect a hitbox and
+     * leave the structure half placed.
+     *
+     * <p>{@code noCollision(AABB)} is not enough on its own: the overload that takes a bare
+     * AABB passes a null entity, so it cannot exclude the player and only sees whatever the
+     * collision index happens to hold. Querying explicitly covers both the player's own box
+     * and mobs, which is what leaves a build incomplete when the module places into them.
+     */
+
     private boolean structureFits(BlockPos pos, List<int[]> relativeOffsets) {
+        // One entity query covering the whole footprint, not one per cell. The auto search
+        // walks every candidate position and the cache key includes the player's block, so a
+        // per-cell query multiplied out to hundreds of lookups per search and repeated while
+        // walking. One query here, then cheap AABB tests per cell against the result.
+        List<AABB> blockers = entityBoxesAround(pos, relativeOffsets);
+
         for (int[] rel : relativeOffsets) {
             BlockPos check = pos.offset(rel[0], rel[1], rel[2]);
             // Outside the world's build range it can never be placed, and the Nether
@@ -838,8 +860,57 @@ public class KMDB extends Module {
                 || !mc.level.noCollision(new AABB(check))) {
                 return false;
             }
+            if (hitsBlocker(check, blockers)) return false;
         }
         return true;
+    }
+
+    /**
+     * Bounding box of every cell in the footprint at {@code pos}, used to ask the world for
+     * the entities that could overlap it in a single query.
+     */
+    private AABB footprintBounds(BlockPos pos, List<int[]> relativeOffsets) {
+        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+        for (int[] rel : relativeOffsets) {
+            int x = pos.getX() + rel[0], y = pos.getY() + rel[1], z = pos.getZ() + rel[2];
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (z < minZ) minZ = z;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+            if (z > maxZ) maxZ = z;
+        }
+        return new AABB(minX, minY, minZ, maxX + 1, maxY + 1, maxZ + 1);
+    }
+
+    /**
+     * Boxes of everything standing in the footprint, the player included.
+     *
+     * <p>{@code noCollision(AABB)} cannot be used for this: the bare-AABB overload passes a
+     * null entity, so it can never discount the player and only sees whatever the collision
+     * index happens to hold. A cell the player or a mob occupies would be built into and
+     * leave the structure half placed.
+     */
+    private List<AABB> entityBoxesAround(BlockPos pos, List<int[]> relativeOffsets) {
+        if (!hitboxAware.get()) return List.of();
+
+        AABB bounds = footprintBounds(pos, relativeOffsets);
+        List<AABB> boxes = new ArrayList<>();
+        for (Entity e : mc.level.getEntities((Entity) null, bounds, e -> true)) {
+            if (!e.isAlive() || e.isSpectator()) continue;
+            if (bounds.intersects(e.getBoundingBox())) boxes.add(e.getBoundingBox());
+        }
+        return boxes;
+    }
+
+    private boolean hitsBlocker(BlockPos pos, List<AABB> blockers) {
+        if (blockers.isEmpty()) return false;
+        AABB cell = new AABB(pos);
+        for (AABB box : blockers) {
+            if (box.intersects(cell)) return true;
+        }
+        return false;
     }
 
     /**
@@ -1320,17 +1391,13 @@ public class KMDB extends Module {
             return;
         }
 
-        // Upside down the base is the topmost cell, so the body hanging beneath it has no face
-        // to be placed against until the base exists. Build base-first in that case only; every
-        // other orientation already starts with the base.
-        List<BlockPos> ironOrder = new ArrayList<>(golem.ironPositions());
-        if (up == Direction.DOWN) {
-            BlockPos body = golem.body();
-            ironOrder.remove(body);
-            ironOrder.add(0, body);
-        }
-
-        for (BlockPos pos : ironOrder) place(pos, iron);
+        // ironPositions() is already base-first, which is what every orientation needs. It is
+        // load-bearing upside down: the base is the topmost cell, resting against the ceiling
+        // that hasSupportAt requires, and the body hangs beneath it. Placing the body first
+        // would try to put a block in mid-air with nothing to click, since with air-place off
+        // BlockUtils.place needs an existing face. Base first, then the body against the
+        // base's now-solid underside.
+        for (BlockPos pos : golem.ironPositions()) place(pos, iron);
         // Lastly a pumpkin, that is what triggers the spawn, and placing it over
         // an incomplete T just does nothing.
         place(golem.pumpkin(), pumpkin);
