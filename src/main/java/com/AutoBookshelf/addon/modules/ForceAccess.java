@@ -2,10 +2,10 @@ package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.mixin.accessor.MultiPlayerGameModeAccessor;
-import meteordevelopment.meteorclient.events.entity.player.DoItemUseEvent;
 import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
 import meteordevelopment.meteorclient.events.entity.player.InteractEntityEvent;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
+import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
@@ -14,16 +14,15 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
-import meteordevelopment.orbit.EventPriority;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.protocol.game.ServerboundInteractPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
+import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.tags.TagKey;
-import net.minecraft.world.Container;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
@@ -204,6 +203,9 @@ public class ForceAccess extends Module {
     private final Deque<BlockPos> scratch = new ArrayDeque<>();
     private final Set<BlockPos> posList = new HashSet<>();
     private Phase phase = Phase.IDLE;
+    private boolean hiddenLock;   // debounces one scan per use-key press
+    private boolean hiddenBlock;  // true while we drive a hidden open/mine flow - suppress vanilla's own packet
+    private boolean hiddenOwn;    // true only while WE send the real open packet, so it isn't self-cancelled
     private BlockPos container;
     private Vec3 openPoint;
     private Entity openEntity;
@@ -228,8 +230,9 @@ public class ForceAccess extends Module {
     private int gravityPasses;           // settle-loop count; safety cap for an unbreakable column
     private boolean allowMine;           // whether this session may mine obstructions
 
-    // Auto-hidden detection state. Driven off DoItemUseEvent rather than InteractBlockEvent, which only fires once vanilla's
-    // own raycast already reached a block, and rather than a per-tick key poll,
+    // Auto-hidden detection state. Driven off a per-tick use-key poll rather than DoItemUseEvent,
+    // which Meteor posts on this version but which its own GhostHand demonstrably does not work
+    // through, and rather than InteractBlockEvent, which only fires once vanilla's
 
     /**
      * An actively mined obstruction (primary/secondary, see double-break).
@@ -273,6 +276,8 @@ public class ForceAccess extends Module {
             open();
             return;
         }
+
+        tickAutoHidden();
     }
 
     @EventHandler
@@ -316,11 +321,25 @@ public class ForceAccess extends Module {
         }
     }
 
-    @EventHandler(priority = EventPriority.LOW)
-    private void onDoItemUse(DoItemUseEvent event) {
-        if (!autoHidden.get()) return;
-        // GhostHand (or anything else) already took this click.
-        if (event.isCancelled()) return;
+    private void tickAutoHidden() {
+        // Only reached while phase == IDLE (the MINE/OPEN branches return above), so this
+        // bounds the suppression window to the single tick in which vanilla sends its own
+        // interact packet for the click we took over. The synchronous direct-open below drives
+        // no phase, so nothing else would ever clear the flag and every later
+        // ServerboundUseItemOnPacket would be swallowed. Flow-driven opens keep the flag set
+        // because this line is not reached while phase != IDLE, and reset() clears it too.
+        hiddenBlock = false;
+
+        // DoItemUseEvent is posted on both 26.1.2 and 26.2 but Meteor's own GhostHand - built
+        // entirely on it - does not work on either, so it is not a usable trigger here. Poll the
+        // use key instead and suppress vanilla's resulting interact packet in onPacket.
+        if (!autoHidden.get() || !mc.options.keyUse.isDown()) {
+            hiddenLock = false;
+            return;
+        }
+        if (hiddenLock) return;
+        hiddenLock = true;
+
         // Another use is already being driven; leave this click alone.
         if (phase != Phase.IDLE) return;
 
@@ -346,8 +365,6 @@ public class ForceAccess extends Module {
             return;
         }
 
-        if (!mc.options.keyUse.isDown()) return;
-
         // The direct crosshair target already has a block entity: vanilla handles
         // it, do nothing.
         if (mc.level.getBlockState(BlockPos.containing(mc.player.pick(
@@ -369,26 +386,37 @@ public class ForceAccess extends Module {
             if (posList.contains(pos)) continue;
             posList.add(pos);
 
-            if (!mc.level.getBlockState(pos).hasBlockEntity()) continue;
-            // Force-Access scope: a container, not any block entity.
+            // container() is the sole gate. It used to also be preceded by a hasBlockEntity()
+            // check, which was redundant while container() demanded an inventory Container (a
+            // chest always has one) but silently skipped every menu-only block once it did not:
+            // crafting tables and stonecutters are not block entities at all in 26.x, so
+            // CraftingBlockEntity does not even exist (only CrafterBlockEntity does).
             if (!container(pos)) continue;
 
             // A stuck lid (block on top of the chest) is mined out first, then
             // opened by the regular flow; otherwise open synchronously exactly
             // like GhostHand: try each hand, accept Success/Fail, swing, cancel.
             if (mineObstruction.get() && obstructed(pos)) {
-                event.cancel();
+                hiddenBlock = true;
                 start(pos);
                 return;
             }
 
             for (InteractionHand hand : InteractionHand.values()) {
-                InteractionResult result = mc.gameMode.useItemOn(mc.player, hand,
-                    new BlockHitResult(new Vec3(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5),
-                        Direction.UP, pos, true));
+                InteractionResult result;
+                // hiddenOwn lets this exact packet through onPacket's cancel filter, which
+                // otherwise suppresses every interact packet while we drive the click.
+                hiddenOwn = true;
+                try {
+                    result = mc.gameMode.useItemOn(mc.player, hand,
+                        new BlockHitResult(new Vec3(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5),
+                            Direction.UP, pos, true));
+                } finally {
+                    hiddenOwn = false;
+                }
                 if (result instanceof InteractionResult.Success || result instanceof InteractionResult.Fail) {
                     mc.player.swing(hand);
-                    event.cancel();
+                    hiddenBlock = true;
                     return;
                 }
             }
@@ -398,8 +426,17 @@ public class ForceAccess extends Module {
         // minecarts/boats, merchants, chested mounts) as a fallback.
         HitTarget hidden = hiddenTarget();
         if (hidden != null && hidden.entity != null) {
-            event.cancel();
+            hiddenBlock = true;
             openHidden(hidden);
+        }
+    }
+
+    @EventHandler
+    private void onPacket(PacketEvent.Send event) {
+        // We poll the use key rather than cancelling an event, so vanilla's own
+        // ServerboundUseItemOnPacket for this click has to be dropped here instead.
+        if (hiddenBlock && !hiddenOwn && event.packet instanceof ServerboundUseItemOnPacket) {
+            event.cancel();
         }
     }
 
@@ -559,13 +596,11 @@ public class ForceAccess extends Module {
         return state.getBlock() instanceof ChestBlock
             || state.getBlock() instanceof ShulkerBoxBlock
             || state.getBlock() == Blocks.ENDER_CHEST
-            // A menu provider alone is not a container: crafting tables, anvils,
-            // enchanting tables, stonecutters, looms, cartography/smithing
-            // tables all expose getMenuProvider but hold no inventory, and would
-            // otherwise be picked as bogus hidden targets. Require an inventory
-            // block entity too (furnaces, barrels, hoppers, dispensers, ...).
-            || (state.getMenuProvider(mc.level, pos) != null
-            && mc.level.getBlockEntity(pos) instanceof Container);
+            // Any block with a menu is a valid hidden target, matching the yarn tree and
+            // the EasyAccess reference: crafting tables, anvils, enchanting tables, looms,
+            // stonecutters and cartography/smithing tables included. This branch used to
+            // also require an inventory Container, which silently excluded all of those.
+            || state.getMenuProvider(mc.level, pos) != null;
     }
 
     /**
@@ -721,7 +756,10 @@ public class ForceAccess extends Module {
     private void addSolidAbove(BlockPos pos, Deque<BlockPos> out) {
         BlockPos above = pos.above();
         BlockState state = mc.level.getBlockState(above);
-        if (!state.isSolid()) return;
+        // Match vanilla's ChestBlock.isChestBlockedAt, which tests isRedstoneConductor.
+        // isCollisionShapeFullBlock is narrower: a slab or stair on the lid blocks the chest
+        // in vanilla but read as clear here, so the open is attempted and silently fails.
+        if (!state.isRedstoneConductor(mc.level, above)) return;
         if (state.getBlock() instanceof FallingBlock) {
             addFallingLid(above, out);
         } else if (!out.contains(above)) {
@@ -1123,6 +1161,10 @@ public class ForceAccess extends Module {
         gravityPasses = 0;
         clearingGravity = false;
         allowMine = false;
+        // hiddenLock is intentionally left alone here, it should only clear on
+        // use-key release (see tickAutoHidden).
+        hiddenBlock = false;
+        hiddenOwn = false;
         session++;
         phase = Phase.IDLE;
     }

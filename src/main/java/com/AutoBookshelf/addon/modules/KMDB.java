@@ -18,17 +18,14 @@ import net.minecraft.core.Direction;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
-import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
-import net.minecraft.world.phys.shapes.CollisionContext;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -876,12 +873,29 @@ public class KMDB extends Module {
      * the player until every cell is placeable rather than building something the server
      * will only half place.
      */
+    /**
+     * Whether there is something to build on, on the side this build actually hangs off.
+     *
+     * <p>Only the upside-down iron golem differs: its own "up" points down, so its base is the
+     * topmost cell and the support has to be above it. Checking below unconditionally demanded
+     * floor under a golem meant to be built from a ceiling. Every other mode and orientation
+     * sits on top of its support, which is what below() gives.
+     */
+    private boolean hasSupportAt(BlockPos pos) {
+        boolean upsideDownIron = buildMode.get() == BuildMode.IronGolem
+            && ironGolemUp() == Direction.DOWN;
+        BlockPos support = upsideDownIron ? pos.above() : pos.below();
+        BlockState state = mc.level.getBlockState(support);
+        return !state.isAir() && !state.canBeReplaced();
+    }
+
     private BlockPos manualFoot(List<int[]> placedOffsets, List<int[]> relativeOffsets) {
         Direction facing = mc.player.getDirection();
         BlockPos playerPos = mc.player.blockPosition();
 
         for (int d = placementDistance.get(); d >= 0; d--) {
             BlockPos pos = playerPos.relative(facing, d);
+            if (!airPlace.get() && !hasSupportAt(pos)) continue;
             if (structureFits(pos, relativeOffsets) && structureWithinReach(pos, placedOffsets)) return pos;
         }
         return null;
@@ -897,10 +911,7 @@ public class KMDB extends Module {
                 for (int z = -searchRadius; z <= searchRadius; z++) {
                     BlockPos pos = preferred.offset(x, y, z);
 
-                    if (!airPlace.get()) {
-                        BlockState belowState = mc.level.getBlockState(pos.below());
-                        if (belowState.isAir() || belowState.canBeReplaced()) continue;
-                    }
+                    if (!airPlace.get() && !hasSupportAt(pos)) continue;
 
                     if (structureFits(pos, relativeOffsets)) candidates.add(pos);
                 }
@@ -1045,6 +1056,17 @@ public class KMDB extends Module {
 
     private void airPlaceBlock(BlockPos pos, FindItemResult item, Direction face) {
         if (!item.found()) return;
+
+        if (item.isOffhand()) {
+            // Already in the off-hand, so place straight from it. Selecting it as the carried
+            // slot throws: SlotUtils.OFFHAND is 40 and Inventory.setSelectedSlot rejects
+            // anything outside the hotbar. Skipping the swap dance is also what Meteor's own
+            // BlockUtils.place does for this case.
+            mc.player.connection.send(new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND,
+                new BlockHitResult(Vec3.atCenterOf(pos), face, pos, false), 0));
+            mc.player.swing(InteractionHand.OFF_HAND);
+            return;
+        }
 
         int previousSlot = mc.player.getInventory().getSelectedSlot();
         mc.player.getInventory().setSelectedSlot(item.slot());
@@ -1298,7 +1320,17 @@ public class KMDB extends Module {
             return;
         }
 
-        for (BlockPos pos : golem.ironPositions()) place(pos, iron);
+        // Upside down the base is the topmost cell, so the body hanging beneath it has no face
+        // to be placed against until the base exists. Build base-first in that case only; every
+        // other orientation already starts with the base.
+        List<BlockPos> ironOrder = new ArrayList<>(golem.ironPositions());
+        if (up == Direction.DOWN) {
+            BlockPos body = golem.body();
+            ironOrder.remove(body);
+            ironOrder.add(0, body);
+        }
+
+        for (BlockPos pos : ironOrder) place(pos, iron);
         // Lastly a pumpkin, that is what triggers the spawn, and placing it over
         // an incomplete T just does nothing.
         place(golem.pumpkin(), pumpkin);

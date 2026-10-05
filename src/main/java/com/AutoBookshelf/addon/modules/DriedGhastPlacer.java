@@ -240,7 +240,7 @@ public class DriedGhastPlacer extends Module {
                     if (below.equals(playerFeet)) continue;
 
                     BlockState bs = mc.level.getBlockState(below);
-                    if (!bs.isSolid()) continue;
+                    if (!bs.isCollisionShapeFullBlock(mc.level, below)) continue;
                     if (bs.getBlock() == driedGhastBlock) continue;
 
                     targetPos = new BlockPos(pos.getX(), pos.getY(), pos.getZ());

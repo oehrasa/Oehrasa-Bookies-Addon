@@ -7,9 +7,7 @@ import com.AutoBookshelf.addon.utils.QueueUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 
-import java.util.Iterator;
-import java.util.Locale;
-import java.util.UUID;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -33,6 +31,8 @@ public final class LivemessageMatcher {
     // repeated client freezes. The template-generated patterns are linear and never trigger this.
     private static final long MATCH_BUDGET_NANOS = 10_000_000L;
     private static final long REDOS_WARN_INTERVAL_MS = 10_000L;
+    private static final int OVERRUNS_BEFORE_REMOVAL = 3;
+    private static final Map<Pattern, Integer> overrunCounts = new HashMap<>();
     private static long lastReDoSWarn = 0L;
 
     private static Matcher safeMatcher(Iterator<Pattern> patternIterator, Pattern pattern, String text) {
@@ -45,17 +45,25 @@ public final class LivemessageMatcher {
                 lastReDoSWarn = now;
                 LiveMessage.LOG.warn("Livemessage pattern '{}' took longer than {}ms to match; removing it to avoid client freezes. Check your regex patterns.", pattern, MATCH_BUDGET_NANOS / 1_000_000L);
             }
-            // Only ever drop user-supplied regex patterns from the editable pattern files. A
-            // one-off slow match (GC pause, JIT warmup) must never permanently discard a
-            // built-in default or a module incoming-format-*/outgoing-format-* setting, which
-            // are literal-ish strings rather than user regex.
-            if (patternIterator != null
+            // Only ever drop user-supplied regex patterns from the editable pattern files, and
+            // only after several overruns in a row: a one-off slow match (GC pause, JIT warmup)
+            // must never permanently discard a built-in default, a module
+            // incoming-format-*/outgoing-format-* setting, or a pattern the user configured.
+            boolean removable = patternIterator != null
                 && !LivemessageUtil.DEFAULT_PATTERNS.contains(pattern)
-                && !LivemessageUtil.MODULE_PATTERNS.contains(pattern)) {
-                patternIterator.remove();
+                && !LivemessageUtil.MODULE_PATTERNS.contains(pattern);
+            if (removable) {
+                int overruns = overrunCounts.merge(pattern, 1, Integer::sum);
+                if (overruns >= OVERRUNS_BEFORE_REMOVAL) {
+                    LiveMessage.LOG.warn("Livemessage pattern '{}' overran the match budget {} times in a row; removing it to avoid client freezes. Check your regex patterns.", pattern, overruns);
+                    patternIterator.remove();
+                    overrunCounts.remove(pattern);
+                }
             }
             return null;
         }
+        // A run inside the budget clears the streak, so only consecutive overruns count.
+        overrunCounts.remove(pattern);
         return matched ? matcher : null;
     }
 

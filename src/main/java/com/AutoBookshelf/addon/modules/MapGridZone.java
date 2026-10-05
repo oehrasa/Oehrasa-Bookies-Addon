@@ -21,7 +21,7 @@ public class MapGridZone extends Module {
     public final Setting<Boolean> mapZoneRender = sgDefault.add(new BoolSetting.Builder()
         .name("map-zones")
         .description("Render zones of map boundaries.")
-        .defaultValue(false)
+        .defaultValue(true)
         .build());
 
     private final Setting<Integer> mapZoneRange = sgDefault.add(new IntSetting.Builder()

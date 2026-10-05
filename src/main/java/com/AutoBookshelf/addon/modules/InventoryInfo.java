@@ -415,8 +415,17 @@ public class InventoryInfo extends Module {
             if (maxX < baseX) continue;
             if (p.x() > baseX + (both ? 3000 : grid.width())) continue;
 
-            drawBackground(event, p.x(), startY, maxX, endY);
-            event.graphics.fill(p.x(), startY - 1, maxX, startY, grid.info().color());
+            // The screen-wide clip does not stop a half-scrolled grid painting over the
+            // search bar, which sits between baseY and the grids. Clip to it for this grid.
+            // enableScissor pushes and disableScissor pops a Deque on this version, so the
+            // pair is balanced and the caller's screen-wide clip survives.
+            event.graphics.enableScissor(0, baseY, mc.getWindow().getGuiScaledWidth(), screenHeight);
+
+            // Clamp to the visible band so the colour header and background of a
+            // half-scrolled grid do not bleed upwards past the panel edge.
+            int drawStart = Math.max(startY, baseY);
+            drawBackground(event, p.x(), drawStart, maxX, endY);
+            event.graphics.fill(p.x(), startY - 1, maxX, drawStart, grid.info().color());
 
             int count = 0, drawX = p.x();
             int drawY = startY;
@@ -435,7 +444,7 @@ public class InventoryInfo extends Module {
                 }
 
                 drawScaledItem(event, stack, drawX, drawY, slotSize, scale);
-                if (isHovering(drawX, drawY, slotSize, event)) hoveredTooltip = stack;
+                if (drawY + slotSize > baseY && isHovering(drawX, drawY, slotSize, event)) hoveredTooltip = stack;
 
                 drawX += slotSize;
                 count++;
@@ -443,12 +452,14 @@ public class InventoryInfo extends Module {
 
             if (clicked != null
                 && clicked.x >= p.x() && clicked.x <= maxX
-                && clicked.y >= startY && clicked.y <= endY) {
+                && clicked.y >= Math.max(startY, baseY) && clicked.y <= endY) {
                 mc.gameMode.handleContainerInput(
                     mc.player.containerMenu.containerId,
                     grid.info().slot(), 0, ContainerInput.PICKUP, mc.player);
                 setClicked(null);
             }
+
+            event.graphics.disableScissor();
         }
 
         height = Math.max(maxBottom - offset, baseY - offset);
