@@ -515,7 +515,7 @@ public class KMDB extends Module {
     private BuildMode lastBuildMode;
 
     public KMDB() {
-        super(Addon.CATEGORY, "KMDB", "Builds Wither, Iron Golem, Snow Golem, or Copper Golem automatically.");
+        super(Addon.CATEGORY, "KMDB", "Builds Wither, Iron Golem, Snow Golem, Copper Golem, or Creaking automatically.");
     }
 
     @Override
@@ -805,7 +805,12 @@ public class KMDB extends Module {
         if (footCacheValid && footCacheHash == hash && footCacheRadius == radius
             && footCacheDistance == distance && footCacheAirPlace == air
             && footCachePlayerPos.equals(playerPos) && footCacheFacing == facing) {
-            return footCacheFoot;
+            // Entity positions are not part of the cache key, so a mob can walk into a spot
+            // that was clear when it was chosen. Re-validate before reusing it: the cached
+            // foot is only a hint about where to look, never a promise the cells are still free.
+            BlockPos cached = footCacheFoot;
+            if (cached != null && structureFits(cached, relativeOffsets)) return cached;
+            footCacheValid = false;
         }
 
         BlockPos found = findClearFootPosition(relativeOffsets, radius);
