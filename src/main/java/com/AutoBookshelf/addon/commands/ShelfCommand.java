@@ -183,6 +183,76 @@ public class ShelfCommand extends Command {
                 return SINGLE_SUCCESS;
             })
         );
+
+        // Writes the extracted book to <gameDir>/AutoBookshelf/<title>_<timestamp>.txt, same
+        // format as .booktranslate export. Exports the copy already in currentBook, so the book
+        // goes back on the shelf exactly as before, this never re-extracts.
+        builder.then(literal("export")
+            .executes(ctx -> {
+                return runExport(1, -1);
+            })
+            .then(argument("page", IntegerArgumentType.integer(1, 100))
+                .executes(ctx -> runExport(
+                    IntegerArgumentType.getInteger(ctx, "page"),
+                    IntegerArgumentType.getInteger(ctx, "page")))
+                .then(argument("endPage", IntegerArgumentType.integer(1, 100))
+                    .executes(ctx -> runExport(
+                        IntegerArgumentType.getInteger(ctx, "page"),
+                        IntegerArgumentType.getInteger(ctx, "endPage")))
+                )
+            )
+        );
+
+        // Translation: identical shape to .booktranslate, reading the extracted copy in
+        // currentBook rather than the hand.
+        addTranslation(builder, BookUtils.TranslateOutput.CHAT, "lang");
+        addTranslation(builder, BookUtils.TranslateOutput.GUI, "gui-translate");
+    }
+
+    private void addTranslation(LiteralArgumentBuilder<ClientSuggestionProvider> builder,
+                                BookUtils.TranslateOutput output, String name) {
+        builder.then(literal(name)
+            .executes(ctx -> runTranslate("en", 1, -1, output))
+            .then(argument("language", StringArgumentType.word())
+                .suggests(BookUtils::suggestLanguages)
+                .executes(ctx -> runTranslate(StringArgumentType.getString(ctx, "language"), 1, -1, output))
+                .then(argument("page", IntegerArgumentType.integer(1, 100))
+                    .executes(ctx -> {
+                        int page = IntegerArgumentType.getInteger(ctx, "page");
+                        return runTranslate(StringArgumentType.getString(ctx, "language"), page, page, output);
+                    })
+                    .then(argument("endPage", IntegerArgumentType.integer(1, 100))
+                        .executes(ctx -> {
+                            int start = IntegerArgumentType.getInteger(ctx, "page");
+                            int end = IntegerArgumentType.getInteger(ctx, "endPage");
+                            return runTranslate(StringArgumentType.getString(ctx, "language"), start, end, output);
+                        })
+                    )
+                )
+            )
+        );
+    }
+
+    /**
+     * Translates the extracted book. Requires {@code currentBook}, like every other subcommand
+     * here, and never re-extracts, the book goes back on the shelf as it was.
+     */
+    private int runTranslate(String targetLang, int startPage, int endPage, BookUtils.TranslateOutput output) {
+        if (currentBook == null) {
+            error("No book loaded. Use .shelf first to extract a book from a bookshelf");
+            return SINGLE_SUCCESS;
+        }
+        BookUtils.translate(currentBook, targetLang, startPage, endPage, output, this::info, this::error);
+        return SINGLE_SUCCESS;
+    }
+
+    private int runExport(int startPage, int endPage) {
+        if (currentBook == null) {
+            error("No book loaded. Use .shelf first to extract a book from a bookshelf");
+            return SINGLE_SUCCESS;
+        }
+        BookUtils.exportBook(currentBook, startPage, endPage, this::info, this::error);
+        return SINGLE_SUCCESS;
     }
 
     private void recordHoverEntry(BlockPos pos, int slot, String title, String author) {

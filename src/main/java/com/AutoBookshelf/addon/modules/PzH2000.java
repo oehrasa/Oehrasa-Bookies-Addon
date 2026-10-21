@@ -17,6 +17,8 @@ import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
@@ -32,7 +34,7 @@ import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -286,7 +288,7 @@ public class PzH2000 extends Module {
 
     private final Setting<Integer> blockedRecheckTicks = sgArtillery.add(new IntSetting.Builder()
         .name("blocked-recheck-ticks")
-        .description("Once a target is confirmed unreachable, wait this many ticks before spending another full search on it, instead of re-running the failed search every single tick.")
+        .description("Once a target is confirmed unreachable, wait this many ticks before spending another full search on it.")
         .defaultValue(20)
         .min(5)
         .sliderRange(5, 100)
@@ -303,10 +305,14 @@ public class PzH2000 extends Module {
 
     // Self-correction: track real fired arrows to measure actual vs. predicted
     // landing point, and accumulate a small running bias correction from it.
-    private final Set<Integer> knownArrowIds = new HashSet<>();
+    private static final int MAX_KNOWN_ARROW_IDS = 512;
+    private final Set<Integer> knownArrowIds = new LinkedHashSet<>();
     // Ids are server-recycled, so knownArrowIds would otherwise grow for the whole
     // session and a reused id would permanently fail the !contains() adoption test,
-    // silently costing that shot its bias correction. Cleared per session in reset().
+    // silently costing that shot its bias correction. Cleared on deactivate and when
+    // the world swaps (see onTick); capped because an entry only matters while its
+    // arrow is still in flight.
+    private ClientLevel lastKnownArrowWorld;
     private boolean wasUsingItemLastTick = false;
     private Entity pendingTargetRef;
     private Vec3 pendingTargetPos;
@@ -453,6 +459,13 @@ public class PzH2000 extends Module {
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.level == null) return;
+
+        // Stale ids from a previous world would permanently fail the !contains()
+        // adoption test in processPendingShot and disable the bias correction.
+        if (mc.level != lastKnownArrowWorld) {
+            knownArrowIds.clear();
+            lastKnownArrowWorld = mc.level;
+        }
 
         boolean isUsingNow = mc.player.isUsingItem();
 
@@ -670,10 +683,10 @@ public class PzH2000 extends Module {
     /**
      * Minimum launch speed (blocks/tick, drag ignored) needed to reach a point
      * at horizontal distance d and height difference dy under constant gravity
-     * g — the classic "safety parabola" envelope formula:
+     * g - the classic "safety parabola" envelope formula:
      * v_min = sqrt(g * (dy + sqrt(d^2 + dy^2)))
      * At exactly v_min there is only one possible launch angle (the two ballistic
-     * roots collapse to one), which is why we never target v_min directly —
+     * roots collapse to one), which is why we never target v_min directly -
      * see powerMargin's description.
      */
     private double computeMinimumSpeed(double d, double dy) {
@@ -683,7 +696,7 @@ public class PzH2000 extends Module {
     /**
      * Inverts the bow's charge curve to find the cheapest charge (in ticks,
      * clamped to [minChargeTicks, maxChargeTicks]) whose launch speed meets
-     * requiredSpeed. Pure arithmetic over ~20 candidates — no simulation —
+     * requiredSpeed. Pure arithmetic over ~20 candidates - no simulation -
      * used only to seed the feasibility lookahead's starting point.
      */
     private int ticksForSpeed(double requiredSpeed) {
@@ -713,6 +726,11 @@ public class PzH2000 extends Module {
                     && arrow.tickCount <= pendingWaitTicks + 1
                     && (pendingShooterPos == null || arrow.position().distanceToSqr(pendingShooterPos) <= 16.0D)) {
                     knownArrowIds.add(arrow.getId());
+                    // Oldest first (LinkedHashSet); an entry only matters while its arrow
+                    // is still in flight, so eviction is always safe.
+                    if (knownArrowIds.size() > MAX_KNOWN_ARROW_IDS) {
+                        knownArrowIds.remove(knownArrowIds.iterator().next());
+                    }
                     trackedArrow = arrow;
                     break;
                 }
@@ -874,7 +892,17 @@ public class PzH2000 extends Module {
             }
         }
 
-        event.renderer.box(target.getBoundingBox(), predictionColor.get(), predictionColor.get(), ShapeMode.Both, 0);
+        // Meteor ESP's tick interpolation. Render only: the hitbox used by the targeting logic
+        // above deliberately stays on the raw getBoundingBox(), because a lead error there
+        // would be a gameplay error rather than a visual one.
+        AABB box = target.getBoundingBox();
+        double x = Mth.lerp(event.tickDelta, target.xOld, target.getX()) - target.getX();
+        double y = Mth.lerp(event.tickDelta, target.yOld, target.getY()) - target.getY();
+        double z = Mth.lerp(event.tickDelta, target.zOld, target.getZ()) - target.getZ();
+        event.renderer.box(
+            x + box.minX, y + box.minY, z + box.minZ,
+            x + box.maxX, y + box.maxY, z + box.maxZ,
+            predictionColor.get(), predictionColor.get(), ShapeMode.Both, 0);
     }
 
     private boolean itemInHand() {
@@ -1160,11 +1188,9 @@ public class PzH2000 extends Module {
      */
     private double distanceToTarget(Vec3 point, Vec3 targetPos, AABB targetBox) {
         if (targetBox == null) return DistanceUtil.distance(point, targetPos);
-
-        double dx = Math.max(0.0, Math.max(targetBox.minX - point.x, point.x - targetBox.maxX));
-        double dy = Math.max(0.0, Math.max(targetBox.minY - point.y, point.y - targetBox.maxY));
-        double dz = Math.max(0.0, Math.max(targetBox.minZ - point.z, point.z - targetBox.maxZ));
-        return Math.sqrt(dx * dx + dy * dy + dz * dz);
+        return Math.sqrt(DistanceUtil.distanceSqToBox(point.x, point.y, point.z,
+            targetBox.minX, targetBox.minY, targetBox.minZ,
+            targetBox.maxX, targetBox.maxY, targetBox.maxZ));
     }
 
     @Override

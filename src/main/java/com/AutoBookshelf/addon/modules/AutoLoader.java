@@ -2,6 +2,7 @@ package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.PlacementEngine;
+import com.AutoBookshelf.addon.utils.ShulkerRestockEngine;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import meteordevelopment.meteorclient.events.meteor.MouseClickEvent;
@@ -21,7 +22,6 @@ import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
-import net.minecraft.tags.ItemTags;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ContainerInput;
@@ -50,7 +50,9 @@ public class AutoLoader extends Module {
         AUTO_TAKE,
         WAIT_CLOSE,
         BREAK,
-        BREAK_SECOND_ECHEST
+        BREAK_SECOND_ECHEST,
+        // Optional post-break step: walk to the box the break just dropped.
+        COLLECT
     }
 
     /**
@@ -58,12 +60,27 @@ public class AutoLoader extends Module {
      */
     private final PlacementEngine placementEngine = new PlacementEngine();
 
+    /**
+     * Walks to a dropped shulker box after the post-use break. Shared with PlatformBuilder and
+     * MaterialsRefill through {@link ShulkerRestockEngine.DropCollector}; AutoLoader drives it from
+     * its own {@link Stage#COLLECT} stage rather than the engine's state machine.
+     */
+    private final ShulkerRestockEngine.DropCollector dropCollector =
+        new ShulkerRestockEngine.DropCollector(mc, message -> info(message));
+
     // Mutable state
     private Stage stage = Stage.IDLE;
     private boolean isEnderChest = false;
     private boolean isBundle = false;
     private int containerInvSlot = -1;
     private int containerHotbarSlot = -1;
+
+    /**
+     * Hotbar index the container was swapped into and the inventory index it came from, or -1.
+     * The displaced stack is put back by {@link #restoreContainerSwap()}.
+     */
+    private int swappedHotbarSlot = -1;
+    private int swappedSourceSlot = -1;
 
     /**
      * Position of the block to open right now (usually the first chest).
@@ -154,6 +171,18 @@ public class AutoLoader extends Module {
         .build()
     );
 
+    /**
+     * After the post-use break, walk to the dropped shulker box and pick it up, via
+     * {@link ShulkerRestockEngine.DropCollector}. Off by default: it moves the player.
+     */
+    private final Setting<Boolean> collectDroppedShulker = sgGeneral.add(new BoolSetting.Builder()
+        .name("collect-dropped-shulker")
+        .description("After breaking the shulker, walk to the dropped box and pick it up.")
+        .defaultValue(false)
+        .visible(breakAfterUse::get)
+        .build()
+    );
+
     private final Setting<Boolean> autoTake = sgGeneral.add(new BoolSetting.Builder()
         .name("auto-take")
         .description("Automatically take all items from the container before it closes, instead of waiting for you to take them manually.")
@@ -171,8 +200,7 @@ public class AutoLoader extends Module {
 
     private final Setting<Boolean> doubleEChest = sgGeneral.add(new BoolSetting.Builder()
         .name("double-ender-chest")
-        .description("Place a second ender chest mirrored next to the first (same facing, same Y), " +
-            "then open the first one. Both are broken after you close.")
+        .description("Place a second ender chest mirrored next to the first (same facing, same Y)")
         .defaultValue(false)
         .visible(() -> instantEChest.get() && breakAfterUse.get())
         .build()
@@ -220,7 +248,7 @@ public class AutoLoader extends Module {
 
     private final Setting<Integer> hotbarSlotSetting = sgGeneral.add(new IntSetting.Builder()
         .name("hotbar-slot")
-        .description("Preferred hotbar slot (1-9) to move the container into.")
+        .description("Preferred hotbar slot (1-9) to move the container into. An empty slot is used first so nothing is displaced.")
         .defaultValue(1)
         .min(1)
         .max(9)
@@ -253,7 +281,7 @@ public class AutoLoader extends Module {
 
     private final Setting<Boolean> preferSolidBlock = sgPlacement.add(new BoolSetting.Builder()
         .name("prefer-solid-block")
-        .description("When air-place is on, try positions that have a solid block below first.")
+        .description("When air-place is on, prefer positions sitting on a full block over mid-air ones.")
         .defaultValue(true)
         .visible(airPlace::get)
         .build()
@@ -305,11 +333,14 @@ public class AutoLoader extends Module {
     }
 
     private void resetState() {
+        restoreContainerSwap();
         unlockRotation();
         isEnderChest = false;
         isBundle = false;
         containerInvSlot = -1;
         containerHotbarSlot = -1;
+        swappedHotbarSlot = -1;
+        swappedSourceSlot = -1;
         placedPos = null;
         firstPos = null;
         secondPos = null;
@@ -327,6 +358,7 @@ public class AutoLoader extends Module {
         autoTakeWaitTicks = 0;
         autoTakeTicks = 0;
         failedPositions.clear();
+        dropCollector.stop();
     }
 
     @EventHandler
@@ -388,6 +420,9 @@ public class AutoLoader extends Module {
             }
             case BREAK -> doBreak(false);
             case BREAK_SECOND_ECHEST -> doBreak(true);
+            case COLLECT -> {
+                if (!dropCollector.tick(false)) finish();
+            }
         }
     }
 
@@ -425,6 +460,8 @@ public class AutoLoader extends Module {
                 ContainerInput.SWAP,
                 mc.player
             );
+            swappedHotbarSlot = targetSlot;
+            swappedSourceSlot = containerInvSlot;
             containerInvSlot = targetSlot; // now <9, next doSetup() call falls through below
             delayTicks = 2;
             return;
@@ -595,6 +632,9 @@ public class AutoLoader extends Module {
                 stage = Stage.OPEN;
                 return;
             }
+            // Hand the first container's displaced stack back before pulling another one in: only
+            // one pending swap is tracked, so a full hotbar would otherwise strand the first one.
+            restoreContainerSwap();
             mc.gameMode.handleContainerInput(
                 mc.player.containerMenu.containerId,
                 containerInvSlot,
@@ -602,6 +642,8 @@ public class AutoLoader extends Module {
                 ContainerInput.SWAP,
                 mc.player
             );
+            swappedHotbarSlot = tgt;
+            swappedSourceSlot = containerInvSlot;
             containerInvSlot = tgt;
             containerHotbarSlot = tgt;
             delayTicks = 3;
@@ -770,8 +812,8 @@ public class AutoLoader extends Module {
      * reserved slot.
      */
     private boolean hasRoomForContents(AbstractContainerMenu handler) {
-        int empty = countEmptyPlayerSlots();
-        int keepFree = keepFreeSlots();
+        int empty = ShulkerRestockEngine.countEmptyPlayerSlots(mc);
+        int keepFree = ShulkerRestockEngine.keepFreeSlots(breakAfterUse.get());
         for (int i = 0; i < 27; i++) {
             ItemStack stack = handler.getSlot(i).getItem();
             if (stack.isEmpty()) continue;
@@ -820,18 +862,6 @@ public class AutoLoader extends Module {
         return false;
     }
 
-    private int keepFreeSlots() {
-        return breakAfterUse.get() ? 1 : 0;
-    }
-
-    private int countEmptyPlayerSlots() {
-        int empty = 0;
-        for (int i = 0; i < 36; i++) {
-            if (mc.player.getInventory().getItem(i).isEmpty()) empty++;
-        }
-        return empty;
-    }
-
     private void doBreak(boolean isSecond) {
         if (mc.gui.screen() != null) {
             mc.player.closeContainer();
@@ -855,7 +885,7 @@ public class AutoLoader extends Module {
 
         // Equip the best pickaxe for breaking
         if (!pickaxeEquipped) {
-            int ps = findPickaxeSlot();
+            int ps = ShulkerRestockEngine.findPickaxeSlot(mc);
             if (ps != -1) {
                 preBreakSlot = mc.player.getInventory().getSelectedSlot();
                 mc.player.getInventory().setSelectedSlot(ps);
@@ -925,9 +955,16 @@ public class AutoLoader extends Module {
         if (!wasSecond && secondPos != null && !mc.level.getBlockState(secondPos).isAir()) {
             placedPos = secondPos;
             stage = Stage.BREAK_SECOND_ECHEST;
-        } else {
-            finish();
+            return;
         }
+
+        // An ender chest drops an ender chest, not a shulker, so the collector would find nothing.
+        if (collectDroppedShulker.get() && !isEnderChest) {
+            dropCollector.start(placedPos);
+            stage = Stage.COLLECT;
+            return;
+        }
+        finish();
     }
 
     private void finish() {
@@ -1031,11 +1068,47 @@ public class AutoLoader extends Module {
 
     private int resolveHotbarSlot() {
         int pref = hotbarSlotSetting.get() - 1;
+
+        // Nothing is displaced when an empty slot takes the container, so try that first.
+        for (int i = 0; i < 9; i++) {
+            if (mc.player.getInventory().getItem(i).isEmpty()) return i;
+        }
+
         if (!isProtected(mc.player.getInventory().getItem(pref))) return pref;
         for (int i = 0; i < 9; i++) {
             if (i != pref && !isProtected(mc.player.getInventory().getItem(i))) return i;
         }
         return -1;
+    }
+
+    /**
+     * Puts the container item back where it came from and returns whatever was displaced when it
+     * was pulled into the hotbar.
+     *
+     * <p>Only the selection used to be restored, so a stack that lived in the target hotbar slot
+     * stayed in the inventory for good. Guarded on the slot still holding a container or nothing
+     * once it has been placed, so a player who rearranged mid-run is not relocated.
+     */
+    private void restoreContainerSwap() {
+        if (swappedHotbarSlot < 0 || swappedSourceSlot < 0) return;
+        if (mc.player == null || mc.player.containerMenu != mc.player.inventoryMenu) return;
+
+        ItemStack inHotbar = mc.player.getInventory().getItem(swappedHotbarSlot);
+        boolean ours = inHotbar.isEmpty()
+            || isShulkerBox(inHotbar)
+            || inHotbar.getItem() == Items.ENDER_CHEST
+            || isBundleItem(inHotbar);
+        if (!ours) return;
+
+        mc.gameMode.handleContainerInput(
+            mc.player.containerMenu.containerId,
+            swappedSourceSlot,
+            swappedHotbarSlot,
+            ContainerInput.SWAP,
+            mc.player
+        );
+        swappedHotbarSlot = -1;
+        swappedSourceSlot = -1;
     }
 
     private boolean isProtected(ItemStack stack) {
@@ -1058,13 +1131,6 @@ public class AutoLoader extends Module {
     private int searchInventory() {
         for (int i = 0; i < 36; i++) {
             if (isExpectedItem(mc.player.getInventory().getItem(i))) return i;
-        }
-        return -1;
-    }
-
-    private int findPickaxeSlot() {
-        for (int i = 0; i < 9; i++) {
-            if (mc.player.getInventory().getItem(i).is(ItemTags.PICKAXES)) return i;
         }
         return -1;
     }

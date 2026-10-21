@@ -18,8 +18,10 @@ import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.BaseRailBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -39,18 +41,35 @@ public class MinecartPlacer extends Module {
     private int cachedEmptyHotbarSlot = -1;
 
     private enum MinecartType {
-        MINECART(Items.MINECART, "Minecart"),
-        CHEST_MINECART(Items.CHEST_MINECART, "Chest Minecart"),
-        FURNACE_MINECART(Items.FURNACE_MINECART, "Furnace Minecart"),
-        TNT_MINECART(Items.TNT_MINECART, "TNT Minecart"),
-        HOPPER_MINECART(Items.HOPPER_MINECART, "Hopper Minecart");
+        MINECART(Items.MINECART, "Minecart", "Minecarts"),
+        CHEST_MINECART(Items.CHEST_MINECART, "Chest Minecart", "Chest Minecarts"),
+        FURNACE_MINECART(Items.FURNACE_MINECART, "Furnace Minecart", "Furnace Minecarts"),
+        TNT_MINECART(Items.TNT_MINECART, "TNT Minecart", "TNT Minecarts"),
+        HOPPER_MINECART(Items.HOPPER_MINECART, "Hopper Minecart", "Hopper Minecarts"),
+        // Appended last so no existing entry shifts in the settings dropdown.
+        ANY(null, "Any Minecart", "Minecarts");
 
         final Item item;
         final String name;
+        final String plural;
 
-        MinecartType(Item item, String name) {
+        MinecartType(Item item, String name, String plural) {
             this.item = item;
             this.name = name;
+            this.plural = plural;
+        }
+
+        /**
+         * ANY is a null item, so every lookup has to go through this rather than
+         * comparing against the entry's own item.
+         */
+        boolean matches(ItemStack stack) {
+            if (stack.isEmpty()) return false;
+            Item held = stack.getItem();
+            if (item != null) return held == item;
+            return held == Items.MINECART || held == Items.CHEST_MINECART
+                || held == Items.FURNACE_MINECART || held == Items.TNT_MINECART
+                || held == Items.HOPPER_MINECART || held == Items.COMMAND_BLOCK_MINECART;
         }
 
         @Override
@@ -60,17 +79,31 @@ public class MinecartPlacer extends Module {
     }
 
     private enum RailType {
-        DETECTOR_RAIL(Blocks.DETECTOR_RAIL, "Detector Rail"),
-        POWERED_RAIL(Blocks.POWERED_RAIL, "Powered Rail"),
-        ACTIVATOR_RAIL(Blocks.ACTIVATOR_RAIL, "Activator Rail"),
-        RAIL(Blocks.RAIL, "Rail");
+        DETECTOR_RAIL(Blocks.DETECTOR_RAIL, "Detector Rail", "Detector Rails"),
+        POWERED_RAIL(Blocks.POWERED_RAIL, "Powered Rail", "Powered Rails"),
+        ACTIVATOR_RAIL(Blocks.ACTIVATOR_RAIL, "Activator Rail", "Activator Rails"),
+        RAIL(Blocks.RAIL, "Rail", "Rails"),
+        // Appended last so no existing entry shifts in the settings dropdown.
+        ANY(null, "Any Rail", "Rails");
 
         final Block block;
         final String name;
+        final String plural;
 
-        RailType(Block block, String name) {
+        RailType(Block block, String name, String plural) {
             this.block = block;
             this.name = name;
+            this.plural = plural;
+        }
+
+        /**
+         * ANY is a null block, so use vanilla's own rail predicate rather than a
+         * comparison against the entry's own block. BaseRailBlock.isRail covers all
+         * four rail blocks (activator rail is an anonymous PoweredRailBlock).
+         */
+        boolean matches(BlockState state) {
+            if (block != null) return state.getBlock() == block;
+            return BaseRailBlock.isRail(state);
         }
 
         @Override
@@ -181,13 +214,13 @@ public class MinecartPlacer extends Module {
         targetRails.clear();
         BlockPos center = mc.player.blockPosition();
         int rad = radius.get();
-        Block targetRail = railType.get().block;
+        RailType type = railType.get();
 
         for (int x = -rad; x <= rad; x++) {
             for (int y = -rad; y <= rad; y++) {
                 for (int z = -rad; z <= rad; z++) {
                     BlockPos pos = center.offset(x, y, z);
-                    if (mc.level.getBlockState(pos).getBlock() == targetRail) {
+                    if (type.matches(mc.level.getBlockState(pos))) {
                         targetRails.add(pos);
                     }
                 }
@@ -195,7 +228,7 @@ public class MinecartPlacer extends Module {
         }
 
         if (targetRails.isEmpty()) {
-            info("§cNo " + railType.get().name + " found within " + rad + " blocks!");
+            info("§cNo " + type.name + " found within " + rad + " blocks!");
             toggle();
             return;
         }
@@ -216,13 +249,32 @@ public class MinecartPlacer extends Module {
         cachedMinecartSlot = -1;
         cachedEmptyHotbarSlot = -1;
 
-        info("§aFound §f" + targetRails.size() + " §a" + railType.get().name + "s. Placing " + minecartType.get().name + "s...");
+        info("§aFound §f" + targetRails.size() + " §a" + railType.get().plural + ". Placing " + minecartType.get().plural + "...");
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.level == null) return;
         if (!placing) return;
+
+        // The rails were collected around wherever the player stood at activation, and the
+        // fabricated hit result is sent no matter how far away the player is - the server just
+        // rejects it, so the module would keep firing (and counting) placements that never
+        // happen. Stop once nothing collected is within the search radius of the player.
+        BlockPos playerPos = mc.player.blockPosition();
+        int rad = radius.get();
+        boolean anyInRange = false;
+        for (BlockPos pos : targetRails) {
+            if (inRange(pos, playerPos, rad)) {
+                anyInRange = true;
+                break;
+            }
+        }
+        if (!anyInRange) {
+            info("§eMoved out of range of the " + railType.get().plural + ". Stopping.");
+            placing = false;
+            return;
+        }
 
         // Handle waiting for minecarts
         if (waitingForMinecarts) {
@@ -258,7 +310,7 @@ public class MinecartPlacer extends Module {
 
         // Loop through all rails to find one that needs a minecart
         boolean foundRail = false;
-        Block targetRail = railType.get().block;
+        RailType targetRail = railType.get();
         boolean shouldSkipOccupied = skipOccupied.get();
 
         for (int i = 0; i < targetRails.size(); i++) {
@@ -266,7 +318,12 @@ public class MinecartPlacer extends Module {
             BlockPos railPos = targetRails.get(index);
 
             // Check if block is still the correct rail type
-            if (mc.level.getBlockState(railPos).getBlock() != targetRail) {
+            if (!targetRail.matches(mc.level.getBlockState(railPos))) {
+                continue;
+            }
+
+            // Do not place at a rail the player has since moved away from.
+            if (!inRange(railPos, playerPos, rad)) {
                 continue;
             }
 
@@ -285,7 +342,7 @@ public class MinecartPlacer extends Module {
                 if (!waitingForMinecarts) {
                     waitingForMinecarts = true;
                     waitCounter = checkDelay.get();
-                    info("§eOut of " + minecartType.get().name + "s! Waiting for more...");
+                    info("§eOut of " + minecartType.get().plural + "! Waiting for more...");
                 }
                 return;
             }
@@ -313,20 +370,30 @@ public class MinecartPlacer extends Module {
         return !mc.level.getEntitiesOfClass(AbstractMinecart.class, box, e -> true).isEmpty();
     }
 
+    /**
+     * Rails are collected in the Chebyshev box {@code ±rad} around the activation point, and the
+     * same box anchored to the player's current position is what keeps a run from continuing after
+     * they walk away. Takes the player position in rather than reading it per rail so the tick loop
+     * and the render path each allocate it once.
+     */
+    private boolean inRange(BlockPos pos, BlockPos playerPos, int rad) {
+        return Math.abs(pos.getX() - playerPos.getX()) <= rad
+            && Math.abs(pos.getY() - playerPos.getY()) <= rad
+            && Math.abs(pos.getZ() - playerPos.getZ()) <= rad;
+    }
+
     private int findMinecartInInventory() {
-        Item targetItem = minecartType.get().item;
+        MinecartType type = minecartType.get();
 
         if (cachedMinecartSlot != -1) {
-            ItemStack cached = mc.player.getInventory().getItem(cachedMinecartSlot);
-            if (!cached.isEmpty() && cached.getItem() == targetItem) {
+            if (type.matches(mc.player.getInventory().getItem(cachedMinecartSlot))) {
                 return cachedMinecartSlot;
             }
             cachedMinecartSlot = -1;
         }
 
         for (int i = 0; i < 36; i++) {
-            ItemStack stack = mc.player.getInventory().getItem(i);
-            if (!stack.isEmpty() && stack.getItem() == targetItem) {
+            if (type.matches(mc.player.getInventory().getItem(i))) {
                 cachedMinecartSlot = i;
                 return i;
             }
@@ -349,15 +416,14 @@ public class MinecartPlacer extends Module {
         );
 
         int previousSlot = mc.player.getInventory().getSelectedSlot();
-        Item targetItem = minecartType.get().item;
+        MinecartType targetType = minecartType.get();
 
         Rotations.rotate(Rotations.getYaw(targetPos), Rotations.getPitch(targetPos), () -> {
             // The slot content may have changed while the rotation was pending
             // (packet lag, inventory fiddling). A minecart that is no longer
-            // there means nothing to place — leave the rail untouched instead of
+            // there means nothing to place; leave the rail untouched instead of
             // swapping in whatever now sits in that slot.
-            ItemStack held = mc.player.getInventory().getItem(slot);
-            if (held.isEmpty() || held.getItem() != targetItem) return;
+            if (!targetType.matches(mc.player.getInventory().getItem(slot))) return;
 
             // Switch to minecart slot
             if (slot < 9) {
@@ -415,18 +481,26 @@ public class MinecartPlacer extends Module {
     @EventHandler
     private void onRender(Render3DEvent event) {
         if (!render.get()) return;
+        if (mc.player == null || mc.level == null) return;
         if (!placing) return;
         if (targetRails.isEmpty()) return;
         if (waitingForMinecarts) return;
 
         // Find the next rail to place
+        BlockPos playerPos = mc.player.blockPosition();
+        int rad = radius.get();
         BlockPos nextRail = null;
         for (int i = 0; i < targetRails.size(); i++) {
             int index = (currentIndex + i) % targetRails.size();
             BlockPos railPos = targetRails.get(index);
 
             // Check if block is still the correct rail type
-            if (mc.level.getBlockState(railPos).getBlock() != railType.get().block) {
+            if (!railType.get().matches(mc.level.getBlockState(railPos))) {
+                continue;
+            }
+
+            // Out-of-range rails are skipped by the placement loop too, so do not highlight one.
+            if (!inRange(railPos, playerPos, rad)) {
                 continue;
             }
 

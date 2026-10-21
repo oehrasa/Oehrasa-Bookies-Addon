@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
@@ -290,6 +291,20 @@ public class SculkRange extends Module {
     private boolean selectKeyWasDown;
     private long tickCounter;
 
+    /**
+     * Cached solidity of the voxels in the current render sets, keyed by packed pos. Populated
+     * in {@link #rebuildAllExposedBlocks()} and kept fresh by {@link #onBlockUpdate}; the render
+     * path only tests membership instead of doing a {@code level.getBlockState} per voxel per frame.
+     */
+    private final LongOpenHashSet solidVoxels = new LongOpenHashSet();
+
+    /**
+     * Reused mutable pos for the six neighbour reads in {@link #passesOcclusion}, so that method
+     * allocates nothing per voxel per frame (the previous {@code pos.relative(dir)} allocated a
+     * new {@code BlockPos} for every direction of every voxel).
+     */
+    private final BlockPos.MutableBlockPos scanPos = new BlockPos.MutableBlockPos();
+
     // Snapshot of the settings that shape generated spheres; rebuildAllSpheres skips
     // regeneration when neither actually changed, since the onChanged handlers can
     // fire more than once for the same value.
@@ -483,7 +498,6 @@ public class SculkRange extends Module {
         w.submit(() -> {
             Set<SensorData> found = new HashSet<>();
             scanChunkForSensors(event.chunk(), found, trackNormal, trackShrieker, advanced);
-            if (found.isEmpty()) return;
             mc.execute(() -> {
                 if (!isActive()) return;
                 boolean changed = false;
@@ -494,6 +508,7 @@ public class SculkRange extends Module {
                     }
                 }
                 if (changed) rebuildAllExposedBlocks();
+                else refreshSolidVoxels();
             });
         });
     }
@@ -559,6 +574,21 @@ public class SculkRange extends Module {
                 || isRedstoneComponent(event.oldState)
                 || isRedstoneComponent(event.newState);
             if (relevant) updateAdvancedNear(pos);
+        }
+
+        // Keep the cached solidity set fresh for the per-frame highlight read. Only voxels in a
+        // sensor's render set matter; everything else is irrelevant.
+        boolean inRenderSet = false;
+        for (SensorData s : sensors) {
+            Set<BlockPos> renderSet = s.exposedBlocks.isEmpty() ? s.sphereBlocks : s.exposedBlocks;
+            if (renderSet.contains(pos)) {
+                inRenderSet = true;
+                break;
+            }
+        }
+        if (inRenderSet) {
+            if (readIsSolid(pos)) solidVoxels.add(pos.asLong());
+            else solidVoxels.remove(pos.asLong());
         }
     }
 
@@ -647,6 +677,17 @@ public class SculkRange extends Module {
         } else {
             for (SensorData s : sensors) s.exposedBlocks = exposedIn(s.sphereBlocks, s.sphereBlocks);
         }
+
+        // Cache which of the (now-final) render-set voxels are solid, so onRender never does a
+        // level.getBlockState per voxel per frame. Rebuilt here because this is the only place the
+        // render sets change shape; per-block changes are handled by onBlockUpdate.
+        solidVoxels.clear();
+        for (SensorData s : sensors) {
+            Set<BlockPos> renderSet = s.exposedBlocks.isEmpty() ? s.sphereBlocks : s.exposedBlocks;
+            for (BlockPos p : renderSet) {
+                if (readIsSolid(p)) solidVoxels.add(p.asLong());
+            }
+        }
     }
 
     private static Set<BlockPos> exposedIn(Set<BlockPos> own, Set<BlockPos> ref) {
@@ -715,8 +756,28 @@ public class SculkRange extends Module {
     }
 
     private boolean isSolidVoxel(BlockPos pos) {
+        return solidVoxels.contains(pos.asLong());
+    }
+
+    /**
+     * The world-read solidity test; used only when rebuilding the cache, never per frame.
+     */
+    private boolean readIsSolid(BlockPos pos) {
         BlockState state = mc.level.getBlockState(pos);
         return !state.isAir() && state.canOcclude();
+    }
+
+    /**
+     * Rebuilds the cached solidity set from the current render sets (cheap; no allocations beyond the set).
+     */
+    private void refreshSolidVoxels() {
+        solidVoxels.clear();
+        for (SensorData s : sensors) {
+            Set<BlockPos> renderSet = s.exposedBlocks.isEmpty() ? s.sphereBlocks : s.exposedBlocks;
+            for (BlockPos p : renderSet) {
+                if (readIsSolid(p)) solidVoxels.add(p.asLong());
+            }
+        }
     }
 
     @EventHandler
@@ -777,7 +838,8 @@ public class SculkRange extends Module {
     private boolean passesOcclusion(BlockPos pos, OcclusionMode mode, Vec3 eye) {
         if (mode == OcclusionMode.None) return true;
         for (Direction dir : DIRECTIONS) {
-            BlockState nb = mc.level.getBlockState(pos.relative(dir));
+            scanPos.set(pos.getX() + dir.getStepX(), pos.getY() + dir.getStepY(), pos.getZ() + dir.getStepZ());
+            BlockState nb = mc.level.getBlockState(scanPos);
             if (!nb.isAir() && nb.canOcclude()) continue;   // this face is blocked by a solid world block
             if (mode == OcclusionMode.Simple) return true;
             // Accurate: the eye-to-face vector must align with the face normal.

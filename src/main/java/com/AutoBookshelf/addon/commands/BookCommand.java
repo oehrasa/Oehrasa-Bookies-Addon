@@ -53,6 +53,36 @@ public class BookCommand extends Command {
                 return SINGLE_SUCCESS;
             })
         );
+
+        // Writes the held book to <gameDir>/AutoBookshelf/<title>_<timestamp>.txt, same format as
+        // .booktranslate export.
+        builder.then(literal("export")
+            .executes(ctx -> {
+                ItemStack item = requireHeldBook();
+                if (item == null) return SINGLE_SUCCESS;
+                BookUtils.exportBook(item, 1, -1, this::info, this::error);
+                return SINGLE_SUCCESS;
+            })
+            .then(argument("page", IntegerArgumentType.integer(1, 100))
+                .executes(ctx -> {
+                    ItemStack item = requireHeldBook();
+                    if (item == null) return SINGLE_SUCCESS;
+                    int pageNum = IntegerArgumentType.getInteger(ctx, "page");
+                    BookUtils.exportBook(item, pageNum, pageNum, this::info, this::error);
+                    return SINGLE_SUCCESS;
+                })
+                .then(argument("endPage", IntegerArgumentType.integer(1, 100))
+                    .executes(ctx -> {
+                        ItemStack item = requireHeldBook();
+                        if (item == null) return SINGLE_SUCCESS;
+                        int start = IntegerArgumentType.getInteger(ctx, "page");
+                        int end = IntegerArgumentType.getInteger(ctx, "endPage");
+                        BookUtils.exportBook(item, start, end, this::info, this::error);
+                        return SINGLE_SUCCESS;
+                    })
+                )
+            )
+        );
     }
 
     private ItemStack requireHeldBook() {

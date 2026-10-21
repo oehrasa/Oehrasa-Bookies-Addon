@@ -1,8 +1,8 @@
 package com.AutoBookshelf.addon.modules;
-//1.21.11 yarn mapping
 
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.DistanceUtil;
+import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -16,16 +16,15 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
@@ -36,7 +35,6 @@ public class MURADAESA extends Module {
     private static final double CONFIRM_PLAYER_RADIUS_BLOCKS = 12.0;
     private static final double CONFIRM_PLAYER_RADIUS_SQ =
         CONFIRM_PLAYER_RADIUS_BLOCKS * CONFIRM_PLAYER_RADIUS_BLOCKS;
-    private static final long RECENT_EVENT_WINDOW_MS = 2500L;
     private static final long STATE_CACHE_TTL_MS = 120000L;
     // Rebuild throttles: expire/resync state at most once per CLEANUP_INTERVAL_TICKS
     // and re-filter/re-sort pings for render at most once per RENDER_SORT_INTERVAL
@@ -50,6 +48,41 @@ public class MURADAESA extends Module {
     private static final int BURST_THRESHOLD = 12;
     private static final double BURST_RADIUS_BLOCKS = 24.0;
     private static final double BURST_RADIUS_SQ = BURST_RADIUS_BLOCKS * BURST_RADIUS_BLOCKS;
+
+    // Cumulative redstone score at one position required before it earns a marker.
+    // One flip scores REDSTONE_SCORE (1.7), so this needs two.
+    private static final double REDSTONE_SCORE = 1.7;
+    private static final double PLACE_BREAK_SCORE = 4.0;
+    private static final double REDSTONE_MARKER_THRESHOLD = REDSTONE_SCORE * 2;
+
+    /**
+     * Redstone positions that have scored, but not enough for a marker yet. Cleared by the
+     * same cleanup pass as everything else, otherwise a block that toggles once and then
+     * stops would accumulate forever and produce a marker minutes later.
+     */
+    private final Map<Long, PendingRedstone> pendingRedstone = new ConcurrentHashMap<>();
+
+    private record PendingRedstone(double score, long timeMs) {
+    }
+
+    /**
+     * Hard cap on {@link #knownStates}. TTL alone is not a bound: it holds 120 seconds of
+     * every block update in range, and on a busy server that is a large map swept on a
+     * 10-tick cadence. When the cap trips we drop the oldest entries first.
+     */
+    private static final int MAX_KNOWN_STATES = 20000;
+
+    /**
+     * Hysteresis for the 128-block cutoff. A marker is only revoked once the player is
+     * inside (PLAYER_ESP_LIMIT_BLOCKS - REVOKE_HYSTERESIS_BLOCKS), so standing on the
+     * boundary no longer makes markers strobe on and off, and you can actually walk up
+     * to a marker you were investigating instead of having it vanish on approach.
+     */
+    private static final double REVOKE_HYSTERESIS_BLOCKS = 12.0;
+    private static final double REVOKE_HYSTERESIS_BLOCKS_MAX =
+        Math.max(PLAYER_ESP_LIMIT_BLOCKS - REVOKE_HYSTERESIS_BLOCKS, 0);
+    private static final double REVOKE_RANGE_SQ =
+        REVOKE_HYSTERESIS_BLOCKS_MAX * REVOKE_HYSTERESIS_BLOCKS_MAX;
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRender = settings.createGroup("Render");
@@ -145,6 +178,24 @@ public class MURADAESA extends Module {
     private final Map<Long, AESAPing> pings = new ConcurrentHashMap<>();
     private final Map<Long, CachedState> knownStates = new ConcurrentHashMap<>();
     private final ConcurrentLinkedDeque<RecentEvent> recentEvents = new ConcurrentLinkedDeque<>();
+
+    /**
+     * Every map above is keyed by {@code BlockPos#asLong()}, which packs only x/y/z and
+     * carries no dimension. Without this guard a nether portal transition leaves Overworld
+     * markers rendering at the same coordinates in the Nether, and - worse - an Overworld
+     * block state gets fed to {@link #resolveOldState} as the "old" state for the Nether's
+     * block at the same coords, manufacturing PLACE/BREAK detections out of nothing.
+     *
+     * <p>Compared by identity on purpose: {@code Level#dimension()} returns the same
+     * {@link ResourceKey} instance for the life of a {@link Level}, so {@code !=} is both
+     * correct and allocation-free on the packet hot path. The key alone is not enough though:
+     * it is a canonical constant shared by every level in that dimension, so switching between
+     * two worlds that are both the Overworld would compare equal. The {@link Level} instance is
+     * tracked too, and the level is treated as unchanged only when <em>both</em> identities match.
+     */
+    private ResourceKey<Level> lastDimension = null;
+    private Level lastLevel = null;
+
     private int cleanupTickCounter = 0;
     private int renderSortCounter = 0;
     private List<AESAPing> sortedRenderCache = null;
@@ -156,10 +207,24 @@ public class MURADAESA extends Module {
 
     @Override
     public void onDeactivate() {
+        resetAll();
+    }
+
+    @EventHandler
+    private void onGameLeft(GameLeftEvent event) {
+        // Without this, stale markers and - worse - stale block states survive a
+        // disconnect and seed the next world with phantom detections.
+        resetAll();
+    }
+
+    private void resetAll() {
         pings.clear();
         knownStates.clear();
         recentEvents.clear();
+        pendingRedstone.clear();
         sortedRenderCache = null;
+        lastDimension = null;
+        lastLevel = null;
     }
 
     @EventHandler
@@ -186,6 +251,11 @@ public class MURADAESA extends Module {
         if (pos == null || newState == null)
             return;
 
+        // Checked before isInAllowedRange so a stale-dimension state can never be
+        // compared against an incoming update, which is the false-positive path.
+        if (!sameDimension())
+            return;
+
         if (!isInAllowedRange(pos))
             return;
 
@@ -207,7 +277,21 @@ public class MURADAESA extends Module {
         if (suppressBursts.get() && isWithinBurst(pos, now))
             return;
 
-        updatePing(pos, detection.kind, detection.oldId, detection.newId);
+        // Score is a real weight, not a label. A redstone flip is worth half a block
+        // break, so one stray toggle no longer earns a marker on its own, two flips at
+        // the same spot do. Previously every score>0 detection produced an identical
+        // marker, which made the "weaker hints" claim in the setting description untrue.
+        if (detection.kind.equals("REDSTONE")) {
+            PendingRedstone prior = pendingRedstone.get(key);
+            double accumulated = detection.score + (prior != null ? prior.score : 0);
+            if (accumulated < REDSTONE_MARKER_THRESHOLD) {
+                pendingRedstone.put(key, new PendingRedstone(accumulated, now));
+                return;
+            }
+            pendingRedstone.remove(key);
+        }
+
+        updatePing(pos, detection.kind, detection.oldId, detection.newId, detection.score);
         recordRecentEvent(pos, now);
     }
 
@@ -228,17 +312,17 @@ public class MURADAESA extends Module {
             return DetectionResult.NONE;
 
         if (oldAir && !newAir && !newFluid)
-            return new DetectionResult(4.0, "PLACE", oldId, newId);
+            return new DetectionResult(PLACE_BREAK_SCORE, "PLACE", oldId, newId);
 
         if (!oldAir && !oldFluid && newAir)
-            return new DetectionResult(4.0, "BREAK", oldId, newId);
+            return new DetectionResult(PLACE_BREAK_SCORE, "BREAK", oldId, newId);
 
         if (!detectRedstoneInteraction.get())
             return DetectionResult.NONE;
 
         if (oldState.getBlock() == newState.getBlock()) {
             if (hasInteractiveFlip(oldState, newState))
-                return new DetectionResult(1.7, "REDSTONE", oldId, newId);
+                return new DetectionResult(REDSTONE_SCORE, "REDSTONE", oldId, newId);
             return DetectionResult.NONE;
         }
 
@@ -249,26 +333,93 @@ public class MURADAESA extends Module {
         return isLikelyNaturalBlock(oldId) || isLikelyNaturalBlock(newId);
     }
 
+    /**
+     * Block ids that change on their own from weather, growth, decay or physics,
+     * and so are NOT evidence of a player. This is an exact-id allowlist, never a
+     * substring test.
+     *
+     * <p><b>Why exact:</b> the previous {@code blockId.contains(...)} version silently
+     * hid real player builds. {@code contains("sand")} matched {@code minecraft:sandstone},
+     * {@code red_sandstone}, {@code soul_sand}, {@code cut_sandstone} and every slab/stair/
+     * wall variant; {@code contains("moss")} matched {@code mossy_cobblestone} and
+     * {@code mossy_stone_bricks}; {@code contains("snow")} matched {@code snow_block}.
+     * Conversely {@code contains("crop")} matched only {@code torchflower_crop} /
+     * {@code pitcher_crop} and missed the actual crops ({@code wheat}, {@code carrots},
+     * {@code potatoes}, {@code beetroots}) entirely.
+     *
+     * <p>Every id below was verified to exist as a {@code Blocks} field on 26.2.
+     * Note {@code snow} here is the *weather snow layer*
+     * ({@code SnowLayerBlock}, built up by snowfall) and is deliberately natural;
+     * {@code snow_block} is the player-placed full block and is deliberately NOT listed.
+     */
+    private static final Set<String> NATURAL_BLOCK_IDS = Set.of(
+        // Snowfall accumulation + ice. snow = the layer snowfall builds, NOT snow_block.
+        // packed_ice / blue_ice are deliberately NOT listed: neither melts nor forms at runtime
+        // (worldgen only), so any update to either is player-caused. Listing them would filter out
+        // real player activity (a false negative), which is the opposite of what this set is for.
+        "minecraft:snow", "minecraft:ice", "minecraft:frosted_ice", "minecraft:powder_snow",
+        // Moss / lichen spread
+        "minecraft:moss_block", "minecraft:moss_carpet",
+        "minecraft:pale_moss_block", "minecraft:pale_moss_carpet",
+        "minecraft:pale_hanging_moss", "minecraft:glow_lichen",
+        // Vines and cave growth
+        "minecraft:vine", "minecraft:cave_vines",
+        // Grass / ferns / dead bushes (spreading + decay)
+        "minecraft:short_grass", "minecraft:tall_grass",
+        "minecraft:fern", "minecraft:large_fern", "minecraft:dead_bush",
+        // Leaf decay and growth
+        "minecraft:oak_leaves", "minecraft:spruce_leaves", "minecraft:birch_leaves",
+        "minecraft:jungle_leaves", "minecraft:acacia_leaves", "minecraft:dark_oak_leaves",
+        "minecraft:mangrove_leaves", "minecraft:cherry_leaves", "minecraft:pale_oak_leaves",
+        "minecraft:azalea_leaves", "minecraft:flowering_azalea_leaves",
+        "minecraft:azalea", "minecraft:flowering_azalea", "minecraft:mangrove_roots",
+        // Physics: falling / drifting blocks
+        "minecraft:sand", "minecraft:red_sand", "minecraft:gravel",
+        "minecraft:suspicious_sand",
+        // Concrete powder hardens on its own schedule. There is NO bare
+        // "minecraft:concrete_powder" id -> Blocks.CONCRETE_POWDER is a ColorCollection<Block>
+        // of the 16 dyed variants, so all 16 must be listed by name.
+        "minecraft:white_concrete_powder", "minecraft:orange_concrete_powder",
+        "minecraft:magenta_concrete_powder", "minecraft:light_blue_concrete_powder",
+        "minecraft:yellow_concrete_powder", "minecraft:lime_concrete_powder",
+        "minecraft:pink_concrete_powder", "minecraft:gray_concrete_powder",
+        "minecraft:light_gray_concrete_powder", "minecraft:cyan_concrete_powder",
+        "minecraft:purple_concrete_powder", "minecraft:blue_concrete_powder",
+        "minecraft:brown_concrete_powder", "minecraft:green_concrete_powder",
+        "minecraft:red_concrete_powder", "minecraft:black_concrete_powder",
+        // Crops (the four the substring version used to miss) + nether growth
+        "minecraft:wheat", "minecraft:carrots", "minecraft:potatoes",
+        "minecraft:beetroots", "minecraft:torchflower_crop", "minecraft:pitcher_crop",
+        "minecraft:nether_wart", "minecraft:nether_sprouts", "minecraft:cocoa",
+        "minecraft:sweet_berry_bush",
+        // Sugar cane / cactus / bamboo spread
+        "minecraft:sugar_cane", "minecraft:cactus", "minecraft:bamboo",
+        "minecraft:bamboo_sapling",
+        // Stem fruit dropped into an adjacent air cell by a melon/pumpkin stem. An unattended
+        // melon or pumpkin farm past 128 blocks otherwise fires a marker + chat alert per fruit.
+        "minecraft:melon", "minecraft:pumpkin",
+        // Cave and nether vine growth (the plant blocks spawn as well as the hanging forms)
+        "minecraft:cave_vines_plant", "minecraft:weeping_vines",
+        "minecraft:weeping_vines_plant", "minecraft:twisting_vines",
+        "minecraft:twisting_vines_plant",
+        // Underwater growth + pointed dripstone. Only the *pointed* dripstone grows; a
+        // dripstone_block is never created at runtime (javap: PointedDripstoneBlock references only
+        // Blocks.MUD/Blocks.CLAY, and DRIPSTONE_BLOCK is placed solely by LargeDripstoneFeature
+        // worldgen), so it is not listed - a player-placed one must register as activity.
+        "minecraft:seagrass", "minecraft:tall_seagrass",
+        "minecraft:kelp", "minecraft:hanging_roots",
+        "minecraft:pointed_dripstone",
+        "minecraft:big_dripleaf", "minecraft:small_dripleaf",
+        "minecraft:big_dripleaf_stem", "minecraft:leaf_litter",
+        // Mushroom / crystal / sculk / chorus growth
+        "minecraft:brown_mushroom", "minecraft:red_mushroom",
+        "minecraft:brown_mushroom_block", "minecraft:red_mushroom_block",
+        "minecraft:amethyst_cluster", "minecraft:sculk", "minecraft:sculk_vein",
+        "minecraft:chorus_plant", "minecraft:chorus_flower"
+    );
+
     private boolean isLikelyNaturalBlock(String blockId) {
-        if (blockId == null)
-            return false;
-
-        if ("minecraft:air".equals(blockId))
-            return false;
-
-        return blockId.contains("vine") || blockId.contains("amethyst_bud")
-            || blockId.contains("mushroom") || blockId.contains("short_grass")
-            || blockId.contains("tall_grass") || blockId.contains("fern")
-            || blockId.contains("lichen") || blockId.contains("moss")
-            || blockId.contains("seagrass") || blockId.contains("kelp")
-            || blockId.contains("sugar_cane") || blockId.contains("cactus")
-            || blockId.contains("bamboo") || blockId.contains("dripleaf")
-            || blockId.contains("dripstone") || blockId.contains("cocoa")
-            || blockId.contains("nether_wart") || blockId.contains("crop")
-            || blockId.contains("sweet_berry_bush")
-            || blockId.contains("leaves") || blockId.contains("snow")
-            || blockId.contains("ice") || blockId.contains("sand")
-            || blockId.contains("gravel") || blockId.contains("concrete_powder");
+        return blockId != null && NATURAL_BLOCK_IDS.contains(blockId);
     }
 
     private boolean hasInteractiveFlip(BlockState oldState, BlockState newState) {
@@ -327,9 +478,12 @@ public class MURADAESA extends Module {
     }
 
     private void pruneRecentEvents(long now) {
+        // Pruned at the burst window, not a longer tail: the only consumer is
+        // isWithinBurst(), which ignores anything older than BURST_WINDOW_MS. Keeping a
+        // 2500ms tail meant ~90% of every burst scan walked entries it would skip.
         while (!recentEvents.isEmpty()) {
             RecentEvent first = recentEvents.peekFirst();
-            if (first == null || now - first.timeMs <= RECENT_EVENT_WINDOW_MS)
+            if (first == null || now - first.timeMs <= BURST_WINDOW_MS)
                 break;
             recentEvents.pollFirst();
         }
@@ -353,7 +507,7 @@ public class MURADAESA extends Module {
         return false;
     }
 
-    private void updatePing(BlockPos pos, String kind, String oldId, String newId) {
+    private void updatePing(BlockPos pos, String kind, String oldId, String newId, double score) {
         long key = pos.asLong();
         long now = System.currentTimeMillis();
         AESAPing ping = pings.get(key);
@@ -364,6 +518,7 @@ public class MURADAESA extends Module {
 
         ping.lastUpdateMs = now;
         ping.hits++;
+        ping.score += score;
         ping.lastKind = kind;
         ping.lastOldId = oldId;
         ping.lastNewId = newId;
@@ -377,9 +532,10 @@ public class MURADAESA extends Module {
                 ? String.format(" (%db away, outside %.0fb).", distanceBlocks, PLAYER_ESP_LIMIT_BLOCKS)
                 : String.format(" (%db away).", distanceBlocks);
             info(String.format(
-                "%s %s -> %s at %d, %d, %d%s", ping.lastKind,
+                "%s %s -> %s at %d, %d, %d%s (%d hit%s, %.1f score)", ping.lastKind,
                 ping.lastOldId, ping.lastNewId, ping.pos.getX(),
-                ping.pos.getY(), ping.pos.getZ(), rangeSuffix));
+                ping.pos.getY(), ping.pos.getZ(), rangeSuffix,
+                ping.hits, ping.hits == 1 ? "" : "s", ping.score));
             ping.lastAlertMs = now;
         }
 
@@ -413,6 +569,12 @@ public class MURADAESA extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
+        if (mc.level == null) return;
+
+        // Drain a dimension change even if no block packets arrived during the window,
+        // so a marker never renders against the wrong dimension.
+        if (!sameDimension()) return;
+
         if (cleanupTickCounter++ % CLEANUP_INTERVAL_TICKS != 0) return;
 
         long now = System.currentTimeMillis();
@@ -425,8 +587,21 @@ public class MURADAESA extends Module {
         });
 
         pruneRecentEvents(now);
+        pendingRedstone.entrySet().removeIf(e -> now - e.getValue().timeMs > lifetimeMs);
 
         knownStates.entrySet().removeIf(e -> now - e.getValue().timeMs > STATE_CACHE_TTL_MS);
+
+        // TTL is a lifetime, not a bound. If the map is still over cap, drop the oldest
+        // entries until it isn't. Sorting is only reached on the overflow path.
+        if (knownStates.size() > MAX_KNOWN_STATES) {
+            ArrayList<Map.Entry<Long, CachedState>> byAge =
+                new ArrayList<>(knownStates.entrySet());
+            byAge.sort(Comparator.comparingLong(e -> e.getValue().timeMs));
+            int excess = knownStates.size() - MAX_KNOWN_STATES;
+            for (int i = 0; i < excess && i < byAge.size(); i++) {
+                knownStates.remove(byAge.get(i).getKey());
+            }
+        }
     }
 
     @EventHandler
@@ -435,10 +610,12 @@ public class MURADAESA extends Module {
             return;
 
         if (sortedRenderCache == null || renderSortCounter++ % RENDER_SORT_INTERVAL == 0) {
+            // pings is already capped at maxMarkers by trimToMarkerLimit on insert, so
+            // the .limit() here was a second, redundant gate on the same bound.
             sortedRenderCache = new ArrayList<>(pings.values()).stream()
-                .filter(p -> isInAllowedRange(p.pos))
-                .sorted(Comparator.comparingLong((AESAPing p) -> p.lastUpdateMs).reversed())
-                .limit(maxMarkers.get())
+                .filter(p -> isRetainedForRender(p.pos))
+                .sorted(Comparator.<AESAPing>comparingDouble(p -> p.score).reversed()
+                    .thenComparing(Comparator.comparingLong((AESAPing p) -> p.lastUpdateMs).reversed()))
                 .toList();
         }
 
@@ -477,12 +654,31 @@ public class MURADAESA extends Module {
         };
     }
 
+    private boolean isRetainedForRender(BlockPos pos) {
+        if (pos == null || mc.player == null)
+            return false;
+
+        if (!onlyBeyondPlayerEspRange.get())
+            return true;
+
+        // Render at the SAME threshold shouldRevokePing holds markers to, not the strict
+        // 128-block one. Between REVOKE_HYSTERESIS_BLOCKS_MAX (116) and the 128 cutoff a ping is
+        // deliberately RETAINED by the revoke sweep, so filtering it out here left markers alive
+        // but invisible - which is precisely the strobe the hysteresis was added to prevent, and it
+        // contradicted the constant's own comment about walking up to a marker you were
+        // investigating. It also let those invisible markers hold slots in `pings` against
+        // maxMarkers.
+        //
+        // isInAllowedRange stays strict at 128 on purpose: it gates NEW detections in
+        // handleBlockChange, where the exact cutoff is the intended rule.
+        return DistanceUtil.distanceSq(mc.player.position(), Vec3.atCenterOf(pos)) > REVOKE_RANGE_SQ;
+    }
+
     private boolean isBeyondPlayerEspRange(BlockPos pos) {
         if (mc.player == null || pos == null)
             return false;
 
-        Vec3 center = Vec3.atCenterOf(pos);
-        return DistanceUtil.distanceSq(mc.player.position(), center) > PLAYER_ESP_LIMIT_SQ;
+        return DistanceUtil.distanceSq(mc.player.position(), Vec3.atCenterOf(pos)) > PLAYER_ESP_LIMIT_SQ;
     }
 
     private boolean isInAllowedRange(BlockPos pos) {
@@ -502,10 +698,36 @@ public class MURADAESA extends Module {
         if (!onlyBeyond)
             return false;
 
-        if (isBeyondPlayerEspRange(ping.pos))
+        // Revokes inside a band rather than exactly at the 128 cutoff, so markers on the
+        // boundary don't strobe as the player walks.
+        if (DistanceUtil.distanceSq(mc.player.position(), Vec3.atCenterOf(ping.pos)) > REVOKE_RANGE_SQ)
             return false;
 
         return !hasTrackedPlayerNear(ping.pos);
+    }
+
+    /**
+     * True when {@code mc.level} is not the same level the cached state/marker maps were
+     * populated under, and clears them when it is not.
+     *
+     * <p>Called from the packet handler, so it must stay cheap: both compares are reference
+     * identity, so the common (unchanged) path allocates nothing.
+     */
+    private boolean sameDimension() {
+        if (mc.level == null) return false;
+
+        Level currentLevel = mc.level;
+        ResourceKey<Level> current = currentLevel.dimension();
+        if (lastLevel == currentLevel && lastDimension == current) return true;
+
+        lastLevel = currentLevel;
+        lastDimension = current;
+        pings.clear();
+        knownStates.clear();
+        recentEvents.clear();
+        pendingRedstone.clear();
+        sortedRenderCache = null;
+        return false;
     }
 
     private boolean hasTrackedPlayerNear(BlockPos pos) {
@@ -526,6 +748,10 @@ public class MURADAESA extends Module {
         private long lastUpdateMs = System.currentTimeMillis();
         private long lastAlertMs;
         private int hits;
+        /**
+         * Accumulated detection weight; drives render ordering so strong signals surface first.
+         */
+        private double score;
         private String lastKind = "UNKNOWN";
         private String lastOldId = "unknown";
         private String lastNewId = "unknown";

@@ -38,7 +38,6 @@ public class ChestTrackerDataV2 {
     private File dataFile;
     private File backupFile;
     private File tempFile;
-    private long lastSaveTime = 0;
     private volatile int saveFailures = 0;
 
     // Guards the actual on-disk write (temp -> backup -> move). Separate from
@@ -75,6 +74,15 @@ public class ChestTrackerDataV2 {
      * writer that is genuinely stuck must not be able to freeze the game.
      */
     private static final long SAVE_INLINE_LOCK_TIMEOUT_SECONDS = 2;
+
+    /**
+     * How long the last-resort inline save waits for the *file* lock. Longer than the data lock
+     * timeout above: the file lock is held by a background save doing disk I/O, which a stuck
+     * writer cannot extend indefinitely, so waiting a bit longer lets the inline write succeed
+     * instead of spuriously "giving up" while a background save is still flushing (the common
+     * case when leaving the world).
+     */
+    private static final long SAVE_INLINE_FILE_LOCK_TIMEOUT_SECONDS = 10;
     private final ScheduledExecutorService saveExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "ChestTracker-Save");
         t.setDaemon(true);
@@ -169,6 +177,38 @@ public class ChestTrackerDataV2 {
         }
     }
 
+    /**
+     * Containers holding a stack whose enchantment-aware
+     * {@link com.AutoBookshelf.addon.utils.ItemSignature} equals {@code sig},
+     * i.e. the exact item *and* enchantments, not just the item.
+     *
+     * <p>Containers loaded from a database written before signatures existed have
+     * no indexed signatures and will not match until they are re-opened and
+     * re-tracked; they are not an error, just unsearchable by signature.
+     */
+    public List<TrackedContainer> searchSignature(String sig) {
+        return searchSignature(sig, getCurrentDimension());
+    }
+
+    public List<TrackedContainer> searchSignature(String sig, String dimension) {
+        if (sig == null || sig.isEmpty()) return new ArrayList<>();
+        lock.readLock().lock();
+        try {
+            Map<BlockPos, TrackedContainer> dimContainers = containers.get(dimension);
+            if (dimContainers == null) return new ArrayList<>();
+            return dimContainers.values().stream()
+                .filter(c -> c.containsSignature(sig))
+                .sorted((a, b) -> Integer.compare(b.getSignatureCount(sig), a.getSignatureCount(sig)))
+                .collect(Collectors.toList());
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    public List<TrackedContainer> getAllContainers() {
+        return getAllContainers(getCurrentDimension());
+    }
+
     public List<TrackedContainer> getAllContainers(String dimension) {
         lock.readLock().lock();
         try {
@@ -189,22 +229,29 @@ public class ChestTrackerDataV2 {
             lock.readLock().unlock();
         }
     }
-    // Some leftover im not sure
-    public int getCurrentDimensionContainerCount() {
-        String dimension = getCurrentDimension();
-        lock.readLock().lock();
-        try {
-            Map<BlockPos, TrackedContainer> dimContainers = containers.get(dimension);
-            return dimContainers != null ? dimContainers.size() : 0;
-        } finally {
-            lock.readLock().unlock();
-        }
-    }
 
     public void clearAll() {
         lock.writeLock().lock();
         try {
             containers.clear();
+        } finally {
+            lock.writeLock().unlock();
+        }
+        markDirty();
+        dataVersion.incrementAndGet();
+    }
+
+    /**
+     * Drops every tracked container in the dimension the player is currently in.
+     * Other dimensions are left alone. Must call markDirty()/bump dataVersion itself -
+     * without that the deletion only exists in memory and the next flush writes the
+     * removed entries straight back to disk.
+     */
+    public void clearCurrentDimension() {
+        String dimension = getCurrentDimension();
+        lock.writeLock().lock();
+        try {
+            containers.remove(dimension);
         } finally {
             lock.writeLock().unlock();
         }
@@ -290,9 +337,9 @@ public class ChestTrackerDataV2 {
             // The data lock bounds the snapshot build, but a background writer
             // can still hold the file lock. Time out on that too, otherwise
             // this client-thread path blocks behind it and freezes the game.
-            writeLocked = fileWriteLock.tryLock(SAVE_INLINE_LOCK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            writeLocked = fileWriteLock.tryLock(SAVE_INLINE_FILE_LOCK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             if (!writeLocked) {
-                LOGGER.error("Gave up saving chest tracker data: file lock still held after {}s", SAVE_INLINE_LOCK_TIMEOUT_SECONDS);
+                LOGGER.error("Gave up saving chest tracker data: file lock still held after {}s", SAVE_INLINE_FILE_LOCK_TIMEOUT_SECONDS);
                 return;
             }
             writeJsonToFile(buildSnapshotJsonLocked());
@@ -356,7 +403,6 @@ public class ChestTrackerDataV2 {
                 Files.copy(dataFile.toPath(), backupFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
             }
             Files.move(tempFile.toPath(), dataFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-            lastSaveTime = System.currentTimeMillis();
             saveFailures = 0;
             pendingContainerSaves.set(0);
         } catch (Exception e) {
@@ -368,6 +414,47 @@ public class ChestTrackerDataV2 {
         } finally {
             fileWriteLock.unlock();
         }
+    }
+
+    /**
+     * Writes a read-only snapshot to ChestTracker/&lt;filename&gt;, independent of the live
+     * database. Deliberately does NOT touch pendingContainerSaves / saveFailures: an export
+     * is not a save, and reporting "all containers saved" off an export would be a lie.
+     *
+     * <p>{@code filename} is sanitised to a bare basename because this is reachable from
+     * the {@code .ct export} command path, an unsanitised name could write anywhere.
+     */
+    public void exportData(String filename) throws java.io.IOException {
+        String safeName = sanitizeFileName(filename);
+        if (safeName.isEmpty()) throw new java.io.IOException("Invalid export file name");
+
+        File exportFile = new File(new File(MeteorClient.FOLDER, "ChestTracker"), safeName);
+
+        JsonObject root = buildSnapshotJson();
+        // Additive export-only fields; the live database never carries these.
+        root.addProperty("exportTime", System.currentTimeMillis());
+        root.addProperty("totalContainers", getTotalContainerCount());
+
+        fileWriteLock.lock();
+        try (Writer writer = new OutputStreamWriter(new FileOutputStream(exportFile), StandardCharsets.UTF_8)) {
+            GSON.toJson(root, writer);
+        } finally {
+            fileWriteLock.unlock();
+        }
+    }
+
+    /**
+     * Strips any directory component and anything outside [A-Za-z0-9._-] out of a name.
+     */
+    private static String sanitizeFileName(String name) {
+        if (name == null) return "";
+        String base = name.replace('\\', '/');
+        int slash = base.lastIndexOf('/');
+        if (slash >= 0) base = base.substring(slash + 1);
+        base = base.replaceAll("[^A-Za-z0-9._-]", "_");
+        // "." and ".." are both directory references, not file names.
+        while (base.startsWith(".")) base = base.substring(1);
+        return base;
     }
 
     public void loadData() {
@@ -441,10 +528,6 @@ public class ChestTrackerDataV2 {
         }
         markDirty();
         dataVersion.incrementAndGet();
-    }
-
-    Map<String, Map<BlockPos, TrackedContainer>> getContainers() {
-        return containers;
     }
 
     private String getCurrentDimension() {

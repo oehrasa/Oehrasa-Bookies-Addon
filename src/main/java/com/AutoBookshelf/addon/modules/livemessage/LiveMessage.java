@@ -225,11 +225,14 @@ public class LiveMessage extends Module {
                 .visible(this.blockAdvertisers::get)
                 .build()
         );
+    /**
+     * Blocks spoofed 'From <player>:' lines in public chat from creating unread counts, toasts, files, or reply targets.
+     */
     public final Setting<Boolean> verifySenderInTab = this.sgAntiSpam
         .add(
             new meteordevelopment.meteorclient.settings.BoolSetting.Builder()
                 .name("verify-sender-in-tab")
-                .description("Only treat chat lines as incoming DMs when the sender name is a valid Minecraft username and appears in the player tab list. Blocks spoofed 'From <player>:' lines posted in public chat from creating unread counts, toasts, files, and reply targets.")
+                .description("Only treat a chat line as an incoming DM when the sender is a valid username in the tab list. Blocks spoofed 'From <player>:' lines in public chat.")
                 .defaultValue(true)
                 .build()
         );

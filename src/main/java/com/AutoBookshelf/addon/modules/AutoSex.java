@@ -4,6 +4,7 @@ import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
 import baritone.api.pathing.goals.GoalBlock;
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.DistanceUtil;
 import meteordevelopment.meteorclient.events.meteor.MouseClickEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
@@ -24,6 +25,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.TamableAnimal;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
+
 import java.util.List;
 import java.util.Set;
 
@@ -346,6 +348,12 @@ public class AutoSex extends Module {
     private Vec3 lastTargetPosVec = null;
     private int pathCooldown = 0;
 
+    /**
+     * Ticks between Automatic-mode target discovery sweeps while not following anything.
+     */
+    private static final int SEARCH_INTERVAL = 5;
+    private int searchTickCounter = 0;
+
     private static final String[] SUBMISSIVE = {
         "fuck me harder daddy",
         "deeper! daddy deeper!",
@@ -597,14 +605,20 @@ public class AutoSex extends Module {
         // Handle automatic mode
         if (targetMode.get() == Mode.Automatic) {
             if (!isFollowing) {
+                // Discovery only matters while nothing is being followed, so the full entity
+                // sweep is throttled: an empty world used to be scanned every tick. Worst
+                // case a target is picked up 250 ms late, which is invisible for "walk over
+                // there and follow".
+                if (searchTickCounter++ % SEARCH_INTERVAL != 0) return;
+
                 LivingEntity potentialTarget = null;
-                double closestDistance = targetRange.get();
+                double closestDistanceSq = targetRange.get() * targetRange.get();
 
                 for (Entity entity : mc.level.entitiesForRendering()) {
                     if (entity instanceof LivingEntity living && isEntityAllowed(living)) {
-                        double dist = mc.player.distanceTo(entity);
-                        if (dist <= closestDistance) {
-                            closestDistance = dist;
+                        double distSq = mc.player.distanceToSqr(entity);
+                        if (distSq <= closestDistanceSq) {
+                            closestDistanceSq = distSq;
                             potentialTarget = living;
                         }
                     }
@@ -695,9 +709,8 @@ public class AutoSex extends Module {
                     shouldUpdate = true;
                 } else {
                     // Horizontal distance only (ignore jumping)
-                    double dx = targetPosVec.x - lastTargetPosVec.x;
-                    double dz = targetPosVec.z - lastTargetPosVec.z;
-                    double horizontalDist = Math.sqrt(dx * dx + dz * dz);
+                    double horizontalDist = DistanceUtil.distanceXZ(
+                        lastTargetPosVec.x, lastTargetPosVec.z, targetPosVec.x, targetPosVec.z);
                     if (horizontalDist >= pathUpdateThreshold.get()) {
                         shouldUpdate = true;
                     }
@@ -770,12 +783,10 @@ public class AutoSex extends Module {
             facingZ * 0.5
         );
 
-        double dx = headPos.x - mc.player.getX();
+        double dh = DistanceUtil.distanceXZ(
+            headPos.x, headPos.z, mc.player.getX(), mc.player.getZ());
         double dy = headPos.y - (mc.player.getY() + mc.player.getEyeHeight(mc.player.getPose()));
-        double dz = headPos.z - mc.player.getZ();
-
-        double dh = Math.sqrt(dx * dx + dz * dz);
-        double targetYaw = Math.toDegrees(Math.atan2(dz, dx)) - 90;
+        double targetYaw = Math.toDegrees(Math.atan2(headPos.z - mc.player.getZ(), headPos.x - mc.player.getX())) - 90;
         double targetPitch = -Math.toDegrees(Math.atan2(dy, dh));
 
         Rotations.rotate(targetYaw, targetPitch, 50);

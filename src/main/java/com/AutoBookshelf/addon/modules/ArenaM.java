@@ -1,7 +1,8 @@
 package com.AutoBookshelf.addon.modules;
-// V4
+// V5
 
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.HotbarSwap;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
@@ -201,7 +202,17 @@ public class ArenaM extends Module {
 
     // Physical constants for the interceptor
     private static final double WIND_SPEED = 1.5;        // blocks/tick
-    private static final double WIND_HALF_SIZE = 0.25;
+    // The wind charge's real hitbox (AbstractWindCharge.makeBoundingBox): width 0.3125,
+    // height 0.3125, anchored 0.15 below the entity position, NOT a 0.5 cube centred on it.
+    private static final double WIND_HALF_WIDTH = 0.3125 / 2.0; // 0.15625
+    private static final double WIND_Y_OFFSET = -0.15;
+    private static final double WIND_HEIGHT = 0.3125;
+    // The engine's entity-hit test inflates the *candidate* (charge) box by
+    // ProjectileUtil.computeMargin(moving projectile), which is clamp((tickCount - 2) / 20, 0, 0.3),
+    // then clips the moving projectile's per-tick sweep against it. It is NOT the candidate's
+    // getPickRadius() (1.0): that overload is only the generic player ray-pick. Using 1.0 here
+    // over-accepts the throw badly (the charge path stops short of the threat).
+    private static final double PROJECTILE_MARGIN_MAX = 0.3;
     private static final double SAFETY_MARGIN = 1.5;     // threats that miss by more than this are ignored
     private static final double SOONEST_WINDOW = 1.5;    // threats within this distance band are tiebroken by arrival time
     private static final int MAX_LEAD = 30;              // max ticks the wind charge is simulated for
@@ -375,8 +386,8 @@ public class ArenaM extends Module {
         Solution solution = solveIntercept(target, eyePos);
         if (solution == null || pathIntersectsSelf(eyePos, solution.direction())) return;
 
-        if (!findWindCharge().found()) return;
         if (mc.player.getCooldowns().isOnCooldown(Items.WIND_CHARGE.getDefaultInstance())) return;
+        if (!findWindCharge().found()) return;
 
         lastTarget = target;
         lastSolution = solution;
@@ -610,36 +621,89 @@ public class ArenaM extends Module {
     }
 
     private Solution solveIntercept(Threat target, Vec3 eyePos) {
-        AABB baseBox = target.entity().getBoundingBox();
-        Vec3 basePos = target.entity().position();
+        Vec3[] path = target.path();
+        Entity threatEntity = target.entity();
         int latencyTicks = getEffectiveLatencyTicks();
 
-        for (int tau = 1; tau <= MAX_LEAD; tau++) {
-            if (tau >= target.path().length || target.path()[tau] == null) break; // path ends here; larger tau can't help either
+        // Index the loop by the charge's *impact tick* t, not by the aim anchor. The pre-2026-10-17
+        // solver looped tau and tested t in {tau, tau+1} while aiming at path[tau], which is exactly
+        // "for impact tick t, aim at path[t-1] then at path[t]" -- so this form reproduces that
+        // solver's choice whenever it had one, and only adds candidates. The charge's tick can lead
+        // the threat's by one (entity update order), hence the endpoint pair rather than a single aim.
+        for (int t = latencyTicks + 1; t <= MAX_LEAD; t++) {
+            if (t >= path.length || path[t] == null) break; // path ends here; larger t can't help either
 
-            int windTicks = tau - latencyTicks;
-            if (windTicks <= 0) continue; // charge hasn't actually left the barrel yet at this real-time tick
+            int flightTicks = t - latencyTicks;
+            double reach = WIND_SPEED * flightTicks;
+            double margin = threatMargin(threatEntity, t);
+            Vec3 a = path[t - 1];
+            Vec3 b = path[t];
 
-            Vec3 aimPoint = target.path()[tau];
-            Vec3 direction = aimPoint.subtract(eyePos).normalize();
-            Vec3 windPos = eyePos.add(direction.scale(WIND_SPEED * windTicks));
+            // The charge flies this exact ray, so test it against the threat's per-tick swept
+            // segment with the engine's own rule: the moving threat sweeps its motion vector and
+            // clips it against the charge's box inflated by the projectile margin. Note
+            // Solution.ticksToImpact() means "how long the real charge actually flies", not t.
+            Vec3 direction = rayTo(eyePos, a);
+            if (direction != null && rayClipsSegment(eyePos, direction, reach, a, b, margin))
+                return new Solution(direction, flightTicks);
 
-            Vec3 threatPrev = target.path()[tau - 1] != null ? target.path()[tau - 1] : aimPoint;
-            Vec3 windPrev = eyePos.add(direction.scale(WIND_SPEED * (windTicks - 1)));
+            direction = rayTo(eyePos, b);
+            if (direction != null && rayClipsSegment(eyePos, direction, reach, a, b, margin))
+                return new Solution(direction, flightTicks);
 
-            AABB threatBoxPrev = baseBox.move(threatPrev.subtract(basePos));
-            AABB threatBoxCurr = baseBox.move(aimPoint.subtract(basePos));
-
-            AABB windBoxPrev = windBoxAt(windPrev);
-            AABB windBoxCurr = windBoxAt(windPos);
-
-            if (union(threatBoxPrev, threatBoxCurr).intersects(union(windBoxPrev, windBoxCurr))) {
-                // Solution.ticksToImpact() means "how long the real charge actually
-                // flies", which is windTicks, not tau
-                return new Solution(direction, windTicks);
+            // Third candidate: the point where this tick's segment crosses the sphere of radius
+            // `reach` around the eye. The charge cannot fall short of or overshoot its own reach, so
+            // when both endpoints sit off that sphere the charge passes *between* them -- on a fast
+            // crossing at a different altitude the endpoints are both too near or both too far, and
+            // the endpoint aims alone miss the shot (measured: ~1-2% of feasible intercepts).
+            // Solves |a + s*(b-a) - eye| = reach for s in [0,1].
+            Vec3 ab = b.subtract(a);
+            double len2 = ab.lengthSqr();
+            if (len2 > 1.0E-9) {
+                Vec3 rel = a.subtract(eyePos);
+                double halfB = rel.dot(ab);
+                double disc = halfB * halfB - len2 * (rel.lengthSqr() - reach * reach);
+                if (disc >= 0.0) {
+                    double root = Math.sqrt(disc);
+                    for (int k = 0; k < 2; k++) {
+                        double s = (k == 0 ? -halfB - root : -halfB + root) / len2;
+                        if (s < 0.0 || s > 1.0) continue;
+                        direction = rayTo(eyePos, a.add(ab.scale(s)));
+                        if (direction != null && rayClipsSegment(eyePos, direction, reach, a, b, margin))
+                            return new Solution(direction, flightTicks);
+                    }
+                }
             }
         }
         return null;
+    }
+
+    /**
+     * Unit direction from {@code origin} to {@code point}, or null when the two coincide.
+     */
+    private static Vec3 rayTo(Vec3 origin, Vec3 point) {
+        Vec3 offset = point.subtract(origin);
+        return offset.lengthSqr() < 1.0E-12 ? null : offset.normalize();
+    }
+
+    /**
+     * The engine's entity-hit rule for one tick: the charge's box at its reach along {@code direction},
+     * inflated by the projectile margin, clipped against the threat's swept segment {@code [a, b]}.
+     */
+    private boolean rayClipsSegment(Vec3 eyePos, Vec3 direction, double reach, Vec3 a, Vec3 b, double margin) {
+        Vec3 windPos = eyePos.add(direction.scale(reach));
+        return windBoxAt(windPos).inflate(margin).clip(a, b).isPresent();
+    }
+
+    /**
+     * The projectile margin the engine applies to a hit candidate at a tick {@code futureTicks}
+     * from now: {@code ProjectileUtil.computeMargin} = clamp((tickCount - 2) / 20, 0, 0.3),
+     * with the projectile's tick counter advanced by the flight. Most in-flight projectiles sit
+     * at the 0.3 cap; the age term only matters for one fired within the last few ticks.
+     */
+    private double threatMargin(Entity threat, int futureTicks) {
+        double age = threat.tickCount + futureTicks;
+        return Math.max(0.0, Math.min(PROJECTILE_MARGIN_MAX, (age - 2.0) / 20.0));
     }
 
     private int getEffectiveLatencyTicks() {
@@ -667,15 +731,8 @@ public class ArenaM extends Module {
 
     private AABB windBoxAt(Vec3 pos) {
         return new AABB(
-            pos.x - WIND_HALF_SIZE, pos.y - WIND_HALF_SIZE, pos.z - WIND_HALF_SIZE,
-            pos.x + WIND_HALF_SIZE, pos.y + WIND_HALF_SIZE, pos.z + WIND_HALF_SIZE
-        );
-    }
-
-    private AABB union(AABB a, AABB b) {
-        return new AABB(
-            Math.min(a.minX, b.minX), Math.min(a.minY, b.minY), Math.min(a.minZ, b.minZ),
-            Math.max(a.maxX, b.maxX), Math.max(a.maxY, b.maxY), Math.max(a.maxZ, b.maxZ)
+            pos.x - WIND_HALF_WIDTH, pos.y + WIND_Y_OFFSET, pos.z - WIND_HALF_WIDTH,
+            pos.x + WIND_HALF_WIDTH, pos.y + WIND_Y_OFFSET + WIND_HEIGHT, pos.z + WIND_HALF_WIDTH
         );
     }
 
@@ -698,7 +755,13 @@ public class ArenaM extends Module {
 
     // Inventory & throwing
     private FindItemResult findWindCharge() {
-        return InvUtils.findInHotbar(Items.WIND_CHARGE);
+        FindItemResult inHotbar = InvUtils.findInHotbar(Items.WIND_CHARGE);
+        if (inHotbar.found()) return inHotbar;
+        // Nothing in the hotbar/offhand: pull one in from the main inventory, or a charge that is
+        // only in the inventory is invisible to the module. Same swap handling as MinecartPlacer
+        // (own inventory menu, container slot id, empty hotbar slot preferred).
+        int slot = HotbarSwap.ensureInHotbar(stack -> stack.is(Items.WIND_CHARGE), -1);
+        return slot == -1 ? new FindItemResult(-1, 0) : new FindItemResult(slot, 1);
     }
 
     private void throwWindCharge() {

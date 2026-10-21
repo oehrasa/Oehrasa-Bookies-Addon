@@ -18,6 +18,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.HashedStack;
 import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
+import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
@@ -224,6 +225,11 @@ public class Fatamorgana extends Module {
     private boolean lastLoggedContainerOpenState = false;
 
     private final IntSet completedEntityIds = new IntOpenHashSet();
+
+    /**
+     * Scratch set reused by {@link #pruneCompletedTargets()} so one prune = one allocation-free world pass.
+     */
+    private final IntSet liveIdScratch = new IntOpenHashSet();
 
     private final Object2LongOpenHashMap<BlockPos> completedBarrelPositions = new Object2LongOpenHashMap<>();
 
@@ -433,10 +439,12 @@ public class Fatamorgana extends Module {
             return;
         }
 
-        // Completion check: if every container slot is already occupied by a
-        // deposit item, there's nothing more we can do here so we mark it and
-        // stop bothering with this specific entity/position.
-        if (isContainerFullOfDepositItems()) {
+        // Completion check: once the container has no free slot there is nothing more
+        // we can deposit here, so we mark it and stop bothering with this specific
+        // entity/position. This is about fullness, not about what fills the slots: a
+        // container holding a non-deposit item has just as little room as one holding
+        // only deposit items, and rejecting it here left it to be re-selected forever.
+        if (isContainerFull()) {
             markCurrentTargetCompleted();
             stage = Stage.CLOSING;
             return;
@@ -456,18 +464,8 @@ public class Fatamorgana extends Module {
             return;
         }
 
-        boolean containerHasEmptySlots = false;
-        for (int i = 0; i < SlotUtils.indexToId(SlotUtils.MAIN_START); i++) {
-            if (mc.player.containerMenu.getSlot(i).getItem().isEmpty()) {
-                containerHasEmptySlots = true;
-                break;
-            }
-        }
-
-        if (!containerHasEmptySlots) {
-            if (autoClose.get()) stage = Stage.CLOSING;
-            return;
-        }
+        // Reaching here means isContainerFull() was false above, so there is at least
+        // one empty container slot to deposit into.
 
         int moved = 0;
         for (int i = SlotUtils.indexToId(SlotUtils.MAIN_START); i < SlotUtils.indexToId(SlotUtils.MAIN_START) + 4 * 9; i++) {
@@ -525,19 +523,37 @@ public class Fatamorgana extends Module {
         }
     }
 
-    private boolean isContainerFullOfDepositItems() {
+    /**
+     * True if every destination-container slot is occupied, i.e. there is no room left to deposit
+     * anything. Deliberately ignores what the occupying items are: a slot holding a non-deposit
+     * item blocks a deposit just as completely as one holding a deposit item.
+     */
+    private boolean isContainerFull() {
         for (int i = 0; i < SlotUtils.indexToId(SlotUtils.MAIN_START); i++) {
-            Slot slot = mc.player.containerMenu.getSlot(i);
-            if (!!slot.getItem().isEmpty() || !isDepositItem(slot.getItem())) return false;
+            if (mc.player.containerMenu.getSlot(i).getItem().isEmpty()) return false;
         }
         return true;
     }
 
     private void pruneCompletedTargets() {
         if (!completedEntityIds.isEmpty()) {
-            IntIterator it = completedEntityIds.iterator();
-            while (it.hasNext()) {
-                if (!entityExists(it.nextInt())) it.remove();
+            // One world pass for every pending id. entityExists() re-scanned the whole
+            // entity list once per id, so K ids cost K full sweeps on every tick - and
+            // completedEntityIds only grows while a session runs.
+            if (mc.level == null) {
+                // Mirrors the old per-id behaviour: every id resolved to "not alive".
+                completedEntityIds.clear();
+            } else {
+                liveIdScratch.clear();
+                for (Entity entity : mc.level.entitiesForRendering()) {
+                    if (entity.isAlive() && completedEntityIds.contains(entity.getId())) {
+                        liveIdScratch.add(entity.getId());
+                    }
+                }
+                IntIterator it = completedEntityIds.iterator();
+                while (it.hasNext()) {
+                    if (!liveIdScratch.contains(it.nextInt())) it.remove();
+                }
             }
         }
 
@@ -547,14 +563,6 @@ public class Fatamorgana extends Module {
                 mc.level.getBlockState(entry.getKey()).getBlock() != Blocks.BARREL || now >= entry.getLongValue()
             );
         }
-    }
-
-    private boolean entityExists(int entityId) {
-        if (mc.level == null) return false;
-        for (Entity entity : mc.level.entitiesForRendering()) {
-            if (entity.getId() == entityId) return entity.isAlive();
-        }
-        return false;
     }
 
     private boolean isBarrelStillPresent(BlockPos pos) {
@@ -668,7 +676,16 @@ public class Fatamorgana extends Module {
         if (targetEntityId != -1) {
             Entity target = getTargetEntity();
             if (target != null) {
-                event.renderer.box(target.getBoundingBox(), sideColor.get(), lineColor.get(), shapeMode.get(), 0);
+                // Meteor ESP's tick interpolation: getBoundingBox() is the box as of the last
+                // tick, so offset it to where the entity is drawn this frame.
+                AABB box = target.getBoundingBox();
+                double x = Mth.lerp(event.tickDelta, target.xOld, target.getX()) - target.getX();
+                double y = Mth.lerp(event.tickDelta, target.yOld, target.getY()) - target.getY();
+                double z = Mth.lerp(event.tickDelta, target.zOld, target.getZ()) - target.getZ();
+                event.renderer.box(
+                    x + box.minX, y + box.minY, z + box.minZ,
+                    x + box.maxX, y + box.maxY, z + box.maxZ,
+                    sideColor.get(), lineColor.get(), shapeMode.get(), 0);
             }
         } else if (targetBlockPos != null && isBarrelStillPresent(targetBlockPos)) {
             event.renderer.box(new AABB(targetBlockPos), sideColor.get(), lineColor.get(), shapeMode.get(), 0);

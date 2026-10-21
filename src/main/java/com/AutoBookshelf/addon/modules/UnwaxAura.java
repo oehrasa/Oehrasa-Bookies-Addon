@@ -240,7 +240,7 @@ public class UnwaxAura extends Module {
     private static final Set<Block> UNAFFECTED_COPPER = unwaxedBlocks(WeatheringCopper.WeatherState.UNAFFECTED);
 
     public UnwaxAura() {
-        super(Addon.CATEGORY2, "Unwax-Aura", "Automatically removes wax from copper blocks and optionally breaks them.");
+        super(Addon.CATEGORY2, "Unwax-Aura", "Automatically removes wax from copper blocks and copper golem and optionally breaks them.");
     }
 
     @Override

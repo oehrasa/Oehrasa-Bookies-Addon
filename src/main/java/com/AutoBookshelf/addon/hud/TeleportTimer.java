@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.hud;
 
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.ForceDefaultFont;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.game.ReceiveMessageEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -110,6 +111,8 @@ public class TeleportTimer extends HudElement {
         .description("TPA cooldown time when rank is NoRank if you have vote?")
         .defaultValue(TpaCooldown.Zero_Vote).visible(() -> rank.get() == Rank.NoRank)
         .build());
+
+    private final ForceDefaultFont forceDefaultFont = new ForceDefaultFont(sgGeneral);
 
     // Warmups
     private int homeWarmupTicks = 0;
@@ -317,16 +320,16 @@ public class TeleportTimer extends HudElement {
 
         if (visibleBars == 0) {
             if (isInEditor()) {
-                double lineH = renderer.textHeight(false, scale);
+                double lineH = forceDefaultFont.height(renderer, false, scale);
                 setSize(120, lineH);
-                renderer.text("Teleport Timer", x, y, Color.WHITE, false, scale);
+                forceDefaultFont.text(renderer, "Teleport Timer", x, y, Color.WHITE, false, scale);
             } else {
                 setSize(0, 0);
             }
             return;
         }
 
-        double lineH = renderer.textHeight(false, scale);
+        double lineH = forceDefaultFont.height(renderer, false, scale);
         double barGap = 2;
         double rowHeight = lineH + 2 + barH + 2 + lineH + barGap;
         double totalHeight = rowHeight * visibleBars;
@@ -359,8 +362,8 @@ public class TeleportTimer extends HudElement {
             : lerpColor(endColor.get(), midColor.get(), fraction * 2.0);
 
         // Label
-        renderer.text(label, x, y, colour, false, scale);
-        double textH = renderer.textHeight(false, scale);
+        forceDefaultFont.text(renderer, label, x, y, colour, false, scale);
+        double textH = forceDefaultFont.height(renderer, false, scale);
         // Background bar
         renderer.quad(x, y + textH + 2, getWidth(), barH, BAR_BACKGROUND);
         // Filled bar
@@ -368,9 +371,9 @@ public class TeleportTimer extends HudElement {
         renderer.quad(x, y + textH + 2, filledW, barH, colour);
         // Timer text below
         String timeText = formatTime(ticks);
-        double textX = x + getWidth() / 2.0 - renderer.textWidth(timeText, false, scale) / 2.0;
+        double textX = x + getWidth() / 2.0 - forceDefaultFont.width(renderer, timeText, false, scale) / 2.0;
         double textY = y + textH + 2 + barH + 2;
-        renderer.text(timeText, textX, textY, colour, false, scale);
+        forceDefaultFont.text(renderer, timeText, textX, textY, colour, false, scale);
     }
 
     private double getScale() { return 1.0; }
