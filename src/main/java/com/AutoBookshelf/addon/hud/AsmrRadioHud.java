@@ -2,6 +2,7 @@ package com.AutoBookshelf.addon.hud;
 
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.AsmrAudioEngine;
+import com.AutoBookshelf.addon.utils.ForceDefaultFont;
 
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.ColorSetting;
@@ -34,6 +35,8 @@ public class AsmrRadioHud extends HudElement {
         .build()
     );
 
+    private final ForceDefaultFont forceDefaultFont = new ForceDefaultFont(sgGeneral);
+
     private static final SettingColor PLACEHOLDER_COLOR = new SettingColor(200, 200, 200, 120);
     private static final String PLACEHOLDER = "ASMR Radio";
 
@@ -47,8 +50,8 @@ public class AsmrRadioHud extends HudElement {
     public void tick(HudRenderer renderer) {
         cachedDisplay = buildDisplay();
         setSize(
-            renderer.textWidth(cachedDisplay != null ? cachedDisplay : PLACEHOLDER),
-            renderer.textHeight()
+            forceDefaultFont.width(renderer, cachedDisplay != null ? cachedDisplay : PLACEHOLDER),
+            forceDefaultFont.height(renderer)
         );
     }
 
@@ -57,9 +60,9 @@ public class AsmrRadioHud extends HudElement {
         if (cachedDisplay != null) {
             SettingColor color = textColor.get();
             color.update();
-            renderer.text(cachedDisplay, x, y, color, true);
+            forceDefaultFont.text(renderer, cachedDisplay, x, y, color, true);
         } else if (isInEditor()) {
-            renderer.text(PLACEHOLDER, x, y, PLACEHOLDER_COLOR, true);
+            forceDefaultFont.text(renderer, PLACEHOLDER, x, y, PLACEHOLDER_COLOR, true);
         }
     }
 

@@ -15,14 +15,13 @@ import meteordevelopment.meteorclient.utils.player.SlotUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.component.DataComponents;
-import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
-import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
-import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
+import net.minecraft.network.protocol.game.*;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.Consumable;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -44,11 +43,15 @@ public class PacketEat extends Module {
         PlatformBuilder.class, PressItemFrame.class, UnwaxAura.class
     };
 
-    private static final int OFFHAND_EAT_TICKS = 10;
-
-    private static final int HOTBAR_EAT_TICKS = 32;
-
     private static final int CONFIRM_TIMEOUT_TICKS = 20;
+    /**
+     * After the client sees the stack count drop (server acknowledged the bite),
+     * wait this many extra ticks before allowing the swap-back. This covers the
+     * round-trip for the server to finalize hunger/health and for the client to
+     * receive that update, preventing the swap-back from arriving mid-eat on a
+     * laggy connection.
+     */
+    private static final int POST_CONSUME_CONFIRM_TICKS = 4;
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgAutoEat = settings.createGroup("Auto Eat");
@@ -72,6 +75,14 @@ public class PacketEat extends Module {
         .name("auto-eat")
         .description("Automatically eat the best food in your hotbar or offhand when below a threshold.")
         .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Boolean> silent = sgAutoEat.add(new BoolSetting.Builder()
+        .name("silent")
+        .description("Eat from hotbar without changing your visible hotbar slot by using SetCarriedItemPacket.")
+        .defaultValue(true)
+        .visible(autoEat::get)
         .build()
     );
 
@@ -231,8 +242,30 @@ public class PacketEat extends Module {
 
     private int eatSlot = -1;
     private int prevSlot = -1;
+    /**
+     * The slot the server believes we're holding during a silent hotbar eat cycle. -1 = not in silent mode.
+     */
+    private int silentServerSlot = -1;
+    /**
+     * Set only for the synchronous window of our own {@code SetCarriedItem} spoof/restore sends, so
+     * the guard in {@link #onPacketSend} can cancel the player's slot-change packets without also
+     * swallowing ours. Single-threaded, so a plain field is sufficient.
+     */
+    private boolean sendingSilentSlot = false;
+    /**
+     * Set only for the synchronous window of our own {@code UseItem} sends, so the foreign-use guard
+     * in {@link #onPacketSend} can tell our eat packets from the player's. Every own send that can
+     * run while a silent cycle is live sets it; the de-sync re-kick in {@link #onTick} is gated on
+     * {@code !autoEating} so it can never reach that guard.
+     */
+    private boolean sendingOwnUse = false;
     private int eatStackCountAtStart = -1;
     private boolean eatFoodAlwaysEat = false;
+    /**
+     * Ticks since the stack count first dropped. Must reach {@link #POST_CONSUME_CONFIRM_TICKS}
+     * before the swap-back is allowed, so the server can fully commit the eat.
+     */
+    private int postConsumeTicks = 0;
 
     // tracks which method this cycle used, so the crosshair override
     // only applies when we actually went through the screen-open fallback.
@@ -323,10 +356,60 @@ public class PacketEat extends Module {
         // food. Mining is never suppressed, and nothing is cancelled at all when
         // there's no food left in the eat slot to recover from, so the cycle
         // can't lock the player out of digging or attacking.
-        if (suppressActions.get() && autoEating
-            && eatSlot != -1 && getFoodComponent(player, eatSlot) != null
+        //
+        // Silent hotbar eat needs the SAME cancellation for a different reason: it spoofs the
+        // server's carried slot, so during the cycle the server believes we hold the EAT slot
+        // while the client still shows (and acts on) the original slot. A block-use packet from
+        // a third-party placer is then resolved against the food item on the server and silently
+        // dropped, desyncing the placer's client-side prediction. This limb is a correctness
+        // guard on the spoofed slot, so it is independent of suppress-actions; the placer limb
+        // remains the user's optional policy. It is deliberately not a cycle-ending event either:
+        // a placer emits use-on continuously, so ending the cycle there would restart the bite on
+        // every placement and the eat would never finish.
+        boolean silentSpoof = autoEating && silentServerSlot != -1;
+        boolean thirdPartySuppress = suppressActions.get() && autoEating
+            && eatSlot != -1 && getFoodComponent(player, eatSlot) != null;
+
+        if ((silentSpoof || thirdPartySuppress)
             && event.packet instanceof ServerboundUseItemOnPacket) {
             event.cancel();
+        }
+
+        // The player scrolled the hotbar mid-cycle. Vanilla's own slot-change packet would move the
+        // SERVER off our spoofed eat slot, and the next `ServerboundUseItemPacket` (which carries
+        // no slot) would then be resolved against whatever item just came into view.
+        // the cycle keeps firing `use` on the wrong item until it runs out of food or times out. Swallow the
+        // foreign packet so the server stays pinned to the eat slot; stopAutoEating re-syncs the
+        // server to the client's live slot when the cycle ends, so the client and server converge.
+        // Only our own spoof/restore sends (flagged) are allowed through.
+        if (silentSpoof && !sendingSilentSlot
+            && event.packet instanceof ServerboundSetCarriedItemPacket) {
+            event.cancel();
+        }
+
+        // A held-item action during a silent cycle means the player interrupted the eat: every
+        // ServerboundPlayerActionPacket except the destroy-progress ones and RELEASE_USE_ITEM
+        // acts on the SERVER's carried slot, which is the food while the spoof is live (drop
+        // would drop the food, swap would move it to the offhand, stab and an entity interact
+        // would use it). End the cycle and restore the server's selected slot BEFORE this packet
+        // goes out, so the action resolves against the real item instead of the food. The
+        // interrupting packet is never cancelled - the player must stay free - and our own eat
+        // packets are flagged so they cannot end the cycle they belong to.
+        //
+        // The use-item packet carries no slot at all, so the same re-sync applies: while the
+        // server is pinned to the eat slot the click would eat instead of using the item the
+        // client has already predicted.
+        boolean heldItemAction = event.packet instanceof ServerboundPlayerActionPacket actionPacket
+            && switch (actionPacket.getAction()) {
+            case START_DESTROY_BLOCK, DROP_ITEM, DROP_ALL_ITEMS, SWAP_ITEM_WITH_OFFHAND, STAB -> true;
+            default -> false;
+        };
+        boolean attack = event.packet instanceof ServerboundAttackPacket;
+        boolean useItem = event.packet instanceof ServerboundUseItemPacket;
+        boolean interact = event.packet instanceof ServerboundInteractPacket;
+        if (silentSpoof && !sendingSilentSlot && !sendingOwnUse
+            && (heldItemAction || attack || useItem || interact)) {
+            stopAutoEating();
         }
     }
 
@@ -335,7 +418,7 @@ public class PacketEat extends Module {
         emergencyActive = emergencyMode.get() && player.getHealth() <= emergencyHealth.get() * 2;
 
         // Engage the "drop placing modules" state only while there is actually
-        // food to force-eat. Critically low with no food is just critically low —
+        // food to force-eat. Critically low with no food is just critically low -
         // nothing to recover from
         emergencyBlocking = emergencyActive && findSlot(player, true) != -1;
 
@@ -350,9 +433,14 @@ public class PacketEat extends Module {
             // reflect real input state the way Utils.rightClick() does, so skip it.
             if (deSync.get() && eatSlot != -1 && !eatingViaScreenClick) {
                 InteractionHand hand = eatSlot == SlotUtils.OFFHAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
-                player.connection.send(
-                    new ServerboundUseItemPacket(hand, 0, player.getYRot(), player.getXRot())
-                );
+                sendingOwnUse = true;
+                try {
+                    player.connection.send(
+                        new ServerboundUseItemPacket(hand, 0, player.getYRot(), player.getXRot())
+                    );
+                } finally {
+                    sendingOwnUse = false;
+                }
             }
 
             int count = getStackCount(player, eatSlot);
@@ -360,20 +448,30 @@ public class PacketEat extends Module {
             boolean noFood = count <= 0 || getFoodComponent(player, eatSlot) == null;
             boolean duringBite = !stackConsumed;
 
-            if (stackConsumed) eatStackCountAtStart = count;
+            if (stackConsumed) {
+                eatStackCountAtStart = count;
+                postConsumeTicks = 0;   // start confirmation window
+            }
+
+            // Confirmation window: after the stack drops, wait POST_CONSUME_CONFIRM_TICKS
+            // before allowing the swap-back. This covers the server to client round-trip for
+            // the hunger/health update so the swap-back packet doesn't arrive while the
+            // server is still finalizing the eat.
+            if (postConsumeTicks >= 0) postConsumeTicks++;
+            boolean confirmed = postConsumeTicks >= POST_CONSUME_CONFIRM_TICKS;
 
             // AutoEat-style stat guard: end a cycle only once hunger/health actually
             // recovered (and, with confirm-finish, only after the bite that restored
             // them completed server-side), when the food ran out, or when the attempt
             // timed out without making progress. Never swap the hotbar back earlier.
             boolean recovered = !belowThreshold(player);
-            // Use at least HOTBAR_EAT_TICKS as the base so offhand cycles also get
-            // enough time to finish and be confirmed before the timeout fires.
-            int minEatDuration = Math.max(eatDuration, HOTBAR_EAT_TICKS);
+            // Use the actual consume duration as the base so fast foods (dried kelp, chicken)
+            // don't wait longer than necessary. The timeout still caps at CONFIRM_TIMEOUT_TICKS.
+            int minEatDuration = eatDuration;
             boolean timedOut = duringBite && eatTicks >= minEatDuration + CONFIRM_TIMEOUT_TICKS;
 
             boolean readyToStop = noFood || timedOut;
-            if (!emergencyActive && recovered && (stackConsumed || !confirmFinish.get())) {
+            if (!emergencyActive && recovered && (!confirmFinish.get() || confirmed)) {
                 readyToStop = true;
             }
 
@@ -384,9 +482,16 @@ public class PacketEat extends Module {
             }
 
             // A bite finished and more food is still needed -> chain-eat the next
-            // item in the stack from the same slot, without leaving it.
-            if (stackConsumed) {
+            // item in the stack from the same slot, without leaving it. While the stats
+            // have already recovered (and no emergency is forcing it) the only reason we
+            // are still here is the confirm-finish window, so wait it out instead of
+            // eating another item.
+            if (stackConsumed && (!recovered || emergencyActive)) {
                 eatTicks = 0;
+                // Restart the confirmation window with the new bite: `confirmed` has to describe
+                // the bite that lands next, not the one we just chained away from, or a cycle
+                // whose stats recovered between bites would stop on the stale counter.
+                postConsumeTicks = -1;
                 useSelectedFood(player);
             }
             return;
@@ -451,14 +556,34 @@ public class PacketEat extends Module {
 
         FoodProperties food = getFoodComponent(player, eatSlot);
         eatFoodAlwaysEat = food != null && food.canAlwaysEat();
+        int consumeTicks = getConsumeTicks(player, eatSlot);
+
+        // Decide the mechanism up front. The screen-open fallback drives the real input path
+        // (Utils.rightClick), which acts on the CLIENT's selected slot; silent mode deliberately
+        // leaves the client on the original slot, so the two cannot be combined -> the click would
+        // use the wrong item while the server already believes we switched. Silent is therefore
+        // only available for the direct-packet path (no screen open).
+        eatingViaScreenClick = mc.screen != null;
 
         if (eatSlot == SlotUtils.OFFHAND) {
             // Offhand: item stays equipped; noRelease + packet intercept carry the rest.
-            eatDuration = OFFHAND_EAT_TICKS;
+            eatDuration = consumeTicks;
+        } else if (silent.get() && !eatingViaScreenClick) {
+            // Silent hotbar eat: tell the server we're on the eat slot, but keep the
+            // client's visible selection unchanged. This avoids the visual hotbar flicker
+            // and lets movement/combat packets continue to carry the original slot.
+            eatDuration = consumeTicks;
+            prevSlot = player.getInventory().getSelectedSlot();
+            silentServerSlot = eatSlot;
+            sendingSilentSlot = true;
+            try {
+                player.connection.send(new ServerboundSetCarriedItemPacket(eatSlot));
+            } finally {
+                sendingSilentSlot = false;
+            }
         } else {
-            // Hotbar: we're temporarily swapping the hotbar selection, so we must stay
-            // on this slot until the eat is confirmed finished before swapping back.
-            eatDuration = HOTBAR_EAT_TICKS;
+            // Non-silent hotbar: actually swap the client selection (original behavior).
+            eatDuration = consumeTicks;
             prevSlot = player.getInventory().getSelectedSlot();
             InvUtils.swap(eatSlot, false);
         }
@@ -472,11 +597,9 @@ public class PacketEat extends Module {
         lastCycleHealth = player.getHealth();
         lastCycleHunger = player.getFoodData().getFoodLevel();
 
-        // Decide method once per cycle, based on actual screen state right now.
-        eatingViaScreenClick = mc.screen != null;
-
         autoEating = true;
         eatTicks = 0;
+        postConsumeTicks = -1;   // -1 = not in confirmation window yet
 
         useSelectedFood(player);
     }
@@ -490,16 +613,42 @@ public class PacketEat extends Module {
             Utils.rightClick();
         } else {
             InteractionHand hand = eatSlot == SlotUtils.OFFHAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
-            player.connection.send(
-                new ServerboundUseItemPacket(hand, 0, player.getYRot(), player.getXRot())
-            );
+            sendingOwnUse = true;
+            try {
+                player.connection.send(
+                    new ServerboundUseItemPacket(hand, 0, player.getYRot(), player.getXRot())
+                );
+            } finally {
+                sendingOwnUse = false;
+            }
         }
     }
 
     private void stopAutoEating() {
         // Revert hotbar slot if we swapped and swap-back is enabled
-        if (eatSlot != SlotUtils.OFFHAND && prevSlot != -1) {
-            if (swapBack.get()) {
+        if (eatSlot != SlotUtils.OFFHAND) {
+            // silentServerSlot records whether THIS cycle used silent mode; reading the live
+            // silent setting instead would send a SetCarriedItem to a server that was never
+            // told to change slots, desyncing the selection the server thinks we are on.
+            if (silentServerSlot != -1) {
+                LocalPlayer player = mc.player;
+                if (player != null && player.connection != null) {
+                    // Tell the server we are back on the slot the client actually shows. The client
+                    // never moved it, so read it live rather than restoring a captured value.
+                    sendingSilentSlot = true;
+                    try {
+                        player.connection.send(new ServerboundSetCarriedItemPacket(
+                            player.getInventory().getSelectedSlot()));
+                    } finally {
+                        sendingSilentSlot = false;
+                    }
+                }
+                // Cleared even when the re-sync above was skipped (module disabled after a
+                // disconnect, so there is no connection left to tell). The flag records which mode
+                // this cycle used; leaving it set would make the next cycle re-sync a server that
+                // was never told about the spoof.
+                silentServerSlot = -1;
+            } else if (prevSlot != -1 && swapBack.get()) {
                 InvUtils.swap(prevSlot, false);
             }
             prevSlot = -1;
@@ -550,7 +699,7 @@ public class PacketEat extends Module {
         // Target only item use / placement: drop the use key and cancel any
         // in-progress item interaction so nothing keeps building while we bite.
         // The attack key and block-breaking progress are deliberately left
-        // untouched — mining must never be suppressed by this module.
+        // untouched -> mining must never be suppressed by this module.
         mc.options.keyUse.setDown(false);
         if (player.isUsingItem()) player.releaseUsingItem();
     }
@@ -633,6 +782,18 @@ public class PacketEat extends Module {
         return slot == SlotUtils.OFFHAND
             ? player.getOffhandItem().getCount()
             : player.getInventory().getItem(slot).getCount();
+    }
+
+    private int getConsumeTicks(LocalPlayer player, int slot) {
+        ItemStack stack = slot == SlotUtils.OFFHAND
+            ? player.getOffhandItem()
+            : player.getInventory().getItem(slot);
+        Consumable consumable = stack.get(DataComponents.CONSUMABLE);
+        if (consumable != null) {
+            int ticks = consumable.consumeTicks();
+            return ticks > 0 ? ticks : 32;  // fallback if 0
+        }
+        return 32;  // default vanilla value
     }
 
     private FoodProperties getFoodComponent(LocalPlayer player, int slot) {

@@ -8,8 +8,10 @@ import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.phys.AABB;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -115,7 +117,7 @@ public class ItemDespawn extends Module {
     private int frameCounter = SCAN_INTERVAL;
 
     public ItemDespawn() {
-        super(Addon.CATEGORY, "Item-Despawn", "Highlights items that are about to despawn.");
+        super(Addon.CATEGORY2, "Item-Despawn", "Highlights items that are about to despawn.");
     }
 
     @Override
@@ -202,7 +204,17 @@ public class ItemDespawn extends Module {
         Color sideColor = new Color(color.r, color.g, color.b, sideOpacity.get());
         Color lineColor = new Color(color.r, color.g, color.b, lineOpacity.get());
 
-        event.renderer.box(item.getBoundingBox(), sideColor, lineColor, shapeMode.get(), 0);
+        // Meteor ESP's tick interpolation: getBoundingBox() is the box as of the last tick, so
+        // offset it to where the item is drawn this frame. Dropped items drift and fall, so
+        // this is visible on them.
+        AABB box = item.getBoundingBox();
+        double x = Mth.lerp(event.tickDelta, item.xOld, item.getX()) - item.getX();
+        double y = Mth.lerp(event.tickDelta, item.yOld, item.getY()) - item.getY();
+        double z = Mth.lerp(event.tickDelta, item.zOld, item.getZ()) - item.getZ();
+        event.renderer.box(
+            x + box.minX, y + box.minY, z + box.minZ,
+            x + box.maxX, y + box.maxY, z + box.maxZ,
+            sideColor, lineColor, shapeMode.get(), 0);
     }
 
     private Color despawnColor(int timeLeft, int warnWindow) {

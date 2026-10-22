@@ -374,27 +374,6 @@ public class ManeWindow extends LiveWindow {
         }
     }
 
-    private static boolean rightMode(int mode, UUID uuid) {
-        switch (mode) {
-            case 0:
-                if (LivemessageGui.unreadMessages.getOrDefault(uuid, 0) == 0) {
-                    return false;
-                }
-                break;
-            case 1:
-                if (LivemessageGui.unreadMessages.getOrDefault(uuid, 0) > 0 || !LivemessageUtil.checkOnlineStatus(uuid)) {
-                    return false;
-                }
-                break;
-            case 2:
-                if (LivemessageGui.unreadMessages.getOrDefault(uuid, 0) > 0 || LivemessageUtil.checkOnlineStatus(uuid)) {
-                    return false;
-                }
-        }
-
-        return true;
-    }
-
     private static boolean searchFilter(String username) {
         try {
             String searchText = searchField.getValue().trim().toLowerCase(Locale.ROOT);

@@ -1,10 +1,10 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.ForceDefaultFont;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.renderer.Renderer2D;
 import meteordevelopment.meteorclient.renderer.text.TextRenderer;
-import meteordevelopment.meteorclient.renderer.text.VanillaTextRenderer;
 import meteordevelopment.meteorclient.settings.DoubleSetting.Builder;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
@@ -116,14 +116,7 @@ public class SignRender extends Module {
                 .defaultValue(true)
                 .build()
         );
-    private final Setting<Boolean> forceDefaultFont = this.sgRender
-        .add(
-            new meteordevelopment.meteorclient.settings.BoolSetting.Builder()
-                .name("force-default-font")
-                .description("Force sign text to render using the default font, even if a custom GUI font is selected in your Meteor config.")
-                .defaultValue(false)
-                .build()
-        );
+    private final ForceDefaultFont forceDefaultFont = new ForceDefaultFont(this.sgRender);
     private final Setting<Boolean> enableClustering = this.sgClustering
         .add(
             new meteordevelopment.meteorclient.settings.BoolSetting.Builder()
@@ -405,7 +398,9 @@ public class SignRender extends Module {
 
     private void renderSigns() {
         if (!this.allSigns.isEmpty()) {
-            TextRenderer textRenderer = (TextRenderer) (this.forceDefaultFont.get() ? VanillaTextRenderer.INSTANCE : TextRenderer.get());
+            // Both text renderers draw into their own mesh in the same physical-pixel space as
+            // Renderer2D (the background panels), so the sign text needs no extra pose scaling.
+            TextRenderer textRenderer = this.forceDefaultFont.textRenderer();
             if ((Boolean) this.enableClustering.get() && !this.clusters.isEmpty()) {
                 this.renderWithClusters(textRenderer);
             } else {

@@ -185,6 +185,7 @@ public class KMDB extends Module {
     // unchanged. footCacheFoot is null when no clear spot was found, which is why
     // validity is tracked separately rather than tested against the result.
     private boolean footCacheValid = false;
+    private boolean rightClickHeld = false;
     private BlockPos footCacheFoot = null;
     private int footCacheHash = 0;
     private int footCacheRadius = 0;
@@ -249,11 +250,19 @@ public class KMDB extends Module {
         .build()
     );
 
+    private final Setting<Boolean> rightClickBuild = sgPlacement.add(new BoolSetting.Builder()
+        .name("right-click-build")
+        .description("Build with a right click instead of the build key. Hides the build key while on.")
+        .defaultValue(false)
+        .visible(manualPlacement::get)
+        .build()
+    );
+
     private final KeybindSetting buildKey = sgPlacement.add(new KeybindSetting.Builder()
         .name("build-key")
         .description("Build the previewed structure. Only used while manual-placement is on.")
         .action(this::executeBuild)
-        .visible(() -> manualPlacement.get())
+        .visible(() -> manualPlacement.get() && !rightClickBuild.get())
         .build()
     );
 
@@ -339,7 +348,7 @@ public class KMDB extends Module {
 
     private final Setting<Boolean> hitboxAware = sgGeneral.add(new BoolSetting.Builder()
         .name("hitbox-aware")
-        .description("Refuse to build a cell that the player or a mob is standing in. Off means the module.")
+        .description("Refuse to build a cell that the player or a mob is standing in.")
         .defaultValue(true)
         .build()
     );
@@ -519,7 +528,7 @@ public class KMDB extends Module {
     private BuildMode lastBuildMode;
 
     public KMDB() {
-        super(Addon.CATEGORY, "KMDB", "Builds Wither, Iron Golem, Snow Golem, or Copper Golem automatically.");
+        super(Addon.CATEGORY2, "KMDB", "Builds Wither, Iron Golem, Snow Golem, Copper Golem, or Creaking automatically.");
     }
 
     @Override
@@ -553,7 +562,9 @@ public class KMDB extends Module {
     private void executeBuild() {
         switch (buildMode.get()) {
             case Wither -> {
-                if (manualMode()) manualStartWither(); else startWither(); }
+                if (manualMode()) manualStartWither();
+                else startWither();
+            }
             case IronGolem -> buildIronGolem();
             case SnowGolem -> buildSnowGolem();
             case CopperGolem -> buildCopperGolem();
@@ -570,7 +581,7 @@ public class KMDB extends Module {
         return manualPlacement.get();
     }
 
-@Override
+    @Override
     public void onDeactivate() {
         currentWither = null;
     }
@@ -809,7 +820,12 @@ public class KMDB extends Module {
         if (footCacheValid && footCacheHash == hash && footCacheRadius == radius
             && footCacheDistance == distance && footCacheAirPlace == air
             && footCachePlayerPos.equals(playerPos) && footCacheFacing == facing) {
-            return footCacheFoot;
+            // Entity positions are not part of the cache key, so a mob can walk into a spot
+            // that was clear when it was chosen. Re-validate before reusing it: the cached
+            // foot is only a hint about where to look, never a promise the cells are still free.
+            BlockPos cached = footCacheFoot;
+            if (cached != null && structureFits(cached, relativeOffsets)) return cached;
+            footCacheValid = false;
         }
 
         BlockPos found = findClearFootPosition(relativeOffsets, radius);
@@ -1175,6 +1191,21 @@ public class KMDB extends Module {
             // stage below ran with whatever currentWither was left over, or searched
             // for one on its own.
             startWither();
+        }
+
+        // Right-click-build: a rising edge of the use key places the previewed
+        // structure, so the module stays active across several builds without a
+        // separate keybind. The queued presses are drained here because vanilla's own
+        // use handling runs after TickEvent.Pre and would otherwise place a block or
+        // open a menu for the same click.
+        if (manualMode() && rightClickBuild.get() && mc.player != null) {
+            boolean down = mc.options.keyUse.isDown();
+            boolean clicked = false;
+            while (mc.options.keyUse.consumeClick()) clicked = true;
+            if (clicked || (down && !rightClickHeld)) executeBuild();
+            rightClickHeld = down;
+        } else {
+            rightClickHeld = false;
         }
 
         if (buildMode.get() != BuildMode.Wither) return;

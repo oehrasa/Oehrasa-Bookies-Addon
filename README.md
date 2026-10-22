@@ -36,9 +36,9 @@ Tested successfully with these mods.
 
 ## Features
 
-**51 modules**, **8 commands**, **10 HUD elements**, **10 mixin**, and **19 Utils**
+**53 modules**, **9 commands**, **10 HUD elements**, **14 mixin**, and **23 Utils**
 
-## Modules (51 total)
+## Modules (53 total)
 <details>
 <summary><b>Modules</b> (Bookies modules)</summary>
 
@@ -54,54 +54,56 @@ Tested successfully with these mods.
 10. **Auto-Take-Off** - Automatically starts elytra flight when on ground, in lava, or falling
 11. **Auto-Sex** - Tries to have sex with the player or mob in freaky ways
 12. **B36-Peacemaker** - Created this to make peace. Named after Convair B-36 Peacemaker
-13. **Block-Radius** - Renders the range of powered beacons, lightning rods, active conduits, linked creakings, and Warden ESP
-14. **Better-BoatFly** - Transforms your boat into a plane
-15. **BLU-27/B-Napalm** - Burns any flammable blocks nearby with flint and steel, I love the smell of Napalm in the morning, Commit some trolling
+13. **BDSM-Mask** - Dispenses carved pumpkins with Curse of Binding onto players/mobs
+14. **Block-Radius** - Renders the range of potions, beacons, lightning rods, conduits, linked creakings, Wardens, and sponges
+15. **Better-BoatFly** - Transforms your boat into a plane
+16. **BLU-27/B-Napalm** - Burns any flammable blocks nearby with flint and steel, I love the smell of Napalm in the morning, Commit some trolling
     against the Vietnamese
-16. **Bookshelf-Filler** - oeh Yuri romcom bookshelves restocker
-17. **Book-Import** - Automatically imports text files into signed books
-18. **Chest-Tracker** - Track items in containers
-19. **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block
-20. **Dried-Ghast** - Give these cute and tiny little creatures a second chances
-21. **DoubleCrystalPopper** - Attacks a locked target then pops two crystals with configurable delays
-22. **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
-23. **Fatamorgana** - Maho x Miho, Miho x Yukari, Maho x Erika
-24. **Force-Access** - Mines the block that keeps a container from opening, then opens it, also works through walls
-25. **Get-Preview** - Shows an item preview overlay on bundles, shulkers, and books
-26. **Homes-List** - Manage and teleport to your server homes with a GUI
-27. **Item-Despawn** - Highlights items that are about to despawn
-28. **Inventory-Info** - SHoiGu!! GEraShimov!!!
-29. **InventoryTracker** - Tracks and shows the equipment/slot history of other players in render distance (use .invsee to open screen)
-30. **KMDB** - Builds Wither, Iron Golem, Snow Golem, or Copper Golem, or Creaking automatically
-31. **LiveMessage** - Advanced DM management system with GUI
-32. **MURADAESA** - Detects likely player activity outside 128 blocks by scoring world-change packet patterns
-33. **Minecart-Placer** - Places any minecarts on any rails in range
-34. **Map-Grid** - Highlights map grid boundaries around the player
-35. **Mapart-Namer** - Auto‑names maps based on inventory slot layout
-36. **Mats-Refill** - Automatically restocks materials from shulker boxes
-37. **Mob-Owner** - Shows entity owner by saving into cache
-38. **PacketEat** - Allows you to eat without interrupting other actions
-39. **PzH200** - With just a bow and this module, It can fire shells at a high velocity aided by a laser rangefinder
-40. **Platform** - Build a platform within a selected area at a given y-level
-41. **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
-42. **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in
+17. **Bookshelf-Filler** - oeh Yuri romcom bookshelves restocker
+18. **Book-Import** - Automatically imports text files into signed books
+19. **Chest-Tracker** - Track items in containers
+20. **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block, Shelf block too
+21. **Dried-Ghast** - Give these cute and tiny little creatures a second chances
+22. **DoubleCrystalPopper** - Attacks a locked target then pops two crystals with configurable delays
+23. **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
+24. **Fatamorgana** - Maho x Miho, Miho x Yukari, Maho x Erika
+25. **Force-Access** - Mines the block that keeps a container from opening, then opens it, also works through walls
+26. **Get-Preview** - Shows an item preview overlay on bundles, shulkers, and books
+27. **Handy-Place** - Controls how directional block were to be placed and skinny-block full-cube placement
+28. **Homes-List** - Manage and teleport to your server homes with a GUI
+29. **Item-Despawn** - Highlights items that are about to despawn
+30. **Inventory-Info** - SHoiGu!! GEraShimov!!!
+31. **InventoryTracker** - Tracks and shows the equipment/slot history of other players in render distance (use .invsee to open screen)
+32. **KMDB** - Builds Wither, Iron Golem, Snow Golem, or Copper Golem, or Creaking automatically
+33. **LiveMessage** - Advanced DM management system with GUI
+34. **MURADAESA** - Detects likely player activity outside 128 blocks by scoring world-change packet patterns
+35. **Minecart-Placer** - Places any minecarts on any rails in range
+36. **Map-Grid** - Highlights map grid boundaries around the player
+37. **Mapart-Namer** - Auto names maps based on inventory slot layout
+38. **Mats-Refill** - Automatically restocks materials from shulker boxes
+39. **Mob-Owner** - Shows entity owner by saving into cache
+40. **PacketEat** - Allows you to eat without interrupting other actions
+41. **PzH-2000** - With just a bow and this module, It can fire shells at a high velocity aided by a laser rangefinder
+42. **Platform** - Build a platform within a selected area at a given y-level
+43. **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
+44. **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in
     1.13+ chunks
-43. **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
-44. **Sculk-Range** - Shows the detection range of normal or calibrated sculk sensors and shriekers
-45. **SignRender** - Renders sign text through walls with advanced clustering
-46. **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
-47. **Tnt-Fuse-Esp** - Shows the fuse time of lit tnt
-48. **Trajectory-Plus** - Smooth projectile prediction and tracking
-49. **Tsundere-Furry** - Transforms outgoing chat messages into animal sounds, tsundere, or both :>
-50. **Unwax-Aura** - Automatically removes wax from waxed copper blocks
-51. **Yuri-Asmr** - Streams a random ASMR search result through yt-dlp + ffmpeg with integrated HUD
+45. **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
+46. **Sculk-Range** - Shows the detection range of normal or calibrated sculk sensors and shriekers
+47. **SignRender** - Renders sign text through walls with advanced clustering
+48. **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
+49. **Tnt-Fuse-Esp** - Shows the fuse time of lit tnt
+50. **Trajectory-Plus** - Smooth projectile prediction and tracking
+51. **Tsundere-Furry** - Transforms outgoing chat messages into animal sounds, tsundere, or both :>
+52. **Unwax-Aura** - Automatically removes wax from copper blocks and copper golem and optionally breaks them
+53. **Yuri-Asmr** - Streams a random ASMR search result through yt-dlp + ffmpeg with integrated HUD
 
 </details>
 
 <details>
 <summary><b>Display of the addon</b> (in-game)</summary>
 <h1 align="left">
-  <img src="https://github.com/user-attachments/assets/3d967f96-7b30-4ab6-8b7e-2b54951485bf" alt="Header Image" style="width:70%; max-width:600px;"/>
+  <img src="https://github.com/user-attachments/assets/bb05cd59-c6b2-4d6a-a41a-d2ec3180f076" alt="Header Image" style="width:80%; max-width:600px;"/>
 </h1>
 </details>
 
@@ -118,17 +120,19 @@ Tested successfully with these mods.
 - **Teleport-Timer** - Shows a countdown bar on pending teleportation
 - **Weather** - Simple weather info display
 
-## Commands (8)
-| Command          | Description                                                                |
-|------------------|----------------------------------------------------------------------------|
-| `.assowner`      | Assign a cracked account name as the owner of the entity you're looking at |
-| `.book`          | Shows book information from your held item                                 |
-| `.booktranslate` | Translates the held written book into another language                     |
-| `.enemy`         | Manage friends marked as enemies                                           |
-| `.ifpeek`        | Shows book information from an item frame                                  |
-| `.invsee`        | Opens a simulated screen of tracked InventoryTracker module                |
-| `.queue`         | Manage queued (offline-pending) DM messages                                |
-| `.shelf`         | Extracts a book from a chiseled bookshelf slot, reads it, and puts it back |
+## Commands (9)
+
+| Command                        | Description                                                                    |
+|--------------------------------|--------------------------------------------------------------------------------|
+| `.assowner`                    | Assign a cracked account name as the owner of the entity you're looking at     |
+| `.book`                        | Shows book information from your held item, and can export it                  |
+| `.booktranslate`               | Translates the held written book, in chat or a GUI, and can export it          |
+| `.chesttracker`, `ct`, `track` | Search for items in tracked containers                                         |
+| `.enemy`                       | Manage friends marked as enemies                                               |
+| `.ifpeek`                      | Shows book information from an item frame, GUI preview and export              |
+| `.invsee`                      | Opens a simulated screen of tracked InventoryTracker module                    |
+| `.queue`                       | Manage queued (offline-pending) DM messages                                    |
+| `.shelf`                       | Extracts a book from a chiseled bookshelf, reads it, GUI preview, puts it back |
 
 ## TUTORIALS
 <details>
@@ -160,7 +164,8 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 2. Put the .txt file into folder : `\minecraft\AutoBookshelf\books` or use the [Remote Source](https://github.com/oehrasa/Ashurbanipal)
 3. _Recommend to use alongside Bookshelf-Filler module_
 4. Press set key in the module settings to continue to next file
-> I post the Python code [here](https://github.com/oehrasa/Auto-Written-Book)
+
+> I posted the Python code [here](https://github.com/oehrasa/Auto-Written-Book)
 </details>
 
 <details>

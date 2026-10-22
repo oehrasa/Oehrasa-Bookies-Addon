@@ -2,6 +2,7 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.DistanceUtil;
 import com.google.common.reflect.TypeToken;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -238,9 +239,8 @@ public class PortalCave extends Module {
                 int playerZ = mc.player.getBlockZ();
                 for (int b = 0; b < candidates.size(); b++) {
                     Vec3 center = candidates.get(b).getCenter();
-                    double dx = center.x - 1 - playerX;
-                    double dz = center.z - 1 - playerZ;
-                    double dist = Math.sqrt(dx * dx + dz * dz);
+                    double dist = DistanceUtil.distanceXZ(
+                        center.x - 1, center.z - 1, playerX, playerZ);
                     if (PortalDistance > dist) {
                         closestPortalX = Math.round((float) (center.x - 1));
                         closestPortalY = Math.round((float) (center.y - 1));
@@ -532,37 +532,35 @@ public class PortalCave extends Module {
     private void onRender(Render3DEvent event) {
         if (portalSideColor.get().a > 5 || portalLineColor.get().a > 5) {
             synchronized (possiblePortalLocations) {
-                if (!nearesttrcr.get()) {
-                    for (AABB box : possiblePortalLocations) {
-                        BlockPos playerPos = new BlockPos(mc.player.getBlockX(), Math.round((float) box.getCenter().y), mc.player.getBlockZ());
-                        if (box != null && playerPos.closerToCenterThan(box.getCenter(), renderDistance.get() * 16)) {
-                            render(box, portalSideColor.get(), portalLineColor.get(), shapeMode.get(), event);
-                        }
+                for (AABB box : possiblePortalLocations) {
+                    if (box == null) continue;
+                    BlockPos playerPos = new BlockPos(mc.player.getBlockX(), Math.round((float) box.getCenter().y), mc.player.getBlockZ());
+                    if (playerPos.closerToCenterThan(box.getCenter(), renderDistance.get() * 16)) {
+                        render(box, portalSideColor.get(), portalLineColor.get(), shapeMode.get(), event);
                     }
-                } else if (nearesttrcr.get()) {
-                    for (AABB box : possiblePortalLocations) {
-                        BlockPos playerPos = new BlockPos(mc.player.getBlockX(), Math.round((float) box.getCenter().y), mc.player.getBlockZ());
-                        if (box != null && playerPos.closerToCenterThan(box.getCenter(), renderDistance.get() * 16)) {
-                            render(box, portalSideColor.get(), portalLineColor.get(), shapeMode.get(), event);
-                        }
-                    }
+                }
+                if (nearesttrcr.get()) {
                     render2(new AABB(new Vec3(closestPortalX, closestPortalY, closestPortalZ), new Vec3(closestPortalX, closestPortalY, closestPortalZ)), portalSideColor.get(), portalLineColor.get(), ShapeMode.Sides, event);
                 }
             }
         }
     }
 
+    // The box outline is drawn by the explicit line() calls in render()/render2(), so the
+    // box's own line colour is always fully transparent - one shared instance is enough.
+    private static final Color NO_LINE = new Color(0, 0, 0, 0);
+
     private void render(AABB box, Color sides, Color lines, ShapeMode shapeMode, Render3DEvent event) {
         if (trcr.get() && Math.abs(box.minX - RenderUtils.center.x) <= renderDistance.get() * 16 && Math.abs(box.minZ - RenderUtils.center.z) <= renderDistance.get() * 16)
             if (!nearesttrcr.get())
                 event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z, box.minX + 0.5, box.minY + ((box.maxY - box.minY) / 2), box.minZ + 0.5, lines);
-        event.renderer.box(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ, sides, new Color(0, 0, 0, 0), shapeMode, 0);
+        event.renderer.box(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ, sides, NO_LINE, shapeMode, 0);
     }
 
     private void render2(AABB box, Color sides, Color lines, ShapeMode shapeMode, Render3DEvent event) {
         if (trcr.get() && Math.abs(box.minX - RenderUtils.center.x) <= renderDistance.get() * 16 && Math.abs(box.minZ - RenderUtils.center.z) <= renderDistance.get() * 16)
             event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z, box.minX + 0.5, box.minY + ((box.maxY - box.minY) / 2), box.minZ + 0.5, lines);
-        event.renderer.box(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ, sides, new Color(0, 0, 0, 0), shapeMode, 0);
+        event.renderer.box(box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ, sides, NO_LINE, shapeMode, 0);
     }
 
     private void removeChunksOutsideRenderDistance(Set<LevelChunk> worldChunks) {

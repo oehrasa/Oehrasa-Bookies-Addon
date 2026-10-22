@@ -239,6 +239,13 @@ public class ChestTrackerModule extends Module {
         .build()
     );
 
+    private final Setting<Boolean> trackCopperChests = sgFilter.add(new BoolSetting.Builder()
+        .name("track-copper-chests")
+        .description("Track copper chests (all weathering stages).")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<Boolean> showOnScreen = sgDisplay.add(new BoolSetting.Builder()
         .name("show-on-screen")
         .description("Show a brief on-screen message when containers are tracked or saved.")
@@ -818,6 +825,10 @@ public class ChestTrackerModule extends Module {
     }
 
     private boolean isTrackableContainer(Block block) {
+        // CopperChestBlock extends ChestBlock on 26.2, so this
+        // test has to come first or every weathering stage of a copper chest
+        // gets folded into the regular-chest filter and labelled "chest".
+        if (block instanceof CopperChestBlock) return trackCopperChests.get();
         if (block instanceof ChestBlock || block instanceof TrappedChestBlock) return trackChests.get();
         if (block instanceof BarrelBlock) return trackBarrels.get();
         if (block instanceof ShulkerBoxBlock) return trackShulkers.get();
@@ -830,6 +841,7 @@ public class ChestTrackerModule extends Module {
     private String getContainerType(BlockPos pos) {
         if (mc.level == null) return "container";
         Block block = mc.level.getBlockState(pos).getBlock();
+        if (block instanceof CopperChestBlock) return "copper_chest";
         if (block instanceof ChestBlock || block instanceof TrappedChestBlock) return "chest";
         if (block instanceof BarrelBlock) return "barrel";
         if (block instanceof ShulkerBoxBlock) return "shulker_box";
@@ -853,6 +865,14 @@ public class ChestTrackerModule extends Module {
 
     public ChestTrackerDataV2 getData() {
         return data;
+    }
+
+    /**
+     * Distance beyond which a tracked container is not rendered; used by ChestTrackerCommand
+     * to colour "nearby" output the same way the boxes are coloured in-world.
+     */
+    public double getRenderDistance() {
+        return renderDistance.get();
     }
 
     public void searchItem(Item item) {

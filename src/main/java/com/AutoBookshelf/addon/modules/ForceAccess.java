@@ -23,6 +23,7 @@ import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.tags.TagKey;
+import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
@@ -466,9 +467,23 @@ public class ForceAccess extends Module {
             }
         }
 
-        if (openEntity != null && openEntity.isAlive()
-            && eye.distanceToSqr(openEntity.getBoundingBox().getCenter()) < maxSq) {
-            event.renderer.box(openEntity.getBoundingBox(), sideColor.get(), lineColor.get(), shapeMode.get(), 0);
+        if (openEntity != null && openEntity.isAlive()) {
+            // Meteor ESP's tick interpolation. The cull and the draw share one offset box so
+            // the entity cannot be culled while the box that would have been drawn was on
+            // screen. Harmless when static: a block-entity display has xOld == x, so the
+            // offset is zero and this reduces to the previous behaviour exactly.
+            AABB box = openEntity.getBoundingBox();
+            double x = Mth.lerp(event.tickDelta, openEntity.xOld, openEntity.getX()) - openEntity.getX();
+            double y = Mth.lerp(event.tickDelta, openEntity.yOld, openEntity.getY()) - openEntity.getY();
+            double z = Mth.lerp(event.tickDelta, openEntity.zOld, openEntity.getZ()) - openEntity.getZ();
+            AABB lerped = box.move(x, y, z);
+
+            if (eye.distanceToSqr(lerped.getCenter()) < maxSq) {
+                event.renderer.box(
+                    x + box.minX, y + box.minY, z + box.minZ,
+                    x + box.maxX, y + box.maxY, z + box.maxZ,
+                    sideColor.get(), lineColor.get(), shapeMode.get(), 0);
+            }
         }
     }
 
@@ -783,9 +798,14 @@ public class ForceAccess extends Module {
             waitTicks = 0;
             if (autoTool.get()) swapTool();
         }
-        if (mining != null && mining2 == null && doubleBreak.get() && packetBreak.get() && !queue.isEmpty()
-            && (!autoTool.get() || findToolSlot(queue.peekFirst()) == findToolSlot(mining.pos))) {
-            mining2 = pop();
+        // Double-break: pop a second obstruction if both need the same tool.
+        // mining is already popped and holds the first obstruction; queue.peekFirst()
+        // is the next obstruction. Compare tools for mining.pos vs next.
+        if (mining != null && mining.pos != null && mining2 == null && doubleBreak.get() && packetBreak.get() && !queue.isEmpty()) {
+            BlockPos next = queue.peekFirst();
+            if (!autoTool.get() || findToolSlot(mining.pos) == findToolSlot(next)) {
+                mining2 = pop();
+            }
         }
         if (mining == null && mining2 == null) {
             phase = Phase.OPEN;

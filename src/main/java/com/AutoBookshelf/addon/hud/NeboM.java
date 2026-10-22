@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.hud;
 
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.ForceDefaultFont;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -213,6 +214,8 @@ public class NeboM extends HudElement {
         .build()
     );
 
+    private final ForceDefaultFont forceDefaultFont = new ForceDefaultFont(sgGeneral);
+
     private final List<Player> players = new ArrayList<>();
     private static final int ICON_SIZE = 16;  // normal size
     private static final int ICON_TEXT_GAP = 2;
@@ -252,8 +255,8 @@ public class NeboM extends HudElement {
 
     @Override public void tick(HudRenderer renderer) {
         double scl = getScale();
-        double width = renderer.textWidth("Players:", shadow.get(), scl);
-        double height = renderer.textHeight(shadow.get(), scl);
+        double width = forceDefaultFont.width(renderer, "Players:", shadow.get(), scl);
+        double height = forceDefaultFont.height(renderer, shadow.get(), scl);
 
         if (mc.level == null) {
             setSize(width, height);
@@ -272,31 +275,31 @@ public class NeboM extends HudElement {
 
             // name
             String name = player.getName().getString();
-            lineWidth += renderer.textWidth(name, shadow.get(), scl);
+            lineWidth += forceDefaultFont.width(renderer, name, shadow.get(), scl);
             // distance
             if (showDistance.get()) {
                 String dist = String.format(" (%.0fm)", player.distanceTo(mc.player));
-                lineWidth += renderer.textWidth(dist, shadow.get(), scl);
+                lineWidth += forceDefaultFont.width(renderer, dist, shadow.get(), scl);
             }
             // direction
             if (showDirection.get()) {
                 String dir = getDirectionString(player.getYRot());
-                lineWidth += renderer.textWidth(" " + dir, shadow.get(), scl);
+                lineWidth += forceDefaultFont.width(renderer, " " + dir, shadow.get(), scl);
             }
             // states + icons
             if (showState.get()) {
                 List<String> states = getActiveStates(player);
                 for (int i = 0; i < states.size(); i++) {
                     String state = states.get(i);
-                    if (i > 0) lineWidth += renderer.textWidth(stateSeparator.get(), shadow.get(), scl);
+                    if (i > 0) lineWidth += forceDefaultFont.width(renderer, stateSeparator.get(), shadow.get(), scl);
                     if (getActionItem(player, state) != null && isActionState(state)) {
                         lineWidth += ICON_SIZE + ICON_TEXT_GAP;
                     }
-                    lineWidth += renderer.textWidth(state, shadow.get(), scl);
+                    lineWidth += forceDefaultFont.width(renderer, state, shadow.get(), scl);
                 }
             }
             width = Math.max(width, lineWidth);
-            height += renderer.textHeight(shadow.get(), scl) + 2;
+            height += forceDefaultFont.height(renderer, shadow.get(), scl) + 2;
         }
         setSize(width, height);
     }
@@ -305,8 +308,8 @@ public class NeboM extends HudElement {
         double y = this.y + border.get();
         double scl = getScale();
 
-        renderer.text("Players:",
-            x + border.get() + alignX(renderer.textWidth("Players:", shadow.get(), scl), alignment.get()),
+        forceDefaultFont.text(renderer, "Players:",
+            x + border.get() + alignX(forceDefaultFont.width(renderer, "Players:", shadow.get(), scl), alignment.get()),
             y, Color.GRAY, shadow.get(), scl);
 
         if (mc.level == null) return;
@@ -337,19 +340,25 @@ public class NeboM extends HudElement {
 
             // Build the line (excluding the head) to measure total text width for alignment
             String lineWithoutHead = name + distanceStr + dirStr + statePart;
-            double fullLineWidth = renderer.textWidth(lineWithoutHead, shadow.get(), scl);
+            double fullLineWidth = forceDefaultFont.width(renderer, lineWithoutHead, shadow.get(), scl);
             if (showHead.get()) {
                 fullLineWidth += headSize.get() + 2; // head icon + gap
             }
 
-            y += renderer.textHeight(shadow.get(), scl) + 2;
+            // `y` is the TOP of the text, not its baseline: forceDefaultFont.text passes it
+            // straight through to GuiGraphicsExtractor.text(Font, String, int, int, int), and
+            // Meteor's HudRenderer.text does the same via VanillaTextRenderer.render. So the text
+            // occupies [y, y + textHeight], and centring a 16px-scale decoration on the line is
+            // just an offset from y. (This used to subtract a whole textHeight for the head, which
+            // drew it a full line ABOVE the name it belongs to.)
+            double textHeight = forceDefaultFont.height(renderer, shadow.get(), scl);
+            y += textHeight + 2;
             double x = this.x + border.get() + alignX(fullLineWidth, alignment.get());
 
             // Draw head icon
             if (showHead.get()) {
                 PlayerSkin skinTextures = getSkinTextures(player);
-                double textHeight = renderer.textHeight(shadow.get(), scl);
-                int headY = (int) (y - textHeight + (textHeight - headSize.get()) / 2);
+                int headY = (int) (y + (textHeight - headSize.get()) / 2);
                 if (skinTextures != null) {
                     PlayerFaceExtractor.extractRenderState(
                         renderer.graphics,
@@ -364,7 +373,7 @@ public class NeboM extends HudElement {
             }
 
             // name + distance + direction
-            x = renderer.text(name + distanceStr + dirStr, x, y, nameColor, shadow.get(), scl);
+            x = forceDefaultFont.text(renderer, name + distanceStr + dirStr, x, y, nameColor, shadow.get(), scl);
 
             // states with optional icons
             if (!statePart.isEmpty()) {
@@ -378,17 +387,21 @@ public class NeboM extends HudElement {
                     Color stateColor = getStateColorByName(state);
 
                     if (i > 0) {
-                        x = renderer.text(stateSeparator.get(), x, y, Color.GRAY, shadow.get(), scl);
+                        x = forceDefaultFont.text(renderer, stateSeparator.get(), x, y, Color.GRAY, shadow.get(), scl);
                     }
 
                     // Draw the state text first
-                    x = renderer.text(state, x, y, stateColor, shadow.get(), scl);
+                    x = forceDefaultFont.text(renderer, state, x, y, stateColor, shadow.get(), scl);
 
                     // Draw icon after the text if the state has an action item
                     ItemStack actionItem = getActionItem(player, state);
                     if (actionItem != null && isActionState(state)) {
                         x += ICON_TEXT_GAP;
-                        double iconY = y - 9;   // centre 16px icon vertically
+                        // Item rendering takes the icon's TOP-left (RenderUtils.drawItem ->
+                        // GuiGraphics.item), so centre the 16px icon on the text line exactly the
+                        // way the head is centred. `y - 9` put its centre on the text's top edge,
+                        // so every state icon sat a few pixels high.
+                        double iconY = y + (textHeight - ICON_SIZE) / 2;
                         renderer.item(actionItem, (int) x, (int) iconY, 1.0f, false);
                         x += ICON_SIZE;
                     }

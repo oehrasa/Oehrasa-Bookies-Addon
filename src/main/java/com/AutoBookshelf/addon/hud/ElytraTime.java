@@ -1,10 +1,16 @@
 package com.AutoBookshelf.addon.hud;
 
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.ForceDefaultFont;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
+import meteordevelopment.meteorclient.gui.utils.StarscriptTextBoxRenderer;
+import meteordevelopment.meteorclient.settings.Setting;
+import meteordevelopment.meteorclient.settings.SettingGroup;
+import meteordevelopment.meteorclient.settings.StringSetting;
 import meteordevelopment.meteorclient.systems.hud.HudElement;
 import meteordevelopment.meteorclient.systems.hud.HudElementInfo;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
+import meteordevelopment.meteorclient.utils.misc.MeteorStarscript;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
@@ -15,6 +21,10 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.item.enchantment.ItemEnchantments;
+import org.meteordev.starscript.Script;
+import org.meteordev.starscript.compiler.Compiler;
+import org.meteordev.starscript.compiler.Parser;
+import org.meteordev.starscript.utils.StarscriptError;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
@@ -26,12 +36,31 @@ public class ElytraTime extends HudElement {
         ElytraTime::new
     );
 
-    private String displayText = "Efly: 0h 0m 0s Dura: 0";
+    private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final ForceDefaultFont forceDefaultFont = new ForceDefaultFont(sgGeneral);
+
+    public final Setting<String> text = sgGeneral.add(new StringSetting.Builder()
+        .name("text")
+        .description("Text to display with Starscript.")
+        .defaultValue("Efly: {elytra.hours}h {elytra.minutes}m {elytra.seconds}s Dura: {elytra.durability}{elytra.unbreaking}")
+        .onChanged(v -> recompile())
+        .wide()
+        .renderer(StarscriptTextBoxRenderer.class)
+        .build()
+    );
+
+    private String displayText = "";
     private long lastCalcMs = 0L;
     private static final long CALC_INTERVAL_MS = 500L;
+    private Script script;
+    private boolean needsCompile = true;
 
     public ElytraTime() {
         super(INFO);
+    }
+
+    private void recompile() {
+        needsCompile = true;
     }
 
     /**
@@ -97,6 +126,7 @@ public class ElytraTime extends HudElement {
     private void calculateElytraTime() {
         if (mc.player == null) {
             displayText = "Efly: 0h 0m 0s Dura: 0";
+            needsCompile = true;
             return;
         }
 
@@ -112,8 +142,47 @@ public class ElytraTime extends HudElement {
             unbreakingDisplay = String.format(" Unb%d", unbreakingLevel);
         }
 
-        displayText = String.format("Efly: %dh %dm %ds Dura: %d%s",
-            hours, minutes, seconds, totalRawDurability, unbreakingDisplay);
+        if (needsCompile) {
+            Parser.Result result = Parser.parse(text.get());
+
+            if (result.hasErrors()) {
+                script = null;
+                displayText = result.errors.getFirst().toString();
+            } else {
+                try {
+                    script = Compiler.compile(result);
+                } catch (StarscriptError e) {
+                    // Compiler.compile (unlike the MeteorStarscript.compile wrapper) does not
+                    // swallow semantic errors - it throws. Meteor's own TextHud lets this
+                    // propagate, but Orbit's EventBus does not catch exceptions, so an uncaught
+                    // throw here would crash the render loop on a broken user template.
+                    script = null;
+                    displayText = e.getMessage();
+                }
+            }
+
+            needsCompile = false;
+        }
+
+        MeteorStarscript.ss.set("elytra", new org.meteordev.starscript.value.ValueMap()
+            .set("hours", org.meteordev.starscript.value.Value.number(hours))
+            .set("minutes", org.meteordev.starscript.value.Value.number(minutes))
+            .set("seconds", org.meteordev.starscript.value.Value.number(seconds))
+            .set("durability", org.meteordev.starscript.value.Value.number(totalRawDurability))
+            .set("unbreaking", org.meteordev.starscript.value.Value.string(unbreakingDisplay))
+            .set("time", org.meteordev.starscript.value.Value.number(totalSeconds))
+        );
+
+        try {
+            if (script != null) {
+                // run() returns null on a runtime error (it prints to chat itself) instead of
+                // throwing; a null here would reach the HUD text renderer.
+                String result = MeteorStarscript.run(script);
+                displayText = result != null ? result : "Starscript error";
+            }
+        } catch (StarscriptError e) {
+            displayText = e.getMessage();
+        }
     }
 
     @Override
@@ -123,7 +192,7 @@ public class ElytraTime extends HudElement {
             lastCalcMs = now;
             calculateElytraTime();
         }
-        setSize(renderer.textWidth(displayText, true), renderer.textHeight(true));
-        renderer.text(displayText, x, y, Color.WHITE, true);
+        setSize(forceDefaultFont.width(renderer, displayText, true), forceDefaultFont.height(renderer, true));
+        forceDefaultFont.text(renderer, displayText, x, y, Color.WHITE, true);
     }
 }

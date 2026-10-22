@@ -240,7 +240,16 @@ public class AutoFarm extends Module {
     }
 
     private void sortBlocksByDistance() {
-        blocks.sort(Comparator.comparingDouble(pos -> getPlayerDistance(pos)));
+        // The old comparator called getPlayerDistance() inside the comparator, which
+        // allocated two Vec3 objects per comparison (~n·log n per tick). Squared
+        // Euclidean distance orders identically and needs no allocation at all.
+        Vec3 eye = mc.player.getEyePosition();
+        blocks.sort(Comparator.comparingDouble(pos -> {
+            double dx = pos.getX() + 0.5 - eye.x;
+            double dy = pos.getY() + 0.5 - eye.y;
+            double dz = pos.getZ() + 0.5 - eye.z;
+            return dx * dx + dy * dy + dz * dz;
+        }));
     }
 
     private void processBlocks() {

@@ -10,6 +10,7 @@ import meteordevelopment.meteorclient.utils.entity.SortPriority;
 import meteordevelopment.meteorclient.utils.entity.TargetUtils;
 import meteordevelopment.meteorclient.utils.player.FindItemResult;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
+import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
@@ -160,6 +161,10 @@ public class DoubleCrystalPopper extends Module {
 
         switch (stage) {
             case ATTACKING -> {
+                // A melee beyond attack-range is rejected server-side, so hold the combo
+                // (retrying each tick) until the target is actually in reach instead of
+                // swinging at a packet that never lands.
+                if (mc.player == null || !PlayerUtils.isWithin(target, attackRange.get())) return;
                 attackTarget();
                 timer = n1.get();
                 stage = Stage.WAIT_BEFORE_POP_1;
@@ -316,7 +321,7 @@ public class DoubleCrystalPopper extends Module {
         return best;
     }
 
-    // Checks that the space the crystal would spawn in isn't overlapping any entity (yourself included) —
+    // Checks that the space the crystal would spawn in isn't overlapping any entity (yourself included) -
     // this is what silently rejects placements right at your own feet or right next to your target.
     private boolean isPlaceable(BlockPos basePos) {
         double x = basePos.getX();

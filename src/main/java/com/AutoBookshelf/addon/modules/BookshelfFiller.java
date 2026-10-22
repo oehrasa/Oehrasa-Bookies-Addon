@@ -27,6 +27,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ChiseledBookShelfBlock;
+import net.minecraft.world.level.block.entity.ChiseledBookShelfBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.BlockHitResult;
@@ -59,6 +60,36 @@ public class BookshelfFiller extends Module {
 
     private List<Integer> sortedBookSlots = new ArrayList<>();
     private int currentBookIndex = 0;
+
+    /**
+     * Books already on the shelf currently being filled, as immutable
+     * {@link net.minecraft.world.item.component.WrittenBookContent} snapshots. Seeded from the
+     * block entity whenever the fill moves to a new shelf and appended to after every placement.
+     *
+     * <p>Scoped to <b>one shelf at a time</b> on purpose. A set held across the whole selection
+     * would keep claiming books that are no longer placed: destroy or unload a filled shelf and
+     * the filler would still refuse to re-place those books, with no way to recover except
+     * restarting the module. Rebuilding from the shelf's current contents makes that case
+     * self-healing - an emptied shelf simply starts with an empty set.
+     *
+     * <p>Appended to as we place, not just seeded once, because the fill revisits a shelf (the
+     * distance check sets {@code delayLeft}, and retries re-enter). Without the append, slot 3
+     * would happily receive the same book slot 2 just took.
+     *
+     * <p>Snapshots rather than {@link ItemStack} references on purpose: the block entity's list
+     * is replaced wholesale when the server syncs it, so a retained reference would either go
+     * stale or pin a dead container in memory.
+     */
+    private final List<WrittenBookContent> batchShelfBooks = new ArrayList<>();
+    private BlockPos dedupAnchorPos = null;
+
+    /**
+     * Set when the last {@link #findNextBookToPlace} pass turned a book away because it
+     * duplicated the shelf, rather than because nothing was found. Distinguishes "you have no
+     * books" from "everything left is already on this shelf", which would otherwise report a
+     * misleading "no written books found" and stop the fill.
+     */
+    private boolean duplicateSkipsThisShelf = false;
 
     private String currentBookTitle = "";
     private String currentBookAuthor = "";
@@ -219,7 +250,7 @@ public class BookshelfFiller extends Module {
 
     private final Setting<FillLayout> fillLayout = sgGeneral.add(new EnumSetting.Builder<FillLayout>()
         .name("fill-layout")
-        .description("Order across the wall and within each shelf: bottom-first fills the lowest Y layer of the selected wall upward (bottom shelf row before the top); top-first is the reverse.")
+        .description("Order across the wall and within each shelf: bottom-first fills the lowest Y layer of the selected wall upward; top-first is the reverse.")
         .defaultValue(FillLayout.TOP_FIRST)
         .build()
     );
@@ -230,13 +261,6 @@ public class BookshelfFiller extends Module {
         .name("counter-tool")
         .description("Tool to use for counting books in bookshelves (right-click to select area).")
         .defaultValue(Items.NETHERITE_PICKAXE)
-        .build()
-    );
-
-    private final Setting<Boolean> requireCounterTool = sgCounter.add(new BoolSetting.Builder()
-        .name("require-counter-tool")
-        .description("Require the counter tool to be held to count books.")
-        .defaultValue(true)
         .build()
     );
 
@@ -276,7 +300,7 @@ public class BookshelfFiller extends Module {
 
     private final Setting<Boolean> bookLogEnabled = sgBookLog.add(new BoolSetting.Builder()
         .name("book-log")
-        .description("Track which book title is placed into which chiseled bookshelf slot and persist it to AutoBookshelf/bookshelf_books.json. Entries are removed when the slot empties.")
+        .description("Track which book title is placed into which chiseled bookshelf slot, and persist it to AutoBookshelf/bookshelf_books.json.")
         .defaultValue(true)
         .build()
     );
@@ -338,9 +362,14 @@ public class BookshelfFiller extends Module {
         .build()
     );
 
+    /**
+     * When this is off, a plain right-click extracts too, but only where the selection does not
+     * claim the click first: if the selection's {@code require-tool-in-hand} is off, or the
+     * selection tool is held, the click selects (pos1/pos2) instead and nothing is extracted.
+     */
     private final Setting<Boolean> requireExtractTool = sgExtract.add(new BoolSetting.Builder()
         .name("require-extract-tool")
-        .description("Require the extract tool to be held to extract books.")
+        .description("Require the extract tool in hand to extract books. When off, a plain right-click extracts too, unless the selection claims the click first.")
         .defaultValue(true)
         .build()
     );
@@ -382,6 +411,20 @@ public class BookshelfFiller extends Module {
     private final Setting<Boolean> enableFilter = sgFilter.add(new BoolSetting.Builder()
         .name("enable-filter")
         .description("Enable book title filtering (extracts numbers from titles).")
+        .defaultValue(true)
+        .build()
+    );
+
+    /**
+     * The match is title, author and page text, and the comparison is scoped to the shelf being
+     * filled rather than the whole selection: a shelf that is broken, emptied or unloaded rebuilds
+     * from what it currently holds, so refilling it always works. A book claimed by a remembered
+     * slot (refill-removed) is never skipped, because refill is the one thing that must be allowed
+     * to put a duplicate back.
+     */
+    private final Setting<Boolean> skipDuplicateBooks = sgFilter.add(new BoolSetting.Builder()
+        .name("skip-duplicate-books")
+        .description("Skip a written book that already matches one on the shelf being filled, so identical copies are not placed side by side.")
         .defaultValue(true)
         .build()
     );
@@ -580,6 +623,8 @@ public class BookshelfFiller extends Module {
         sortedBookSlots.clear();
         currentBookIndex = 0;
         cachedBookSlot = -1;
+        resetBatchShelfBooks();
+        duplicateSkipsThisShelf = false;
         currentBookTitle = "";
         currentBookAuthor = "";
         currentBookSlot = -1;
@@ -1258,10 +1303,6 @@ public class BookshelfFiller extends Module {
 
         // Counter tool
         if (counterTool.get() != null && !hand.isEmpty() && hand.getItem() == counterTool.get()) {
-            if (requireCounterTool.get() && hand.getItem() != counterTool.get()) {
-                return;
-            }
-
             if (!countingMode) {
                 countPos1 = pos;
                 countingMode = true;
@@ -1277,7 +1318,14 @@ public class BookshelfFiller extends Module {
             }
         }
 
-        if (extractTool.get() != null && !hand.isEmpty() && hand.getItem() == extractTool.get()) {
+        // Selection gets first refusal on a plain click (checked as a flag below), so a
+        // shelf stays selectable without the wand even when require-extract-tool is off.
+        boolean selectionClaimsClick = !areaSelector.requiresToolInHand() || areaSelector.isToolStack(hand);
+
+        // Holding the extract tool always extracts; with require-extract-tool off, a
+        // plain click extracts too (unless the selection handler claims it).
+        if ((extractTool.get() != null && !hand.isEmpty() && hand.getItem() == extractTool.get())
+            || (!requireExtractTool.get() && !selectionClaimsClick)) {
             fullReset();
             startSingleBlockExtract(pos);
             event.cancel();
@@ -1285,7 +1333,7 @@ public class BookshelfFiller extends Module {
         }
 
         // Selection tool handling with respect to require-tool-in-hand setting
-        if (!areaSelector.requiresToolInHand() || areaSelector.isToolStack(hand)) {
+        if (selectionClaimsClick) {
             AreaSelector.Result result = areaSelector.handleClick(pos);
             switch (result) {
                 case POS1_SET -> info("§aPos1 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
@@ -1558,6 +1606,7 @@ public class BookshelfFiller extends Module {
         stuckCounter = 0;
         lastPos = null;
         lastSlot = -1;
+        resetBatchShelfBooks();
         isFilling = true;
         currentBookTitle = "";
         currentBookAuthor = "";
@@ -1569,7 +1618,7 @@ public class BookshelfFiller extends Module {
         dedicatedSwapSlot = dedicatedSwapSlotIndex.get();
 
         if (enableFilter.get()) {
-            refreshBookList();
+            refreshBookList(false);
         }
 
         if (!rows.isEmpty()) {
@@ -1590,7 +1639,7 @@ public class BookshelfFiller extends Module {
         }
     }
 
-    private void refreshBookList() {
+    private void refreshBookList(boolean quiet) {
         sortedBookSlots.clear();
         currentBookIndex = 0;
 
@@ -1619,7 +1668,7 @@ public class BookshelfFiller extends Module {
 
                     if (!numbers.isEmpty() || !enableFilter.get()) {
                         slotBookInfoMap.put(i, new BookInfo(title, author, numbers));
-                        if (verboseChecking.get() && !waitingForRetry) {
+                        if (!quiet && verboseChecking.get() && !waitingForRetry) {
                             if (enableFilter.get()) {
                                 info("§7Found: §f" + title + " §7by §f" + (author != null ? author : "Unknown") + " §7in slot §f" + i + " §7(numbers: §f" + numbers + "§7)");
                             } else {
@@ -1665,13 +1714,13 @@ public class BookshelfFiller extends Module {
             sortedBookSlots = new ArrayList<>(slotBookInfoMap.keySet());
         }
 
-        if (verboseChecking.get() && waitingForRetry) {
+        if (!quiet && verboseChecking.get() && waitingForRetry) {
             info("§aFound §f" + sortedBookSlots.size() + " §anew books! Resuming");
-        } else if (verboseChecking.get()) {
+        } else if (!quiet && verboseChecking.get()) {
             info("§aFound §f" + sortedBookSlots.size() + " §abooks");
         }
 
-        if (enableFilter.get() && verboseChecking.get()) {
+        if (!quiet && enableFilter.get() && verboseChecking.get()) {
             info("§7Sorting order:");
             for (int idx = 0; idx < Math.min(10, sortedBookSlots.size()); idx++) {
                 int slot = sortedBookSlots.get(idx);
@@ -1746,7 +1795,7 @@ public class BookshelfFiller extends Module {
             if (retryWaitCounter >= retryCheckInterval.get()) {
                 waitingForRetry = false;
                 retryWaitCounter = 0;
-                refreshBookList();
+                refreshBookList(false);
                 if (sortedBookSlots.isEmpty() && continuousChecking.get()) {
                     waitingForRetry = true;
                 } else if (!sortedBookSlots.isEmpty()) {
@@ -1864,16 +1913,43 @@ public class BookshelfFiller extends Module {
         boolean isSlotEmpty = !state.getValue(ChiseledBookShelfBlock.SLOT_OCCUPIED_PROPERTIES.get(slotToFill));
 
         if (isSlotEmpty) {
-            int bookSlot = findNextBookToPlace();
+            int bookSlot = findNextBookToPlace(pos);
             if (bookSlot == -1) {
+                // Distinguish "nothing in your inventory" from "everything left already matches a
+                // book on this shelf". The second is the normal end state of a fill that has
+                // books left, and reporting it as "no written books found" would be a lie.
+                boolean onlyDuplicates = duplicateSkipsThisShelf;
+                String kind = enableFilter.get() ? "books with numbers" : "written books";
+
+                // Everything left duplicates this shelf. Placing it would be exactly what
+                // skip-duplicate-books exists to prevent, and staying put is not an option:
+                // continuous-checking would retry this slot forever, and otherwise the fill
+                // would declare the whole selection done. Move to the next block instead -
+                // those books are perfectly valid there.
+                if (onlyDuplicates) {
+                    if (verboseChecking.get()) {
+                        info("§eRemaining " + kind + " all match this shelf, moving to the next one");
+                    }
+                    // currentSlot rolls into currentCol on its own after slot 2, so it has to be
+                    // rewound here as well or the next block would start at this block's slot.
+                    currentCol++;
+                    currentSlot = 0;
+                    // No currentBookIndex reset here: advancing to the next block makes the next
+                    // findNextBookToPlace re-seed onto a new shelf, and ensureBatchShelfBooks owns
+                    // the rewind. Two places resetting the cursor is one too many.
+                    cachedBookSlot = -1;
+                    retryCount = 0;
+                    stuckCounter = 0;
+                    lastPos = null;
+                    lastSlot = -1;
+                    delayLeft = delay.get();
+                    return;
+                }
+
                 if (continuousChecking.get()) {
                     if (!waitingForRetry) {
                         if (verboseChecking.get()) {
-                            if (enableFilter.get()) {
-                                info("§eNo more books with numbers found! Waiting");
-                            } else {
-                                info("§eNo written books found! Waiting");
-                            }
+                            info("§eNo more " + kind + " found! Waiting");
                         }
                         waitingForRetry = true;
                         retryWaitCounter = 0;
@@ -1882,11 +1958,7 @@ public class BookshelfFiller extends Module {
                     delayLeft = delay.get();
                     return;
                 } else {
-                    if (enableFilter.get()) {
-                        info("§cNo more numbers found in books, Stopping. Enable 'continuous-checking' to continue.");
-                    } else {
-                        info("§cNo written books found! Stopping. Enable 'continuous-checking' to continue.");
-                    }
+                    info("§cNo " + kind + " found! Stopping. Enable 'continuous-checking' to continue.");
                     allFull = true;
                     isFilling = false;
                     return;
@@ -1921,6 +1993,11 @@ public class BookshelfFiller extends Module {
 
             int finalBookSlot = bookSlot;
             int previousSlot = mc.player.getInventory().getSelectedSlot();
+            // Read before the click. Rotations.rotate only *queues* its callback (it runs from
+            // SendMovementPacketsEvent.Pre), so the slot is still intact at the point the
+            // bookkeeping below runs - but capturing here does not depend on that ordering.
+            WrittenBookContent placedContent =
+                BookUtils.readWrittenContent(mc.player.getInventory().getItem(finalBookSlot));
 
             Rotations.rotate(
                 Rotations.getYaw(hitVec),
@@ -1951,6 +2028,13 @@ public class BookshelfFiller extends Module {
             );
 
             retryCount = 0;
+
+            // Optimistic: the click above is not confirmed, but delay can be 0, so the next
+            // candidate may be chosen before the server's block-entity sync lands. Record it now
+            // so slot N+1 cannot take the book slot N just took. If the click did fail, the entry
+            // is stale for the rest of this shelf - bounded, because the set is re-seeded from the
+            // block entity whenever the fill moves to another shelf.
+            if (skipDuplicateBooks.get() && placedContent != null) batchShelfBooks.add(placedContent);
 
             currentSlot++;
             if (currentSlot >= 3) {
@@ -2066,23 +2150,132 @@ public class BookshelfFiller extends Module {
         }
     }
 
-    private int findNextBookToPlace() {
+    /**
+     * Resets the duplicate-detection scope. Called wherever the fill's other per-shelf state is
+     * reset, and on deactivate.
+     */
+    private void resetBatchShelfBooks() {
+        batchShelfBooks.clear();
+        dedupAnchorPos = null;
+    }
+
+    /**
+     * Seeds {@link #batchShelfBooks} from the shelf the fill is on. Re-seeds whenever the shelf
+     * changes, so the set always describes what that one shelf currently holds.
+     *
+     * <p>Reads the live block entity rather than trusting accumulated state, which is what makes
+     * a destroyed-and-refilled shelf recover: the new shelf simply starts empty.
+     */
+    private void seedBatchShelfBooks(BlockPos pos) {
+        batchShelfBooks.clear();
+        dedupAnchorPos = pos;
+
+        if (mc.level == null || pos == null) return;
+        if (!(mc.level.getBlockEntity(pos) instanceof ChiseledBookShelfBlockEntity be)) return;
+
+        for (ItemStack shelfBook : be.getItems()) {
+            WrittenBookContent content = BookUtils.readWrittenContent(shelfBook);
+            if (content != null) batchShelfBooks.add(content);
+        }
+    }
+
+    /**
+     * Re-seeds if the fill has moved to a different shelf since the last seed.
+     */
+    private void ensureBatchShelfBooks(BlockPos pos) {
+        if (!skipDuplicateBooks.get()) return;
+        if (dedupAnchorPos == null || !dedupAnchorPos.equals(pos)) {
+            seedBatchShelfBooks(pos);
+            // New shelf, new duplicate set, so every book the walk passed over on the last shelf
+            // is a candidate again - rewind the pool cursor to its head. The walk advances
+            // currentBookIndex past anything it rejects, and without this a book skipped as a
+            // duplicate on shelf 1 would never be retried on shelf 2. That turns the documented
+            // "one copy per shelf" into "one copy per fill", and it fails silently: the books are
+            // still in your inventory, the shelves just quietly stay emptier than they should.
+            //
+            // Rewinding the cursor cannot re-place an already-placed book, which is worth stating
+            // because it looks like it should. Placement is gated on the shelf slot being empty,
+            // the per-shelf set above was just re-read from that shelf's block entity (so a book
+            // already on it is still blocked, including when the fill returns to it later), and
+            // this only runs when the position actually changes, so a same-shelf retry - the
+            // distance and stuck paths - does not rewind.
+            if (enableFilter.get()) currentBookIndex = 0;
+        }
+    }
+
+    /**
+     * Whether {@code candidate} duplicates a book already on the shelf being filled.
+     */
+    private boolean isDuplicateOnShelf(ItemStack candidate) {
+        if (!skipDuplicateBooks.get()) return false;
+        WrittenBookContent content = BookUtils.readWrittenContent(candidate);
+        if (content == null) return false;
+
+        for (WrittenBookContent onShelf : batchShelfBooks) {
+            if (BookUtils.isSameBook(onShelf, content)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Whether the numbered pool's current head can no longer be used for a reason
+     * {@link #refreshBookList()} can fix - the slot stopped being a book, or it is claimed by a
+     * remembered slot (refill puts that one back there, and the rebuild already excludes it).
+     *
+     * <p>Deliberately <b>not</b> "is a duplicate of the shelf". Duplicates stay in the pool and
+     * are skipped by walking past them, because the rebuild would not filter them anyway and the
+     * rebuild resets {@code currentBookIndex} to 0 - so folding duplicates in here would let a
+     * persistent duplicate bounce the index back to 0 and spin forever.
+     */
+    private boolean isPoolHeadStale(ItemStack stack) {
+        if (stack.getItem() != Items.WRITTEN_BOOK || stack.isEmpty()) return true;
+        String title = getBookTitle(stack);
+        return title != null && isTitleClaimedByRemovedBook(title);
+    }
+
+    /**
+     * Whether a candidate is acceptable to place, excluding anything the fill is deliberately
+     * not taking. The two reasons are ordered, and the order is load-bearing:
+     *
+     * <p>{@code isTitleClaimedByRemovedBook} means refill-removed owns this book - it was taken
+     * out of a remembered slot and refill is going to put it back there. Dedup must never veto
+     * that, or a shelf legitimately holding two copies would permanently block refill of the
+     * slot that was just emptied. The claim is the more specific statement about why a book is
+     * being skipped, so it wins.
+     */
+    private boolean isSkippableCandidate(ItemStack stack, String title) {
+        if (title != null && isTitleClaimedByRemovedBook(title)) return true;
+        if (isDuplicateOnShelf(stack)) {
+            duplicateSkipsThisShelf = true;
+            return true;
+        }
+        return false;
+    }
+
+    private int findNextBookToPlace(BlockPos pos) {
+        // Re-seed whenever the fill has moved to a different shelf, so the duplicate scope is
+        // always the shelf currently being filled.
+        ensureBatchShelfBooks(pos);
+        duplicateSkipsThisShelf = false;
+
         if (!enableFilter.get()) {
             if (cachedBookSlot != -1) {
                 ItemStack cached = mc.player.getInventory().getItem(cachedBookSlot);
                 if (cached.getItem() == Items.WRITTEN_BOOK && !cached.isEmpty()) {
                     String cachedTitle = getBookTitle(cached);
-                    if (cachedTitle == null || !isTitleClaimedByRemovedBook(cachedTitle)) {
+                    if (cachedTitle == null || !isSkippableCandidate(cached, cachedTitle)) {
                         return cachedBookSlot;
                     }
                 }
+                // Stale cache: the slot moved, or the book is now claimed / a duplicate of the
+                // shelf. Invalidate it or we would hand back the same rejected slot forever.
                 cachedBookSlot = -1;
             }
             for (int i = 0; i < 36; i++) {
                 ItemStack stack = mc.player.getInventory().getItem(i);
                 if (stack.getItem() == Items.WRITTEN_BOOK && !stack.isEmpty()) {
                     String foundTitle = getBookTitle(stack);
-                    if (foundTitle != null && isTitleClaimedByRemovedBook(foundTitle)) continue;
+                    if (foundTitle != null && isSkippableCandidate(stack, foundTitle)) continue;
                     cachedBookSlot = i;
                     return i;
                 }
@@ -2091,19 +2284,26 @@ public class BookshelfFiller extends Module {
             return -1;
         }
 
-        if (currentBookIndex < sortedBookSlots.size()) {
+        // Rebuild the pool at most once, before the walk. refreshBookList() zeroes
+        // currentBookIndex, so doing it inside the loop would let a persistent rejection bounce
+        // the index back to the head forever.
+        if (currentBookIndex < sortedBookSlots.size()
+            && isPoolHeadStale(mc.player.getInventory().getItem(sortedBookSlots.get(currentBookIndex)))) {
+            refreshBookList(true);
+        }
+
+        // currentBookIndex is only advanced by the placement path, so anything rejected here has
+        // to advance it explicitly or the same slot is re-tested forever.
+        while (currentBookIndex < sortedBookSlots.size()) {
             int slot = sortedBookSlots.get(currentBookIndex);
             ItemStack stack = mc.player.getInventory().getItem(slot);
             if (stack.getItem() == Items.WRITTEN_BOOK && !stack.isEmpty()) {
                 String foundTitle = getBookTitle(stack);
-                if (foundTitle != null && !isTitleClaimedByRemovedBook(foundTitle)) {
+                if (foundTitle == null || !isSkippableCandidate(stack, foundTitle)) {
                     return slot;
                 }
             }
-            // Slot is gone or the book is claimed by a just-emptied shelf slot
-            // (refill puts it back there); rebuild the pool and take the next one.
-            refreshBookList();
-            return currentBookIndex < sortedBookSlots.size() ? sortedBookSlots.get(currentBookIndex) : -1;
+            currentBookIndex++;
         }
 
         return -1;

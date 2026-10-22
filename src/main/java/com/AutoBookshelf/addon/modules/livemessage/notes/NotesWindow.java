@@ -38,7 +38,6 @@ public class NotesWindow extends LiveWindow {
     private static final int MAX_HISTORY = 50;
     private final Deque<List<NoteEntry>> undoStack = new ArrayDeque<>();
     private final Deque<List<NoteEntry>> redoStack = new ArrayDeque<>();
-    private boolean ctrlWasDown = false;
 
     public NotesWindow() {
         instance = this;
