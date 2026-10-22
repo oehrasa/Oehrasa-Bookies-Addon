@@ -13,6 +13,7 @@ import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
@@ -248,7 +249,7 @@ public class B36 extends Module {
                     } else {
                         // Light TNT
                         useFlintAndSteel(blockPos);
-                        mc.player.swing(InteractionHand.MAIN_HAND);
+                        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
                     }
 
                     placed = true;
@@ -296,7 +297,7 @@ public class B36 extends Module {
             ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
 
         // Visual feedback
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
     }
 
     /**
@@ -320,7 +321,7 @@ public class B36 extends Module {
         Vec3 hitPos = new Vec3(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
         BlockHitResult hit = new BlockHitResult(hitPos, Direction.UP, pos, false);
         mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
     }
 
     /**

@@ -22,6 +22,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
@@ -1151,7 +1152,7 @@ public class KMDB extends Module {
             // BlockUtils.place does for this case.
             mc.player.connection.send(new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND,
                 new BlockHitResult(Vec3.atCenterOf(pos), face, pos, false), 0));
-            mc.player.swing(InteractionHand.OFF_HAND);
+            mc.player.swing(InteractionHand.OFF_HAND, SwingAnimation.DEFAULT, false);
             return;
         }
 
@@ -1171,7 +1172,7 @@ public class KMDB extends Module {
         mc.player.connection.send(new ServerboundPlayerActionPacket(
             ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
 
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
 
         mc.player.getInventory().setSelectedSlot(previousSlot);
         mc.player.connection.send(new ServerboundSetCarriedItemPacket(previousSlot));

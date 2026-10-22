@@ -1,20 +1,20 @@
 [versions]
-mod-version = "26.2-1.2.3"
+mod-version = "26.3-1.2.3"
 
 # Fabric (https://fabricmc.net/develop)
 jdk = "25"
-minecraft = "26.2"
-fabric-loader = "0.19.3"
-fabric-api = "0.157.0+26.2"
+minecraft = "26.3"
+fabric-loader = "0.19.5"
+fabric-api = "0.163.0+26.3"
 
 # Loom (https://github.com/FabricMC/fabric-loom)
-loom = "1.17-SNAPSHOT"
+loom = "1.18-SNAPSHOT"
 
 # Meteor (https://github.com/MeteorDevelopment/meteor-client/)
-meteor = "26.2-SNAPSHOT"
+meteor = "26.3-SNAPSHOT"
 
 # Baritone
-baritone = "26.1-SNAPSHOT"
+baritone = "26.3-SNAPSHOT"
 
 # Mods
 [libraries]

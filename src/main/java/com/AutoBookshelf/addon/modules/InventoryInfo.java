@@ -1,9 +1,11 @@
 package com.AutoBookshelf.addon.modules;
 //26.2 mojmap
+
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.events.ScreenRenderEvent;
 import com.AutoBookshelf.addon.utils.ShulkerInfo;
 import com.AutoBookshelf.addon.utils.Type;
+import com.mojang.blaze3d.platform.InputConstants;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.gui.GuiThemes;
 import meteordevelopment.meteorclient.gui.themes.meteor.MeteorGuiTheme;
@@ -22,7 +24,6 @@ import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import org.joml.Vector2f;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.*;
 
@@ -845,14 +846,14 @@ public class InventoryInfo extends Module {
 
     public void onSearchKeyPressed(int keyCode) {
         if (!searchFocused) return;
-        if (keyCode == GLFW.GLFW_KEY_BACKSPACE && !searchQuery.isEmpty()) {
+        if (keyCode == InputConstants.KEY_BACKSPACE && !searchQuery.isEmpty()) {
             searchQuery.deleteCharAt(searchQuery.length() - 1);
             invalidateSearchCaches();
-        } else if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
+        } else if (keyCode == InputConstants.KEY_RETURN || keyCode == InputConstants.KEY_NUMPADENTER) {
             // The screen mixin cancels any key pressed while the bar has focus, so
             // without handling it here Enter was swallowed and ESC was the only way out.
             searchFocused = false;
-        } else if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+        } else if (keyCode == InputConstants.KEY_ESCAPE) {
             searchFocused = false;
         }
     }

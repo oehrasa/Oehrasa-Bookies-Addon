@@ -1,7 +1,9 @@
 package com.AutoBookshelf.addon.modules.BlockRadiusUtils;
 
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.renderer.Renderer3D;
+import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import net.minecraft.world.entity.AnimationState;
@@ -131,7 +133,7 @@ public class WardenEsp {
 
         wardenLabelScale = sgWarden.add(new DoubleSetting.Builder()
             .name("warden-label-scale")
-            .description("Scale of the world-space Warden labels.")
+            .description("Scale of the Warden labels.")
             .defaultValue(1.2)
             .min(0.7)
             .max(10.0)
@@ -332,23 +334,59 @@ public class WardenEsp {
                         meteordevelopment.meteorclient.renderer.ShapeMode.Sides, 0);
                 }
 
-                float labelScaleValue = wardenLabelScale.get().floatValue();
-                float lineSpacing = 12F * (0.9F + 0.1F * labelScaleValue);
+            } catch (Throwable t) {
+                // ignore per-entity errors
+            }
+        }
+    }
+
+    /**
+     * Draws the warden labels. They live in the 2D pass because the world-space submit pipeline
+     * needs a RenderPass that only the engine's own frame owns; {@link
+     * meteordevelopment.meteorclient.utils.render.NametagUtils} projects the same billboard.
+     */
+    public void renderLabels(Render2DEvent event) {
+        if (!showWardens.get() || wardens.isEmpty()) return;
+
+        float labelScaleValue = wardenLabelScale.get().floatValue();
+        // Pitch comes from the active renderer, not a constant: both fonts draw ~18px-tall lines
+        // (VanillaTextRenderer begin(..., 1) draws at 2x, the custom font is 27 / 1.5), so the old
+        // 12px world-space constant from the 9px mc.font path overlapped every line and merged the
+        // padded background quads into one slab. 1.5 keeps the gap ratio the world-space label had.
+        float lineSpacing = (float) (TextRenderer.get().getHeight() * 1.5);
+
+        for (LivingEntity w : wardens) {
+            if (!(w instanceof Warden warden)) continue;
+
+            try {
+                Vec3 lerpedPos = w.getPosition(event.tickDelta);
+                AABB lerped = w.getBoundingBox().move(lerpedPos.subtract(w.position()));
+
+                int anger = warden.getClientAngerLevel();
+                WardenState state = classifyWarden(warden, anger, AngerLevel.byAnger(anger));
+
+                long expiry = attackExpiry.getOrDefault(w.getId(), 0L);
+                boolean attackFlash = warden.tickCount <= expiry
+                    && !state.digging() && !state.emerging();
+                SettingColor color = attackFlash
+                    ? getFastPulseColor(wardenLockedColor.get(), 0.35F)
+                    : state.baseColor();
+
                 float baseOffset = (float) (lerped.getYsize() / 2.0 + 0.55
                     + 0.25 * (labelScaleValue - 1.0));
                 int line = 0;
 
                 if (attackFlash && showImminentIndicator.get()) {
-                    shared.drawWorldLabel(event.matrices, "! ATTACK",
+                    shared.drawWorldLabel(event.graphics, "! ATTACK",
                         lerped.getCenter().x, lerped.getCenter().y + baseOffset,
                         lerped.getCenter().z, wardenLockedColor.get(),
-                        1.15F * labelScaleValue, -lineSpacing * line, event.tickDelta);
+                        1.15F * labelScaleValue, -lineSpacing * line);
                     line += 1;
                 }
 
-                shared.drawWorldLabel(event.matrices, state.label(), lerped.getCenter().x,
+                shared.drawWorldLabel(event.graphics, state.label(), lerped.getCenter().x,
                     lerped.getCenter().y + baseOffset, lerped.getCenter().z,
-                    color, labelScaleValue, -lineSpacing * line, event.tickDelta);
+                    color, labelScaleValue, -lineSpacing * line);
                 line += 1;
 
                 // Target label keys off hasTarget(), not lockedOnYou/lockedOnOther: those require
@@ -361,27 +399,26 @@ public class WardenEsp {
                         ? (attackFlash ? getFastPulseColor(wardenLockedColor.get(), 0.35F)
                            : getPulseColor(wardenLockedColor.get(), 0.6F))
                         : wardenOtherTargetColor.get();
-                    shared.drawWorldLabel(event.matrices, tgt, lerped.getCenter().x,
+                    shared.drawWorldLabel(event.graphics, tgt, lerped.getCenter().x,
                         lerped.getCenter().y + baseOffset, lerped.getCenter().z,
-                        tc, 0.95F * labelScaleValue, -lineSpacing * line, event.tickDelta);
+                        tc, 0.95F * labelScaleValue, -lineSpacing * line);
                     line += 1;
                 }
 
                 if (state.sniffing() && showSniffingPulse.get()) {
-                    shared.drawWorldLabel(event.matrices, "SNIFFING",
+                    shared.drawWorldLabel(event.graphics, "SNIFFING",
                         lerped.getCenter().x, lerped.getCenter().y + baseOffset,
                         lerped.getCenter().z, new SettingColor(255, 255, 170),
-                        0.9F * labelScaleValue, -lineSpacing * line, event.tickDelta);
+                        0.9F * labelScaleValue, -lineSpacing * line);
                     line += 1;
                 }
 
                 if (state.digging() || state.emerging()) {
                     String label = state.digging() ? "DIGGING" : "EMERGING";
-                    shared.drawWorldLabel(event.matrices, label, lerped.getCenter().x,
+                    shared.drawWorldLabel(event.graphics, label, lerped.getCenter().x,
                         lerped.getCenter().y + baseOffset, lerped.getCenter().z,
                         wardenDiggingColor.get(), 0.9F * labelScaleValue,
-                        -lineSpacing * line, event.tickDelta);
-                    line += 1;
+                        -lineSpacing * line);
                 }
             } catch (Throwable t) {
                 // ignore per-entity errors

@@ -5,6 +5,7 @@ import com.AutoBookshelf.addon.mixin.accessor.AbstractSignEditScreenAccessor;
 import com.AutoBookshelf.addon.modules.remote.BookEntry;
 import com.AutoBookshelf.addon.modules.remote.RemoteBookSelectScreen;
 import com.AutoBookshelf.addon.modules.remote.RemoteLibrary;
+import com.AutoBookshelf.addon.utils.FileDialogs;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import meteordevelopment.meteorclient.MeteorClient;
@@ -30,7 +31,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
-import org.lwjgl.util.tinyfd.TinyFileDialogs;
+import net.minecraft.world.level.block.entity.SignTextSlot;
 
 import java.io.File;
 import java.io.IOException;
@@ -663,13 +664,10 @@ public class BookImporter extends Module {
 
         WButton selectBtn = row.add(theme.button("Select File")).widget();
         selectBtn.action = () -> {
-            String path = TinyFileDialogs.tinyfd_openFileDialog(
+            String path = FileDialogs.openFile(
                 "Select a .txt file",
-                new File(mc.gameDirectory, importFolder.get()).getAbsolutePath(),
-                null,
-                null,
-                false
-            );
+                new File(mc.gameDirectory, importFolder.get()),
+                "Text files", "txt");
             if (path != null) {
                 cancelActiveImport();
                 selectedFilePath.set(path);
@@ -823,7 +821,8 @@ public class BookImporter extends Module {
         event.cancel();
         String[] lines = getNextGroupSignLines();
         if (signPacketQueue.isEmpty()) signPacketTimer = 0;
-        signPacketQueue.addLast(new ServerboundSignUpdatePacket(sign.getBlockPos(), true, lines[0], lines[1], lines[2], lines[3]));
+        signPacketQueue.addLast(new ServerboundSignUpdatePacket(sign.getBlockPos(),
+            List.of(lines[0], lines[1], lines[2], lines[3]), SignTextSlot.FRONT));
     }
 
     private boolean refillCurrentSignWords() {

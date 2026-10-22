@@ -1,9 +1,11 @@
 package com.AutoBookshelf.addon.modules;
 //26.2 mojmap
+
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.JoinPayload;
 import com.google.gson.*;
 import com.google.gson.reflect.TypeToken;
+import com.mojang.blaze3d.platform.InputConstants;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.game.ReceiveMessageEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
@@ -39,7 +41,6 @@ import net.minecraft.server.dialog.MultiActionDialog;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import org.lwjgl.glfw.GLFW;
 
 import java.io.*;
 import java.lang.reflect.Type;
@@ -60,7 +61,7 @@ public class HomesList extends Module {
     public final Setting<Keybind> openGui = sgGeneral.add(new KeybindSetting.Builder()
         .name("open-gui")
         .description("Opens the homes list GUI. Press again to close.")
-        .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_H))
+        .defaultValue(Keybind.fromKey(InputConstants.KEY_H))
         .action(() -> {
             if (MeteorClient.mc.gui.screen() instanceof HomesScreen ||
                 MeteorClient.mc.gui.screen() instanceof EditHomeScreen) {
@@ -110,14 +111,14 @@ public class HomesList extends Module {
     public final Setting<Keybind> quickSelectKey = sgQuickSelect.add(new KeybindSetting.Builder()
         .name("quick-select-key")
         .description("Hold to open the screen. Scroll to select then release to TP to highlighted home.")
-        .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_LEFT_ALT))
+        .defaultValue(Keybind.fromKey(InputConstants.KEY_LALT))
         .build()
     );
 
     public final Setting<Keybind> quickSelectCancelKey = sgQuickSelect.add(new KeybindSetting.Builder()
         .name("cancel-key")
         .description("Press this key inside the quick-select overlay to cancel without teleporting.")
-        .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_X))
+        .defaultValue(Keybind.fromKey(InputConstants.KEY_X))
         .build()
     );
 
@@ -783,27 +784,27 @@ public class HomesList extends Module {
             }
 
             int keyCode = input.key();
-            if (keyCode == GLFW.GLFW_KEY_UP) {
+            if (keyCode == InputConstants.KEY_UP) {
                 if (selectedIndex < 0) selectedIndex = 0;
                 selectedIndex = Math.floorMod(selectedIndex - columns, homes.size());
                 scrollIndex = linearToColumnMajor(selectedIndex);
                 return true;
-            } else if (keyCode == GLFW.GLFW_KEY_DOWN) {
+            } else if (keyCode == InputConstants.KEY_DOWN) {
                 if (selectedIndex < 0) selectedIndex = 0;
                 selectedIndex = Math.floorMod(selectedIndex + columns, homes.size());
                 scrollIndex = linearToColumnMajor(selectedIndex);
                 return true;
-            } else if (keyCode == GLFW.GLFW_KEY_LEFT) {
+            } else if (keyCode == InputConstants.KEY_LEFT) {
                 if (selectedIndex < 0) selectedIndex = 0;
                 selectedIndex = Math.floorMod(selectedIndex - 1, homes.size());
                 scrollIndex = linearToColumnMajor(selectedIndex);
                 return true;
-            } else if (keyCode == GLFW.GLFW_KEY_RIGHT) {
+            } else if (keyCode == InputConstants.KEY_RIGHT) {
                 if (selectedIndex < 0) selectedIndex = 0;
                 selectedIndex = Math.floorMod(selectedIndex + 1, homes.size());
                 scrollIndex = linearToColumnMajor(selectedIndex);
                 return true;
-            } else if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+            } else if (keyCode == InputConstants.KEY_ESCAPE) {
                 // Fallback in addition to the configurable cancel key above.
                 module.cancelQuickSelect();
                 return true;

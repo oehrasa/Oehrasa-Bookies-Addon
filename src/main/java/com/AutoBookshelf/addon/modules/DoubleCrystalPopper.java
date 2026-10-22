@@ -21,6 +21,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
@@ -245,7 +246,7 @@ public class DoubleCrystalPopper extends Module {
 
     private void attackEntity(Entity entity) {
         mc.player.connection.send(new ServerboundAttackPacket(entity.getId()));
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
     }
 
     // Returns false if it couldn't place this tick (no item, no valid spot) so the caller can retry next tick.
@@ -277,7 +278,7 @@ public class DoubleCrystalPopper extends Module {
 
         Runnable place = () -> {
             mc.gameMode.useItemOn(mc.player, hand, result);
-            mc.player.swing(hand);
+            mc.player.swing(hand, SwingAnimation.DEFAULT, false);
         };
 
         if (rotate.get()) {

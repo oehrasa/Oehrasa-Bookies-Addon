@@ -1,21 +1,18 @@
 package com.AutoBookshelf.addon.modules.BlockRadiusUtils;
 
 import com.AutoBookshelf.addon.utils.DistanceUtil;
-import com.mojang.blaze3d.vertex.PoseStack;
-import com.mojang.math.Axis;
+import meteordevelopment.meteorclient.renderer.Renderer2D;
 import meteordevelopment.meteorclient.renderer.Renderer3D;
+import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.settings.Setting;
+import meteordevelopment.meteorclient.utils.render.NametagUtils;
+import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
-import net.minecraft.client.gui.Font;
-import net.minecraft.client.renderer.SubmitNodeStorage;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.chat.Style;
-import net.minecraft.util.FormattedCharSequence;
-import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
-
-import static meteordevelopment.meteorclient.MeteorClient.mc;
+import org.joml.Vector3d;
 
 /**
  * State and helpers shared by every BlockRadius feature renderer.
@@ -35,6 +32,11 @@ public class BlockRadiusShared {
      * every feature without the values stepping on each other mid-loop.
      */
     public final BlockPos.MutableBlockPos scanPos = new BlockPos.MutableBlockPos();
+
+    /**
+     * Reused so the per-frame label background does not allocate a Color per line.
+     */
+    private final Color labelBackground = new Color();
 
     public BlockRadiusShared(Setting<ShapeMode> shapeMode, Setting<Double> maxRenderDistance,
                              Setting<Integer> searchRadius) {
@@ -100,55 +102,40 @@ public class BlockRadiusShared {
               : meteordevelopment.meteorclient.renderer.ShapeMode.Both, 0);
     }
 
-    public void drawWorldLabel(PoseStack matrices, String text, double x,
-                               double y, double z, SettingColor color, float scale, float offsetPx,
-                               float tickDelta) {
-        matrices.pushPose();
-        Vec3 cam = mc.gameRenderer.mainCamera().position();
-        matrices.translate(x - cam.x, y - cam.y, z - cam.z);
-        Entity camEntity = mc.getCameraEntity();
-        if (camEntity != null) {
-            matrices.mulPose(Axis.YP.rotationDegrees(-camEntity.getViewYRot(tickDelta)));
-            matrices.mulPose(Axis.XP.rotationDegrees(camEntity.getViewXRot(tickDelta)));
-        }
-        matrices.mulPose(Axis.YP.rotationDegrees(180.0F));
+    /**
+     * Draws a billboard label in the 2D pass. The old submit-pipeline form needs a RenderPass we
+     * cannot obtain outside the engine's own frame, and {@link NametagUtils} gives the same
+     * camera-facing result from a Render2DEvent.
+     * <p>
+     * No distance factor: the screen-space form is already distance-invariant, so the old
+     * world-space compensation would shrink nearby labels instead of keeping them readable.
+     */
+    public void drawWorldLabel(GuiGraphicsExtractor graphics, String text, double x, double y,
+                               double z, SettingColor color, float scale, float offsetPx) {
+        Vector3d joml = new Vector3d(x, y, z);
+        if (!NametagUtils.to2D(joml, scale, false)) return;
 
-        float distance = (float) DistanceUtil.distance(cam, x, y, z);
-        float distanceFactor = getDistanceLabelFactor(distance);
-        float s = 0.018F * scale * distanceFactor;
-        matrices.scale(s, -s, s);
-        matrices.translate(0, offsetPx, 0);
+        TextRenderer tr = TextRenderer.get();
+        NametagUtils.begin(joml, graphics);
 
-        Font tr = mc.font;
-        float w = tr.width(text) / 2F;
+        // Measure while building: both renderers size themselves from state that begin() sets, so
+        // measuring beforehand reads a stale scale left by whatever drew last (VanillaTextRenderer
+        // keeps it in a field). Width, height, the quad and the glyphs must come from one begin().
+        tr.begin(graphics, 1, false, false);
+        double w = tr.getWidth(text);
+        double h = tr.getHeight();
+        double top = -h + offsetPx;
 
-        int argb = color.getPacked();
-        int baseAlpha = (argb >>> 24) & 0xFF;
-        int bg = (int) (0.25F * baseAlpha) << 24;
+        int baseAlpha = (color.getPacked() >>> 24) & 0xFF;
+        labelBackground.set(0, 0, 0, (int) (0.25 * baseAlpha));
+        Renderer2D.COLOR.begin();
+        Renderer2D.COLOR.quad(-w / 2 - 1, top - 1, w + 2, h + 2, labelBackground);
+        Renderer2D.COLOR.render();
 
-        SubmitNodeStorage collector = new SubmitNodeStorage();
-        collector.submitText(
-            matrices,
-            -w, 0,
-            FormattedCharSequence.forward(text, Style.EMPTY),
-            false,
-            Font.DisplayMode.SEE_THROUGH,
-            0xF000F0,
-            argb,
-            bg,
-            0 // outlineColor: "off"
-        );
-        mc.gameRenderer.featureRenderDispatcher().renderAllFeatures(collector);
+        tr.render(text, -w / 2, top, color, false);
+        tr.end();
 
-        matrices.popPose();
-    }
-
-    public static float getDistanceLabelFactor(float distance) {
-        if (distance <= 4F)
-            return 0.30F;
-        if (distance >= 28F)
-            return 1.00F;
-        return 0.30F + (distance - 4F) / 24F * 0.70F;
+        NametagUtils.end(graphics);
     }
 
     public static float clamp01(float v) {

@@ -25,6 +25,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.*;
 import net.minecraft.world.level.block.piston.PistonBaseBlock;
@@ -385,7 +386,7 @@ public class HandyPlace extends Module {
         // Only intercept the placement this pending click produced. A stale pending from an
         // earlier click must never cancel an unrelated placement (that was the "can't place
         // anything" bug: one rotate click poisoned every later click).
-        if (!useItemOn.getHitResult().getBlockPos().equals(pendingHit.getBlockPos())) return;
+        if (!useItemOn.hitResult().getBlockPos().equals(pendingHit.getBlockPos())) return;
 
         // ...and a stale pending must not survive long enough to be *matched* either. pos equality
         // alone is not enough: aiming at the same block twice (the normal repetitive case) will
@@ -661,7 +662,7 @@ public class HandyPlace extends Module {
                     mc.getConnection().send(new ServerboundMovePlayerPacket.Rot(
                         mc.player.getYRot(), mc.player.getXRot(),
                         mc.player.onGround(), mc.player.horizontalCollision));
-                    mc.player.swing(InteractionHand.MAIN_HAND);
+                    mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
                 }
             });
         }

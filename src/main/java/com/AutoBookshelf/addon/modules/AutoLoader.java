@@ -3,6 +3,7 @@ package com.AutoBookshelf.addon.modules;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.PlacementEngine;
 import com.AutoBookshelf.addon.utils.ShulkerRestockEngine;
+import com.mojang.blaze3d.platform.InputConstants;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import meteordevelopment.meteorclient.events.meteor.MouseClickEvent;
@@ -27,12 +28,12 @@ import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.*;
+import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.level.block.EnderChestBlock;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -366,7 +367,7 @@ public class AutoLoader extends Module {
         if (stage != Stage.IDLE) return;
         if (mc.player == null || mc.level == null) return;
         if (event.action != KeyAction.Press) return;
-        if (event.button() != GLFW.GLFW_MOUSE_BUTTON_RIGHT) return;
+        if (event.button() != InputConstants.MOUSE_BUTTON_RIGHT) return;
         if (!(mc.gui.screen() instanceof AbstractContainerScreen<?> screen)) return;
 
         Slot focusedSlot = ((AbstractContainerScreenAccessor) screen).meteor$getHoveredSlot();
@@ -476,7 +477,7 @@ public class AutoLoader extends Module {
         mc.player.getInventory().setSelectedSlot(containerHotbarSlot);
         mc.getConnection().send(new ServerboundSetCarriedItemPacket(containerHotbarSlot));
         mc.gameMode.useItem(mc.player, InteractionHand.MAIN_HAND);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
         if (preActionSlot >= 0 && preActionSlot <= 8 && preActionSlot != containerHotbarSlot) {
             mc.player.getInventory().setSelectedSlot(preActionSlot);
             mc.getConnection().send(new ServerboundSetCarriedItemPacket(preActionSlot));
@@ -721,11 +722,11 @@ public class AutoLoader extends Module {
             Rotations.rotate(Rotations.getYaw(center), Rotations.getPitch(center), -100, () -> {
                 mc.getConnection().send(
                     new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND, hit, 0));
-                mc.player.swing(InteractionHand.MAIN_HAND);
+                mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
             });
         } else {
             mc.getConnection().send(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND, hit, 0));
-            mc.player.swing(InteractionHand.MAIN_HAND);
+            mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
         }
         delayTicks = 4;
     }
@@ -910,7 +911,7 @@ public class AutoLoader extends Module {
                     sendBreakPackets(secondPos, Direction.UP);
                 }
 
-                mc.player.swing(InteractionHand.MAIN_HAND);
+                mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
                 packetBreakSent = true;
             }
             // Wait a few ticks for the server to confirm; the isAir() check at the
@@ -921,7 +922,7 @@ public class AutoLoader extends Module {
 
         // Normal break
         mc.gameMode.continueDestroyBlock(placedPos, Direction.UP);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
         if (mc.level.getBlockState(placedPos).isAir()) afterBreak(isSecond);
         else delayTicks = 2;
     }
@@ -989,11 +990,11 @@ public class AutoLoader extends Module {
             if (rotate.get())
                 Rotations.rotate(Rotations.getYaw(supportHit), Rotations.getPitch(supportHit), -100, () -> {
                     mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-                    mc.player.swing(InteractionHand.MAIN_HAND);
+                    mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
                 });
             else {
                 mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-                mc.player.swing(InteractionHand.MAIN_HAND);
+                mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
             }
         }
         if (resyncAfterPlace.get()) sendResyncPacket();
@@ -1016,11 +1017,11 @@ public class AutoLoader extends Module {
             if (rotate.get())
                 Rotations.rotate(yaw, pitch, -100, () -> {
                     mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-                    mc.player.swing(InteractionHand.MAIN_HAND);
+                    mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
                 });
             else {
                 mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-                mc.player.swing(InteractionHand.MAIN_HAND);
+                mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
             }
         }
         if (resyncAfterPlace.get()) sendResyncPacket();
@@ -1043,7 +1044,7 @@ public class AutoLoader extends Module {
             new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND, hit, revision));
         mc.getConnection().send(new ServerboundPlayerActionPacket(
             ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
     }
 
     private void sendResyncPacket() {

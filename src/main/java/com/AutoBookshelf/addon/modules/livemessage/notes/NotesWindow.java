@@ -4,11 +4,11 @@ import com.AutoBookshelf.addon.modules.livemessage.gui.GuiUtil;
 import com.AutoBookshelf.addon.modules.livemessage.gui.LiveWindow;
 import com.AutoBookshelf.addon.modules.livemessage.gui.LivemessageGui;
 import com.AutoBookshelf.addon.modules.livemessage.util.LivemessageUtil;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.*;
 
@@ -293,14 +293,14 @@ public class NotesWindow extends LiveWindow {
 
     private boolean isCtrlDown() {
         long handle = this.mc.getWindow().handle();
-        return GLFW.glfwGetKey(handle, GLFW.GLFW_KEY_LEFT_CONTROL) == 1 || GLFW.glfwGetKey(handle, GLFW.GLFW_KEY_RIGHT_CONTROL) == 1;
+        return InputConstants.isKeyDown(InputConstants.KEY_LCONTROL) || InputConstants.isKeyDown(InputConstants.KEY_RCONTROL);
     }
 
     @Override
     public void keyTyped(char typedChar, int keyCode) {
         // Ctrl+Z / Ctrl+Y undo-redo.
-        if (isCtrlDown() && (keyCode == GLFW.GLFW_KEY_Z || keyCode == GLFW.GLFW_KEY_Y)) {
-            if (keyCode == GLFW.GLFW_KEY_Z) this.undo();
+        if (isCtrlDown() && (keyCode == InputConstants.KEY_Z || keyCode == InputConstants.KEY_Y)) {
+            if (keyCode == InputConstants.KEY_Z) this.undo();
             else this.redo();
             super.keyTyped(typedChar, keyCode);
             return;

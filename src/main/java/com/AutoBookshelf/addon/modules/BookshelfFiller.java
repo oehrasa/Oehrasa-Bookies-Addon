@@ -24,6 +24,7 @@ import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ChiseledBookShelfBlock;
@@ -1039,7 +1040,7 @@ public class BookshelfFiller extends Module {
                 }
 
                 mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hitResult);
-                mc.player.swing(InteractionHand.MAIN_HAND);
+                mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
 
                 if (previousSlot != mc.player.getInventory().getSelectedSlot()) {
                     mc.player.getInventory().setSelectedSlot(previousSlot);
@@ -1576,7 +1577,7 @@ public class BookshelfFiller extends Module {
             }
 
             mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hitResult);
-            mc.player.swing(InteractionHand.MAIN_HAND);
+            mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
 
             logBookRemoved(pos, slot);
             extractCount++;
@@ -2015,7 +2016,7 @@ public class BookshelfFiller extends Module {
                     }
 
                     mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hitResult);
-                    mc.player.swing(InteractionHand.MAIN_HAND);
+                    mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
 
                     if (previousSlot != mc.player.getInventory().getSelectedSlot()) {
                         mc.player.getInventory().setSelectedSlot(previousSlot);

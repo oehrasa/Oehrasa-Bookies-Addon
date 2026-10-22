@@ -15,6 +15,7 @@ import net.minecraft.tags.BlockTags;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.level.block.BaseFireBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -105,7 +106,7 @@ public class BLU27BNapalm extends Module {
                         if (state.getBlock() != Blocks.FIRE && !(state.getBlock() instanceof BaseFireBlock)) continue;
 
                         mc.gameMode.startDestroyBlock(pos, Direction.UP);
-                        mc.player.swing(InteractionHand.MAIN_HAND);
+                        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
                         mc.gameMode.continueDestroyBlock(pos, Direction.UP);
 
                         if (--blocksPerTick <= 0) return;

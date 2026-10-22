@@ -17,10 +17,7 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
-import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.world.level.block.entity.HangingSignBlockEntity;
-import net.minecraft.world.level.block.entity.SignBlockEntity;
-import net.minecraft.world.level.block.entity.SignText;
+import net.minecraft.world.level.block.entity.*;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3d;
 
@@ -662,11 +659,11 @@ public class SignRender extends Module {
             SignText frontText = null;
             SignText backText = null;
             if (blockEntity instanceof SignBlockEntity sign) {
-                frontText = sign.getFrontText();
-                backText = sign.getBackText();
+                frontText = sign.getText(SignTextSlot.FRONT);
+                backText = sign.getText(SignTextSlot.BACK);
             } else if (blockEntity instanceof HangingSignBlockEntity sign) {
-                frontText = sign.getFrontText();
-                backText = sign.getBackText();
+                frontText = sign.getText(SignTextSlot.FRONT);
+                backText = sign.getText(SignTextSlot.BACK);
             }
 
             if (frontText != null) {
@@ -692,14 +689,13 @@ public class SignRender extends Module {
         List<String> lines = new ArrayList<>();
 
         try {
-            Component[] messages = signText.getMessages(false);
-            if (messages != null) {
-                for (Component message : messages) {
-                    if (message != null) {
-                        String line = this.safeExtractString(message);
-                        if (!line.isEmpty()) {
-                            lines.add(line);
-                        }
+            // getMessages returns the four slots, null for an empty line; iterate the list directly
+            // instead of copying it into an array on every extraction.
+            for (Component message : signText.getMessages(false)) {
+                if (message != null) {
+                    String line = this.safeExtractString(message);
+                    if (!line.isEmpty()) {
+                        lines.add(line);
                     }
                 }
             }

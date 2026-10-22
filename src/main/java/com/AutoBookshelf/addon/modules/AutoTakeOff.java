@@ -14,6 +14,7 @@ import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.FireworkRocketItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.SwingAnimation;
 
 public class AutoTakeOff extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -253,14 +254,14 @@ public class AutoTakeOff extends Module {
         if (rocketSlot == -1) {
             if (mc.player.getOffhandItem().getItem() instanceof FireworkRocketItem) {
                 mc.gameMode.useItem(mc.player, InteractionHand.OFF_HAND);
-                if (!silentRockets.get()) mc.player.swing(InteractionHand.OFF_HAND);
+                if (!silentRockets.get()) mc.player.swing(InteractionHand.OFF_HAND, SwingAnimation.DEFAULT, false);
             }
             return;
         }
 
         InvUtils.swap(rocketSlot, true);
         mc.gameMode.useItem(mc.player, InteractionHand.MAIN_HAND);
-        if (!silentRockets.get()) mc.player.swing(InteractionHand.MAIN_HAND);
+        if (!silentRockets.get()) mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
         InvUtils.swapBack();
     }
 

@@ -31,6 +31,7 @@ import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.phys.AABB;
@@ -407,7 +408,7 @@ public class Fatamorgana extends Module {
         if (mc.player == null || mc.gameMode == null || !target.isAlive()) return;
         EntityHitResult hit = new EntityHitResult(target, target.position());
         mc.gameMode.interact(mc.player, target, hit, InteractionHand.MAIN_HAND);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
     }
 
     private void interactBarrelTarget(BlockPos pos) {
@@ -415,7 +416,7 @@ public class Fatamorgana extends Module {
 
         BlockHitResult hitResult = new BlockHitResult(Vec3.atCenterOf(pos), Direction.UP, pos, false);
         InteractionResult result = mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hitResult);
-        if (result.consumesAction()) mc.player.swing(InteractionHand.MAIN_HAND);
+        if (result.consumesAction()) mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
     }
 
     private void doDepositing() {

@@ -8,6 +8,8 @@ import com.AutoBookshelf.addon.modules.livemessage.util.WhisperRateLimiter;
 import com.AutoBookshelf.addon.utils.EnemyManager;
 import com.AutoBookshelf.addon.utils.QueueUtil;
 import com.google.gson.Gson;
+import com.mojang.blaze3d.Blaze3D;
+import com.mojang.blaze3d.platform.InputConstants;
 import meteordevelopment.meteorclient.systems.friends.Friend;
 import meteordevelopment.meteorclient.systems.friends.Friends;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -17,8 +19,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
 import net.minecraft.util.Mth;
-import net.minecraft.util.Util;
-import org.lwjgl.glfw.GLFW;
 
 import java.io.*;
 import java.net.URI;
@@ -685,15 +685,15 @@ public class ChatWindow extends LiveWindow {
             } else {
                 this.sendOrQueue();
             }
-        } else if (keyCode == GLFW.GLFW_KEY_A && ctrl) {
+        } else if (keyCode == InputConstants.KEY_A && ctrl) {
             this.inputBox.selectAll();
-        } else if (keyCode == GLFW.GLFW_KEY_C && ctrl) {
+        } else if (keyCode == InputConstants.KEY_C && ctrl) {
             if (this.mc.keyboardHandler != null) {
                 // Selection if there is one, otherwise the whole box
                 String copied = this.inputBox.hasSelection() ? this.inputBox.getSelectedText() : this.inputBox.getText();
                 if (!copied.isEmpty()) this.mc.keyboardHandler.setClipboard(copied);
             }
-        } else if (keyCode == GLFW.GLFW_KEY_X && ctrl) {
+        } else if (keyCode == InputConstants.KEY_X && ctrl) {
             if (this.mc.keyboardHandler != null) {
                 String cut = this.inputBox.hasSelection() ? this.inputBox.getSelectedText() : this.inputBox.getText();
                 if (!cut.isEmpty()) this.mc.keyboardHandler.setClipboard(cut);
@@ -701,7 +701,7 @@ public class ChatWindow extends LiveWindow {
             if (!this.inputBox.deleteSelection()) {
                 this.inputBox.clear();
             }
-        } else if (keyCode == GLFW.GLFW_KEY_V && ctrl) {
+        } else if (keyCode == InputConstants.KEY_V && ctrl) {
             if (this.mc.keyboardHandler != null) {
                 String clipboard = this.mc.keyboardHandler.getClipboard();
                 if (clipboard != null && !clipboard.isEmpty()) {
@@ -749,7 +749,7 @@ public class ChatWindow extends LiveWindow {
     @Override
     public void mouseWheel(int mWheelState) {
         this.markAsRead();
-        boolean shift = GLFW.glfwGetKey(this.mc.getWindow().handle(), 340) == 1;
+        boolean shift = InputConstants.isKeyDown(InputConstants.KEY_LSHIFT);
         int scrollAmount = shift ? 10 : 1;
 
         // Wheel over the input box scrolls the input's wrapped text (so the top
@@ -926,8 +926,8 @@ public class ChatWindow extends LiveWindow {
     }
 
     private boolean isShiftHeld() {
-        return GLFW.glfwGetKey(this.mc.getWindow().handle(), GLFW.GLFW_KEY_LEFT_SHIFT) == 1
-            || GLFW.glfwGetKey(this.mc.getWindow().handle(), GLFW.GLFW_KEY_RIGHT_SHIFT) == 1;
+        return InputConstants.isKeyDown(InputConstants.KEY_LSHIFT)
+            || InputConstants.isKeyDown(InputConstants.KEY_RSHIFT);
     }
 
     private void placeCursorFromMouse(int mouseX, int mouseY, boolean selecting) {
@@ -942,8 +942,8 @@ public class ChatWindow extends LiveWindow {
     }
 
     private boolean isCtrlHeld() {
-        return GLFW.glfwGetKey(this.mc.getWindow().handle(), GLFW.GLFW_KEY_LEFT_CONTROL) == 1
-            || GLFW.glfwGetKey(this.mc.getWindow().handle(), GLFW.GLFW_KEY_RIGHT_CONTROL) == 1;
+        return InputConstants.isKeyDown(InputConstants.KEY_LCONTROL)
+            || InputConstants.isKeyDown(InputConstants.KEY_RCONTROL);
     }
 
     private static String encodeUrl(String url) {
@@ -977,7 +977,7 @@ public class ChatWindow extends LiveWindow {
                 return;
             }
 
-            Util.getPlatform().openUri(URI.create(encodeUrl(candidate)));
+            Blaze3D.openUri(URI.create(encodeUrl(candidate)));
             LiveMessage.LOG.info("Opening URL: {}", candidate);
         } catch (Exception e) {
             LiveMessage.logError("Failed to open URL: {}", url, e);

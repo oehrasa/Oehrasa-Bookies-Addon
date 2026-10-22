@@ -21,6 +21,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ItemStackTemplate;
 import net.minecraft.world.item.component.ItemContainerContents;
+import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -348,7 +349,7 @@ public class ShulkerRestockEngine {
                     mc.getConnection().send(new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND, hit, revision));
                     mc.getConnection().send(new ServerboundPlayerActionPacket(
                         ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
-                    mc.player.swing(InteractionHand.MAIN_HAND);
+                    mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
                     restoreSlotAfterPlacement();
                 });
             } else {
@@ -357,7 +358,7 @@ public class ShulkerRestockEngine {
                 mc.getConnection().send(new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND, hit, revision));
                 mc.getConnection().send(new ServerboundPlayerActionPacket(
                     ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
-                mc.player.swing(InteractionHand.MAIN_HAND);
+                mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
                 restoreSlotAfterPlacement();
             }
         } else {
@@ -367,12 +368,12 @@ public class ShulkerRestockEngine {
             if (config.rotate()) {
                 Rotations.rotate(Rotations.getYaw(supportHit), Rotations.getPitch(supportHit), -100, () -> {
                     mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-                    mc.player.swing(InteractionHand.MAIN_HAND);
+                    mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
                     restoreSlotAfterPlacement();
                 });
             } else {
                 mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-                mc.player.swing(InteractionHand.MAIN_HAND);
+                mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
                 restoreSlotAfterPlacement();
             }
         }
@@ -449,7 +450,7 @@ public class ShulkerRestockEngine {
         // go straight to interacting with it.
         BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf(placedShulkerPos), Direction.UP, placedShulkerPos, false);
         mc.getConnection().send(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND, hit, 0));
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
 
         stateTicks = 0;
         stage = Stage.WAIT_FOR_OPEN;
@@ -708,11 +709,11 @@ public class ShulkerRestockEngine {
                 Vec3 c = Vec3.atCenterOf(placedShulkerPos);
                 Rotations.rotate(Rotations.getYaw(c), Rotations.getPitch(c), -100, () -> {
                     sendBreakPackets(placedShulkerPos, Direction.UP);
-                    mc.player.swing(InteractionHand.MAIN_HAND);
+                    mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
                 });
             } else {
                 sendBreakPackets(placedShulkerPos, Direction.UP);
-                mc.player.swing(InteractionHand.MAIN_HAND);
+                mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
             }
             packetBreakSent = true;
             stateTicks = 0;
@@ -743,7 +744,7 @@ public class ShulkerRestockEngine {
         }
 
         mc.gameMode.continueDestroyBlock(placedShulkerPos, Direction.UP);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
 
         stateTicks++;
         if (stateTicks >= BREAK_TIMEOUT_TICKS) {

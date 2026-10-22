@@ -14,9 +14,11 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.BonemealSource;
 import net.minecraft.world.level.block.BonemealableBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
@@ -349,7 +351,7 @@ public class AutoMoss extends Module {
             }
 
             boolean applied = block instanceof BonemealableBlock bonemealable
-                && bonemealable.isValidBonemealTarget(mc.level, blockPos, state);
+                && bonemealable.isValidBonemealTarget(mc.level, blockPos, state, BonemealSource.INTERACTION);
             if (applied) {
                 Vec3 hitPos = new Vec3(blockPos.getX() + 0.5, blockPos.getY() + 0.5, blockPos.getZ() + 0.5);
                 BlockHitResult hit = new BlockHitResult(hitPos, Direction.UP, blockPos, false);
@@ -363,7 +365,7 @@ public class AutoMoss extends Module {
 
                 // Add moss blocks to cooldown map
                 if (isMoss) {
-                    recentlyUsedMoss.put(new BlockPos(blockPos), mossSpreadCooldown.get());
+                    recentlyUsedMoss.put(blockPos.immutable(), mossSpreadCooldown.get());
                 }
 
                 uses++;
@@ -754,7 +756,7 @@ public class AutoMoss extends Module {
         Rotations.rotate(Rotations.getYaw(finalHit), Rotations.getPitch(finalHit), -100, () -> {
             BlockHitResult hit = new BlockHitResult(finalHit, Direction.UP, finalFloor, false);
             mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-            mc.player.swing(InteractionHand.MAIN_HAND);
+            mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
         });
 
         mc.player.getInventory().setSelectedSlot(prevSlot);

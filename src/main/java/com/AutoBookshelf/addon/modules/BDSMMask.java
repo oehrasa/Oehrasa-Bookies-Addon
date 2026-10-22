@@ -42,7 +42,6 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.Set;
 import java.util.function.Predicate;
@@ -464,7 +463,7 @@ public class BDSMMask extends Module {
             }
             prevKeybindPressed = now;
         } else if (targetMode.get() == TargetMode.MiddleClick) {
-            boolean pressed = GLFW.glfwGetMouseButton(GLFW.glfwGetCurrentContext(), GLFW.GLFW_MOUSE_BUTTON_MIDDLE) == GLFW.GLFW_PRESS;
+            boolean pressed = mc.mouseHandler.isMiddlePressed();
             if (mc.crosshairPickEntity instanceof LivingEntity living && isEntityAllowed(living)) {
                 if (pressed && !prevMiddlePressed && state == State.IDLE) {
                     targetEntity = living;

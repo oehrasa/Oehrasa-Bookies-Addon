@@ -11,6 +11,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.mojang.authlib.GameProfile;
+import com.mojang.blaze3d.platform.InputConstants;
 import meteordevelopment.meteorclient.systems.friends.Friends;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -21,7 +22,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.player.Player;
-import org.lwjgl.glfw.GLFW;
 
 import java.io.File;
 import java.io.FileReader;
@@ -250,8 +250,8 @@ public class ManeWindow extends LiveWindow {
         } else if (keyCode == 267) {
             listScrollPosition = Math.min(maxScroll, listScrollPosition + 10);
         } else if (keyCode == 258) { // Tab
-            boolean ctrl = GLFW.glfwGetKey(this.mc.getWindow().handle(), GLFW.GLFW_KEY_LEFT_CONTROL) == 1
-                || GLFW.glfwGetKey(this.mc.getWindow().handle(), GLFW.GLFW_KEY_RIGHT_CONTROL) == 1;
+            boolean ctrl = InputConstants.isKeyDown(InputConstants.KEY_LCONTROL)
+                || InputConstants.isKeyDown(InputConstants.KEY_RCONTROL);
             if (!ctrl && this.autocompleteSearch()) {
                 return; // consumed by autocomplete
             }
@@ -279,7 +279,7 @@ public class ManeWindow extends LiveWindow {
     public void mouseWheel(int mWheelState) {
         int maxVisibleLines = (this.h - (this.buddyListY + 13 + 15)) / 12;
         int maxScroll = Math.max(0, buddyListEntries.size() - maxVisibleLines);
-        boolean shift = GLFW.glfwGetKey(this.mc.getWindow().handle(), 340) == 1;
+        boolean shift = InputConstants.isKeyDown(InputConstants.KEY_LSHIFT);
         int scrollAmount = shift ? 5 : 1;
         if (mWheelState < 0) {
             listScrollPosition = Math.min(maxScroll, listScrollPosition + scrollAmount);

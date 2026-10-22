@@ -198,5 +198,6 @@ public class BlockRadius extends Module {
         Vec3 cam = mc.gameRenderer.mainCamera().position();
         sulfur.render2D(event, cam, shared.maxDistSq());
         potions.render2D(event, cam, shared.maxDistSq());
+        wardens.renderLabels(event);
     }
 }

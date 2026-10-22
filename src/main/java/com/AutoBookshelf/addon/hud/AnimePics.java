@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.hud;
 
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.FileDialogs;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -19,10 +20,6 @@ import meteordevelopment.meteorclient.systems.hud.HudRenderer;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.Identifier;
-import org.lwjgl.BufferUtils;
-import org.lwjgl.PointerBuffer;
-import org.lwjgl.system.MemoryUtil;
-import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
@@ -59,7 +56,6 @@ public class AnimePics extends HudElement {
     private final AtomicBoolean locked = new AtomicBoolean(false);
     private boolean empty = true;
     private int ticks = 0;
-    private final PointerBuffer saveFilters;         // file filters for save dialogue
     private volatile boolean manualRefresh = false; // true = next load must use fixed tag
     private final Identifier textureId;   // unique per element
 
@@ -370,14 +366,6 @@ public class AnimePics extends HudElement {
         super(INFO);
         this.textureId = Identifier.fromNamespaceAndPath("autobookshelf", "animepics_" + UUID.randomUUID());
 
-        // Save dialogue filters: png (converted stills) + gif/jpg/jpeg (original downloaded formats)
-        String[] filterPatterns = {"*.png", "*.gif", "*.jpg", "*.jpeg"};
-        saveFilters = BufferUtils.createPointerBuffer(filterPatterns.length);
-        for (String pattern : filterPatterns) {
-            saveFilters.put(MemoryUtil.memASCII(pattern));
-        }
-        saveFilters.rewind();
-
         MeteorClient.EVENT_BUS.subscribe(this);
         updateSize();
     }
@@ -455,12 +443,10 @@ public class AnimePics extends HudElement {
 
         String suggestedName = currentImageName != null ? currentImageName : "animepic.png";
 
-        String path = TinyFileDialogs.tinyfd_saveFileDialog(
+        String path = FileDialogs.saveFile(
             "Save Image",
-            new File(MeteorClient.FOLDER, suggestedName).getAbsolutePath(),
-            saveFilters,
-            null
-        );
+            new File(MeteorClient.FOLDER, suggestedName),
+            "Images", "png", "gif", "jpg", "jpeg");
 
         if (path == null) return;   // user cancelled
 
@@ -473,12 +459,11 @@ public class AnimePics extends HudElement {
     }
 
     private void selectLocalFolder() {
-        String path = TinyFileDialogs.tinyfd_selectFolderDialog(
+        String path = FileDialogs.chooseDirectory(
             "Choose image folder",
             localFolderPath.get().isEmpty()
-                ? new File(MeteorClient.FOLDER, "images").getAbsolutePath()
-                : localFolderPath.get()
-        );
+                ? new File(MeteorClient.FOLDER, "images")
+                : new File(localFolderPath.get()));
         if (path != null) {
             localFolderPath.set(path);
             source.set(Source.LocalFolder);

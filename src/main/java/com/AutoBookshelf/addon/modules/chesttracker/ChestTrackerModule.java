@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.modules.chesttracker;
 
 import com.AutoBookshelf.addon.Addon;
+import com.mojang.blaze3d.platform.InputConstants;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
 import meteordevelopment.meteorclient.events.packets.InventoryEvent;
@@ -31,6 +32,7 @@ import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.level.block.*;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.ChestType;
@@ -38,7 +40,6 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3d;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.*;
 
@@ -54,7 +55,7 @@ public class ChestTrackerModule extends Module {
     private final Setting<Keybind> browserKey = sgGeneral.add(new KeybindSetting.Builder()
         .name("browser-keybind")
         .description("Open container browser GUI.")
-        .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_Y))
+        .defaultValue(Keybind.fromKey(InputConstants.KEY_Y))
         .action(() -> {
             if (mc.gui.screen() == null) {
                 mc.gui.setScreen(new ChestTrackerScreen(this));
@@ -529,7 +530,7 @@ public class ChestTrackerModule extends Module {
                                 if (!otherPos.equals(canonicalPos)) currentOpenPositions[1] = otherPos;
                             }
                         }
-                        mc.player.swing(InteractionHand.MAIN_HAND);
+                        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
                         if (debugMode.get()) info("Auto-opening container at " + canonicalPos.toShortString());
                         return;
                     } else if (result == InteractionResult.FAIL) {

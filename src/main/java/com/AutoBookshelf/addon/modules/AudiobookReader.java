@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
+import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.text2speech.Narrator;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -15,7 +16,6 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.WritableBookContent;
 import net.minecraft.world.item.component.WrittenBookContent;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -44,14 +44,14 @@ public class AudiobookReader extends Module {
     private final Setting<Keybind> playKey = sgGeneral.add(new KeybindSetting.Builder()
         .name("play-key")
         .description("Key to start reading the book")
-        .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_V))
+        .defaultValue(Keybind.fromKey(InputConstants.KEY_V))
         .build()
     );
 
     private final Setting<Keybind> stopKey = sgGeneral.add(new KeybindSetting.Builder()
         .name("stop-key")
         .description("Key to stop reading")
-        .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_B))
+        .defaultValue(Keybind.fromKey(InputConstants.KEY_B))
         .build()
     );
 

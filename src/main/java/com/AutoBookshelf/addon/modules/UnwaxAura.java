@@ -18,6 +18,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.animal.golem.CopperGolem;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.WeatheringCopper;
@@ -394,7 +395,7 @@ public class UnwaxAura extends Module {
         BlockPos closest = null;
         int r = range.get();
         BlockPos playerPos = mc.player.blockPosition();
-        for (BlockPos pos : BlockPos.withinManhattan(playerPos, r, r, r)) {
+        for (BlockPos pos : BlockPos.withinBoxByManhattanDistance(playerPos, r, r, r)) {
             BlockState state = mc.level.getBlockState(pos);
             if (!isBlockTarget(state)) continue;
             double dist = pos.distSqr(playerPos);
@@ -454,7 +455,7 @@ public class UnwaxAura extends Module {
         Vec3 hitVec = Vec3.atCenterOf(currentTarget);
         BlockHitResult hit = new BlockHitResult(hitVec, Direction.UP, currentTarget, false);
         mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
         mc.options.keyShift.setDown(false);
         stage = Stage.WAIT_UNWAX;
         actionTimer = unwaxDelay.get();
@@ -475,7 +476,7 @@ public class UnwaxAura extends Module {
             }
         }
         mc.gameMode.interact(mc.player, golem, new EntityHitResult(golem), InteractionHand.MAIN_HAND);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
         stage = Stage.WAIT_UNWAX;
         actionTimer = unwaxDelay.get();
     }
@@ -544,7 +545,7 @@ public class UnwaxAura extends Module {
         } else {
             mc.gameMode.continueDestroyBlock(currentTarget, Direction.UP);
         }
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
         stage = Stage.BREAKING;
         actionTimer = 1;
     }
@@ -558,7 +559,7 @@ public class UnwaxAura extends Module {
             breakingStarted = false;
         } else {
             mc.gameMode.continueDestroyBlock(currentTarget, Direction.UP);
-            mc.player.swing(InteractionHand.MAIN_HAND);
+            mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
             actionTimer = 1;
         }
     }
@@ -639,7 +640,7 @@ public class UnwaxAura extends Module {
         espGolems.clear();
         int r = range.get();
         BlockPos playerPos = mc.player.blockPosition();
-        for (BlockPos pos : BlockPos.withinManhattan(playerPos, r, r, r)) {
+        for (BlockPos pos : BlockPos.withinBoxByManhattanDistance(playerPos, r, r, r)) {
             if (isBlockTarget(mc.level.getBlockState(pos))) {
                 espBlocks.add(pos.immutable());
             }

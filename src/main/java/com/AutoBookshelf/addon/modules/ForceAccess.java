@@ -29,6 +29,7 @@ import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.animal.equine.AbstractChestedHorse;
 import net.minecraft.world.entity.vehicle.ContainerEntity;
+import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.item.trading.Merchant;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.*;
@@ -390,7 +391,7 @@ public class ForceAccess extends Module {
                     new BlockHitResult(new Vec3(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5),
                         Direction.UP, pos, true));
                 if (result instanceof InteractionResult.Success || result instanceof InteractionResult.Fail) {
-                    mc.player.swing(hand);
+                    mc.player.swing(hand, SwingAnimation.DEFAULT, false);
                     event.cancel();
                     return;
                 }
@@ -491,7 +492,7 @@ public class ForceAccess extends Module {
             int r = (int) Math.ceil(blockRange);
             double maxSq = blockRange * blockRange;
 
-            for (BlockPos p : BlockPos.withinManhattan(BlockPos.containing(eye), r, r, r)) {
+            for (BlockPos p : BlockPos.withinBoxByManhattanDistance(BlockPos.containing(eye), r, r, r)) {
                 if (!container(p)) continue;
                 double distSq = eye.distanceToSqr(Vec3.atCenterOf(p));
                 if (distSq > maxSq || distSq >= bestSq) continue;
@@ -616,7 +617,7 @@ public class ForceAccess extends Module {
             || block instanceof ChiseledBookShelfBlock
             || block instanceof ComposterBlock
             || block instanceof DaylightDetectorBlock
-            || block instanceof RedStoneWireBlock;
+            || block instanceof RedstoneWireBlock;
     }
 
     private boolean obstructed(BlockPos pos) {
@@ -840,7 +841,7 @@ public class ForceAccess extends Module {
             }
             refreshToolSlot();
             sendBreakPackets(target.pos, face(target.pos));
-            mc.player.swing(InteractionHand.MAIN_HAND);
+            mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
             burstSent = true;
         } else {
             // Normal per-tick breaking: progress every tick until the server reports
@@ -852,7 +853,7 @@ public class ForceAccess extends Module {
             }
             refreshToolSlot();
             mc.gameMode.continueDestroyBlock(target.pos, face(target.pos));
-            mc.player.swing(InteractionHand.MAIN_HAND);
+            mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
         }
     }
 
@@ -1087,14 +1088,14 @@ public class ForceAccess extends Module {
         // gets cancelled here by the phase != IDLE guard on our own handler.
         boolean sneak = e instanceof AbstractChestedHorse || e instanceof ContainerEntity;
         mc.player.connection.send(new ServerboundInteractPacket(e.getId(), InteractionHand.MAIN_HAND, e.position(), sneak));
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
     }
 
     private void sendOpen(BlockHitResult hit) {
         // Click-through open
         phase = Phase.IDLE;
         mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
     }
 
     private BlockHitResult hit(BlockPos pos) {

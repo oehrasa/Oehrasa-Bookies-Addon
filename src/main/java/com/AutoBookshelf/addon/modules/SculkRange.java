@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
+import com.mojang.blaze3d.platform.InputConstants;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import meteordevelopment.meteorclient.events.game.GameJoinedEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
@@ -37,7 +38,6 @@ import net.minecraft.world.level.gameevent.vibrations.VibrationSystem;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3d;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.*;
 import java.util.concurrent.ExecutorService;
@@ -77,7 +77,7 @@ public class SculkRange extends Module {
         .name("select-key")
         .description("Press while looking at a calibrated sculk sensor to add or remove it.")
         .visible(manualMode::get)
-        .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_V))
+        .defaultValue(Keybind.fromKey(InputConstants.KEY_V))
         .build());
 
     private final Setting<Boolean> showNormalSculk = sgGeneral.add(new BoolSetting.Builder()
@@ -750,7 +750,7 @@ public class SculkRange extends Module {
     }
 
     private boolean hasShriekerInRange(Level world, BlockPos pos) {
-        for (BlockPos p : BlockPos.withinManhattan(pos, 16, 16, 16))
+        for (BlockPos p : BlockPos.withinBoxByManhattanDistance(pos, 16, 16, 16))
             if (world.getBlockState(p).getBlock() instanceof SculkShriekerBlock) return true;
         return false;
     }

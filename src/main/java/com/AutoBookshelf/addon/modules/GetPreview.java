@@ -415,7 +415,7 @@ public class GetPreview extends Module {
             } else {
                 BundleContents contents = stack.get(DataComponents.BUNDLE_CONTENTS);
                 if (contents == null || contents.isEmpty()) return;
-                items = contents.itemCopyStream().toList();
+                items = contents.itemCopies().toList();
             }
 
             if (items.isEmpty()) return;

@@ -11,10 +11,12 @@ import meteordevelopment.meteorclient.utils.player.PlayerUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.PositionAndRotation;
 import net.minecraft.network.protocol.game.ClientboundMoveVehiclePacket;
 import net.minecraft.network.protocol.game.ServerboundMoveVehiclePacket;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.vehicle.boat.Boat;
+import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -173,7 +175,7 @@ public class BetterBoatFly extends Module {
     private void doInteract(Boat boat) {
         assert mc.gameMode != null;
         EntityHitResult location = new EntityHitResult(boat, boat.position());
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
         mc.gameMode.interact(mc.player, boat, location, InteractionHand.MAIN_HAND);
     }
 
@@ -206,8 +208,7 @@ public class BetterBoatFly extends Module {
 
         if (sentPacket && mc.player.getVehicle() != null) {
             ServerboundMoveVehiclePacket packet = ServerboundMoveVehiclePacket.fromEntity(mc.player.getVehicle());
-            ((IVec3) packet.position()).meteor$setY(lastPacketY);
-            mc.getConnection().send(packet);
+            mc.getConnection().send(withY(packet, lastPacketY));
             sentPacket = false;
         }
 
@@ -218,14 +219,24 @@ public class BetterBoatFly extends Module {
     private void onSendPacket(PacketEvent.Send event) {
         if (!antiKick.get() || !(event.packet instanceof ServerboundMoveVehiclePacket packet)) return;
 
-        double currentY = packet.position().y;
+        double currentY = packet.movingTo().position().y;
         if (delayLeft <= 0 && !sentPacket && shouldFlyDown(currentY)) {
-            ((IVec3) packet.position()).meteor$setY(lastPacketY - 0.03130D);
+            // The packet carries the vehicle's own PositionAndRotation, so mutating it in place
+            // would move the boat client-side. Drop it and resend a copy with only the Y changed.
+            event.cancel();
+            event.sendSilently(withY(packet, lastPacketY - 0.03130D));
             sentPacket = true;
             delayLeft = delay.get();
         }
 
         lastPacketY = currentY;
+    }
+
+    private static ServerboundMoveVehiclePacket withY(ServerboundMoveVehiclePacket packet, double y) {
+        Vec3 pos = packet.movingTo().position();
+        PositionAndRotation target = PositionAndRotation.of(
+            new Vec3(pos.x, y, pos.z), packet.movingTo().yRot(), packet.movingTo().xRot());
+        return new ServerboundMoveVehiclePacket(target, packet.onGround());
     }
 
     private boolean shouldFlyDown(double currentY) {

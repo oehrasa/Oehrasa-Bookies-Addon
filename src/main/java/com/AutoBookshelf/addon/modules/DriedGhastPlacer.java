@@ -24,6 +24,7 @@ import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.SwingAnimation;
 import net.minecraft.world.item.enchantment.Enchantments;
 import net.minecraft.world.item.enchantment.ItemEnchantments;
 import net.minecraft.world.level.block.Block;
@@ -589,7 +590,7 @@ public class DriedGhastPlacer extends Module {
         Vec3 hitVec = Vec3.atCenterOf(supportBlockPos).add(0, 0.5, 0);
         BlockHitResult hit = new BlockHitResult(hitVec, Direction.UP, supportBlockPos, false);
         mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
         confirmWaitTicks = 0;
         delayTicks = 2;
         stage = Stage.WAIT_ICE;
@@ -620,7 +621,7 @@ public class DriedGhastPlacer extends Module {
     private void executeBreakIce() {
         mc.gameMode.startDestroyBlock(targetPos, Direction.UP);
         mc.gameMode.continueDestroyBlock(targetPos, Direction.UP);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
         breakWaitTicks = 0;
         breakWaitStep = 4;
         delayTicks = 4; stage = Stage.WAIT_BREAK;
@@ -642,7 +643,7 @@ public class DriedGhastPlacer extends Module {
                 Rotations.rotate(Rotations.getYaw(Vec3.atCenterOf(targetPos)), Rotations.getPitch(Vec3.atCenterOf(targetPos)), -100, () -> {
                 });
             mc.gameMode.continueDestroyBlock(targetPos, Direction.UP);
-            mc.player.swing(InteractionHand.MAIN_HAND);
+            mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
         } else if (state.getBlock() == Blocks.WATER) {
             // Ice is gone and did its job - clear the wait counters and hand over.
             breakWaitTicks = 0;
@@ -708,7 +709,7 @@ public class DriedGhastPlacer extends Module {
         Vec3 hitVec = Vec3.atCenterOf(supportBlockPos).add(0, 0.5, 0);
         BlockHitResult hit = new BlockHitResult(hitVec, Direction.UP, supportBlockPos, false);
         mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
         delayTicks = 2; stage = Stage.WAIT_GHAST;
     }
 

@@ -241,7 +241,7 @@ public class MapartNamer extends Module {
     @EventHandler
     private void onSendPacket(PacketEvent.Send event) {
         if (state == State.AwaitInteract && event.packet instanceof ServerboundUseItemOnPacket packet) {
-            BlockPos blockPos = packet.getHitResult().getBlockPos();
+            BlockPos blockPos = packet.hitResult().getBlockPos();
             if (mc.level.getBlockState(blockPos).getBlock() instanceof AnvilBlock) {
                 state = State.AwaitScreen;
             }
