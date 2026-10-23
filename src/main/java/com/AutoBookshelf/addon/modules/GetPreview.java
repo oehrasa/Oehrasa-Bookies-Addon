@@ -183,6 +183,8 @@ public class GetPreview extends Module {
     }
 
     public void renderBundleOverlay(DrawContext context, int x, int y, ItemStack stack) {
+        // When the HUD is hidden (F1), don't render hotbar overlays.
+        if (mc.options.hudHidden) return;
         if (isRenderingPreview) return;
         if (stack.isEmpty()) return;
 

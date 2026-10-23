@@ -104,9 +104,6 @@ public class AudiobookReader extends Module {
     // Page progress tracking
     private String currentPageText = "";
     private int totalCharsInPage = 0;
-    private int spokenChars = 0;
-    private int currentWordIndex = 0;
-    private List<Integer> wordPositions = new ArrayList<>();
     private long pageStartTime = 0;
     private long estimatedPageDuration = 0;
 

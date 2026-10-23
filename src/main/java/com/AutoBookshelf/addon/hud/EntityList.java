@@ -2,11 +2,14 @@ package com.AutoBookshelf.addon.hud;
 
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.DistanceUtil;
+import com.AutoBookshelf.addon.utils.ForceDefaultFont;
+import meteordevelopment.meteorclient.gui.utils.StarscriptTextBoxRenderer;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.hud.Alignment;
 import meteordevelopment.meteorclient.systems.hud.HudElement;
 import meteordevelopment.meteorclient.systems.hud.HudElementInfo;
 import meteordevelopment.meteorclient.systems.hud.HudRenderer;
+import meteordevelopment.meteorclient.utils.misc.MeteorStarscript;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.Entity;
@@ -16,6 +19,13 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.projectile.FireworkRocketEntity;
 import net.minecraft.entity.projectile.ProjectileEntity;
 import net.minecraft.entity.vehicle.VehicleEntity;
+import org.meteordev.starscript.Script;
+import org.meteordev.starscript.Section;
+import org.meteordev.starscript.compiler.Compiler;
+import org.meteordev.starscript.compiler.Parser;
+import org.meteordev.starscript.utils.StarscriptError;
+import org.meteordev.starscript.value.Value;
+import org.meteordev.starscript.value.ValueMap;
 
 import java.util.*;
 
@@ -31,6 +41,16 @@ public class EntityList extends HudElement {
         .name("show-title")
         .description("Display the HUD title.")
         .defaultValue(true)
+        .build()
+    );
+
+    public final Setting<String> text = sgGeneral.add(new StringSetting.Builder()
+        .name("text")
+        .description("Starscript format for each entity line. Available: entity.name, entity.count, entity.distance, entity.showDistance.")
+        .defaultValue("{entity.name}{entity.count > 1 ? ' x' + entity.count : ''}{entity.showDistance ? ' (' + entity.distance + 'm)' : ''}")
+        .onChanged(s -> recompile())
+        .wide()
+        .renderer(StarscriptTextBoxRenderer.class)
         .build()
     );
     private final Setting<Boolean> showItems = sgGeneral.add(new BoolSetting.Builder()
@@ -121,6 +141,7 @@ public class EntityList extends HudElement {
         .defaultValue(true)
         .build()
     );
+    private final ForceDefaultFont forceDefaultFont = new ForceDefaultFont(sgGeneral);
 
     // Colors
     private final Setting<SettingColor> titleColor = sgColors.add(new ColorSetting.Builder()
@@ -212,8 +233,15 @@ public class EntityList extends HudElement {
         .build()
     );
 
+    private Script script;
+    private boolean needsCompile = true;
+
     public EntityList() {
         super(INFO);
+    }
+
+    private void recompile() {
+        needsCompile = true;
     }
 
     // The world entity scan + aggregation is the expensive part; it can't change faster than
@@ -280,18 +308,11 @@ public class EntityList extends HudElement {
         }
 
         // Build the display text/width for every aggregated entry up front, since sorting by
-        // Length needs the final rendered text (name + count + distance suffix), not just the
-        // raw entity name.
+        // Length needs the final Starscript-rendered text, not just the raw entity name.
         cachedEntityLines.clear();
         for (Aggregated agg : map.values()) {
-            String text = agg.name;
-            if (agg.count > 1) {
-                text += " x" + agg.count;
-            }
-            if (showDistance.get()) {
-                text += " (" + (int) agg.minDist + "m)";
-            }
-            double textWidth = renderer.textWidth(text, textShadow.get(), textScale.get());
+            String text = renderLine(agg);
+            double textWidth = forceDefaultFont.width(renderer, text, textShadow.get(), textScale.get());
             cachedEntityLines.add(new Line(text, agg.color, textWidth, agg.minDist));
         }
 
@@ -299,11 +320,71 @@ public class EntityList extends HudElement {
             // Sort by rendered pixel width rather than String#length(): length() counts UTF-16
             // code units, which misrepresents entities with non-ASCII/wide-glyph names (and any
             // future locale-translated names) relative to the actual on-screen size of the
-            // name + count + distance suffix.
+            // Starscript-rendered line.
             case Distance -> cachedEntityLines.sort(Comparator.comparingDouble(Line::minDist));
             case Length -> cachedEntityLines.sort(Comparator.comparingDouble(Line::width).reversed());
             case Name -> cachedEntityLines.sort(Comparator.comparing(Line::text, String.CASE_INSENSITIVE_ORDER));
         }
+    }
+
+    /**
+     * Compiles the Starscript template. A parse or compile failure leaves {@code script} null,
+     * which makes {@link #renderLine} fall back to the default format so the list always works.
+     */
+    private void compileScript() {
+        if (!needsCompile) return;
+
+        Parser.Result result = Parser.parse(text.get());
+        if (result.hasErrors()) {
+            script = null;
+        } else {
+            try {
+                script = Compiler.compile(result);
+            } catch (StarscriptError e) {
+                script = null;
+            }
+        }
+
+        needsCompile = false;
+    }
+
+    /**
+     * Renders one aggregated entity to its display line. Runs the compiled Starscript template
+     * with the per-entity {@code entity} variables; on any failure falls back to the default
+     * {@code name x count (distance)m} format.
+     */
+    private String renderLine(Aggregated agg) {
+        if (script != null) {
+            ValueMap entity = new ValueMap()
+                .set("name", agg.name)
+                .set("count", agg.count)
+                .set("distance", (int) agg.minDist)
+                .set("showDistance", showDistance.get());
+            MeteorStarscript.ss.set("entity", entity);
+
+            try {
+                Section section = MeteorStarscript.ss.run(script);
+                String result = section != null ? section.toString() : null;
+                if (result != null) return result;
+            } catch (StarscriptError e) {
+                // Disable the broken template until it is edited; fall back to the default format.
+                // Leaving needsCompile alone keeps the compile from being retried every frame,
+                // which would just recompile a template that throws on every run.
+                script = null;
+            } finally {
+                // Never leave the per-entity value in the shared Starscript state.
+                MeteorStarscript.ss.set("entity", Value.null_());
+            }
+        }
+
+        String text = agg.name;
+        if (agg.count > 1) {
+            text += " x" + agg.count;
+        }
+        if (showDistance.get()) {
+            text += " (" + (int) agg.minDist + "m)";
+        }
+        return text;
     }
 
     @Override
@@ -313,20 +394,20 @@ public class EntityList extends HudElement {
         if (mc.world == null || mc.player == null) {
             if (isInEditor()) {
                 String title = "Entity List";
-                double titleWidth = renderer.textWidth(title, textShadow.get(), textScale.get());
-                double titleHeight = renderer.textHeight(textShadow.get(), textScale.get());
+                double titleWidth = forceDefaultFont.width(renderer, title, textShadow.get(), textScale.get());
+                double titleHeight = forceDefaultFont.height(renderer, textShadow.get(), textScale.get());
                 setSize(titleWidth, titleHeight);
 
                 if (background.get()) renderer.quad(x, y, getWidth(), getHeight(), backgroundColor.get());
                 double drawX = x + box.alignX(getWidth(), titleWidth, alignment.get());
-                renderer.text(title, drawX, y, titleColor.get(), textShadow.get(), textScale.get());
+                forceDefaultFont.text(renderer, title, drawX, y, titleColor.get(), textShadow.get(), textScale.get());
             }
             return;
         }
 
         refreshEntities(renderer, mc);
 
-        double textHeight = renderer.textHeight(textShadow.get(), textScale.get());
+        double textHeight = forceDefaultFont.height(renderer, textShadow.get(), textScale.get());
         double spacing = 2;
 
         List<Line> lines = new ArrayList<>();
@@ -335,7 +416,7 @@ public class EntityList extends HudElement {
 
         if (showTitle.get()) {
             String title = "Entity List";
-            double titleWidth = renderer.textWidth(title, textShadow.get(), textScale.get());
+            double titleWidth = forceDefaultFont.width(renderer, title, textShadow.get(), textScale.get());
             lines.add(new Line(title, titleColor.get(), titleWidth, 0));
             maxWidth = Math.max(maxWidth, titleWidth);
             totalHeight += textHeight + spacing;
@@ -355,7 +436,7 @@ public class EntityList extends HudElement {
         double curY = y;
         for (Line line : lines) {
             double drawX = x + box.alignX(getWidth(), line.width(), alignment.get());
-            renderer.text(line.text(), drawX, curY, line.color(), textShadow.get(), textScale.get());
+            forceDefaultFont.text(renderer, line.text(), drawX, curY, line.color(), textShadow.get(), textScale.get());
             curY += textHeight + spacing;
         }
     }

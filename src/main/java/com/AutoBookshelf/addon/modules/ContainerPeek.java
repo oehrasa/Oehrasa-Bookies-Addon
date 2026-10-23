@@ -4,6 +4,7 @@ import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.modules.chesttracker.ChestTrackerDataV2;
 import com.AutoBookshelf.addon.modules.chesttracker.ChestTrackerModule;
 import com.AutoBookshelf.addon.modules.chesttracker.TrackedContainer;
+import com.AutoBookshelf.addon.utils.ShelfTooltip;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
@@ -18,6 +19,7 @@ import net.minecraft.block.enums.ChestType;
 import net.minecraft.client.gl.RenderPipelines;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.tooltip.TooltipBackgroundRenderer;
+import net.minecraft.client.gui.tooltip.TooltipComponent;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.ContainerComponent;
 import net.minecraft.entity.Entity;
@@ -37,10 +39,8 @@ import net.minecraft.world.World;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Vector3d;
 
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.stream.Collectors;
 
 public class ContainerPeek extends Module {
     private static final int SLOT_SIZE = 18;
@@ -136,20 +136,154 @@ public class ContainerPeek extends Module {
         .build()
     );
 
+    private final Setting<Boolean> showEmpty = sgGeneral.add(new BoolSetting.Builder()
+        .name("show-empty")
+        .description("Still show the preview when a container in an item frame (a shulker) is empty.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final SettingGroup sgShelfTooltip = settings.createGroup("Shelf Tooltip");
+
+    private final Setting<Boolean> shelfTooltip = sgShelfTooltip.add(new BoolSetting.Builder()
+        .name("shelf-tooltip")
+        .description("When looking at a shelf, show a vanilla-style tooltip of the item on it.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> tripleMode = sgShelfTooltip.add(new BoolSetting.Builder()
+        .name("triple-mode")
+        .description("Show all three shelf slots at once instead of only the slot under the crosshair.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Boolean> showAmount = sgShelfTooltip.add(new BoolSetting.Builder()
+        .name("show-amount")
+        .description("Show the item's stack count in the tooltip.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<String> amountFormat = sgShelfTooltip.add(new StringSetting.Builder()
+        .name("amount-format")
+        .description("Format for the item count. %amount% is replaced with the count.")
+        .defaultValue("%amount%x ")
+        .build()
+    );
+
+    private final Setting<ShelfTooltip.AmountPosition> amountPosition = sgShelfTooltip.add(new EnumSetting.Builder<ShelfTooltip.AmountPosition>()
+        .name("amount-position")
+        .description("Where the count goes. The lore positions fall back to 'between' on an item with no lore.")
+        .defaultValue(ShelfTooltip.AmountPosition.BEFORE_NAME)
+        .build()
+    );
+
+    private final Setting<SettingColor> amountColor = sgShelfTooltip.add(new ColorSetting.Builder()
+        .name("amount-color")
+        .description("Colour of the item count.")
+        .defaultValue(new SettingColor(170, 170, 170))
+        .build()
+    );
+
+    private final Setting<Boolean> showAttributes = sgShelfTooltip.add(new BoolSetting.Builder()
+        .name("show-attributes")
+        .description("Show the item's attribute modifier lines.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<SettingColor> attributeColor = sgShelfTooltip.add(new ColorSetting.Builder()
+        .name("attribute-color")
+        .description("Colour applied to the attribute modifier lines.")
+        .defaultValue(new SettingColor(170, 170, 170))
+        .build()
+    );
+
+    private final Setting<Boolean> showPotionEffects = sgShelfTooltip.add(new BoolSetting.Builder()
+        .name("show-potion-effects")
+        .description("Show the item's potion effect lines.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> showTrimUpgrades = sgShelfTooltip.add(new BoolSetting.Builder()
+        .name("show-trim-upgrades")
+        .description("Show smithing trim material and pattern lines.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> showAdvanced = sgShelfTooltip.add(new BoolSetting.Builder()
+        .name("show-advanced")
+        .description("Append the debug lines vanilla only shows in advanced mode (component ids and the like).")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<SettingColor> advancedColor = sgShelfTooltip.add(new ColorSetting.Builder()
+        .name("advanced-color")
+        .description("Colour of the advanced/debug lines.")
+        .defaultValue(new SettingColor(170, 170, 170))
+        .build()
+    );
+
+    private final Setting<ShelfTooltip.TooltipPosition> tooltipPosition = sgShelfTooltip.add(new EnumSetting.Builder<ShelfTooltip.TooltipPosition>()
+        .name("tooltip-position")
+        .description("Which corner or edge the tooltip is anchored to.")
+        .defaultValue(ShelfTooltip.TooltipPosition.TOP_MIDDLE)
+        .build()
+    );
+
+    private final Setting<Double> tooltipScale = sgShelfTooltip.add(new DoubleSetting.Builder()
+        .name("tooltip-scale")
+        .description("Scale of the whole tooltip.")
+        .defaultValue(1.0)
+        .min(0.25)
+        .max(3.0)
+        .sliderRange(0.25, 3.0)
+        .build()
+    );
+
+    private final Setting<Double> tripleSpacing = sgShelfTooltip.add(new DoubleSetting.Builder()
+        .name("spacing")
+        .description("Gap between the per-slot tooltips in triple mode.")
+        .defaultValue(1.0)
+        .min(0.25)
+        .max(4.0)
+        .sliderRange(0.25, 4.0)
+        .build()
+    );
+
+    private final Setting<Boolean> transparent = sgShelfTooltip.add(new BoolSetting.Builder()
+        .name("transparent")
+        .description("Draw the tooltip without its background.")
+        .defaultValue(true)
+        .build()
+    );
+
     private final ChestTrackerDataV2 data = new ChestTrackerDataV2();
     private BlockPos lastTargetedPos;
     private TrackedContainer lastContainer;
     private World lastWorld;
 
     private Entity lastEntity;
-    private List<ItemStack> lastEntityItems;
-    private String lastEntityType;
 
     private boolean lastShulkerIconSetting = shulkerIconPreview.get();
+    private boolean lastShowEmptySetting = showEmpty.get();
     private PeekStyle lastStyle = style.get();
 
     private PreviewData currentPreview = null;
     private final Vector3d previewVec = new Vector3d();   // reused per frame by onRender2D
+
+    // Shelf tooltip state
+    /**
+     * Per-slot tooltip lines, parallel to the slots that were targeted.
+     */
+    private final List<List<TooltipComponent>> shelfBoxes = new ArrayList<>();
+    private BlockPos shelfTarget = null;
+    private long shelfStamp = Long.MIN_VALUE;
 
     public static final ThreadLocal<Boolean> IS_RENDERING = ThreadLocal.withInitial(() -> false);
 
@@ -172,7 +306,7 @@ public class ContainerPeek extends Module {
 
     public ContainerPeek() {
         super(Addon.CATEGORY, "Container-Peek",
-            "Displays the tracked contents from Chest-Tracker when you look at the block.");
+            "Displays the tracked contents from Chest-Tracker when you look at the block, Shelf block too.");
     }
 
     @Override
@@ -186,9 +320,8 @@ public class ContainerPeek extends Module {
         lastTargetedPos = null;
         lastContainer = null;
         lastEntity = null;
-        lastEntityItems = null;
-        lastEntityType = null;
         currentPreview = null;
+        resetShelfTooltip();
     }
 
     @EventHandler
@@ -199,17 +332,14 @@ public class ContainerPeek extends Module {
             lastTargetedPos = null;
             lastContainer = null;
             lastEntity = null;
-            lastEntityItems = null;
-            lastEntityType = null;
             currentPreview = null;
+            resetShelfTooltip();
         }
 
         if (mc.player == null || mc.world == null) return;
 
         if (lastEntity != null && (lastEntity.isRemoved() || !lastEntity.isAlive())) {
             lastEntity = null;
-            lastEntityItems = null;
-            lastEntityType = null;
             currentPreview = null;
         }
 
@@ -220,14 +350,43 @@ public class ContainerPeek extends Module {
         boolean styleChanged = style.get() != lastStyle;
         if (styleChanged) lastStyle = style.get();
 
+        // show-empty is a *decision*, not a render-time toggle: it decides whether the entity
+        // branch produces a preview at all. Without folding it into the guard below, toggling it
+        // while already aimed at the same item frame would hit
+        // `entity == lastEntity && !changed && return` and the panel would not appear until you
+        // looked away and back.
+        boolean showEmptyChanged = showEmpty.get() != lastShowEmptySetting;
+        if (showEmptyChanged) lastShowEmptySetting = showEmpty.get();
+        boolean branchInputsChanged = shulkerSettingChanged || styleChanged || showEmptyChanged;
+
         // Block containers
         if (mc.crosshairTarget != null && mc.crosshairTarget.getType() == HitResult.Type.BLOCK) {
             lastEntity = null;
-            lastEntityItems = null;
-            lastEntityType = null;
 
             BlockHitResult hit = (BlockHitResult) mc.crosshairTarget;
             BlockPos pos = hit.getBlockPos();
+
+            // A shelf is not a grid-preview target - it gets its own tooltip, handled before the
+            // panel path below. Claimed first so the chest branch's `pos.equals(lastTargetedPos)`
+            // early return can never swallow it: this branch never stores lastTargetedPos, it
+            // clears it, so a stale value from an earlier chest can never match a later one.
+            if (mc.world.getBlockState(pos).getBlock() instanceof ShelfBlock) {
+                lastTargetedPos = null;
+                lastContainer = null;
+                currentPreview = null;
+                // Same range gate as the grid preview below. Without it the two disagreed: lower
+                // max-distance and the panel would vanish while a shelf tooltip for the very same
+                // block stayed up.
+                double shelfDist = Math.sqrt(mc.player.squaredDistanceTo(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5));
+                if (shelfDist > maxDistance.get()) {
+                    resetShelfTooltip();
+                    return;
+                }
+                updateShelfTooltip(pos, hit);
+                return;
+            }
+            resetShelfTooltip();
+
             if (pos.equals(lastTargetedPos) && !shulkerSettingChanged && !styleChanged) return;
             lastTargetedPos = pos;
 
@@ -265,12 +424,11 @@ public class ContainerPeek extends Module {
 
         // Entity item frame
         if (mc.crosshairTarget != null && mc.crosshairTarget instanceof EntityHitResult entityHit) {
+            resetShelfTooltip();
             Entity entity = entityHit.getEntity();
-            if (entity == lastEntity && !shulkerSettingChanged && !styleChanged) return;
+            if (entity == lastEntity && !branchInputsChanged) return;
 
             lastEntity = entity;
-            lastEntityItems = null;
-            lastEntityType = null;
 
             if (entity instanceof ItemFrameEntity frame) {
                 ItemStack stack = frame.getHeldItemStack();
@@ -278,21 +436,27 @@ public class ContainerPeek extends Module {
                     currentPreview = null;
                     return;
                 }
+                // Standard container component (shulker box and anything else carrying one).
+                // Note this is broader than "shulker": any item with a CONTAINER component gets
+                // a peek, so the type label has to be derived rather than hardcoded
                 ContainerComponent container = stack.get(DataComponentTypes.CONTAINER);
                 if (container != null) {
                     List<ItemStack> nonEmpty = container.streamNonEmpty().map(ItemStack::copy).toList();
-                    if (!nonEmpty.isEmpty()) {
-                        lastEntityItems = nonEmpty;
-                        lastEntityType = "shulker_box";
-                        buildEntityPreview(entity, nonEmpty, "shulker_box");
+
+                    // Empty is a real, visible state
+                    if (!nonEmpty.isEmpty() || showEmpty.get()) {
+                        String type = entityContainerType(stack);
+                        // Title is the stack's real display name, so a renamed shulker shows its
+                        // custom name instead of the raw id-ish "shulker_box" string this used to
+                        // hardcode and render verbatim as the panel header.
+                        String title = stack.getName().getString();
+                        buildEntityPreview(entity, nonEmpty, type, title);
                         return;
                     }
                 }
             }
 
             lastEntity = null;
-            lastEntityItems = null;
-            lastEntityType = null;
             currentPreview = null;
             return;
         }
@@ -301,9 +465,96 @@ public class ContainerPeek extends Module {
         lastTargetedPos = null;
         lastContainer = null;
         lastEntity = null;
-        lastEntityItems = null;
-        lastEntityType = null;
         currentPreview = null;
+        resetShelfTooltip();
+    }
+    // Shelf tooltip
+
+    /**
+     * The settings that can change a tooltip line, and so the ones the line cache is keyed on.
+     */
+    private ShelfTooltip.ContentConfig shelfContentConfig() {
+        return new ShelfTooltip.ContentConfig(
+            tripleMode.get(),
+            showAmount.get(),
+            amountFormat.get(),
+            amountPosition.get(),
+            amountColor.get(),
+            showAttributes.get(),
+            attributeColor.get(),
+            showPotionEffects.get(),
+            showTrimUpgrades.get(),
+            showAdvanced.get(),
+            advancedColor.get()
+        );
+    }
+
+    /**
+     * The settings that only affect where and how big the finished tooltip is drawn.
+     */
+    private ShelfTooltip.LayoutConfig shelfLayoutConfig() {
+        return new ShelfTooltip.LayoutConfig(
+            tooltipPosition.get(),
+            tooltipScale.get(),
+            tripleSpacing.get(),
+            transparent.get()
+        );
+    }
+
+    private void resetShelfTooltip() {
+        shelfBoxes.clear();
+        shelfTarget = null;
+        // Deliberately not reset to Long.MIN_VALUE: the stamp has to stay stale so the next
+        // target is recognised as a change. Clearing it would make the first look at an
+        // unchanged shelf skip its rebuild and render nothing.
+    }
+
+    /**
+     * Builds the cached tooltip lines for the shelf under the crosshair, if anything changed.
+     *
+     * <p>Runs on the tick, not the frame, and only rebuilds when {@link ShelfTooltip#stamp} says
+     * a line-affecting input moved. Layout settings are absent from that stamp on purpose - they
+     * are read at draw time, so moving the scale slider must not cost a rebuild.
+     */
+    private void updateShelfTooltip(BlockPos pos, BlockHitResult hit) {
+        if (!shelfTooltip.get()) {
+            resetShelfTooltip();
+            return;
+        }
+
+        ShelfTooltip.ContentConfig config = shelfContentConfig();
+        List<ItemStack> stacks = ShelfTooltip.targetStacks(mc.world, pos, hit, config.tripleMode());
+        if (stacks == null) {
+            resetShelfTooltip();
+            return;
+        }
+
+        long stamp = ShelfTooltip.stamp(pos, stacks, config);
+        if (pos.equals(shelfTarget) && stamp == shelfStamp) return;
+
+        shelfTarget = pos;
+        shelfStamp = stamp;
+        shelfBoxes.clear();
+
+        if (mc.world == null || mc.player == null) return;
+
+        Item.TooltipContext tooltipContext = Item.TooltipContext.create(mc.world);
+
+        for (ItemStack stack : stacks) {
+            if (stack.isEmpty()) continue;
+            List<Text> lines = ShelfTooltip.buildLines(stack, tooltipContext, mc.player, config);
+            if (lines.isEmpty()) continue;
+            shelfBoxes.add(lines.stream()
+                .map(Text::asOrderedText)
+                .map(TooltipComponent::of)
+                .collect(Collectors.toList()));
+        }
+    }
+
+    private void renderShelfTooltip(DrawContext context) {
+        if (shelfBoxes.isEmpty() || !shelfTooltip.get()) return;
+        ShelfTooltip.render(context, mc.textRenderer, shelfBoxes, shelfLayoutConfig(),
+            mc.getWindow().getScaledWidth(), mc.getWindow().getScaledHeight());
     }
 
     private BlockPos getCanonicalChestPos(BlockPos pos) {
@@ -350,11 +601,22 @@ public class ContainerPeek extends Module {
         buildPreview(pos, title, stacks, false, dominantMap);
     }
 
-    private void buildEntityPreview(Entity entity, List<ItemStack> stacks, String type) {
-        String title = type != null ? type : "container";
+    /**
+     * Container type label for an item-frame stack. Only a real ShulkerBoxBlock may be called
+     * "shulker_box" the CONTAINER component is carried by other items too, and they were all
+     * being filed under the shulker label.
+     */
+    private static String entityContainerType(ItemStack stack) {
+        if (stack.getItem() instanceof BlockItem bi && bi.getBlock() instanceof ShulkerBoxBlock) {
+            return "shulker_box";
+        }
+        return "container";
+    }
+
+    private void buildEntityPreview(Entity entity, List<ItemStack> stacks, String type, String title) {
         BlockPos pos = entity.getBlockPos();
         Map<Integer, ItemStack> dominantMap = computeDominantMap(stacks);
-        buildPreview(pos, title, stacks, false, dominantMap);
+        buildPreview(pos, title != null ? title : type, stacks, false, dominantMap);
     }
 
     private Map<Integer, ItemStack> computeDominantMap(List<ItemStack> stacks) {
@@ -514,11 +776,17 @@ public class ContainerPeek extends Module {
 
     @EventHandler
     private void onRender2D(Render2DEvent event) {
-        PreviewData preview = this.currentPreview;
-        if (preview == null) return;
-
         DrawContext context = event.drawContext;
         if (context == null) return;
+
+        // The shelf tooltip and the grid preview are mutually exclusive by construction: a shelf
+        // is not in the preview allowlist, and the tick branch claims it before the panel path
+        // runs. Drawn first, and only when there is no panel to show.
+        PreviewData preview = this.currentPreview;
+        if (preview == null) {
+            renderShelfTooltip(context);
+            return;
+        }
 
         Vector3d vec = previewVec;
         vec.set(preview.pos.getX() + 0.5, preview.pos.getY() + 0.5, preview.pos.getZ() + 0.5);

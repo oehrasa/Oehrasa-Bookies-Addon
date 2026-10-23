@@ -223,13 +223,6 @@ public class ChestTrackerScreen extends Screen {
         return closest;
     }
 
-    private double getClosestContainerDistance(Item item, Vec3d playerPos, List<TrackedContainer> containers) {
-        TrackedContainer closest = findClosestContainer(item, playerPos, containers);
-        if (closest == null) return Double.POSITIVE_INFINITY;
-        BlockPos pos = closest.getPosition();
-        return Math.sqrt(playerPos.squaredDistanceTo(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5));
-    }
-
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         refreshIfDataChanged();

@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.hud;
 
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.ForceDefaultFont;
 import meteordevelopment.meteorclient.settings.BoolSetting;
 import meteordevelopment.meteorclient.settings.ColorSetting;
 import meteordevelopment.meteorclient.settings.Setting;
@@ -58,6 +59,8 @@ public class OnlineFriendsHUD extends HudElement {
         .build()
     );
 
+    private final ForceDefaultFont forceDefaultFont = new ForceDefaultFont(sgGeneral);
+
     public OnlineFriendsHUD() {
         super(INFO);
     }
@@ -75,8 +78,8 @@ public class OnlineFriendsHUD extends HudElement {
 
     private void renderOffline(HudRenderer renderer) {
         String title = "No Friends Online";
-        double width = renderer.textWidth(title, true);
-        double height = renderer.textHeight(true);
+        double width = forceDefaultFont.width(renderer, title, true);
+        double height = forceDefaultFont.height(renderer, true);
 
         setSize(width, height);
 
@@ -85,18 +88,18 @@ public class OnlineFriendsHUD extends HudElement {
         }
 
         // Red color for "No Friends Online"
-        renderer.text(title, x, y, NO_FRIENDS_COLOR, true);
+        forceDefaultFont.text(renderer, title, x, y, NO_FRIENDS_COLOR, true);
     }
 
     private void renderFriendsList(HudRenderer renderer, List<String> onlineFriends) {
         String title = onlineFriends.isEmpty() ? "No Friends Online" : "Online Friends";
-        double titleWidth = renderer.textWidth(title, true);
-        double lineHeight = renderer.textHeight(true);
+        double titleWidth = forceDefaultFont.width(renderer, title, true);
+        double lineHeight = forceDefaultFont.height(renderer, true);
 
         // Calculate dimensions
         double maxWidth = titleWidth;
         for (String friend : onlineFriends) {
-            double friendWidth = renderer.textWidth(friend, false);
+            double friendWidth = forceDefaultFont.width(renderer, friend, false);
             if (friendWidth > maxWidth) maxWidth = friendWidth;
         }
 
@@ -115,12 +118,12 @@ public class OnlineFriendsHUD extends HudElement {
         SettingColor titleColor = onlineFriends.isEmpty() ? NO_FRIENDS_COLOR : FRIENDS_COLOR;
 
         // Render title
-        renderer.text(title, x, y, titleColor, true);
+        forceDefaultFont.text(renderer, title, x, y, titleColor, true);
 
         // Render friend names in light blue
         double currentY = y + lineHeight;
         for (String friend : onlineFriends) {
-            renderer.text(friend, x, currentY, friendColor.get(), false);
+            forceDefaultFont.text(renderer, friend, x, currentY, friendColor.get(), false);
             currentY += lineHeight;
         }
     }

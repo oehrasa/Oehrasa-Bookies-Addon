@@ -93,7 +93,7 @@ public class MaterialsRefill extends Module {
 
     private final Setting<Boolean> preferSolidBlock = sgGeneral.add(new BoolSetting.Builder()
         .name("prefer-solid-block")
-        .description("When air place is on, try solid block positions first.")
+        .description("When air place is on, prefer positions sitting on a full block (glass and leaves included) over mid-air ones.")
         .defaultValue(true)
         .visible(airPlace::get)
         .build()
@@ -106,10 +106,46 @@ public class MaterialsRefill extends Module {
         .build()
     );
 
+    /**
+     * After the restock break, walk to the dropped shulker box and pick it up, via
+     * {@link ShulkerRestockEngine.DropCollector}. Off by default: it moves the player.
+     */
+    private final Setting<Boolean> collectDroppedShulker = sgGeneral.add(new BoolSetting.Builder()
+        .name("collect-dropped-shulker")
+        .description("After breaking the shulker, walk to the dropped box and pick it up.")
+        .defaultValue(false)
+        .visible(breakAfterFill::get)
+        .build()
+    );
+
     private final Setting<Boolean> autoTake = sgGeneral.add(new BoolSetting.Builder()
         .name("auto-take")
         .description("Automatically take items from the shulker. If disabled, only open/close.")
         .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> onlySingleItem = sgGeneral.add(new BoolSetting.Builder()
+        .name("only-single-item")
+        .description("Only auto-take if the shulker contains a single item type; otherwise leave it for manual take.")
+        .defaultValue(false)
+        .visible(autoTake::get)
+        .build()
+    );
+
+    private final Setting<Boolean> packetBreak = sgGeneral.add(new BoolSetting.Builder()
+        .name("packet-break")
+        .description("Use instant packet based breaking for the shulker.")
+        .defaultValue(false)
+        .visible(breakAfterFill::get)
+        .build()
+    );
+
+    private final Setting<Boolean> packetBreakGrim = sgGeneral.add(new BoolSetting.Builder()
+        .name("grim-v3-packet")
+        .description("Use the Grim-v3 packet breaking sequence.")
+        .defaultValue(false)
+        .visible(() -> breakAfterFill.get() && packetBreak.get())
         .build()
     );
 
@@ -129,7 +165,7 @@ public class MaterialsRefill extends Module {
 
     private final Setting<Integer> shulkerHotbarSlot = sgGeneral.add(new IntSetting.Builder()
         .name("shulker-hotbar-slot")
-        .description("Hotbar slot (1‑9) used when moving the shulker from inventory.")
+        .description("Preferred slot (1-9) for the shulker when it is moved out of the inventory. An empty slot is used first so nothing is displaced.")
         .defaultValue(1)
         .min(1)
         .max(9)
@@ -153,12 +189,47 @@ public class MaterialsRefill extends Module {
         .build()
     );
 
+    private final Setting<Integer> maxStacks = sgGeneral.add(new IntSetting.Builder()
+        .name("max-stacks")
+        .description("How many stacks of the target item to take out of one shulker per restock. 27 is a full shulker.")
+        .defaultValue(27)
+        .min(1)
+        .max(27)
+        .sliderRange(1, 27)
+        .build()
+    );
+
     private final Setting<Integer> maxOpenAttempts = sgRetries.add(new IntSetting.Builder()
         .name("max-open-attempts")
         .description("How many times to retry opening the placed shulker before giving up.")
         .defaultValue(3)
         .min(1)
         .sliderMax(20)
+        .build()
+    );
+
+    @SuppressWarnings("unused")
+    private final Setting<Keybind> removeTargetFromHeld = sgControls.add(new KeybindSetting.Builder()
+        .name("remove-target-from-held")
+        .description("Remove the held item from the target list, if it is one.")
+        .defaultValue(Keybind.none())
+        .action(() -> {
+            if (!isActive()) return;
+            ItemStack held = mc.player.getMainHandStack();
+            if (held.isEmpty()) {
+                info("§eNothing held to remove.");
+                return;
+            }
+            List<Item> current = new ArrayList<>(targetItems.get());
+            if (current.remove(held.getItem())) {
+                targetItems.set(current);
+                // Drop any failure suppression for it too, so re-adding later starts clean.
+                itemFailCooldowns.remove(held.getItem());
+                info("Removed target item: " + held.getName().getString());
+            } else {
+                info("§e" + held.getName().getString() + " is not a target item.");
+            }
+        })
         .build()
     );
 
@@ -282,7 +353,13 @@ public class MaterialsRefill extends Module {
             protectedItems.get(),
             List.<BlockPos>of(),
             maxPlacementAttempts.get(),
-            maxOpenAttempts.get()
+            maxOpenAttempts.get(),
+            maxStacks.get(),
+            onlySingleItem.get(),
+            packetBreak.get(),
+            packetBreakGrim.get(),
+            collectDroppedShulker.get(),
+            false
         );
     }
 }

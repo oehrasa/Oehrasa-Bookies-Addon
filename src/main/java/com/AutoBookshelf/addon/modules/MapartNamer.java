@@ -16,12 +16,14 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.ingame.AnvilScreen;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.MapIdComponent;
+import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
 import net.minecraft.network.packet.c2s.play.RenameItemC2SPacket;
 import net.minecraft.network.packet.s2c.play.CloseScreenS2CPacket;
 import net.minecraft.screen.slot.SlotActionType;
+import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 
 import java.util.*;
@@ -153,7 +155,7 @@ public class MapartNamer extends Module {
     );
 
     public MapartNamer() {
-        super(Addon.CATEGORY2, "Mapart-Namer", "Auto‑names maps based on inventory slot layout.");
+        super(Addon.CATEGORY2, "Mapart-Namer", "Auto names maps based on inventory slot layout.");
     }
 
     private enum State { AwaitInteract, AwaitScreen, HandleMaps }
@@ -162,9 +164,22 @@ public class MapartNamer extends Module {
     private List<MapSlotInfo> mapSlots;
     private int ticks;
 
-    // invSlot -> index label for the overlay, recomputed each tick while the
-    // setting is on so it always reflects what the module would rename right now.
+    // invSlot -> index label for the overlay. Rebuilt only when labelInputsStamp() changes, so
+    // the common case (standing still, holding maps) costs a cheap 36-slot scan per tick instead
+    // of a Text->String flattening per map per tick.
     private final Map<Integer, String> indexLabels = new HashMap<>();
+
+    /**
+     * Reverse lookup by stack *identity*, so rendering a map's label is O(1) instead of scanning
+     * all 36 slots. The overlay hook runs on every item drawn anywhere in the GUI, so the old
+     * linear reference scan ran per map per frame.
+     */
+    private final IdentityHashMap<ItemStack, String> labelByStack = new IdentityHashMap<>();
+
+    /**
+     * Fingerprint of everything {@link #refreshIndexLabels()} reads.
+     */
+    private long labelsStamp = Long.MIN_VALUE;
 
     private MapSlotInfo currentMap;
     private int mapStep;
@@ -199,6 +214,10 @@ public class MapartNamer extends Module {
     @Override
     public void onDeactivate() {
         indexLabels.clear();
+        // Both maps hold strong references to live ItemStacks; clear them with the labels so a
+        // dropped map cannot be kept alive by the overlay cache.
+        labelByStack.clear();
+        labelsStamp = Long.MIN_VALUE;
     }
 
     // Reset button
@@ -264,25 +283,18 @@ public class MapartNamer extends Module {
         int offset = startIndex.get() == StartIndex.ONE ? 1 : 0;
 
         mapSlots.clear();
-        for (MapSlotInfo info : allMaps) {
-            int rawX = info.col - minCol;
-            info.x = rawX + offset;
-            if (info.x >= mapWidth.get() + offset) {
-                info.skip = true;
+        for (MapSlotInfo slot : allMaps) {
+            // Local named `slot`, not `info` - the old name shadowed the info() method and the
+            // body mixed `info.x = ...` with `info("...")` calls, which reads as a type error.
+            slot.x = slot.col - minCol + offset;
+            if (slot.x >= mapWidth.get() + offset) continue;
+
+            String expectedName = expectedNameFor(slot.x, slot.row);
+            if (resumeSequence.get() && slot.currentName.equals(expectedName)) {
+                info("Skipping inv slot " + slot.invSlot + " - already named " + expectedName);
                 continue;
             }
-
-            int currentY = baseY.get() + info.row + offset;
-            String expectedCoord = coordinateFormat.get()
-                .replace("{x}", String.valueOf(info.x))
-                .replace("{y}", String.valueOf(currentY));
-            String expectedName = buildMapName(expectedCoord);
-
-            if (resumeSequence.get() && info.currentName.equals(expectedName)) {
-                info("Skipping inv slot " + info.invSlot + " – already named " + expectedName);
-                continue;
-            }
-            mapSlots.add(info);
+            mapSlots.add(slot);
         }
 
         if (mapSlots.isEmpty()) {
@@ -358,11 +370,7 @@ public class MapartNamer extends Module {
                     return;
                 }
 
-                int off = startIndex.get() == StartIndex.ONE ? 1 : 0;
-                int currentY = baseY.get() + currentMap.row + off;
-                String coordPart = coordinateFormat.get()
-                    .replace("{x}", String.valueOf(currentMap.x))
-                    .replace("{y}", String.valueOf(currentY));
+                String coordPart = expectedCoordFor(currentMap.x, currentMap.row);
                 String newName = buildMapName(coordPart);
                 info("Renaming inv slot " + currentMap.invSlot + " (row " + currentMap.row + ", col " + currentMap.col + ") to " + newName);
                 mc.getNetworkHandler().sendPacket(new RenameItemC2SPacket(newName));
@@ -435,6 +443,62 @@ public class MapartNamer extends Module {
         return baseY.get() + offset;
     }
 
+    /**
+     * Fingerprints everything {@link #refreshIndexLabels()} reads: the settings that shape a name,
+     * plus the identity/name/id of every inventory slot.
+     */
+    private long labelInputsStamp() {
+        long stamp = 1469598103934665603L;
+        stamp = 31 * stamp + baseY.get();
+        stamp = 31 * stamp + mapWidth.get();
+        stamp = 31 * stamp + (startIndex.get() == StartIndex.ONE ? 1 : 0);
+        stamp = 31 * stamp + (coordPosition.get() == CoordPosition.Prefix ? 1 : 0);
+        stamp = 31 * stamp + (renameAlreadyNamed.get() ? 1 : 0);
+        stamp = 31 * stamp + (resumeSequence.get() ? 1 : 0);
+        stamp = 31 * stamp + coordinateFormat.get().hashCode();
+        stamp = 31 * stamp + mapName.get().hashCode();
+
+        PlayerInventory inventory = mc.player.getInventory();
+        for (int i = 0; i < 36; i++) {
+            ItemStack stack = inventory.getStack(i);
+            if (stack.isEmpty()) {
+                stamp = 31 * stamp + 1;
+                continue;
+            }
+            // The label cache is keyed by ItemStack IDENTITY (labelByStack is an IdentityHashMap),
+            // so replacing an ItemStack object while its content stays equal MUST invalidate the
+            // stamp or the new object misses the cache and the labels go stale. Hashing the object
+            // identity is what makes the memo key match the map it feeds.
+            stamp = 31 * stamp + System.identityHashCode(stack);
+            stamp = 31 * stamp + System.identityHashCode(stack.getItem());
+            MapIdComponent id = stack.get(DataComponentTypes.MAP_ID);
+            stamp = 31 * stamp + (id == null ? 0 : id.id());
+            Text custom = stack.get(DataComponentTypes.CUSTOM_NAME);
+            stamp = 31 * stamp + (custom == null ? 0 : custom.hashCode());
+        }
+        return stamp;
+    }
+
+    /**
+     * The single source of truth for a map's coordinate string and expected name.
+     *
+     * <p>This formula used to be written out in several places, and one copy had drifted: the
+     * rename queue's resume filter compared against a string the module never writes when
+     * {@code coord-position = Prefix}. Both call sites now come through here so they cannot
+     * disagree again.
+     */
+    private String expectedCoordFor(int x, int row) {
+        int off = startIndex.get() == StartIndex.ONE ? 1 : 0;
+        int y = baseY.get() + row + off;
+        return coordinateFormat.get()
+            .replace("{x}", String.valueOf(x))
+            .replace("{y}", String.valueOf(y));
+    }
+
+    private String expectedNameFor(int x, int row) {
+        return buildMapName(expectedCoordFor(x, row));
+    }
+
     private String buildMapName(String coordPart) {
         return coordPosition.get() == CoordPosition.Prefix ? coordPart + mapName.get() : mapName.get() + coordPart;
     }
@@ -469,14 +533,22 @@ public class MapartNamer extends Module {
     }
 
     private void refreshIndexLabels() {
+        if (mc.player == null) return;
+
+        long stamp = labelInputsStamp();
+        if (stamp == labelsStamp) return;   // nothing the labels depend on has changed
+        labelsStamp = stamp;
+
         indexLabels.clear();
+        labelByStack.clear();
 
         // Mirror the collectMapsAndStart scan (same invSlot -> row/col mapping and
         // the same name/rename filters) so the overlay matches what the module is
         // actually about to rename.
         List<MapSlotInfo> maps = new ArrayList<>();
+        PlayerInventory inventory = mc.player.getInventory();
         for (int invSlot = 0; invSlot < 36; invSlot++) {
-            ItemStack stack = mc.player.getInventory().getStack(invSlot);
+            ItemStack stack = inventory.getStack(invSlot);
             if (stack.getItem() != Items.FILLED_MAP) continue;
 
             String currentName = stack.getName().getString();
@@ -495,32 +567,36 @@ public class MapartNamer extends Module {
             int x = info.col - minCol + offset;
             if (x >= mapWidth.get() + offset) continue;
 
-            int currentY = baseY.get() + info.row + offset;
-            String expectedCoord = coordinateFormat.get()
-                .replace("{x}", String.valueOf(x))
-                .replace("{y}", String.valueOf(currentY));
-            String expectedName = buildMapName(expectedCoord);
+            String expectedCoord = expectedCoordFor(x, info.row);
 
-            // Same filter as the rename queue: skip maps that are already named
-            // correctly when resume-sequence is on.
-            if (resumeSequence.get() && info.currentName.equals(expectedName)) continue;
+            // Same filter as the rename queue (shared helper, so it cannot drift): skip maps
+            // that are already named correctly when resume-sequence is on.
+            if (resumeSequence.get() && info.currentName.equals(expectedNameFor(x, info.row))) {
+                // Known slot with NO pending label. Record its identity with a null value so
+                // indexLabelForStack's containsKey check catches it and returns null, instead of
+                // falling through to the MAP_ID match -> a duplicate map in another slot shares
+                // this MAP_ID and would otherwise stamp its label onto the already-correct map.
+                labelByStack.put(inventory.getStack(info.invSlot), null);
+                continue;
+            }
 
             indexLabels.put(info.invSlot, expectedCoord);
+            labelByStack.put(inventory.getStack(info.invSlot), expectedCoord);
         }
     }
 
     private String indexLabelForStack(ItemStack stack) {
-        // Identity first: the overlay hook is handed the very ItemStack object that
-        // lives in an inventory slot, so matching by reference gives each slot its
-        // own label even when several slots hold maps with the same MAP_ID.
+        // Identity first, and now O(1): the overlay hook is handed the very ItemStack object
+        // that lives in an inventory slot, so matching by reference gives each slot its own label
+        // even when several slots hold maps with the same MAP_ID. labelByStack is rebuilt
+        // alongside indexLabels, and a miss falls through to the MAP_ID path below.
+        String direct = labelByStack.get(stack);
+        if (direct != null) return direct;
+        if (labelByStack.containsKey(stack)) return null;  // slot is known, but has no pending label
+
         var inventory = mc.player.getInventory();
-        for (int slot = 0; slot < 36; slot++) {
-            if (inventory.getStack(slot) == stack) {
-                // A slot with no pending label (or already named correctly) must
-                // stay unlabeled rather than borrowing a same-ID sibling's label.
-                return indexLabels.get(slot);
-            }
-        }
+        // A stack that is not any inventory slot's own object (a copy from some render path)
+        // will not be in labelByStack; fall through to the MAP_ID match so it still shows.
 
         // Not an inventory slot's own stack (a copy from some render path):
         // fall back to the old MAP_ID match so the overlay still shows. If two
@@ -544,7 +620,6 @@ public class MapartNamer extends Module {
         final int containerSlot, row, col, invSlot;
         final String currentName;
         int x;
-        boolean skip;
 
         MapSlotInfo(int containerSlot, int row, int col, int invSlot, String currentName) {
             this.containerSlot = containerSlot; this.row = row; this.col = col;

@@ -1,5 +1,12 @@
 package com.AutoBookshelf.addon.utils;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonParser;
+import com.mojang.brigadier.LiteralMessage;
+import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.suggestion.Suggestions;
+import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.utils.render.NametagUtils;
@@ -7,6 +14,7 @@ import meteordevelopment.meteorclient.utils.render.color.Color;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.gui.screen.ingame.BookScreen;
+import net.minecraft.command.CommandSource;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.WritableBookContentComponent;
 import net.minecraft.component.type.WrittenBookContentComponent;
@@ -22,7 +30,24 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 import org.joml.Vector3d;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
@@ -62,6 +87,58 @@ public class BookUtils {
         return null;
     }
 
+    /**
+     * Whether two written books are the same book for duplicate-avoidance purposes.
+     *
+     * <p>Identity is title, author and page text. Three things it is deliberately not:
+     *
+     * <ul>
+     *   <li><b>Not a content hash.</b> The comparison set is at most the six slots of one
+     *       bookshelf, so a hash costs a full pass over up to 32 KB per page
+     *       ({@code PAGE_LENGTH = 32767}) and then still has to do the string compare. Comparing
+     *       directly with an early exit is strictly cheaper, has no collision risk, and needs no
+     *       cache to invalidate.
+     *   <li><b>Not the map id.</b> Written books have no map id at all - {@code MAP_ID} is read
+     *       only by the filled-map side (MapartNamer, MapViewer, GetPreview, InventoryInfo). Two
+     *       copies are distinct items with byte-identical content, which is exactly the case this
+     *       has to catch, and there is no id to fall back on.
+     *   <li><b>Not {@code generation}.</b> It only distinguishes copies made by crafting
+     *       ({@code craftCopy()} bumps it, {@code MAX_GENERATION = 3}), so two books created
+     *       separately are both generation 0 and a generation-keyed check would miss the common
+     *       case.
+     * </ul>
+     *
+     * <p>Takes {@link WrittenBookContentComponent} rather than {@link ItemStack} so callers can hold the
+     * contents of a shelf without holding live stack references into a block entity that may be
+     * replaced or unloaded. {@code WrittenBookContentComponent} is a record, so the reference is a safe
+     * immutable snapshot; {@link #readWrittenContent} produces one from a stack.
+     */
+    public static boolean isSameBook(WrittenBookContentComponent a, WrittenBookContentComponent b) {
+        if (a == null || b == null) return false;
+
+        // Title and author first: these almost always differ, so the page walk is the rare path.
+        // Page *count* is a record field, so it costs nothing to reject on before materialising.
+        if (!Objects.equals(a.title().raw(), b.title().raw())) return false;
+        if (!Objects.equals(a.author(), b.author())) return false;
+        if (a.pages().size() != b.pages().size()) return false;
+
+        List<String> pa = a.getPages(true).stream().map(Text::getString).toList();
+        List<String> pb = b.getPages(true).stream().map(Text::getString).toList();
+
+        for (int i = 0; i < pa.size(); i++) {
+            if (!Objects.equals(pa.get(i), pb.get(i))) return false;
+        }
+        return true;
+    }
+
+    /**
+     * The written-book content of {@code stack}, or null when it is not a readable written book.
+     */
+    public static WrittenBookContentComponent readWrittenContent(ItemStack stack) {
+        if (stack == null || stack.isEmpty() || stack.getItem() != Items.WRITTEN_BOOK) return null;
+        return stack.get(DataComponentTypes.WRITTEN_BOOK_CONTENT);
+    }
+
     public static int getPageCount(ItemStack item) {
         BookContent content = checkHeldBook(item);
         return content != null ? content.pages().size() : 0;
@@ -84,6 +161,68 @@ public class BookUtils {
         if (stack == null || stack.isEmpty()) return false;
         return (stack.isOf(Items.WRITTEN_BOOK) && stack.get(DataComponentTypes.WRITTEN_BOOK_CONTENT) != null)
             || (stack.isOf(Items.WRITABLE_BOOK) && stack.get(DataComponentTypes.WRITABLE_BOOK_CONTENT) != null);
+    }
+
+    private static final int MAX_CHAT_LINE_CHARS = 1000;
+    private static final int MAX_NAMETAG_CHARS = 48;
+
+    /**
+     * Makes untrusted book text safe to hand to the chat renderer.
+     *
+     * <p>Book contents come from the server and from anvil NBT, so a title, author or page can
+     * contain anything: ISO control characters, zero-width and bidi override characters, and
+     * unpaired surrogates from malformed UTF-16. Newlines and tabs become spaces, everything
+     * unsafe is dropped, and the result is length-capped.
+     */
+    public static String sanitizeForChat(String input) {
+        if (input == null || input.isEmpty()) return "";
+        if (input.length() > MAX_CHAT_LINE_CHARS) input = input.substring(0, MAX_CHAT_LINE_CHARS);
+
+        StringBuilder sb = new StringBuilder(input.length());
+        for (int i = 0; i < input.length(); ) {
+            int cp = input.codePointAt(i);
+            i += Character.charCount(cp);
+
+            if (cp == '\n' || cp == '\r' || cp == '\t') {
+                sb.append(' ');
+                continue;
+            }
+            // A surrogate pair was already combined above, so anything left here is unpaired.
+            if (cp >= 0xD800 && cp <= 0xDFFF) continue;
+            if (cp == 0x7F || Character.isISOControl(cp)) continue;
+            if (isUnsafeLayoutChar(cp)) continue;
+
+            sb.appendCodePoint(cp);
+        }
+        return sb.toString().trim();
+    }
+
+    /**
+     * Caps untrusted book text to a nametag-sized run of whole code points, without splitting a
+     * surrogate pair.
+     */
+    private static String truncateForNametag(String text) {
+        if (text.length() <= MAX_NAMETAG_CHARS) return text;
+        int end = MAX_NAMETAG_CHARS;
+        if (Character.isHighSurrogate(text.charAt(end - 1))) end--;
+        return text.substring(0, end) + "...";
+    }
+
+    private static boolean isUnsafeLayoutChar(int cp) {
+        return cp == 0x00AD
+            || cp == 0x200B || cp == 0x200C || cp == 0x200D
+            || cp == 0x200E || cp == 0x200F
+            || (cp >= 0x202A && cp <= 0x202E)
+            || (cp >= 0x2060 && cp <= 0x2064)
+            || (cp >= 0x2066 && cp <= 0x2069)
+            || cp == 0xFEFF;
+    }
+
+    /**
+     * Wraps a chat consumer so every line these printers emit is sanitized first.
+     */
+    private static Consumer<String> chatSink(Consumer<String> out) {
+        return line -> out.accept(sanitizeForChat(line));
     }
 
     public static String escapePercent(String input) {
@@ -318,6 +457,148 @@ public class BookUtils {
     }
 
     /**
+     * Subdirectory under the game directory that exports are written to.
+     */
+    private static final String EXPORT_DIR = "AutoBookshelf";
+
+    /**
+     * Upper bound on the sanitised title that forms the filename stem. The rest of the name is a
+     * fixed-width timestamp, so this is what keeps a path under the usual per-component limit.
+     */
+    private static final int MAX_EXPORT_NAME_CHARS = 50;
+
+    /**
+     * Writes {@code pages} to a timestamped {@code .txt} under {@code <gameDir>/AutoBookshelf}
+     * and reports the result through {@code info}/{@code error}.
+     *
+     * <p>{@code startPage} is the 1-based book page that {@code pages.get(0)} came from, so a
+     * range export keeps the book's real page numbers rather than renumbering from 1.
+     */
+    public static void exportPages(BookContent content, List<String> pages, int startPage,
+                                   Consumer<String> info, Consumer<String> error) {
+        if (content == null || pages == null || pages.isEmpty()) {
+            error.accept("This book has no content to export!");
+            return;
+        }
+
+        StringBuilder fileContent = new StringBuilder();
+        for (int i = 0; i < pages.size(); i++) {
+            fileContent.append("===== Page ").append(startPage + i).append(" =====\n\n");
+            fileContent.append(pages.get(i).trim()).append("\n\n");
+        }
+
+        String rawTitle = content.type() == BookType.WRITTEN ? content.title() : "book_and_quill";
+        String stem = sanitizeExportName(rawTitle == null || rawTitle.isBlank() ? "book" : rawTitle);
+        String timestamp = LocalDateTime.now().format(EXPORT_TIMESTAMP);
+
+        Path outDir = mc.runDirectory.toPath().resolve(EXPORT_DIR);
+        try {
+            Files.createDirectories(outDir);
+            Path outFile = writeUnique(outDir, stem, timestamp, fileContent.toString());
+            if (outFile == null) {
+                error.accept("Failed to write file: too many exports share that timestamp.");
+                return;
+            }
+            info.accept("§aExported " + pages.size() + " page(s) to §f" + outFile.toAbsolutePath());
+        } catch (Exception e) {
+            error.accept("Failed to write file: " + e.getMessage());
+        }
+    }
+
+    private static final DateTimeFormatter EXPORT_TIMESTAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss");
+
+    /**
+     * Clamps a requested page range to the book and writes it out.
+     *
+     * <p>{@code endPage < 0} means "to the last page". A reversed range is swapped rather than
+     * refused, because {@code .book export 9 3} reads as an obvious slip.
+     *
+     * <p>The ordering of the three steps below is load-bearing, and getting it wrong is a crash
+     * rather than a wrong answer. Resolving {@code -1} first stops an explicit out-of-range start
+     * being silently swapped into a valid-looking range. Swapping <em>before</em> clamping is
+     * what actually matters: clamp first and {@code end} is pulled down to the last page while
+     * {@code start} stays high, so the swap hands back an {@code end} that is past the last page
+     * again and {@code subList} throws {@code IndexOutOfBoundsException} - i.e. {@code export 9 3}
+     * on a 5-page book takes the game down.
+     */
+    public static void exportBook(ItemStack book, int startPage, int endPage,
+                                  Consumer<String> info, Consumer<String> error) {
+        BookContent content = checkHeldBook(book);
+        if (content == null || content.pages().isEmpty()) {
+            error.accept("This book has no content!");
+            return;
+        }
+
+        int total = content.pages().size();
+        int start = startPage;
+        int end = (endPage < 0) ? total : endPage;
+
+        if (endPage >= 0 && start > end) {
+            int swap = start;
+            start = end;
+            end = swap;
+        }
+
+        start = Math.max(1, start);
+        end = Math.min(end, total);
+
+        if (start > end) {
+            error.accept("Page " + start + " is out of range; this book has " + total + " page(s).");
+            return;
+        }
+
+        exportPages(content, content.pages().subList(start - 1, end), start, info, error);
+    }
+
+    /**
+     * Writes to {@code <stem>_<timestamp>.txt}, adding {@code -2}, {@code -3}, ... until a name
+     * is free. Returns null if 1000 names are somehow all taken.
+     *
+     * <p>The timestamp has one-second resolution, so two exports in the same second resolve to the
+     * same file. That used to cost the earlier export: {@code writeString}'s default options
+     * include {@code TRUNCATE_EXISTING}, so the second export silently overwrote the first, with
+     * no error anywhere. It is only noticed when the earlier export turns out to be the one you
+     * wanted.
+     *
+     * <p>The {@code CREATE_NEW} is what actually fixes it. Probing with {@code exists()} and then
+     * writing is a check-then-act race, and it is the write that destroys data - so the
+     * uniqueness test has to live in the same atomic operation that creates the file, rather than
+     * being a separate step that merely looks equivalent.
+     */
+    private static Path writeUnique(Path dir, String stem, String timestamp, String content) throws IOException {
+        for (int n = 1; n < 1000; n++) {
+            Path candidate = dir.resolve(stem + "_" + timestamp + (n == 1 ? "" : "-" + n) + ".txt");
+            try {
+                Files.writeString(candidate, content, StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+                return candidate;
+            } catch (FileAlreadyExistsException ignored) {
+                // Name taken by a previous export in the same second; try the next suffix.
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Turns a book title into a filename stem.
+     *
+     * <p>This is the one place in export that genuinely needs sanitising, and the reason is
+     * worth being precise about: the title is untrusted text that reaches a <em>filesystem path</em>,
+     * which is exactly the case where sanitising applies. Page text does not, and never should -
+     * see the note on {@code sanitizeForChat}.
+     *
+     * <p>Separators and the characters Windows rejects are replaced rather than removed, so a
+     * title stays readable. Control characters (including a newline) are dropped outright: they
+     * survive the separator replace and would produce a filename the shell mangles.
+     */
+    private static String sanitizeExportName(String title) {
+        String cleaned = title.replaceAll("[\\\\/:*?\"<>|]", "_").replaceAll("[\\p{Cc}&&[^\\t]]", "");
+        cleaned = cleaned.strip();
+        if (cleaned.isEmpty() || cleaned.equals(".") || cleaned.equals("..")) cleaned = "book";
+        return cleaned.length() > MAX_EXPORT_NAME_CHARS ? cleaned.substring(0, MAX_EXPORT_NAME_CHARS) : cleaned;
+    }
+
+    /**
      * Vanilla written-book titles are limited to 32 chars; the packet codec rejects longer ones.
      */
     private static final int MAX_WRITTEN_BOOK_TITLE_CHARS = 32;
@@ -520,5 +801,445 @@ public class BookUtils {
         NametagUtils.end(event.drawContext);
 
         return true;
+    }
+
+    // Translation
+    // Shared by .booktranslate, .shelf and .ifpeek.
+    //
+    // It also must not be duplicated per command. The request pool and the global throttle
+    // below are static, so three copies would give each command its own pool and its own
+    // gap enforcement, and three books' pages would hit the free endpoint at three times
+    // the intended rate, which is what produces the 429s the backoff below exists for.
+
+    // Bounded pool: a few pages can translate concurrently
+    // without unboundedly hammering the free endpoint
+    // the way a fully-parallel commonPool() dispatch could.
+    private static final int TRANSLATE_POOL_SIZE = 2;
+
+    /**
+     * Daemon worker threads, deliberately. {@code newFixedThreadPool} hands back NON-daemon
+     * threads that sit idle waiting for tasks forever, which keeps the JVM alive: verified by
+     * running a pool on the same JDK and watching {@code main()} return without the process ever
+     * exiting. A client-side mod has no business holding the process open, and this one is the
+     * worst case for it, since a page being translated can sit in the retry loop for up to
+     * {@code MAX_TRANSLATE_ATTEMPTS} with a backoff capped at 30s.
+     */
+    private static final ExecutorService TRANSLATE_POOL = Executors.newFixedThreadPool(
+        TRANSLATE_POOL_SIZE, runnable -> {
+            Thread thread = new Thread(runnable, "BookTranslate");
+            thread.setDaemon(true);
+            return thread;
+        });
+
+    private static final int MAX_TRANSLATE_ATTEMPTS = 8;
+
+    // Global request throttle: no two page requests may actually start closer
+    // than this apart (millis + random jitter). Even a small pool will 429 the
+    // free endpoint if every page fires back-to-back.
+    private static final long REQUEST_MIN_INTERVAL_MILLIS = 250;
+    private static final long REQUEST_INTERVAL_JITTER = 250;
+
+    // Cap for the exponential retry backoff; Google's free endpoint can stay
+    // rate-limited for a while, so let retries keep trying without growing unbounded.
+    private static final long REQUEST_MAX_RETRY_DELAY_MILLIS = 30_000;
+
+    private static final Random RANDOM = new Random();
+    private static final AtomicLong LAST_REQUEST_START_NANOS = new AtomicLong();
+
+    // Codes Google Translate accepts for the `tl` parameter (ISO 639-1 alpha-2).
+    private static final List<Language> LANGUAGES = List.of(
+        new Language("af", "Afrikaans"),
+        new Language("sq", "Albanian"),
+        new Language("am", "Amharic"),
+        new Language("ar", "Arabic"),
+        new Language("hy", "Armenian"),
+        new Language("az", "Azerbaijani"),
+        new Language("eu", "Basque"),
+        new Language("be", "Belarusian"),
+        new Language("bn", "Bengali"),
+        new Language("bs", "Bosnian"),
+        new Language("bg", "Bulgarian"),
+        new Language("ca", "Catalan"),
+        new Language("ceb", "Cebuano"),
+        new Language("ny", "Chichewa"),
+        new Language("zh-CN", "Chinese (Simplified)"),
+        new Language("zh-TW", "Chinese (Traditional)"),
+        new Language("co", "Corsican"),
+        new Language("hr", "Croatian"),
+        new Language("cs", "Czech"),
+        new Language("da", "Danish"),
+        new Language("nl", "Dutch"),
+        new Language("en", "English"),
+        new Language("eo", "Esperanto"),
+        new Language("et", "Estonian"),
+        new Language("tl", "Filipino"),
+        new Language("fi", "Finnish"),
+        new Language("fr", "French"),
+        new Language("fy", "Frisian"),
+        new Language("gl", "Galician"),
+        new Language("ka", "Georgian"),
+        new Language("de", "German"),
+        new Language("el", "Greek"),
+        new Language("gu", "Gujarati"),
+        new Language("ht", "Haitian Creole"),
+        new Language("ha", "Hausa"),
+        new Language("haw", "Hawaiian"),
+        new Language("he", "Hebrew"),
+        new Language("hi", "Hindi"),
+        new Language("hmn", "Hmong"),
+        new Language("hu", "Hungarian"),
+        new Language("is", "Icelandic"),
+        new Language("ig", "Igbo"),
+        new Language("id", "Indonesian"),
+        new Language("ga", "Irish"),
+        new Language("it", "Italian"),
+        new Language("ja", "Japanese"),
+        new Language("jw", "Javanese"),
+        new Language("kn", "Kannada"),
+        new Language("kk", "Kazakh"),
+        new Language("km", "Khmer"),
+        new Language("rw", "Kinyarwanda"),
+        new Language("ko", "Korean"),
+        new Language("ku", "Kurdish"),
+        new Language("ky", "Kyrgyz"),
+        new Language("lo", "Lao"),
+        new Language("la", "Latin"),
+        new Language("lv", "Latvian"),
+        new Language("lt", "Lithuanian"),
+        new Language("lb", "Luxembourgish"),
+        new Language("mk", "Macedonian"),
+        new Language("mg", "Malagasy"),
+        new Language("ms", "Malay"),
+        new Language("ml", "Malayalam"),
+        new Language("mt", "Maltese"),
+        new Language("mi", "Maori"),
+        new Language("mr", "Marathi"),
+        new Language("mn", "Mongolian"),
+        new Language("my", "Myanmar (Burmese)"),
+        new Language("ne", "Nepali"),
+        new Language("no", "Norwegian"),
+        new Language("or", "Odia"),
+        new Language("ps", "Pashto"),
+        new Language("fa", "Persian"),
+        new Language("pl", "Polish"),
+        new Language("pt", "Portuguese"),
+        new Language("pa", "Punjabi"),
+        new Language("ro", "Romanian"),
+        new Language("ru", "Russian"),
+        new Language("sm", "Samoan"),
+        new Language("gd", "Scots Gaelic"),
+        new Language("sr", "Serbian"),
+        new Language("st", "Sesotho"),
+        new Language("sn", "Shona"),
+        new Language("sd", "Sindhi"),
+        new Language("si", "Sinhala"),
+        new Language("sk", "Slovak"),
+        new Language("sl", "Slovenian"),
+        new Language("so", "Somali"),
+        new Language("es", "Spanish"),
+        new Language("su", "Sundanese"),
+        new Language("sw", "Swahili"),
+        new Language("sv", "Swedish"),
+        new Language("tg", "Tajik"),
+        new Language("ta", "Tamil"),
+        new Language("tt", "Tatar"),
+        new Language("te", "Telugu"),
+        new Language("th", "Thai"),
+        new Language("tr", "Turkish"),
+        new Language("tk", "Turkmen"),
+        new Language("uk", "Ukrainian"),
+        new Language("ur", "Urdu"),
+        new Language("ug", "Uyghur"),
+        new Language("uz", "Uzbek"),
+        new Language("vi", "Vietnamese"),
+        new Language("cy", "Welsh"),
+        new Language("xh", "Xhosa"),
+        new Language("yi", "Yiddish"),
+        new Language("yo", "Yoruba"),
+        new Language("zu", "Zulu")
+    );
+
+    private record Language(String code, String name) {
+    }
+
+    public static String getLanguageName(String code) {
+        for (Language language : LANGUAGES) {
+            if (language.code().equals(code)) return language.name();
+        }
+        return code;
+    }
+
+    public static CompletableFuture<Suggestions> suggestLanguages(CommandContext<CommandSource> context, SuggestionsBuilder builder) {
+        for (Language language : LANGUAGES) {
+            builder.suggest(language.code(), new LiteralMessage(language.name()));
+        }
+        return builder.buildFuture();
+    }
+
+    /**
+     * Where a finished translation goes.
+     */
+    public enum TranslateOutput {CHAT, EXPORT, GUI}
+
+    /**
+     * Translates {@code book}'s pages {@code startPage..endPage} into {@code targetLang} and
+     * renders the result as {@code output}. {@code endPage < 0} means "to the last page".
+     *
+     * <p>Fully asynchronous; progress and completion are reported through the supplied consumers.
+     */
+    public static void translate(ItemStack book, String targetLang, int startPage, int endPage,
+                                 TranslateOutput output, Consumer<String> info, Consumer<String> error) {
+        BookUtils.BookContent content = BookUtils.checkHeldBook(book);
+        if (content == null || content.pages().isEmpty()) {
+            error.accept("This book has no content!");
+            return;
+        }
+
+        List<String> allPages = content.pages();
+        int totalPages = allPages.size();
+
+        // A reversed explicit range is swapped, not refused: `.shelf lang de 9 3` reads as an
+        // obvious slip. This used to live in each command's brigadier layer (three copies in
+        // BookTranslateCommand, none in Shelf/Ifpeek), which made `.booktranslate lang de 9 3`
+        // work while `.shelf lang de 9 3` said "Invalid page range" for the identical request.
+        // One owner, one behaviour.
+        int start = Math.max(1, startPage);
+        int end = (endPage < 0) ? totalPages : endPage;
+        if (endPage >= 0 && start > end) {
+            int swap = start;
+            start = end;
+            end = swap;
+        }
+        end = Math.min(end, totalPages);
+
+        // Still invalid after normalisation: an explicit start past the last page. A negative
+        // `endPage` can never land here because it was resolved to totalPages above.
+        if (start > end) {
+            error.accept("Invalid page range.");
+            return;
+        }
+
+        List<String> pagesToTranslate = allPages.subList(start - 1, end);
+        String rangeInfo = (start == end) ? "page " + start : "pages " + start + "-" + end;
+        info.accept("§6Translating " + rangeInfo + " of " + totalPages + " to " + getLanguageName(targetLang) + " (" + targetLang + ")...");
+
+        AtomicInteger completed = new AtomicInteger();
+        int totalToTranslate = pagesToTranslate.size();
+        List<CompletableFuture<String>> futures = new ArrayList<>();
+        for (String page : pagesToTranslate) {
+            CompletableFuture<String> future = page.isBlank() ? CompletableFuture.completedFuture("") : translateTextAsync(targetLang, page);
+            future.whenComplete((result, err) -> {
+                int done = completed.incrementAndGet();
+                if (done % 30 == 0 || done == totalToTranslate) {
+                    mc.execute(() -> info.accept("§6Translating progress: " + done + "/" + totalToTranslate + " pages translated..."));
+                }
+            });
+            futures.add(future);
+        }
+
+        int finalStart = start;
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+            .thenAccept(v -> {
+                List<String> translated = new ArrayList<>();
+                for (int i = 0; i < futures.size(); i++) {
+                    String t = futures.get(i).join();
+                    if (t == null) {
+                        int failedPage = finalStart + i;
+                        mc.execute(() -> error.accept("Translation failed on page " + failedPage + ". Check the log for the HTTP error."));
+                        return;
+                    }
+                    translated.add(t);
+                }
+
+                mc.execute(() -> {
+                    switch (output) {
+                        case EXPORT -> BookUtils.exportPages(content, translated, finalStart, info, error);
+                        case GUI -> openTranslatedGui(content, translated, info, error);
+                        default -> printTranslation(rangeInfo, finalStart, translated, info);
+                    }
+                });
+            })
+            .exceptionally(e -> {
+                mc.execute(() -> error.accept("Translation error: " + e.getMessage()));
+                return null;
+            });
+    }
+
+    private static void printTranslation(String rangeInfo, int startPage, List<String> translatedPages, Consumer<String> info) {
+        // Translated pages are remote text, so they go through the same sanitizing sink the other
+        // chat printers use before any of them reaches chat.
+        Consumer<String> sink = chatSink(info);
+        sink.accept("§6<Translated Book (" + rangeInfo + ")>");
+        for (int i = 0; i < translatedPages.size(); i++) {
+            int actualPage = startPage + i;
+            sink.accept("§7--- Page " + actualPage + " ---");
+            String text = translatedPages.get(i);
+            for (String line : text.split("\n")) {
+                if (line.length() > MAX_TRANSLATION_LINE_CHARS) {
+                    int from = 0;
+                    while (from < line.length()) {
+                        int to = Math.min(from + MAX_TRANSLATION_LINE_CHARS, line.length());
+                        // Never split a surrogate pair. Each chunk becomes its own chat line, so a
+                        // boundary landing between a high and low surrogate leaves a lone half at
+                        // the end of one line and the start of the next, and BOTH render as U+FFFD.
+                        // Step back one char and resume from the adjusted boundary.
+                        if (to < line.length() && Character.isHighSurrogate(line.charAt(to - 1))) to--;
+                        if (to <= from) to = Math.min(from + MAX_TRANSLATION_LINE_CHARS, line.length());
+                        sink.accept("§f" + BookUtils.escapePercent(line.substring(from, to)));
+                        from = to;
+                    }
+                } else {
+                    sink.accept("§f" + BookUtils.escapePercent(line));
+                }
+            }
+        }
+        sink.accept("§6========================");
+    }
+
+    /**
+     * Chat lines wider than this are wrapped; see {@link #printTranslation}.
+     */
+    private static final int MAX_TRANSLATION_LINE_CHARS = 120;
+
+    private static void openTranslatedGui(BookUtils.BookContent content, List<String> translatedPages,
+                                          Consumer<String> info, Consumer<String> error) {
+        if (translatedPages.isEmpty()) {
+            error.accept("Translation produced no content.");
+            return;
+        }
+
+        String title = content.type() == BookUtils.BookType.WRITTEN && content.title() != null
+            ? content.title() : "Translated";
+        String author = content.author() != null ? content.author()
+            : mc.player.getName().getString();
+
+        ItemStack translatedBook = BookUtils.createWrittenBook(title, author, translatedPages);
+        int pageCount = BookUtils.getPageCount(translatedBook);
+        BookUtils.openBookGui(translatedBook, 1);
+        info.accept("§aOpened translated book in GUI. §7" + pageCount + " page(s)");
+    }
+
+    private static CompletableFuture<String> translateTextAsync(String targetLang, String textToTranslate) {
+        return CompletableFuture.supplyAsync(() -> {
+            int attempts = 0;
+            while (true) {
+                try {
+                    String urlString = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl="
+                        + URLEncoder.encode(targetLang, StandardCharsets.UTF_8)
+                        + "&dt=t&q=" + URLEncoder.encode(textToTranslate, StandardCharsets.UTF_8);
+
+                    String raw;
+                    while (true) {
+                        // Recreated on every attempt: HttpURLConnection is single-use,
+                        // so retrying on the same object just reads the cached status.
+                        throttleRequestStart();
+                        HttpURLConnection conn = null;
+                        try {
+                            conn = (HttpURLConnection) new URI(urlString).toURL().openConnection();
+                            conn.setConnectTimeout(5000);
+                            conn.setReadTimeout(8000);
+                            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+
+                            int status = conn.getResponseCode();
+                            if (status >= 200 && status < 300) {
+                                try (InputStream stream = conn.getInputStream()) {
+                                    raw = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+                                }
+                                JsonArray root = JsonParser.parseString(raw).getAsJsonArray();
+                                StringBuilder result = new StringBuilder();
+                                if (!root.isEmpty() && root.get(0).isJsonArray()) {
+                                    JsonArray segments = root.get(0).getAsJsonArray();
+                                    for (JsonElement el : segments) {
+                                        if (el.isJsonArray()) {
+                                            JsonArray segment = el.getAsJsonArray();
+                                            if (!segment.isEmpty()) {
+                                                String translatedSegment = segment.get(0).getAsString();
+                                                if (translatedSegment != null && !translatedSegment.isEmpty()) {
+                                                    result.append(translatedSegment);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                return result.toString();
+                            }
+
+                            // Transient failures (rate limit, 5xx) get an exponential,
+                            // jittered backoff; hard 4xx fail fast.
+                            if ((status == 429 || status >= 500) && attempts < MAX_TRANSLATE_ATTEMPTS - 1) {
+                                attempts++;
+                                long retryDelay = Math.min(REQUEST_MAX_RETRY_DELAY_MILLIS, 1200L * (1L << (attempts - 1))) + RANDOM.nextLong(1500);
+                                sleep(retryDelay);
+                                continue;
+                            }
+                            // Any non-2xx we're not retrying further is a real failure.
+                            // Log the body for diagnostics but return null so the caller's
+                            // `t == null` check reports it as a failed page instead of
+                            // silently treating the error body as translated text.
+                            String errorBody = readErrorBody(conn);
+                            System.err.println("BookTranslate: HTTP " + status + " for page translation: " + errorBody);
+                            return null;
+                        } catch (IOException e) {
+                            // Transient connection-level failures (connect/read timeout,
+                            // connect reset, DNS) are retried through the same exponential,
+                            // jittered backoff; pacing and attempt budget are untouched.
+                            if (attempts < MAX_TRANSLATE_ATTEMPTS - 1) {
+                                attempts++;
+                                long retryDelay = Math.min(REQUEST_MAX_RETRY_DELAY_MILLIS, 1200L * (1L << (attempts - 1))) + RANDOM.nextLong(1500);
+                                sleep(retryDelay);
+                                continue;
+                            }
+                            e.printStackTrace();
+                            return null;
+                        } finally {
+                            if (conn != null) conn.disconnect();
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    return null;
+                }
+            }
+        }, TRANSLATE_POOL);
+    }
+
+    private static void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    // Enforces a global minimum gap between consecutive request *starts* (with
+    // jitter), so an entire book can't burst the free endpoint at once even
+    // though pages translate concurrently. Blocks the worker until a slot opens.
+    private static void throttleRequestStart() {
+        while (true) {
+            long now = System.nanoTime();
+            long last = LAST_REQUEST_START_NANOS.get();
+            if (last == 0) {
+                if (LAST_REQUEST_START_NANOS.compareAndSet(0, now)) return;
+                continue;
+            }
+            long intervalMillis = REQUEST_MIN_INTERVAL_MILLIS + RANDOM.nextLong(REQUEST_INTERVAL_JITTER + 1);
+            long gapMillis = intervalMillis - (now - last) / 1_000_000L;
+            if (gapMillis <= 0) {
+                if (LAST_REQUEST_START_NANOS.compareAndSet(last, now)) return;
+                continue;
+            }
+            sleep(gapMillis);
+        }
+    }
+
+    private static String readErrorBody(HttpURLConnection conn) {
+        try (InputStream errorStream = conn.getErrorStream()) {
+            if (errorStream == null) return "";
+            byte[] bytes = errorStream.readAllBytes();
+            String body = new String(bytes, StandardCharsets.UTF_8);
+            return body.length() > 300 ? body.substring(0, 300) : body;
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 }

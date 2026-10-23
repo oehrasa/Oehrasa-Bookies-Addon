@@ -4,6 +4,7 @@ import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
 import baritone.api.pathing.goals.GoalXZ;
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.DistanceUtil;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
@@ -248,9 +249,7 @@ public class AutoBeacon extends Module {
         BlockPos best = null;
         double bestDist = Double.MAX_VALUE;
         for (BlockPos c : candidates) {
-            double dx = c.getX() - target.getX();
-            double dz = c.getZ() - target.getZ();
-            double d = dx * dx + dz * dz;
+            double d = DistanceUtil.distanceSqXZ(c.getX(), c.getZ(), target.getX(), target.getZ());
             if (d < bestDist) {
                 bestDist = d;
                 best = c;

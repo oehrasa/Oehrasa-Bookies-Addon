@@ -51,6 +51,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new AudiobookReader());
         // B
         Modules.get().add(new B36());
+        Modules.get().add(new BDSMMask());
         Modules.get().add(new BlockRadius());
         Modules.get().add(new BLU27BNapalm());
         Modules.get().add(new BookImporter());
@@ -68,6 +69,7 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new ForceAccess());
         Modules.get().add(new GetPreview());
         // H
+        Modules.get().add(new HandyPlace());
         Modules.get().add(new HomesList());
         // I
         Modules.get().add(new ItemDespawn());
@@ -120,6 +122,7 @@ public class Addon extends MeteorAddon {
         Commands.add(new AssignOwnerCommand());
         Commands.add(new BookCommand());
         Commands.add(new BookTranslateCommand());
+        Commands.add(new ChestTrackerCommand());
         Commands.add(new EnemyCommand());
         Commands.add(new IfpeekCommand());
         Commands.add(new InvseeCommand());

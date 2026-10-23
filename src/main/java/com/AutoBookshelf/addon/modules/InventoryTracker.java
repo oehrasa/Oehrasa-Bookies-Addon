@@ -7,6 +7,8 @@ import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.systems.modules.render.Nametags;
 import meteordevelopment.meteorclient.utils.Utils;
 import meteordevelopment.meteorclient.utils.render.NametagUtils;
 import meteordevelopment.meteorclient.utils.render.RenderUtils;
@@ -50,6 +52,29 @@ public class InventoryTracker extends Module {
         .onChanged(v -> {
             if (!v) renderPreviews.clear();
         })
+        .build()
+    );
+
+    public enum NametagCompat {
+        Ignore,   // always draw at height-offset (previous behaviour)
+        Offset,   // push the panel above Nametags, scaled to its distance-dependent size
+        Hide      // draw nothing while Nametags is rendering player nametags
+    }
+
+    private final Setting<NametagCompat> nametagCompat = sgGeneral.add(new EnumSetting.Builder<NametagCompat>()
+        .name("nametag-compat")
+        .description("Offset pushes the panel above it using the same distance factor.")
+        .defaultValue(NametagCompat.Offset)
+        .build()
+    );
+
+    private final Setting<Double> nametagClearance = sgGeneral.add(new DoubleSetting.Builder()
+        .name("nametag-clearance")
+        .description("Multiplies Nametags' distance-scaled height to decide how far to clear it. Raise if Nametags still overlaps.")
+        .defaultValue(1.6)
+        .min(0)
+        .sliderRange(0, 4)
+        .visible(() -> nametagCompat.get() == NametagCompat.Offset)
         .build()
     );
 
@@ -414,11 +439,28 @@ public class InventoryTracker extends Module {
             PlayerEntity player = preview.player();
             if (player == null || player.isRemoved() || !player.isAlive()) continue;
 
+            // Meteor's Nametags only overlaps us when it is actually rendering player nametags.
+            Nametags nametags = Modules.get().get(Nametags.class);
+            boolean meteorNametags = nametags != null && nametags.playerNametags();
+            if (meteorNametags && nametagCompat.get() == NametagCompat.Hide) continue;
+
             double dist = mc.player.distanceTo(player);
             if (dist > maxRenderDistance.get()) continue;
 
             Vector3d vec = new Vector3d(player.getX(), player.getEyeY() + 0.6 + heightOffset.get(), player.getZ());
             if (!NametagUtils.to2D(vec, 1.0)) continue;
+
+            // NametagUtils.to2D just ran, so NametagUtils.scale now holds the SAME distance factor
+            // Nametags will use (zoom * getScale(pos), where getScale is
+            // clamp(1 - dist*0.01, 0.5, MAX)). Reading it instead of re-deriving the formula keeps
+            // us in step with Meteor's dynamic scaling, which is what a fixed world-space
+            // height-offset cannot track.
+            double nametagPixels = 0;
+            if (meteorNametags && nametagCompat.get() == NametagCompat.Offset) {
+                double textHeight = mc.textRenderer.fontHeight;
+                // Nametags draws a text row, and when its item row is on it adds 32 + 7 below that.
+                nametagPixels = (textHeight + 39) * NametagUtils.scale * nametagClearance.get();
+            }
 
             // Recomputed live every frame
             double guiScaleX = (double) mc.getWindow().getScaledWidth() / mc.getWindow().getWidth();
@@ -428,7 +470,7 @@ public class InventoryTracker extends Module {
             int screenY = (int) (vec.y * guiScaleY);
 
             int panelX = screenX - preview.panelWidth() / 2;
-            int panelY = screenY - preview.panelHeight() - screenGap.get();
+            int panelY = screenY - preview.panelHeight() - screenGap.get() - (int) nametagPixels;
 
             if (panelX < 0) panelX = 0;
             if (panelY < 0) panelY = 0;

@@ -267,7 +267,7 @@ public class UnwaxAura extends Module {
     private int espFrameCounter = ESP_SCAN_INTERVAL;
 
     public UnwaxAura() {
-        super(Addon.CATEGORY2, "Unwax-Aura", "Automatically removes wax from copper blocks and optionally breaks them.");
+        super(Addon.CATEGORY2, "Unwax-Aura", "Automatically removes wax from copper blocks and copper golem and optionally breaks them.");
     }
 
     @Override

@@ -1,6 +1,7 @@
 package com.AutoBookshelf.addon.hud;
 
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.ForceDefaultFont;
 import meteordevelopment.meteorclient.settings.DoubleSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
@@ -25,6 +26,8 @@ public class Weather extends HudElement {
         .build()
     );
 
+    private final ForceDefaultFont forceDefaultFont = new ForceDefaultFont(sgGeneral);
+
     public Weather() {
         super(INFO);
         mc = MinecraftClient.getInstance();
@@ -33,7 +36,7 @@ public class Weather extends HudElement {
     @Override
     public void render(HudRenderer renderer) {
         String textWidth = "Weather:            ";
-        setSize(renderer.textWidth(textWidth, true, scale.get()), renderer.textHeight(true, scale.get()));
+        setSize(forceDefaultFont.width(renderer, textWidth, true, scale.get()), forceDefaultFont.height(renderer, true, scale.get()));
         String weather = "None";
         if (mc.world != null && mc.world.canHaveWeather()) {
             if (mc.world.isThundering()) {
@@ -44,7 +47,7 @@ public class Weather extends HudElement {
                 weather = "Clear";
             }
         }
-        renderer.text("Weather: ", x, y, Color.WHITE, true, scale.get());
-        renderer.text(weather, renderer.textWidth("Weather: ", true, scale.get()) + x, y, Color.LIGHT_GRAY, true, scale.get());
+        forceDefaultFont.text(renderer, "Weather: ", x, y, Color.WHITE, true, scale.get());
+        forceDefaultFont.text(renderer, weather, forceDefaultFont.width(renderer, "Weather: ", true, scale.get()) + x, y, Color.LIGHT_GRAY, true, scale.get());
     }
 }

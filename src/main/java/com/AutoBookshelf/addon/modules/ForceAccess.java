@@ -33,10 +33,7 @@ import net.minecraft.util.Hand;
 import net.minecraft.util.function.BooleanBiFunction;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.util.math.*;
 import net.minecraft.util.shape.VoxelShape;
 import net.minecraft.util.shape.VoxelShapes;
 import net.minecraft.world.RaycastContext;
@@ -395,9 +392,23 @@ public class ForceAccess extends Module {
             }
         }
 
-        if (openEntity != null && openEntity.isAlive()
-            && eye.squaredDistanceTo(openEntity.getBoundingBox().getCenter()) < maxSq) {
-            event.renderer.box(openEntity.getBoundingBox(), sideColor.get(), lineColor.get(), shapeMode.get(), 0);
+        if (openEntity != null && openEntity.isAlive()) {
+            // Meteor ESP's tick interpolation. The cull and the draw share one offset box so
+            // the entity cannot be culled while the box that would have been drawn was on
+            // screen. Harmless when static: a block-entity display has lastRenderX == getX(),
+            // so the offset is zero and this reduces to the previous behaviour exactly.
+            Box box = openEntity.getBoundingBox();
+            double x = MathHelper.lerp(event.tickDelta, openEntity.lastRenderX, openEntity.getX()) - openEntity.getX();
+            double y = MathHelper.lerp(event.tickDelta, openEntity.lastRenderY, openEntity.getY()) - openEntity.getY();
+            double z = MathHelper.lerp(event.tickDelta, openEntity.lastRenderZ, openEntity.getZ()) - openEntity.getZ();
+            Box lerped = box.offset(x, y, z);
+
+            if (eye.squaredDistanceTo(lerped.getCenter()) < maxSq) {
+                event.renderer.box(
+                    x + box.minX, y + box.minY, z + box.minZ,
+                    x + box.maxX, y + box.maxY, z + box.maxZ,
+                    sideColor.get(), lineColor.get(), shapeMode.get(), 0);
+            }
         }
     }
 
@@ -690,9 +701,14 @@ public class ForceAccess extends Module {
             waitTicks = 0;
             if (autoTool.get()) swapTool();
         }
-        if (mining != null && mining2 == null && doubleBreak.get() && packetBreak.get() && !queue.isEmpty()
-            && (!autoTool.get() || findToolSlot(queue.peekFirst()) == findToolSlot(mining.pos))) {
-            mining2 = pop();
+        // Double-break: pop a second obstruction if both need the same tool.
+        // mining is already popped and holds the first obstruction; queue.peekFirst()
+        // is the next obstruction. Compare tools for mining.pos vs next.
+        if (mining != null && mining.pos != null && mining2 == null && doubleBreak.get() && packetBreak.get() && !queue.isEmpty()) {
+            BlockPos next = queue.peekFirst();
+            if (!autoTool.get() || findToolSlot(mining.pos) == findToolSlot(next)) {
+                mining2 = pop();
+            }
         }
         if (mining == null && mining2 == null) {
             phase = Phase.OPEN;

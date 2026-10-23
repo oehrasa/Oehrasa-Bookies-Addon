@@ -98,7 +98,7 @@ public class TrajectoryPlus extends Module {
 
     private final Setting<Integer> aheadTrailLength = sgTrail.add(new IntSetting.Builder()
         .name("ahead-trail-length")
-        .description("Maximum number of predicted-path points to render ahead. Simulation still runs its full length for collision accuracy; this only limits how much of the path gets drawn.")
+        .description("Maximum number of predicted-path points to render ahead; simulation still runs its full length for collision accuracy.")
         .defaultValue(100)
         .min(1)
         .sliderMax(500)
@@ -250,6 +250,15 @@ public class TrajectoryPlus extends Module {
     // Breadcrumb ("behind") trails for already-fired projectiles, keyed by entity UUID.
     private final Map<UUID, List<Vector3d>> firedTrails = new ConcurrentHashMap<>();
 
+    /**
+     * How often {@link #pruneBreadcrumbs()} actually runs, in frames. Pruning is pure
+     * memory hygiene - the render loop only walks live entities, so trails of removed
+     * entities are never drawn again - which means the full entity sweep it needs does
+     * not have to happen at frame rate.
+     */
+    private static final int BREADCRUMB_PRUNE_FRAMES = 30;
+    private int breadcrumbPruneCounter = 0;
+
     private static final double MULTISHOT_OFFSET = Math.toRadians(10); // accurate-ish offset of crossbow multishot in radians (10°)
     private static final double MIN_THREAT_SPEED_SQ = 0.0025;
     private static final int MAX_SIMULATION_STEPS_HARD_CAP = 5000;
@@ -266,12 +275,14 @@ public class TrajectoryPlus extends Module {
         firedTrails.clear();
         cachedPaths.clear();
         simRefreshCounter = 0;
+        breadcrumbPruneCounter = 0;
     }
 
     @Override
     public void onActivate() {
         cachedPaths.clear();
         simRefreshCounter = 0;
+        breadcrumbPruneCounter = 0;
     }
 
     private boolean itemFilter(Item item) {
@@ -545,6 +556,12 @@ public class TrajectoryPlus extends Module {
 
     private void pruneBreadcrumbs() {
         if (firedTrails.isEmpty()) return;
+
+        // Half-a-second stale trails are invisible: the render loop only walks live
+        // entities, so entries for removed projectiles are never drawn again. Skipping
+        // the per-frame full entity sweep and UUID set rebuild is not.
+        if (++breadcrumbPruneCounter < BREADCRUMB_PRUNE_FRAMES) return;
+        breadcrumbPruneCounter = 0;
 
         Set<UUID> alive = new HashSet<>();
         for (Entity e : mc.world.getEntities()) alive.add(e.getUuid());

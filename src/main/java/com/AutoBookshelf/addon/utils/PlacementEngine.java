@@ -190,10 +190,29 @@ public class PlacementEngine {
         return isReplaceableOrAir(pos.up());
     }
 
+    /**
+     * A cell a block can be placed into off the face of the cell below: this cell and the one above
+     * it are clear, and the cell below is a full collision cube.
+     *
+     * <p>The support test is {@code isFullCube}, not {@code canOcclude()}: glass and
+     * leaves are full cubes you can place a block on but they do not occlude, so an occlusion test
+     * rejects a perfectly good support. {@code canOcclude()} stays as a fallback so a full-occlusion
+     * block with a non-full collision shape still counts, making this a strict superset of the old
+     * test - no spot that used to be accepted stops being accepted.
+     */
     public boolean validSolidPos(BlockPos pos) {
         return isReplaceableOrAir(pos)
             && isReplaceableOrAir(pos.up())
-            && mc.world.getBlockState(pos.down()).isSolidBlock(mc.world, pos.down());
+            && isSupportBlock(pos.down());
+    }
+
+    /**
+     * True when the cell can host a placement on its top face: a full collision cube (glass, leaves
+     * included), or an occluding block as a fallback for shapes the collision test misses.
+     */
+    private boolean isSupportBlock(BlockPos support) {
+        var state = mc.world.getBlockState(support);
+        return state.isOpaque() || state.isFullCube(mc.world, support);
     }
 
     public Direction horizontalDirectionBetween(BlockPos from, BlockPos to) {

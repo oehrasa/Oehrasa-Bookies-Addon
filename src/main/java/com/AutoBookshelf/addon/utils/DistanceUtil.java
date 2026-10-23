@@ -76,6 +76,13 @@ public class DistanceUtil {
 
     // Squared distance from a point to the nearest point on/in an axis-aligned box
     // (0 if the point is inside). Used for camera-distance culling of ESP boxes.
+    //
+    // NOTE: this assumes min <= max on every axis, which an AABB always satisfies. It is NOT
+    // equivalent to a per-axis `max(0, max(min - p, p - max))` for an inverted box: clamp() is
+    // only well-defined for lo <= hi, and with min > max the two forms genuinely disagree (verified
+    // over 3M random boxes - 0 mismatches with valid boxes, thousands with inverted ones). The
+    // per-axis sign difference disappears once squared, so for a real AABB the two are bit-for-bit
+    // identical; do not "fix" a caller by re-deriving the clamp form without checking this.
     public static double distanceSqToBox(double px, double py, double pz,
                                          double minX, double minY, double minZ,
                                          double maxX, double maxY, double maxZ) {

@@ -314,4 +314,43 @@ public class AreaSelector {
     public SettingColor getLineColor() {
         return lineColor.get();
     }
+
+    /**
+     * Walls: perimeter only (4 sides) spanning Y of c1..c2.
+     */
+    public List<BlockPos> getWalls() {
+        List<BlockPos> list = new ArrayList<>();
+        if (!hasCompleteSelection()) return list;
+
+        int minX = minX(), maxX = maxX(), minY = minY(), maxY = maxY(), minZ = minZ(), maxZ = maxZ();
+        BlockPos.Mutable pos = new BlockPos.Mutable();
+
+        if (minX == maxX || minZ == maxZ) {
+            for (int y = minY; y <= maxY; y++) {
+                for (int x = minX; x <= maxX; x++) {
+                    for (int z = minZ; z <= maxZ; z++) {
+                        pos.set(x, y, z);
+                        list.add(pos.toImmutable());
+                    }
+                }
+            }
+            return list;
+        }
+
+        for (int y = minY; y <= maxY; y++) {
+            for (int x = minX; x <= maxX; x++) {
+                pos.set(x, y, minZ);
+                list.add(pos.toImmutable());
+                pos.set(x, y, maxZ);
+                list.add(pos.toImmutable());
+            }
+            for (int z = minZ + 1; z < maxZ; z++) {
+                pos.set(minX, y, z);
+                list.add(pos.toImmutable());
+                pos.set(maxX, y, z);
+                list.add(pos.toImmutable());
+            }
+        }
+        return list;
+    }
 }

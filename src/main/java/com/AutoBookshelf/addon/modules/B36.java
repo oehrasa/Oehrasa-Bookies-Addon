@@ -1,16 +1,11 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.HotbarSwap;
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.settings.BoolSetting;
-import meteordevelopment.meteorclient.settings.DoubleSetting;
-import meteordevelopment.meteorclient.settings.IntSetting;
-import meteordevelopment.meteorclient.settings.Setting;
-import meteordevelopment.meteorclient.settings.SettingGroup;
-import meteordevelopment.meteorclient.systems.modules.Categories;
+import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.orbit.EventHandler;
-import net.minecraft.block.Blocks;
 import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractBlockC2SPacket;
@@ -23,8 +18,8 @@ import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 
 /**
- * B52 Module - Places and ignites TNT around the player.
- * Supports airplace mode for placing TNT in the air.
+ * B36 - places and ignites TNT in a radius around the player (airplace supported). TNT and flint
+ * and steel are pulled from the inventory into the hotbar when missing.
  */
 public class B36 extends Module {
     // Setting groups
@@ -70,7 +65,7 @@ public class B36 extends Module {
     // Inventory settings
     private final Setting<Boolean> autoMoveToHotbar = sgInventory.add(new BoolSetting.Builder()
         .name("auto-move-to-hotbar")
-        .description("Automatically moves TNT from inventory to hotbar if none is found")
+        .description("Automatically moves TNT and flint and steel from the inventory to the hotbar if not found there")
         .defaultValue(true)
         .build()
     );
@@ -148,33 +143,30 @@ public class B36 extends Module {
 
     /**
      * Prepares inventory by finding TNT and flint and steel.
-     * Moves TNT from inventory to hotbar if needed.
+     * Pulls either in from the main inventory when it is only there.
      * @return true if preparation successful, false otherwise
      */
     private boolean prepareInventory() {
         // Get TNT slot or try to move TNT to hotbar
         int tntSlot = findTntInHotbar();
+        if (tntSlot == -1 && autoMoveToHotbar.get()) {
+            tntSlot = HotbarSwap.ensureInHotbar(stack -> stack.isOf(Items.TNT), 0);
+        }
         if (tntSlot == -1) {
-            if (autoMoveToHotbar.get()) {
-                boolean moved = moveTntToHotbar();
-                if (moved) {
-                    tntSlot = findTntInHotbar(); // Get the new slot
-                } else {
-                    if (autoDisable.get()) {
-                        toggle();
-                    }
-                    return false;
-                }
-            } else {
-                if (autoDisable.get()) {
-                    toggle();
-                }
-                return false;
+            if (autoDisable.get()) {
+                toggle();
             }
+            return false;
         }
 
-        // Search for flint and steel in hotbar
+        // Search for flint and steel in hotbar, pulling it in from the inventory if needed. The two
+        // items have to sit in the hotbar together (placeTnt swaps between them), so the flint pull
+        // uses a fallback slot that is never the TNT's, otherwise a full hotbar would let it
+        // clobber the stack that was just provisioned.
         int flintAndSteelSlot = findFlintAndSteelInHotbar();
+        if (flintAndSteelSlot == -1 && autoMoveToHotbar.get()) {
+            flintAndSteelSlot = HotbarSwap.ensureInHotbar(stack -> stack.isOf(Items.FLINT_AND_STEEL), tntSlot == 0 ? 1 : 0);
+        }
         if (flintAndSteelSlot == -1) {
             if (autoDisable.get()) {
                 toggle();

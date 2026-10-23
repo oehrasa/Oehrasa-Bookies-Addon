@@ -187,6 +187,7 @@ public class KMDB extends Module {
     // unchanged. footCacheFoot is null when no clear spot was found, which is why
     // validity is tracked separately rather than tested against the result.
     private boolean footCacheValid = false;
+    private boolean rightClickHeld = false;
     private BlockPos footCacheFoot = null;
     private int footCacheHash = 0;
     private int footCacheRadius = 0;
@@ -251,11 +252,19 @@ public class KMDB extends Module {
         .build()
     );
 
+    private final Setting<Boolean> rightClickBuild = sgPlacement.add(new BoolSetting.Builder()
+        .name("right-click-build")
+        .description("Build with a right click instead of the build key. Hides the build key while on.")
+        .defaultValue(false)
+        .visible(manualPlacement::get)
+        .build()
+    );
+
     private final KeybindSetting buildKey = sgPlacement.add(new KeybindSetting.Builder()
         .name("build-key")
         .description("Build the previewed structure. Only used while manual-placement is on.")
         .action(this::executeBuild)
-        .visible(() -> manualPlacement.get())
+        .visible(() -> manualPlacement.get() && !rightClickBuild.get())
         .build()
     );
 
@@ -515,7 +524,7 @@ public class KMDB extends Module {
     private BuildMode lastBuildMode;
 
     public KMDB() {
-        super(Addon.CATEGORY, "KMDB", "Builds Wither, Iron Golem, Snow Golem, Copper Golem, or Creaking automatically.");
+        super(Addon.CATEGORY2, "KMDB", "Builds Wither, Iron Golem, Snow Golem, Copper Golem, or Creaking automatically.");
     }
 
     @Override
@@ -1112,6 +1121,21 @@ public class KMDB extends Module {
             // stage below ran with whatever currentWither was left over, or searched
             // for one on its own.
             startWither();
+        }
+
+        // Right-click-build: a rising edge of the use key places the previewed
+        // structure, so the module stays active across several builds without a
+        // separate keybind. The queued presses are drained here because vanilla's own
+        // use handling runs after TickEvent.Pre and would otherwise place a block or
+        // open a menu for the same click.
+        if (manualMode() && rightClickBuild.get() && mc.player != null) {
+            boolean down = mc.options.useKey.isPressed();
+            boolean clicked = false;
+            while (mc.options.useKey.wasPressed()) clicked = true;
+            if (clicked || (down && !rightClickHeld)) executeBuild();
+            rightClickHeld = down;
+        } else {
+            rightClickHeld = false;
         }
 
         if (buildMode.get() != BuildMode.Wither) return;

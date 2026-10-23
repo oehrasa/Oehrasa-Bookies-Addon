@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 
@@ -37,7 +38,6 @@ public class ChestTrackerDataV2 {
     private File dataFile;
     private File backupFile;
     private File tempFile;
-    private long lastSaveTime = 0;
     private volatile int saveFailures = 0;
 
     // Guards the actual on-disk write (temp -> backup -> move). Separate from
@@ -46,15 +46,43 @@ public class ChestTrackerDataV2 {
     // places: the debounced background executor, the "Save Data" button, and
     // world-leave. and without this, two of them landing at once could
     // interleave writes to the same temp file.
-    private final Object fileWriteLock = new Object();
+    // A ReentrantLock (not a monitor) so the client-thread inline path can
+    // time out on it instead of blocking indefinitely behind a stuck writer.
+    private final ReentrantLock fileWriteLock = new ReentrantLock();
 
     private final AtomicInteger pendingContainerSaves = new AtomicInteger(0);
 
-    // Bumped on every mutation so consumers (e.g. the browser screen) can
+    // Bumped on every mutation so consumers (the browser screen) can
     // cheaply detect "did anything change" without diffing the map.
     private final AtomicLong dataVersion = new AtomicLong(0);
 
     private static final long SAVE_DEBOUNCE_MS = 2000;
+
+    /**
+     * How long a synchronous save waits for the background save thread before
+     * writing inline. Kept equal to SAVE_INLINE_LOCK_TIMEOUT_SECONDS: every caller
+     * of saveDataSync() is on the client thread (deactivate, world-leave, the manual
+     * save button), so waiting far longer than the inline path's own lock budget
+     * would freeze the game for many seconds before even reaching the fallback
+     * that exists precisely to avoid freezing it.
+     */
+    private static final long SAVE_SYNC_TIMEOUT_SECONDS = 2;
+
+    /**
+     * How long the last-resort inline save waits for the data lock. Deliberately
+     * short: this runs on the client thread (typically while disconnecting), so a
+     * writer that is genuinely stuck must not be able to freeze the game.
+     */
+    private static final long SAVE_INLINE_LOCK_TIMEOUT_SECONDS = 2;
+
+    /**
+     * How long the last-resort inline save waits for the *file* lock. Longer than the data lock
+     * timeout above: the file lock is held by a background save doing disk I/O, which a stuck
+     * writer cannot extend indefinitely, so waiting a bit longer lets the inline write succeed
+     * instead of spuriously "giving up" while a background save is still flushing (the common
+     * case when leaving the world).
+     */
+    private static final long SAVE_INLINE_FILE_LOCK_TIMEOUT_SECONDS = 10;
     private final ScheduledExecutorService saveExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "ChestTracker-Save");
         t.setDaemon(true);
@@ -149,6 +177,38 @@ public class ChestTrackerDataV2 {
         }
     }
 
+    /**
+     * Containers holding a stack whose enchantment-aware
+     * {@link com.AutoBookshelf.addon.utils.ItemSignature} equals {@code sig},
+     * i.e. the exact item *and* enchantments, not just the item.
+     *
+     * <p>Containers loaded from a database written before signatures existed have
+     * no indexed signatures and will not match until they are re-opened and
+     * re-tracked; they are not an error, just unsearchable by signature.
+     */
+    public List<TrackedContainer> searchSignature(String sig) {
+        return searchSignature(sig, getCurrentDimension());
+    }
+
+    public List<TrackedContainer> searchSignature(String sig, String dimension) {
+        if (sig == null || sig.isEmpty()) return new ArrayList<>();
+        lock.readLock().lock();
+        try {
+            Map<BlockPos, TrackedContainer> dimContainers = containers.get(dimension);
+            if (dimContainers == null) return new ArrayList<>();
+            return dimContainers.values().stream()
+                .filter(c -> c.containsSignature(sig))
+                .sorted((a, b) -> Integer.compare(b.getSignatureCount(sig), a.getSignatureCount(sig)))
+                .collect(Collectors.toList());
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    public List<TrackedContainer> getAllContainers() {
+        return getAllContainers(getCurrentDimension());
+    }
+
     public List<TrackedContainer> getAllContainers(String dimension) {
         lock.readLock().lock();
         try {
@@ -169,16 +229,23 @@ public class ChestTrackerDataV2 {
             lock.readLock().unlock();
         }
     }
-    // Some leftover im not sure
-    public int getCurrentDimensionContainerCount() {
+
+    /**
+     * Drops every tracked container in the dimension the player is currently in.
+     * Other dimensions are left alone. Must call markDirty()/bump dataVersion itself -
+     * without that the deletion only exists in memory and the next flush writes the
+     * removed entries straight back to disk.
+     */
+    public void clearCurrentDimension() {
         String dimension = getCurrentDimension();
-        lock.readLock().lock();
+        lock.writeLock().lock();
         try {
-            Map<BlockPos, TrackedContainer> dimContainers = containers.get(dimension);
-            return dimContainers != null ? dimContainers.size() : 0;
+            containers.remove(dimension);
         } finally {
-            lock.readLock().unlock();
+            lock.writeLock().unlock();
         }
+        markDirty();
+        dataVersion.incrementAndGet();
     }
 
     public void clearAll() {
@@ -230,24 +297,78 @@ public class ChestTrackerDataV2 {
      * must know the data is on disk (module deactivate, world-leave, manual save).
      */
     public void saveDataSync() {
-        // Bounded wait: every caller of saveDataSync() is on the client thread
-        // (deactivate, world-leave, the manual save button), so this must not be
-        // allowed to stall the game for many seconds when the save thread is stuck.
+        // A pending debounced save is redundant once we write the full snapshot below.
+        ScheduledFuture<?> pending = pendingSave;
+        if (pending != null) pending.cancel(false);
+
         try {
-            saveExecutor.submit(this::snapshotAndWrite).get(2, TimeUnit.SECONDS);
+            saveExecutor.submit(this::snapshotAndWrite).get(SAVE_SYNC_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             saveFailures++;
             LOGGER.error("Save interrupted while waiting for write", e);
-        } catch (ExecutionException | TimeoutException e) {
+        } catch (ExecutionException e) {
             saveFailures++;
-            LOGGER.error("Failed to wait for data save (attempt {})", saveFailures, e);
+            LOGGER.error("Failed to save data (attempt {})", saveFailures, e);
+        } catch (TimeoutException e) {
+            // The save thread is blocked or backed up (typically a writer holding
+            // the data lock while the world tears down). Don't drop the save on
+            // the floor: write it here, with a bounded lock wait so a stuck
+            // writer can't freeze the client thread either.
+            saveFailures++;
+            LOGGER.warn("Save thread busy after {}s, writing inline (attempt {})", SAVE_SYNC_TIMEOUT_SECONDS, saveFailures);
+            writeSnapshotInline();
+        }
+    }
+
+    /**
+     * Last-resort save: builds and writes a snapshot on the calling thread,
+     * giving up if the data lock cannot be acquired promptly.
+     */
+    private void writeSnapshotInline() {
+        boolean locked = false;
+        boolean writeLocked = false;
+        try {
+            locked = lock.readLock().tryLock(SAVE_INLINE_LOCK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!locked) {
+                LOGGER.error("Gave up saving chest tracker data: data lock still held after {}s", SAVE_INLINE_LOCK_TIMEOUT_SECONDS);
+                return;
+            }
+            // The data lock bounds the snapshot build, but a background writer
+            // can still hold the file lock. Time out on that too, otherwise
+            // this client-thread path blocks behind it and freezes the game.
+            writeLocked = fileWriteLock.tryLock(SAVE_INLINE_FILE_LOCK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!writeLocked) {
+                LOGGER.error("Gave up saving chest tracker data: file lock still held after {}s", SAVE_INLINE_FILE_LOCK_TIMEOUT_SECONDS);
+                return;
+            }
+            writeJsonToFile(buildSnapshotJsonLocked());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            LOGGER.error("Interrupted while saving chest tracker data inline", e);
+        } catch (Exception e) {
+            saveFailures++;
+            LOGGER.error("Failed to save data inline (attempt {})", saveFailures, e);
+        } finally {
+            if (writeLocked) fileWriteLock.unlock();
+            if (locked) lock.readLock().unlock();
         }
     }
 
     private JsonObject buildSnapshotJson() {
         lock.readLock().lock();
         try {
+            return buildSnapshotJsonLocked();
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Caller must already hold the data lock (read is enough).
+     */
+    private JsonObject buildSnapshotJsonLocked() {
+        {
             JsonObject root = new JsonObject();
             root.addProperty("version", CURRENT_VERSION);
             root.addProperty("saveTime", System.currentTimeMillis());
@@ -261,38 +382,79 @@ public class ChestTrackerDataV2 {
             }
             root.add("dimensions", dimensions);
             return root;
-        } finally {
-            lock.readLock().unlock();
         }
     }
 
     /**
-     * Writes a previously-built snapshot to disk. Always runs on the single
-     * background save-executor thread; synchronized on fileWriteLock (not the
-     * data lock) so the debounced flush, manual "Save Data" button, and
-     * world-leave saves don't stomp on the same temp file if they overlap.
+     * Writes a previously-built snapshot to disk. Runs on the single background
+     * save-executor thread, or on the client thread from the inline last-resort
+     * path (which already holds the file lock via tryLock). Held on
+     * fileWriteLock (not the data lock) so the debounced flush, manual
+     * "Save Data" button, and world-leave saves don't stomp on the same temp
+     * file if they overlap.
      */
     private void writeJsonToFile(JsonObject root) {
-        synchronized (fileWriteLock) {
-            try {
-                try (Writer writer = new OutputStreamWriter(new FileOutputStream(tempFile), StandardCharsets.UTF_8)) {
-                    GSON.toJson(root, writer);
-                }
-                if (dataFile.exists() && dataFile.length() > 0) {
-                    Files.copy(dataFile.toPath(), backupFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                }
-                Files.move(tempFile.toPath(), dataFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                lastSaveTime = System.currentTimeMillis();
-                saveFailures = 0;
-                pendingContainerSaves.set(0);
-            } catch (Exception e) {
-                saveFailures++;
-                LOGGER.error("Failed to save data (attempt {})", saveFailures, e);
-                if (saveFailures > 3) {
-                    LOGGER.error("Multiple save failures, data may be lost!");
-                }
+        fileWriteLock.lock();
+        try {
+            try (Writer writer = new OutputStreamWriter(new FileOutputStream(tempFile), StandardCharsets.UTF_8)) {
+                GSON.toJson(root, writer);
             }
+            if (dataFile.exists() && dataFile.length() > 0) {
+                Files.copy(dataFile.toPath(), backupFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            }
+            Files.move(tempFile.toPath(), dataFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            saveFailures = 0;
+            pendingContainerSaves.set(0);
+        } catch (Exception e) {
+            saveFailures++;
+            LOGGER.error("Failed to save data (attempt {})", saveFailures, e);
+            if (saveFailures > 3) {
+                LOGGER.error("Multiple save failures, data may be lost!");
+            }
+        } finally {
+            fileWriteLock.unlock();
         }
+    }
+
+    /**
+     * Writes a read-only snapshot to ChestTracker/&lt;filename&gt;, independent of the live
+     * database. Deliberately does NOT touch pendingContainerSaves / saveFailures: an export
+     * is not a save, and reporting "all containers saved" off an export would be a lie.
+     *
+     * <p>{@code filename} is sanitised to a bare basename because this is reachable from
+     * the {@code .ct export} command path, an unsanitised name could write anywhere.
+     */
+    public void exportData(String filename) throws java.io.IOException {
+        String safeName = sanitizeFileName(filename);
+        if (safeName.isEmpty()) throw new java.io.IOException("Invalid export file name");
+
+        File exportFile = new File(new File(MeteorClient.FOLDER, "ChestTracker"), safeName);
+
+        JsonObject root = buildSnapshotJson();
+        // Additive export-only fields; the live database never carries these.
+        root.addProperty("exportTime", System.currentTimeMillis());
+        root.addProperty("totalContainers", getTotalContainerCount());
+
+        fileWriteLock.lock();
+        try (Writer writer = new OutputStreamWriter(new FileOutputStream(exportFile), StandardCharsets.UTF_8)) {
+            GSON.toJson(root, writer);
+        } finally {
+            fileWriteLock.unlock();
+        }
+    }
+
+    /**
+     * Strips any directory component and anything outside [A-Za-z0-9._-] out of a name.
+     */
+    private static String sanitizeFileName(String name) {
+        if (name == null) return "";
+        String base = name.replace('\\', '/');
+        int slash = base.lastIndexOf('/');
+        if (slash >= 0) base = base.substring(slash + 1);
+        base = base.replaceAll("[^A-Za-z0-9._-]", "_");
+        // "." and ".." are both directory references, not file names.
+        while (base.startsWith(".")) base = base.substring(1);
+        return base;
     }
 
     public void loadData() {
@@ -366,10 +528,6 @@ public class ChestTrackerDataV2 {
         }
         markDirty();
         dataVersion.incrementAndGet();
-    }
-
-    Map<String, Map<BlockPos, TrackedContainer>> getContainers() {
-        return containers;
     }
 
     private String getCurrentDimension() {

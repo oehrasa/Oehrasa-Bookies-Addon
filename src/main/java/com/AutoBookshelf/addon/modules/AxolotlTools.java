@@ -414,14 +414,18 @@ public class AxolotlTools extends Module {
                                 return;
                             }
                         }
+                        // Note the outer parens around the mode clauses: without them this parses
+                        // as (variant && catch) || breed, and Breed mode skips the variant filter
+                        // entirely, the Trigger path checks interactVariants in both branches.
+                        // expand() takes the delta, not its square (4.5 * 4.5 = 20.25 blocks).
                         List<AxolotlEntity> nearby = mc.world.getEntitiesByClass(
                             AxolotlEntity.class,
-                            mc.player.getBoundingBox().expand(mc.player.getEntityInteractionRange() * mc.player.getEntityInteractionRange()),
+                            mc.player.getBoundingBox().expand(mc.player.getEntityInteractionRange()),
                             ax -> interactVariants.contains(ax.getVariant().toString())
-                                && (axolotlMode.get() == AxolotlMode.Catch
+                                && ((axolotlMode.get() == AxolotlMode.Catch
                                 && (catchBabies.get() ? !onlyCatchBabies.get() || ax.isBaby() : !ax.isBaby()))
                                 || (axolotlMode.get() == AxolotlMode.Breed
-                                && (feedBabies.get() ? !onlyFeedBabies.get() || ax.isBaby() : !ax.isBaby()))
+                                && (feedBabies.get() ? !onlyFeedBabies.get() || ax.isBaby() : !ax.isBaby())))
                         );
                         double d = Double.MAX_VALUE;
                         AxolotlEntity target = null;
@@ -524,7 +528,7 @@ public class AxolotlTools extends Module {
                     case Full -> {
                         List<TropicalFishEntity> nearby = mc.world.getEntitiesByClass(
                             TropicalFishEntity.class,
-                            mc.player.getBoundingBox().expand(mc.player.getEntityInteractionRange() * mc.player.getEntityInteractionRange()),
+                            mc.player.getBoundingBox().expand(mc.player.getEntityInteractionRange()),
                             fishy -> fishy.getBlockPos().isWithinDistance(mc.player.getBlockPos(), 3)
                         );
                         double d = Double.MAX_VALUE;
