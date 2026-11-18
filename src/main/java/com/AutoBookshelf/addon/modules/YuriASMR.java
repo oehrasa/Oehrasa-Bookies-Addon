@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -23,6 +28,13 @@ public class YuriASMR extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgQueries = settings.createGroup("Queries");
     private final SettingGroup sgBinaries = settings.createGroup("Binaries");
+
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
 
     public final Setting<Boolean> asmr = sgQueries.add(new BoolSetting.Builder()
         .name("asmr")
@@ -105,6 +117,7 @@ public class YuriASMR extends Module {
         .build()
     );
 
+
     // Minimum time between skip() calls. Rapid-fire skipping fires a burst
     // of back-to-back yt-dlp requests at YouTube from the same IP, which is
     // exactly the pattern that gets flagged and starts returning
@@ -124,7 +137,7 @@ public class YuriASMR extends Module {
                 return;
             }
 
-            info("yt-dlp/ffmpeg not found, downloading...");
+            if (debug.get()) info("yt-dlp/ffmpeg not found, downloading...");
             YtDlpInstaller.installAsync(
                 this::info,
                 () -> {

@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules.BlockRadiusUtils;
 
 import com.AutoBookshelf.addon.utils.DistanceUtil;
@@ -14,6 +19,9 @@ import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+
+import java.util.HashMap;
+import java.util.Map;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
@@ -52,11 +60,21 @@ public class BlockRadiusShared {
      * An axis-aligned bounding box used for all flat footprints and beacon cubes.
      */
     public static class RangeBox {
+        private static final int[] EMPTY_RECTS = new int[0];
+
         public final double minX, minY, minZ, maxX, maxY, maxZ;
         public int level; // beacon pyramid level; 0 for all other boxes
         public boolean render = true; // culling flag (beacons only)
-        // Cached solid-overlap edge cells for the beacon-range box, rebuilt each scan.
-        public final java.util.List<BlockPos> solidEdgeCells = new java.util.ArrayList<>();
+        // Meteor `Dir` bits for the faces of this box that are interior to a merged beacon union
+        // and must not be drawn. 0 everywhere else, which is Meteor's own "draw all faces".
+        public int excludeDir = 0;
+        // Cached solid-overlap shell for the beacon-range box, rebuilt only when the shell is
+        // recomputed. Exactly one of the two forms is populated, chosen by
+        // `beacon-solid-voxel-style`: one block per collected cell, or merged flat regions
+        // flattened as (x1,y1,z1,x2,y2,z2) groups of six ints. Both are assigned by reference
+        // from the shell cache, so a throttled scan copies nothing.
+        public java.util.List<BlockPos> solidEdgeCells = java.util.List.of();
+        public int[] solidEdgeRects = EMPTY_RECTS;
 
         public RangeBox(double x1, double y1, double z1, double x2, double y2, double z2) {
             this.minX = Math.min(x1, x2);
@@ -78,12 +96,48 @@ public class BlockRadiusShared {
         }
     }
 
+    /**
+     * Small cache for translucent fill variants. Keyed on the RGB+alpha tuple rather than the
+     * SettingColor instance, because SettingColor has identity-based hashCode/equals: a
+     * freshly-allocated base (e.g. from getPulseColor) would otherwise never hit the cache
+     * and the cache would be dead. Editing the base in the GUI changes the tuple, so a stale
+     * entry is unreachable.
+     */
+    private record ColorKey(int r, int g, int b, int alpha) {
+    }
+
+    private final Map<ColorKey, SettingColor> fillCache = new HashMap<>();
+
+    public SettingColor translucent(SettingColor base, int alpha) {
+        ColorKey key = new ColorKey(base.r, base.g, base.b, alpha);
+        SettingColor cached = this.fillCache.get(key);
+        if (cached != null) return cached;
+        SettingColor made = new SettingColor(base.r, base.g, base.b, alpha);
+        if (this.fillCache.size() > 128) {
+            this.fillCache.clear();
+        }
+        this.fillCache.put(key, made);
+        return made;
+    }
+
     public void renderBox(Renderer3D renderer,
                           double x1, double y1, double z1,
                           double x2, double y2, double z2,
                           SettingColor sideColor, SettingColor lineColor) {
-        if (shapeMode.get().lines()) renderer.boxLines(x1, y1, z1, x2, y2, z2, lineColor, 0);
-        if (shapeMode.get().sides()) renderer.boxSides(x1, y1, z1, x2, y2, z2, sideColor, 0);
+        renderBox(renderer, x1, y1, z1, x2, y2, z2, sideColor, lineColor, shapeMode.get());
+    }
+
+    /**
+     * Same draw, with the shape mode passed in. Callers that emit many boxes in one frame resolve
+     * {@code shape-mode} once and use this overload instead of reading the setting per box (the
+     * beacon shell can emit tens of thousands of boxes per frame).
+     */
+    public void renderBox(Renderer3D renderer,
+                          double x1, double y1, double z1,
+                          double x2, double y2, double z2,
+                          SettingColor sideColor, SettingColor lineColor, ShapeMode mode) {
+        if (mode.lines()) renderer.boxLines(x1, y1, z1, x2, y2, z2, lineColor, 0);
+        if (mode.sides()) renderer.boxSides(x1, y1, z1, x2, y2, z2, sideColor, 0);
     }
 
     /**
@@ -99,6 +153,14 @@ public class BlockRadiusShared {
               ? meteordevelopment.meteorclient.renderer.ShapeMode.Sides
               : meteordevelopment.meteorclient.renderer.ShapeMode.Both, 0);
     }
+
+    /**
+     * The batched label collector for this frame; created lazily on the first label of the
+     * frame and drained once at {@link #flushWorldLabels()} instead of once per label line.
+     * Labels submit copies of the pose into the collector, so the caller can pop its matrices
+     * immediately.
+     */
+    private SubmitNodeStorage labelCollector;
 
     public void drawWorldLabel(PoseStack matrices, String text, double x,
                                double y, double z, SettingColor color, float scale, float offsetPx,
@@ -126,8 +188,10 @@ public class BlockRadiusShared {
         int baseAlpha = (argb >>> 24) & 0xFF;
         int bg = (int) (0.25F * baseAlpha) << 24;
 
-        SubmitNodeStorage collector = new SubmitNodeStorage();
-        collector.submitText(
+        if (this.labelCollector == null) {
+            this.labelCollector = new SubmitNodeStorage();
+        }
+        this.labelCollector.submitText(
             matrices,
             -w, 0,
             FormattedCharSequence.forward(text, Style.EMPTY),
@@ -138,9 +202,21 @@ public class BlockRadiusShared {
             bg,
             0 // outlineColor: "off"
         );
-        mc.gameRenderer.featureRenderDispatcher().renderAllFeatures(collector);
-
         matrices.popPose();
+    }
+
+    /**
+     * Draw every label submitted this frame, once, as a single feature pass. Called at the end
+     * of the label producer's render (currently WardenEsp.render); the collector is fresh for
+     * the next frame.
+     */
+    public void flushWorldLabels() {
+        SubmitNodeStorage collector = this.labelCollector;
+        if (collector == null) {
+            return;
+        }
+        this.labelCollector = null;
+        mc.gameRenderer.featureRenderDispatcher().renderAllFeatures(collector);
     }
 
     public static float getDistanceLabelFactor(float distance) {

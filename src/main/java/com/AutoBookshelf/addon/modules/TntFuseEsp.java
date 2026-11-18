@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -14,7 +19,6 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.item.PrimedTnt;
-import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3d;
 
 import java.util.ArrayList;
@@ -146,6 +150,13 @@ public class TntFuseEsp extends Module {
         frameCounter = SCAN_INTERVAL;
     }
 
+    private final Vector3d vectorScratch = new Vector3d();
+    private final java.util.Map<Integer, Color> fuseColorCache = new java.util.HashMap<>();
+    private final java.util.Map<Integer, Color> fuseSideCache = new java.util.HashMap<>();
+    private final java.util.Map<Integer, Color> fuseLineCache = new java.util.HashMap<>();
+    private final java.util.Map<Integer, String> fuseTextCache = new java.util.HashMap<>();
+    private int fuseSideOpacity = -1, fuseLineOpacity = -1;
+
     @EventHandler
     private void onRender3D(Render3DEvent event) {
         if (mc.level == null || mc.player == null) return;
@@ -169,10 +180,8 @@ public class TntFuseEsp extends Module {
                 continue;
             }
 
-            Color color = fuseColor(tntEntity.getFuse());
-
-            Color sideColor = new Color(color.r, color.g, color.b, sideOpacity.get());
-            Color lineColor = new Color(color.r, color.g, color.b, lineOpacity.get());
+            Color sideColor = sideColorFor(tntEntity.getFuse());
+            Color lineColor = lineColorFor(tntEntity.getFuse());
 
             event.renderer.box(tntEntity.getX() - .5, tntEntity.getY(), tntEntity.getZ() - .5, tntEntity.getX() + 0.5,
                 tntEntity.getY() + 1,
@@ -199,17 +208,16 @@ public class TntFuseEsp extends Module {
                 continue;
             }
 
-            Vec3 vec3 = new Vec3(tntEntity.getX(), tntEntity.getY() + 0.5, tntEntity.getZ());
-            Vector3d joml = new Vector3d(vec3.x, vec3.y, vec3.z);
+            vectorScratch.set(tntEntity.getX(), tntEntity.getY() + 0.5, tntEntity.getZ());
 
-            if (!NametagUtils.to2D(joml, textScale.get())) continue;
-            NametagUtils.begin(joml);
+            if (!NametagUtils.to2D(vectorScratch, textScale.get())) continue;
+            NametagUtils.begin(vectorScratch);
 
             // to2D already applied textScale, so the renderer itself draws at scale 1.
             TextRenderer fuseRenderer = TextRenderer.get();
             fuseRenderer.begin(event.graphics, 1, false, true);
 
-            String text = String.format("%.2f", (double) tntEntity.getFuse() / 20);
+            String text = fuseText(tntEntity.getFuse());
             Color color = computeColorFromFuse.get() ? fuseColor(tntEntity.getFuse()) : textColor.get();
 
             // Measured after begin() so the metrics match the transform the glyphs are drawn with.
@@ -223,7 +231,9 @@ public class TntFuseEsp extends Module {
         }
     }
 
-    private static Color fuseColor(int currentFuseTicks) {
+    private Color fuseColor(int currentFuseTicks) {
+        Color cached = fuseColorCache.get(currentFuseTicks);
+        if (cached != null) return cached;
         final int initialFuse = 80;
 
         double percent = (double) currentFuseTicks / initialFuse;
@@ -232,6 +242,48 @@ public class TntFuseEsp extends Module {
         int r = (int) (255 * (1.0 - percent));
         int g = (int) (255 * percent);
 
-        return new Color(r, g, 0);
+        return cacheOrBuild(fuseColorCache, currentFuseTicks, new Color(r, g, 0));
+    }
+
+    private Color sideColorFor(int fuse) {
+        int op = sideOpacity.get();
+        if (op != fuseSideOpacity) {
+            fuseSideOpacity = op;
+            fuseSideCache.clear();
+        }
+        Color cached = fuseSideCache.get(fuse);
+        if (cached != null) return cached;
+
+        Color hue = fuseColor(fuse);
+        return cacheOrBuild(fuseSideCache, fuse, new Color(hue.r, hue.g, hue.b, op));
+    }
+
+    private Color lineColorFor(int fuse) {
+        int op = lineOpacity.get();
+        if (op != fuseLineOpacity) {
+            fuseLineOpacity = op;
+            fuseLineCache.clear();
+        }
+        Color cached = fuseLineCache.get(fuse);
+        if (cached != null) return cached;
+
+        Color hue = fuseColor(fuse);
+        return cacheOrBuild(fuseLineCache, fuse, new Color(hue.r, hue.g, hue.b, op));
+    }
+
+    private String fuseText(int fuse) {
+        String text = fuseTextCache.get(fuse);
+        if (text == null) {
+            text = cacheOrBuild(fuseTextCache, fuse, String.format("%.2f", (double) fuse / 20));
+        }
+        return text;
+    }
+
+    private static <K, V> V cacheOrBuild(java.util.Map<K, V> cache, K key, V value) {
+        if (cache.size() > 512) {
+            cache.clear();
+        }
+        cache.put(key, value);
+        return value;
     }
 }

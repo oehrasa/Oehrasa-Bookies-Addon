@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -250,6 +255,13 @@ public class PzH2000 extends Module {
 
     private final SettingGroup sgBracketing = settings.createGroup("Bracketing");
 
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
+
     private final Setting<Boolean> bracketing = sgBracketing.add(new BoolSetting.Builder()
         .name("bracketing")
         .description("Between shots at the same target, walk the aim further in the direction of the last correction as long as each shot is landing closer than before.")
@@ -294,6 +306,7 @@ public class PzH2000 extends Module {
         .sliderRange(5, 100)
         .build()
     );
+
 
     private boolean wasPathing;
     private Entity target;

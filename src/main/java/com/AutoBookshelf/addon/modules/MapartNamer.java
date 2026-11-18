@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -31,9 +36,16 @@ import java.util.*;
 public class MapartNamer extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
 
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
+
     private final Setting<Integer> mapWidth = sgGeneral.add(new IntSetting.Builder()
         .name("map-width")
-        .description("Number of columns (X) in the map art.")
+        .description("Number of columns (X) in the map art this module names. Independent of MapartSort, which lays the art out and has its own bounds.")
         .defaultValue(4)
         .min(1)
         .sliderRange(1, 20)
@@ -42,7 +54,7 @@ public class MapartNamer extends Module {
 
     private final Setting<Integer> mapHeight = sgGeneral.add(new IntSetting.Builder()
         .name("map-height")
-        .description("Total number of rows (Y) in the map art.")
+        .description("Total number of rows (Y) in the map art this module names. Independent of MapartSort, which lays the art out and has its own bounds.")
         .defaultValue(5)
         .min(1)
         .sliderRange(1, 30)
@@ -58,14 +70,14 @@ public class MapartNamer extends Module {
 
     public final Setting<String> coordinateFormat = sgGeneral.add(new StringSetting.Builder()
         .name("coordinate-format")
-        .description("Format for the X/Y part. Use {x} and {y} as placeholders.")
+        .description("Format for the X/Y part ({x}/{y}). MapartSort reads these coordinates back out of the names, so the two templates have to match.")
         .defaultValue("[{x}, {y}]")
         .build()
     );
 
-    private final Setting<CoordPosition> coordPosition = sgGeneral.add(new EnumSetting.Builder<CoordPosition>()
+    public final Setting<CoordPosition> coordPosition = sgGeneral.add(new EnumSetting.Builder<CoordPosition>()
         .name("coord-position")
-        .description("Whether the coordinates are placed before or after the map name.")
+        .description("Whether the coordinates are placed before or after the map name. MapartSort reads this position back too.")
         .defaultValue(CoordPosition.Suffix)
         .build()
     );
@@ -160,6 +172,7 @@ public class MapartNamer extends Module {
         .build()
     );
 
+
     // invSlot -> index label for the overlay. Rebuilt only when labelInputsStamp() changes, so
     // the common case (standing still, holding maps) costs a cheap 36-slot scan per tick instead
     // of a Component->String flattening per map per tick.
@@ -171,6 +184,14 @@ public class MapartNamer extends Module {
      * linear reference scan ran per map per frame.
      */
     private final IdentityHashMap<ItemStack, String> labelByStack = new IdentityHashMap<>();
+
+    /**
+     * Cached pixel widths per label. The same label measures identically on a given client,
+     * so the overlay hook does this once per label per refresh instead of once per map per
+     * frame. Contents change when the refresh rebuilds, so this is cleared with the label
+     * cache.
+     */
+    private final Map<String, Integer> labelWidths = new HashMap<>();
 
     /**
      * Fingerprint of everything {@link #refreshIndexLabels()} reads.
@@ -215,9 +236,9 @@ public class MapartNamer extends Module {
         // If the anvil screen is already open, skip the "await interact" step
         if (mc.gui.screen() instanceof AnvilScreen) {
             state = State.AwaitScreen;
-            info("Anvil screen already open, waiting for screen detection…");
+            if (debug.get()) info("Anvil screen already open, waiting for screen detection…");
         } else {
-            info("§aEnabled. Right-click an anvil with maps in your inventory.");
+            if (debug.get()) info("§aEnabled. Right-click an anvil with maps in your inventory.");
         }
     }
 
@@ -228,7 +249,7 @@ public class MapartNamer extends Module {
         WButton resetBtn = list.add(theme.button("Reset Progress")).widget();
         resetBtn.action = () -> {
             baseY.set(0);
-            info("Progress reset (base-Y set to 0).");
+            if (debug.get()) info("Progress reset (base-Y set to 0).");
         };
         return list;
     }
@@ -251,7 +272,7 @@ public class MapartNamer extends Module {
     @EventHandler
     private void onReceivePacket(PacketEvent.Receive event) {
         if (state == State.HandleMaps && event.packet instanceof ClientboundContainerClosePacket) {
-            info("Anvil closed. Next batch starts at Y = " + getNextBatchStartY());
+            if (debug.get()) info("Anvil closed. Next batch starts at Y = " + getNextBatchStartY());
             state = State.AwaitInteract;
         }
     }
@@ -336,7 +357,7 @@ public class MapartNamer extends Module {
 
         // Fit the label inside the 16x16 item, shrunk down to a readable floor,
         // then scale by the user's size preference.
-        int textWidth = mc.font.width(label);
+        int textWidth = this.labelWidths.computeIfAbsent(label, s -> mc.font.width(s));
         float scale = Math.min(0.7f, 14f / textWidth) * indexSize.get().floatValue();
 
         var matrices = context.pose();
@@ -358,6 +379,7 @@ public class MapartNamer extends Module {
 
         indexLabels.clear();
         labelByStack.clear();
+        labelWidths.clear();
 
         // Mirror the collectMapsAndStart scan (same invSlot -> row/col mapping and
         // the same name/rename filters) so the overlay matches what the module is
@@ -472,14 +494,14 @@ public class MapartNamer extends Module {
 
             String expectedName = expectedNameFor(slot.x, slot.row);
             if (resumeSequence.get() && slot.currentName.equals(expectedName)) {
-                info("Skipping inv slot " + slot.invSlot + " – already named " + expectedName);
+                if (debug.get()) info("Skipping inv slot " + slot.invSlot + " – already named " + expectedName);
                 continue;
             }
             mapSlots.add(slot);
         }
 
         if (mapSlots.isEmpty()) {
-            info("All maps in this inventory already correctly named.");
+            if (debug.get()) info("All maps in this inventory already correctly named.");
             state = State.AwaitInteract;
             return;
         }
@@ -487,7 +509,7 @@ public class MapartNamer extends Module {
         // Sort top to bottom, left to right
         mapSlots.sort(Comparator.comparingInt((MapSlotInfo s) -> s.row).thenComparingInt(s -> s.col));
 
-        info("Found " + mapSlots.size() + " map(s). Starting rename sequence.");
+        if (debug.get()) info("Found " + mapSlots.size() + " map(s). Starting rename sequence.");
         ticks = renameDelay.get();
         state = State.HandleMaps;
         currentMap = null;
@@ -544,7 +566,7 @@ public class MapartNamer extends Module {
             }
             case STEP_SEND_RENAME -> {
                 if (mc.player.experienceLevel < 1) {
-                    info("Not enough XP.");
+                    if (debug.get()) info("Not enough XP.");
                     currentMap = null;
                     mapStep = -1;
                     state = State.AwaitInteract;
@@ -554,7 +576,8 @@ public class MapartNamer extends Module {
 
                 String coordPart = expectedCoordFor(currentMap.x, currentMap.row);
                 String newName = buildMapName(coordPart);
-                info("Renaming inv slot " + currentMap.invSlot + " (row " + currentMap.row + ", col " + currentMap.col + ") to " + newName);
+                if (debug.get())
+                    info("Renaming inv slot " + currentMap.invSlot + " (row " + currentMap.row + ", col " + currentMap.col + ") to " + newName);
                 mc.getConnection().send(new ServerboundRenameItemPacket(newName));
                 mapStep = STEP_WAIT_RENAME;
                 mapStepTimer = renamePause.get();
@@ -594,11 +617,11 @@ public class MapartNamer extends Module {
                     int nextBaseY = baseY.get() + 4;
                     int off = startIndex.get() == StartIndex.ONE ? 1 : 0;
                     if (nextBaseY + off > mapHeight.get()) {
-                        info("All maps named, mapart are now complete.");
+                        if (debug.get()) info("All maps named, mapart are now complete.");
                         baseY.set(0);
                         toggle();
                     } else {
-                        info("Batch finished. Next Y-offset = " + (nextBaseY + off));
+                        if (debug.get()) info("Batch finished. Next Y-offset = " + (nextBaseY + off));
                         baseY.set(nextBaseY);
                     }
                     if (mc.gui.screen() != null) mc.player.closeContainer();

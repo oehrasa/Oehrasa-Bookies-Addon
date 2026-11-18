@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules.BlockRadiusUtils;
 
 import com.AutoBookshelf.addon.utils.DistanceUtil;
@@ -73,8 +78,8 @@ public class SpongeAbsorptionRenderer {
 
         showSpongeAbsorption = sgSponge.add(new BoolSetting.Builder()
             .name("show-sponge-absorption")
-            .description("Shows the water blocks a dry sponge would absorb if placed at the targeted position.")
-            .defaultValue(false)
+            .description("Shows the water blocks a dry sponge would absorb if placed at the targeted position by player.")
+            .defaultValue(true)
             .build()
         );
 

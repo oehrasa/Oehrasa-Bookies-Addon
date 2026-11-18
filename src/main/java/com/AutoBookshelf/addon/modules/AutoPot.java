@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -130,6 +135,11 @@ public class AutoPot extends Module {
     private boolean drinkStarted;
     private int drinkWaitTicks;
     /**
+     * The usablePotions list last seen, and its holders, built once per change.
+     */
+    private List<MobEffect> lastUsablePotions;
+    private List<Holder<MobEffect>> usablePotionHolders;
+    /**
      * Ticks left in the throw's settle window.
      */
     private int splashTicks;
@@ -178,9 +188,20 @@ public class AutoPot extends Module {
         }
         if (mc.player.isUsingItem()) return;
 
+        // Holders are built once per setting change, not per tick: wrapAsHolder is a
+        // registry operation and this loop runs every tick.
+        List<MobEffect> effects = usablePotions.get();
+        if (!java.util.Objects.equals(effects, lastUsablePotions)) {
+            lastUsablePotions = new ArrayList<>(effects);
+            usablePotionHolders = new ArrayList<>(effects.size());
+            for (MobEffect effect : effects) {
+                usablePotionHolders.add(BuiltInRegistries.MOB_EFFECT.wrapAsHolder(effect));
+            }
+        }
         // Look for missing effects
-        for (MobEffect statusEffect : usablePotions.get()) {
-            Holder<MobEffect> registryEntry = BuiltInRegistries.MOB_EFFECT.wrapAsHolder(statusEffect);
+        for (int i = 0, n = effects.size(); i < n; i++) {
+            MobEffect statusEffect = effects.get(i);
+            Holder<MobEffect> registryEntry = usablePotionHolders.get(i);
             if (!mc.player.hasEffect(registryEntry)) {
                 slot = findPotionSlot(statusEffect);
                 if (slot != -1) {

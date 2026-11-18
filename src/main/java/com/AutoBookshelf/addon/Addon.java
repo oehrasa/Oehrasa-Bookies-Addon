@@ -1,9 +1,18 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon;
 
 import com.AutoBookshelf.addon.commands.*;
 import com.AutoBookshelf.addon.gui.EnemiesTab;
 import com.AutoBookshelf.addon.hud.*;
+import com.AutoBookshelf.addon.modules.AircraftPhase.BoatPhase;
 import com.AutoBookshelf.addon.modules.*;
+import com.AutoBookshelf.addon.modules.LOSAT.BlockBreaker;
+import com.AutoBookshelf.addon.modules.LOSAT.Lance;
+import com.AutoBookshelf.addon.modules.chesttracker.ChestTrackerModule;
 import com.AutoBookshelf.addon.modules.livemessage.LiveMessage;
 import com.AutoBookshelf.addon.utils.EnemyManager;
 import com.AutoBookshelf.addon.utils.JoinPayload;
@@ -17,7 +26,9 @@ import meteordevelopment.meteorclient.systems.hud.Hud;
 import meteordevelopment.meteorclient.systems.hud.HudGroup;
 import meteordevelopment.meteorclient.systems.modules.Category;
 import meteordevelopment.meteorclient.systems.modules.Modules;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.world.item.Items;
 import org.slf4j.Logger;
 
@@ -32,10 +43,23 @@ public class Addon extends MeteorAddon {
     @Override
     public void onInitialize() {
         LOG.info("Honey, dinner's ready, Identified AutoBookshelf Addon.");
+        // The addon compiles against the shared `baritone.api` package, so any provider works.
+        boolean baritoneAvailable = FabricLoader.getInstance().isModLoaded("baritone-meteor")
+            || FabricLoader.getInstance().isModLoaded("baritone");
+        if (!baritoneAvailable) {
+            throw new IllegalStateException(
+                "AutoBookshelf Addon requires a Baritone API provider (baritone-meteor or cabaletta baritone-api), see the README for required/incompatible mods.");
+        }
         com.AutoBookshelf.addon.utils.Checks.init();
 
         PayloadTypeRegistry.serverboundPlay().register(JoinPayload.TYPE, JoinPayload.CODEC);
         Systems.add(new EnemyManager());
+
+        // BlockBreaker is a static event listener (it has @EventHandler on static
+        // methods) used by Lance's self-web clearing; it must be subscribed to
+        // Meteor's event bus to receive TickEvent.Pre/Post.
+        meteordevelopment.meteorclient.MeteorClient.EVENT_BUS.subscribe(
+            BlockBreaker.class);
 
         // Modules
         Modules.get().add(new AutoLogin(CATEGORY));
@@ -55,7 +79,8 @@ public class Addon extends MeteorAddon {
         Modules.get().add(new BlockRadius());
         Modules.get().add(new BLU27BNapalm());
         Modules.get().add(new BookImporter());
-        Modules.get().add(new BetterBoatFly());
+        Modules.get().add(new BoatPhase());
+        Modules.get().add(new com.AutoBookshelf.addon.modules.AttackAircraft.BoatShot());
         Modules.get().add(new BookshelfFiller());
         // C
         Modules.get().add(new ContainerPeek());
@@ -77,12 +102,14 @@ public class Addon extends MeteorAddon {
         // K
         Modules.get().add(new KMDB());
         // L
+        Modules.get().add(new Lance());
         Modules.get().add(new LiveMessage());
         // M
         Modules.get().add(new MobOwner());
         Modules.get().add(new MURADAESA());
         Modules.get().add(new MapartNamer());
         Modules.get().add(new MapGridZone());
+        Modules.get().add(new MapartSort());
         Modules.get().add(new MaterialsRefill());
         Modules.get().add(new MinecartPlacer());
         // P
@@ -131,6 +158,12 @@ public class Addon extends MeteorAddon {
 
         // TABS
         Tabs.add(new EnemiesTab());
+
+        // Save the Chest Tracker bank and wait for the write when the game closes.
+        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+            ChestTrackerModule tracker = Modules.get().get(ChestTrackerModule.class);
+            if (tracker != null) tracker.onClientStopping();
+        });
 
     }
 

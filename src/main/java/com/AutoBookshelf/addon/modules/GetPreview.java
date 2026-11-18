@@ -1,4 +1,8 @@
-//26.2 Mojmap
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -251,8 +255,20 @@ public class GetPreview extends Module {
         }
     }
 
+    /**
+     * Cached module lookup: resolving the peek module per item icon per frame (this hook
+     * runs for every drawn item) is one lookup too many. The module never leaves the
+     * registered set after startup, so caching the reference is safe.
+     */
+    private ContainerPeek containerPeekModule;
+    private boolean containerPeekLookedUp;
+
     private boolean isInsideContainerPeekRender() {
-        var peek = Modules.get().get(ContainerPeek.class);
+        if (!containerPeekLookedUp) {
+            containerPeekModule = Modules.get().get(ContainerPeek.class);
+            containerPeekLookedUp = true;
+        }
+        var peek = containerPeekModule;
         return peek != null && peek.isActive() && peek.isShulkerIconPreviewEnabled()
             && ContainerPeek.IS_RENDERING.get();
     }
@@ -299,6 +315,33 @@ public class GetPreview extends Module {
     }
 
     /**
+     * Cache for shulker fill fractions: the container component is value-based and
+     * replaced on every content change, so the map keys stay valid exactly as long as the
+     * contents do. Bounded to keep a long session clean.
+     */
+    private final Map<ItemContainerContents, Double> fillCache = new HashMap<>();
+
+    private double containerFillFraction(ItemContainerContents container) {
+        Double cached = this.fillCache.get(container);
+        if (cached != null) return cached;
+
+        double maxItems = 27L * 64;
+        double filled = 0;
+        // Templates, not copies: nonEmptyItemCopyStream() would allocate one ItemStack per
+        // contained item per call - once per frame per shulker - to sum a single fraction.
+        for (ItemStackTemplate template : container.nonEmptyItems()) {
+            int maxStack = Math.max(1, template.item().value().getDefaultMaxStackSize());
+            filled += (double) template.count() * 64.0 / maxStack;
+        }
+        double fraction = filled / maxItems;
+        if (this.fillCache.size() > 512) {
+            this.fillCache.clear();
+        }
+        this.fillCache.put(container, fraction);
+        return fraction;
+    }
+
+    /**
      * Draws a fullness bar on a shulker box item using the exact vanilla bundle
      * item-bar geometry: background at (x+2, y+13) to (x+15, y+15) and a 1px
      * fill line at y+14. Color is orange when mostly empty, yellow when near
@@ -308,13 +351,9 @@ public class GetPreview extends Module {
         ItemContainerContents container = stack.get(DataComponents.CONTAINER);
         if (container == null) return;
 
-        double maxItems = 27L * 64;
-        double filled = 0;
-        for (ItemStack s : container.nonEmptyItemCopyStream().toList()) {
-            filled += (double) s.getCount() * 64.0 / Math.max(1, s.getItem().getDefaultMaxStackSize());
-        }
-        if (!showEmptyBar.get() && filled <= 0) return;
-        float capacity = (float) Math.min(1.0, filled / maxItems);
+        double fraction = containerFillFraction(container);
+        if (!showEmptyBar.get() && fraction <= 0) return;
+        float capacity = (float) Math.min(1.0, fraction);
 
         int barWidth = 13;
         int barX = x + 2;

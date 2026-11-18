@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -50,6 +55,13 @@ public class SculkRange extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRender = settings.createGroup("Render");
     private final SettingGroup sgExperimental = settings.createGroup("Experimental");
+
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
 
     private static final double CALIBRATED_RANGE = 16.0;
     private static final double NORMAL_RANGE = 8.0;
@@ -240,6 +252,7 @@ public class SculkRange extends Module {
         .defaultValue(new SettingColor(255, 220, 100, 255))
         .visible(showActivationPower::get)
         .build());
+
 
     private static final String[] VIBRATION_LABELS = {
         "?",
@@ -436,10 +449,10 @@ public class SculkRange extends Module {
         if (down && !selectKeyWasDown && mc.hitResult instanceof BlockHitResult hit) {
             BlockPos pos = hit.getBlockPos();
             if (typeOf(mc.level.getBlockState(pos).getBlock()) != null) {
-                if (manualSensors.remove(pos)) info("Removed sensor at " + pos.toShortString());
+                if (debug.get() && (manualSensors.remove(pos))) info("Removed sensor at " + pos.toShortString());
                 else {
                     manualSensors.add(pos.immutable());
-                    info("Added sensor at " + pos.toShortString());
+                    if (debug.get()) info("Added sensor at " + pos.toShortString());
                 }
             }
         }

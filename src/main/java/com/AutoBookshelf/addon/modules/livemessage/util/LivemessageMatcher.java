@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules.livemessage.util;
 
 import com.AutoBookshelf.addon.modules.livemessage.LiveMessage;
@@ -199,12 +204,12 @@ public final class LivemessageMatcher {
     }
 
     private static boolean isUnverifiedSender(Match match) {
-        // Both sender checks belong to verify-sender-in-tab (its description covers
-        // the username check and the tab-list check together). With it off the user
-        // has opted out of sender verification, so a legitimate DM from a server
-        // that allows nonstandard names must not be dropped as a spoof.
-        if (LiveMessage.INSTANCE == null || !LiveMessage.INSTANCE.verifySenderInTab.get()) {
-            return false;
+        // Sender verification is a hard gate: a chat line is only treated as an
+        // incoming DM when the sender is a valid username that is actually in the
+        // tab list. This blocks spoofed 'From <player>:' lines in public chat from
+        // creating phantom DM windows, toasts, files or reply targets.
+        if (LiveMessage.INSTANCE == null) {
+            return true;
         }
         if (!LivemessageUtil.isSafeUsername(match.username())) {
             return true;

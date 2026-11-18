@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -214,6 +219,11 @@ public class UnwaxAura extends Module {
     private static final int ESP_SCAN_INTERVAL = 20; // frames between ESP rescans
     private final List<BlockPos> espBlocks = new ArrayList<>();
     private final List<CopperGolem> espGolems = new ArrayList<>();
+    /**
+     * The ESP draw sets, reused every frame so the render path allocates nothing.
+     */
+    private final Set<BlockPos> espFrameBlocks = new HashSet<>();
+    private final Set<CopperGolem> espFrameGolems = new HashSet<>();
     private int scanTimer = 0;
     private int espFrameCounter = ESP_SCAN_INTERVAL;
 
@@ -589,7 +599,10 @@ public class UnwaxAura extends Module {
         }
 
         int rangeSq = espRange.get() * espRange.get();
-        Set<BlockPos> blocks = new HashSet<>();
+        // The sets are reused: this runs every frame, and a fresh set per frame is pure
+        // garbage for the GC to collect.
+        Set<BlockPos> blocks = espFrameBlocks;
+        blocks.clear();
         if (currentTarget != null) {
             blocks.add(currentTarget);
         } else if (stage == Stage.SCAN) {
@@ -610,12 +623,15 @@ public class UnwaxAura extends Module {
                 );
             }
         }
-        Set<CopperGolem> golems = new HashSet<>();
+        Set<CopperGolem> golems = espFrameGolems;
+        golems.clear();
         if (currentEntityTarget instanceof CopperGolem current) {
             golems.add(current);
         } else if (stage == Stage.SCAN) {
-            for (Entity entity : mc.level.entitiesForRendering()) {
-                if (entity instanceof CopperGolem golem && isValidGolemTarget(golem)) {
+            // The espGolems cache is repopulated by refreshEsp() on the frame interval; the
+            // re-validation here is just the cheap predicate to keep the drawn set honest.
+            for (CopperGolem golem : espGolems) {
+                if (isValidGolemTarget(golem)) {
                     golems.add(golem);
                 }
             }

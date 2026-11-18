@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules.livemessage.gui;
 
 import com.AutoBookshelf.addon.modules.livemessage.LiveMessage;
@@ -89,7 +94,7 @@ public class ManeWindow extends LiveWindow {
         searchField = new EditBox(this.mc.font, 9, this.h - 16, this.w - 18, 12, Component.literal(""));
         searchField.setMaxLength(16);
         searchField.setBordered(false);
-        searchField.setFocused(true);
+        searchField.setFocused(LiveMessage.INSTANCE.autoFocus.get());
         searchField.setValue("");
         searchField.setTextColor(-1);
         searchField.setTextColorUneditable(-8355712);
@@ -163,6 +168,7 @@ public class ManeWindow extends LiveWindow {
     public void initButtons() {
         this.liveButtons.add(new LiveWindow.LiveButton(0, 14, titlebarHeight + 3 + 13, 11, 11, true, 2, "Custom color", () -> this.toggleMainWindowColor()));
         this.liveButtons.add(new LiveWindow.LiveButton(1, 14, titlebarHeight + 3 + 26, 11, 11, true, NOTE_ICON, "Open Notes", () -> this.openNotesWindow()));
+        this.updateButtonStates();
     }
 
     private void openNotesWindow() {
@@ -241,6 +247,34 @@ public class ManeWindow extends LiveWindow {
         return true;
     }
 
+    // Match for an Enter press: an exact (case-insensitive) hit is the "final" tab-completed name;
+    // otherwise accept it only when the prefix resolves to exactly one buddy, and never guess.
+    private boolean openFirstSearchMatch() {
+        String partial = searchField.getValue().trim();
+        if (partial.isEmpty()) return false;
+
+        ManeWindow.BuddyListEntry exact = null;
+        ManeWindow.BuddyListEntry prefix = null;
+        int prefixMatches = 0;
+        for (ManeWindow.BuddyListEntry entry : buddyListEntries) {
+            if (entry.uuid == null) continue;
+            if (entry.username.equalsIgnoreCase(partial)) {
+                exact = entry;
+                break;
+            }
+            if (entry.username.regionMatches(true, 0, partial, 0, partial.length())) {
+                prefixMatches++;
+                if (prefix == null) prefix = entry;
+            }
+        }
+        ManeWindow.BuddyListEntry chosen = exact != null ? exact
+            : prefixMatches == 1 ? prefix : null;
+        if (chosen == null) return false;
+
+        LivemessageGui.openChatWindow(chosen.uuid);
+        return true;
+    }
+
     @Override
     public void keyTyped(char typedChar, int keyCode) {
         int maxVisibleLines = (this.h - (this.buddyListY + 13 + 15)) / 12;
@@ -249,6 +283,9 @@ public class ManeWindow extends LiveWindow {
             listScrollPosition = Math.max(0, listScrollPosition - 10);
         } else if (keyCode == 267) {
             listScrollPosition = Math.min(maxScroll, listScrollPosition + 10);
+        } else if (keyCode == 257 || keyCode == 335) { // Enter / numpad Enter
+            if (this.openFirstSearchMatch()) return; // opened the chat window for the matched buddy
+            // exact or unique-prefix match not possible: nothing, like an empty Tab completion
         } else if (keyCode == 258) { // Tab
             boolean ctrl = GLFW.glfwGetKey(this.mc.getWindow().handle(), GLFW.GLFW_KEY_LEFT_CONTROL) == 1
                 || GLFW.glfwGetKey(this.mc.getWindow().handle(), GLFW.GLFW_KEY_RIGHT_CONTROL) == 1;
@@ -383,6 +420,7 @@ public class ManeWindow extends LiveWindow {
             return;
         }
         lastSourceRebuild = now;
+        sealDirty = true;
 
         Friends friends = Friends.get();
         EnemyManager enemyManager = EnemyManager.get();
@@ -480,8 +518,32 @@ public class ManeWindow extends LiveWindow {
         cachedOfflineList = offlineList;
     }
 
+    // Sealed snapshots of the cached lists and the search text, plus a dirtiness flag set by
+    // rebuildBuddyListSource(). When nothing changed, generateBuddylist() keeps last frame's
+    // rows instead of allocating fresh BuddyListEntry objects for every visible buddy.
+    private static List<BuddyListEntry> sealRecent, sealNearby, sealFriends, sealNeutrals, sealEnemies, sealOffline;
+    private static String sealSearch = "";
+    private static boolean sealDirty = true;
+
     public static void generateBuddylist() {
         rebuildBuddyListSource();
+
+        String search = ManeWindow.searchField != null ? ManeWindow.searchField.getValue() : "";
+        if (!sealDirty
+            && sealRecent == cachedRecentList && sealNearby == cachedNearbyList
+            && sealFriends == cachedFriendsList && sealNeutrals == cachedNeutralsList
+            && sealEnemies == cachedEnemiesList && sealOffline == cachedOfflineList
+            && search.equals(sealSearch)) {
+            return;
+        }
+        sealDirty = false;
+        sealRecent = cachedRecentList;
+        sealNearby = cachedNearbyList;
+        sealFriends = cachedFriendsList;
+        sealNeutrals = cachedNeutralsList;
+        sealEnemies = cachedEnemiesList;
+        sealOffline = cachedOfflineList;
+        sealSearch = search;
 
         buddyListEntries.clear();
         addFilteredSection("Recent", cachedRecentList);

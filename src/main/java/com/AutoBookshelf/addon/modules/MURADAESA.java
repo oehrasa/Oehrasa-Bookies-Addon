@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -9,6 +14,7 @@ import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
@@ -19,6 +25,8 @@ import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.phys.AABB;
@@ -86,6 +94,13 @@ public class MURADAESA extends Module {
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRender = settings.createGroup("Render");
+
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
 
     private final Setting<Boolean> showBoxes = sgRender.add(new BoolSetting.Builder()
         .name("show-boxes")
@@ -174,6 +189,7 @@ public class MURADAESA extends Module {
         .defaultValue(new SettingColor(255, 200, 80))
         .build()
     );
+
 
     private final Map<Long, AESAPing> pings = new ConcurrentHashMap<>();
     private final Map<Long, CachedState> knownStates = new ConcurrentHashMap<>();
@@ -303,123 +319,116 @@ public class MURADAESA extends Module {
         boolean newAir = newState.isAir();
         boolean oldFluid = !oldState.getFluidState().isEmpty();
         boolean newFluid = !newState.getFluidState().isEmpty();
-        String oldId = getBlockId(oldState);
-        String newId = getBlockId(newState);
-        if (isLikelyNaturalTransition(oldId, newId))
+        if (isLikelyNaturalTransition(oldState.getBlock(), newState.getBlock()))
             return DetectionResult.NONE;
 
         if (isFluidOrFireState(oldState) || isFluidOrFireState(newState))
             return DetectionResult.NONE;
 
         if (oldAir && !newAir && !newFluid)
-            return new DetectionResult(PLACE_BREAK_SCORE, "PLACE", oldId, newId);
+            return new DetectionResult(PLACE_BREAK_SCORE, "PLACE", getBlockId(oldState), getBlockId(newState));
 
         if (!oldAir && !oldFluid && newAir)
-            return new DetectionResult(PLACE_BREAK_SCORE, "BREAK", oldId, newId);
+            return new DetectionResult(PLACE_BREAK_SCORE, "BREAK", getBlockId(oldState), getBlockId(newState));
 
         if (!detectRedstoneInteraction.get())
             return DetectionResult.NONE;
 
         if (oldState.getBlock() == newState.getBlock()) {
             if (hasInteractiveFlip(oldState, newState))
-                return new DetectionResult(REDSTONE_SCORE, "REDSTONE", oldId, newId);
+                return new DetectionResult(REDSTONE_SCORE, "REDSTONE", getBlockId(oldState), getBlockId(newState));
             return DetectionResult.NONE;
         }
 
         return DetectionResult.NONE;
     }
 
-    private boolean isLikelyNaturalTransition(String oldId, String newId) {
-        return isLikelyNaturalBlock(oldId) || isLikelyNaturalBlock(newId);
+    private boolean isLikelyNaturalTransition(Block oldBlock, Block newBlock) {
+        return isLikelyNaturalBlock(oldBlock) || isLikelyNaturalBlock(newBlock);
     }
 
     /**
-     * Block ids that change on their own from weather, growth, decay or physics,
-     * and so are NOT evidence of a player. This is an exact-id allowlist, never a
-     * substring test.
+     * Blocks that change on their own from weather, growth, decay or physics, and so are NOT
+     * evidence of a player. This is an identity allowlist, never a substring test.
      *
-     * <p><b>Why exact:</b> the previous {@code blockId.contains(...)} version silently
-     * hid real player builds. {@code contains("sand")} matched {@code minecraft:sandstone},
-     * {@code red_sandstone}, {@code soul_sand}, {@code cut_sandstone} and every slab/stair/
-     * wall variant; {@code contains("moss")} matched {@code mossy_cobblestone} and
-     * {@code mossy_stone_bricks}; {@code contains("snow")} matched {@code snow_block}.
-     * Conversely {@code contains("crop")} matched only {@code torchflower_crop} /
-     * {@code pitcher_crop} and missed the actual crops ({@code wheat}, {@code carrots},
-     * {@code potatoes}, {@code beetroots}) entirely.
+     * <p><b>Why identity:</b> the previous {@code blockId.contains(...)} version silently hid real
+     * player builds. The exact-id string set had to run a registry lookup per block update to get
+     * the id for the membership test; identity comparison against compile-time Block fields is
+     * that same exact-id allowlist, allocation-free, and self-verifying at build time if a field
+     * is ever renamed by a mapping change. The set stays exact: every member below is a block
+     * that vanilla creates from air without a player.
      *
-     * <p>Every id below was verified to exist as a {@code Blocks} field on 26.2.
-     * Note {@code snow} here is the *weather snow layer*
+     * <p>Every block below exists as a {@code Blocks} field on this branch (verified by javap and
+     * by the project's build). Note {@code snow} here is the *weather snow layer*
      * ({@code SnowLayerBlock}, built up by snowfall) and is deliberately natural;
      * {@code snow_block} is the player-placed full block and is deliberately NOT listed.
      */
-    private static final Set<String> NATURAL_BLOCK_IDS = Set.of(
+    private static final Set<Block> NATURAL_BLOCKS = Set.of(
         // Snowfall accumulation + ice. snow = the layer snowfall builds, NOT snow_block.
-        // packed_ice / blue_ice are deliberately NOT listed: neither melts nor forms at runtime
-        // (worldgen only), so any update to either is player-caused. Listing them would filter out
-        // real player activity (a false negative), which is the opposite of what this set is for.
-        "minecraft:snow", "minecraft:ice", "minecraft:frosted_ice", "minecraft:powder_snow",
+        Blocks.SNOW, Blocks.ICE, Blocks.FROSTED_ICE, Blocks.POWDER_SNOW,
         // Moss / lichen spread
-        "minecraft:moss_block", "minecraft:moss_carpet",
-        "minecraft:pale_moss_block", "minecraft:pale_moss_carpet",
-        "minecraft:pale_hanging_moss", "minecraft:glow_lichen",
+        Blocks.MOSS_BLOCK, Blocks.MOSS_CARPET,
+        Blocks.PALE_MOSS_BLOCK, Blocks.PALE_MOSS_CARPET,
+        Blocks.PALE_HANGING_MOSS, Blocks.GLOW_LICHEN,
         // Vines and cave growth
-        "minecraft:vine", "minecraft:cave_vines",
+        Blocks.VINE, Blocks.CAVE_VINES,
         // Grass / ferns / dead bushes (spreading + decay)
-        "minecraft:short_grass", "minecraft:tall_grass",
-        "minecraft:fern", "minecraft:large_fern", "minecraft:dead_bush",
+        Blocks.SHORT_GRASS, Blocks.TALL_GRASS,
+        Blocks.FERN, Blocks.LARGE_FERN, Blocks.DEAD_BUSH,
         // Leaf decay and growth
-        "minecraft:oak_leaves", "minecraft:spruce_leaves", "minecraft:birch_leaves",
-        "minecraft:jungle_leaves", "minecraft:acacia_leaves", "minecraft:dark_oak_leaves",
-        "minecraft:mangrove_leaves", "minecraft:cherry_leaves", "minecraft:pale_oak_leaves",
-        "minecraft:azalea_leaves", "minecraft:flowering_azalea_leaves",
-        "minecraft:azalea", "minecraft:flowering_azalea", "minecraft:mangrove_roots",
+        Blocks.OAK_LEAVES, Blocks.SPRUCE_LEAVES, Blocks.BIRCH_LEAVES,
+        Blocks.JUNGLE_LEAVES, Blocks.ACACIA_LEAVES, Blocks.DARK_OAK_LEAVES,
+        Blocks.MANGROVE_LEAVES, Blocks.CHERRY_LEAVES, Blocks.PALE_OAK_LEAVES,
+        Blocks.AZALEA_LEAVES, Blocks.FLOWERING_AZALEA_LEAVES,
+        Blocks.AZALEA, Blocks.FLOWERING_AZALEA, Blocks.MANGROVE_ROOTS,
         // Physics: falling / drifting blocks
-        "minecraft:sand", "minecraft:red_sand", "minecraft:gravel",
-        "minecraft:suspicious_sand",
+        Blocks.SAND, Blocks.RED_SAND, Blocks.GRAVEL,
+        Blocks.SUSPICIOUS_SAND,
         // Concrete powder hardens on its own schedule. There is NO bare
-        // "minecraft:concrete_powder" id -> Blocks.CONCRETE_POWDER is a ColorCollection<Block>
-        // of the 16 dyed variants, so all 16 must be listed by name.
-        "minecraft:white_concrete_powder", "minecraft:orange_concrete_powder",
-        "minecraft:magenta_concrete_powder", "minecraft:light_blue_concrete_powder",
-        "minecraft:yellow_concrete_powder", "minecraft:lime_concrete_powder",
-        "minecraft:pink_concrete_powder", "minecraft:gray_concrete_powder",
-        "minecraft:light_gray_concrete_powder", "minecraft:cyan_concrete_powder",
-        "minecraft:purple_concrete_powder", "minecraft:blue_concrete_powder",
-        "minecraft:brown_concrete_powder", "minecraft:green_concrete_powder",
-        "minecraft:red_concrete_powder", "minecraft:black_concrete_powder",
+        // Blocks.CONCRETE_POWDER constant -> it is a ColorCollection<Block> record of the 16
+        // dyed variants, so all 16 accessor calls are listed individually.
+        Blocks.CONCRETE_POWDER.white(), Blocks.CONCRETE_POWDER.orange(),
+        Blocks.CONCRETE_POWDER.magenta(), Blocks.CONCRETE_POWDER.lightBlue(),
+        Blocks.CONCRETE_POWDER.yellow(), Blocks.CONCRETE_POWDER.lime(),
+        Blocks.CONCRETE_POWDER.pink(), Blocks.CONCRETE_POWDER.gray(),
+        Blocks.CONCRETE_POWDER.lightGray(), Blocks.CONCRETE_POWDER.cyan(),
+        Blocks.CONCRETE_POWDER.purple(), Blocks.CONCRETE_POWDER.blue(),
+        Blocks.CONCRETE_POWDER.brown(), Blocks.CONCRETE_POWDER.green(),
+        Blocks.CONCRETE_POWDER.red(), Blocks.CONCRETE_POWDER.black(),
         // Crops (the four the substring version used to miss) + nether growth
-        "minecraft:wheat", "minecraft:carrots", "minecraft:potatoes",
-        "minecraft:beetroots", "minecraft:torchflower_crop", "minecraft:pitcher_crop",
-        "minecraft:nether_wart", "minecraft:nether_sprouts", "minecraft:cocoa",
-        "minecraft:sweet_berry_bush",
+        Blocks.WHEAT, Blocks.CARROTS, Blocks.POTATOES,
+        Blocks.BEETROOTS, Blocks.TORCHFLOWER_CROP, Blocks.PITCHER_CROP,
+        Blocks.NETHER_WART, Blocks.NETHER_SPROUTS, Blocks.COCOA,
+        Blocks.SWEET_BERRY_BUSH,
         // Sugar cane / cactus / bamboo spread
-        "minecraft:sugar_cane", "minecraft:cactus", "minecraft:bamboo",
-        "minecraft:bamboo_sapling",
+        Blocks.SUGAR_CANE, Blocks.CACTUS, Blocks.BAMBOO,
+        Blocks.BAMBOO_SAPLING,
         // Stem fruit dropped into an adjacent air cell by a melon/pumpkin stem. An unattended
         // melon or pumpkin farm past 128 blocks otherwise fires a marker + chat alert per fruit.
-        "minecraft:melon", "minecraft:pumpkin",
+        Blocks.MELON, Blocks.PUMPKIN,
         // Cave and nether vine growth (the plant blocks spawn as well as the hanging forms)
-        "minecraft:cave_vines_plant", "minecraft:weeping_vines",
-        "minecraft:weeping_vines_plant", "minecraft:twisting_vines",
-        "minecraft:twisting_vines_plant",
+        Blocks.CAVE_VINES_PLANT, Blocks.WEEPING_VINES,
+        Blocks.WEEPING_VINES_PLANT, Blocks.TWISTING_VINES,
+        Blocks.TWISTING_VINES_PLANT,
         // Underwater growth + pointed dripstone. Only the *pointed* dripstone grows; a
-        // dripstone_block is never created at runtime (javap: PointedDripstoneBlock references only
-        // Blocks.MUD/Blocks.CLAY, and DRIPSTONE_BLOCK is placed solely by LargeDripstoneFeature
-        // worldgen), so it is not listed - a player-placed one must register as activity.
-        "minecraft:seagrass", "minecraft:tall_seagrass",
-        "minecraft:kelp", "minecraft:hanging_roots",
-        "minecraft:pointed_dripstone",
-        "minecraft:big_dripleaf", "minecraft:small_dripleaf",
-        "minecraft:big_dripleaf_stem", "minecraft:leaf_litter",
+        // dripstone_block is never created at runtime (javap: PointedDripstoneBlock references
+        // only Blocks.MUD/Blocks.CLAY, and DRIPSTONE_BLOCK is placed solely by
+        // LargeDripstoneFeature worldgen), so it is not listed - a player-placed one must
+        // register as activity.
+        Blocks.SEAGRASS, Blocks.TALL_SEAGRASS,
+        Blocks.KELP, Blocks.HANGING_ROOTS,
+        Blocks.POINTED_DRIPSTONE,
+        Blocks.BIG_DRIPLEAF, Blocks.SMALL_DRIPLEAF,
+        Blocks.BIG_DRIPLEAF_STEM, Blocks.LEAF_LITTER,
         // Mushroom / crystal / sculk / chorus growth
-        "minecraft:brown_mushroom", "minecraft:red_mushroom",
-        "minecraft:brown_mushroom_block", "minecraft:red_mushroom_block",
-        "minecraft:amethyst_cluster", "minecraft:sculk", "minecraft:sculk_vein",
-        "minecraft:chorus_plant", "minecraft:chorus_flower"
+        Blocks.BROWN_MUSHROOM, Blocks.RED_MUSHROOM,
+        Blocks.BROWN_MUSHROOM_BLOCK, Blocks.RED_MUSHROOM_BLOCK,
+        Blocks.AMETHYST_CLUSTER, Blocks.SCULK, Blocks.SCULK_VEIN,
+        Blocks.CHORUS_PLANT, Blocks.CHORUS_FLOWER
     );
 
-    private boolean isLikelyNaturalBlock(String blockId) {
-        return blockId != null && NATURAL_BLOCK_IDS.contains(blockId);
+    private boolean isLikelyNaturalBlock(Block block) {
+        return NATURAL_BLOCKS.contains(block);
     }
 
     private boolean hasInteractiveFlip(BlockState oldState, BlockState newState) {
@@ -448,13 +457,6 @@ public class MURADAESA extends Module {
         return BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
     }
 
-    private boolean isFireId(String blockId) {
-        if (blockId == null)
-            return false;
-
-        return "minecraft:fire".equals(blockId) || "minecraft:soul_fire".equals(blockId);
-    }
-
     private boolean isFluidOrFireState(BlockState state) {
         if (state == null)
             return true;
@@ -462,7 +464,8 @@ public class MURADAESA extends Module {
         if (!state.getFluidState().isEmpty())
             return true;
 
-        return isFireId(getBlockId(state));
+        Block block = state.getBlock();
+        return block == Blocks.FIRE || block == Blocks.SOUL_FIRE;
     }
 
     private boolean isChunkLoaded(BlockPos pos) {
@@ -490,14 +493,13 @@ public class MURADAESA extends Module {
     }
 
     private boolean isWithinBurst(BlockPos pos, long now) {
-        Vec3 center = Vec3.atCenterOf(pos);
         int nearbyRecent = 0;
 
         for (RecentEvent event : recentEvents) {
             if (now - event.timeMs > BURST_WINDOW_MS)
                 continue;
 
-            if (DistanceUtil.distanceSq(Vec3.atCenterOf(event.pos), center) <= BURST_RADIUS_SQ)
+            if (pos.distSqr(event.pos) <= BURST_RADIUS_SQ)
                 nearbyRecent++;
 
             if (nearbyRecent >= BURST_THRESHOLD)
@@ -531,7 +533,7 @@ public class MURADAESA extends Module {
             String rangeSuffix = onlyBeyondPlayerEspRange.get()
                 ? String.format(" (%db away, outside %.0fb).", distanceBlocks, PLAYER_ESP_LIMIT_BLOCKS)
                 : String.format(" (%db away).", distanceBlocks);
-            info(String.format(
+            if (debug.get()) info(String.format(
                 "%s %s -> %s at %d, %d, %d%s (%d hit%s, %.1f score)", ping.lastKind,
                 ping.lastOldId, ping.lastNewId, ping.pos.getX(),
                 ping.pos.getY(), ping.pos.getZ(), rangeSuffix,
@@ -630,9 +632,8 @@ public class MURADAESA extends Module {
             }
 
             if (showTracers.get()) {
-                Vec3 eyes = mc.player.getEyePosition(event.tickDelta);
                 Vec3 center = box.getCenter();
-                event.renderer.line(eyes.x, eyes.y, eyes.z,
+                event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z,
                     center.x, center.y, center.z, color);
             }
         }

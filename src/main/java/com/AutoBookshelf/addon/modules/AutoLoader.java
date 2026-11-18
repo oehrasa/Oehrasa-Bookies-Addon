@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -65,8 +70,7 @@ public class AutoLoader extends Module {
      * MaterialsRefill through {@link ShulkerRestockEngine.DropCollector}; AutoLoader drives it from
      * its own {@link Stage#COLLECT} stage rather than the engine's state machine.
      */
-    private final ShulkerRestockEngine.DropCollector dropCollector =
-        new ShulkerRestockEngine.DropCollector(mc, message -> info(message));
+    private final ShulkerRestockEngine.DropCollector dropCollector;
 
     // Mutable state
     private Stage stage = Stage.IDLE;
@@ -142,6 +146,13 @@ public class AutoLoader extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgPlacement = settings.createGroup("Placement");
     private final SettingGroup sgRetries = settings.createGroup("Retries");
+
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
 
     private final Setting<Boolean> instantShulker = sgGeneral.add(new BoolSetting.Builder()
         .name("instant-shulker")
@@ -287,6 +298,13 @@ public class AutoLoader extends Module {
         .build()
     );
 
+    private final Setting<Boolean> placeAboveHead = sgPlacement.add(new BoolSetting.Builder()
+        .name("place-above-head")
+        .description("Place the container directly above your head (requires ghost placement). Drops land on you when broken. Falls back to normal placement if occupied.")
+        .defaultValue(false)
+        .build()
+    );
+
     private final Setting<Integer> maxOpenAttempts = sgRetries.add(new IntSetting.Builder()
         .name("max-open-attempts")
         .description("How many ticks to retry waiting for the container to appear/open before giving up or trying a new spot.")
@@ -316,9 +334,13 @@ public class AutoLoader extends Module {
         .build()
     );
 
+
     public AutoLoader() {
         super(Addon.CATEGORY, "Auto-Loader",
             "Right-click shulker boxes, ender chests, or bundles in your inventory to instantly use them.");
+        dropCollector = new ShulkerRestockEngine.DropCollector(mc, message -> {
+            if (debug.get()) info(message);
+        });
     }
 
     @Override
@@ -437,7 +459,7 @@ public class AutoLoader extends Module {
             if (!isExpectedItem(mc.player.getInventory().getItem(containerInvSlot))) {
                 containerInvSlot = searchInventory();
                 if (containerInvSlot < 0) {
-                    info("Lost track of container item after inventory re-sync.");
+                    if (debug.get()) info("Lost track of container item after inventory re-sync.");
                     stage = Stage.IDLE;
                     resetState();
                     return;
@@ -446,7 +468,7 @@ public class AutoLoader extends Module {
 
             int targetSlot = resolveHotbarSlot();
             if (targetSlot == -1) {
-                info("No available hotbar slot (all slots are protected). Skipping container.");
+                if (debug.get()) info("No available hotbar slot (all slots are protected). Skipping container.");
                 stage = Stage.IDLE;
                 resetState();
                 return;
@@ -496,7 +518,7 @@ public class AutoLoader extends Module {
 
         ItemStack handStack = mc.player.getInventory().getItem(containerHotbarSlot);
         if (!isExpectedItem(handStack)) {
-            info("Container item missing from hotbar slot, aborting placement.");
+            if (debug.get()) info("Container item missing from hotbar slot, aborting placement.");
             stage = Stage.IDLE;
             resetState();
             return;
@@ -506,10 +528,13 @@ public class AutoLoader extends Module {
         mc.getConnection().send(new ServerboundSetCarriedItemPacket(containerHotbarSlot));
 
         boolean needsSecondSpot = isEnderChest && doubleEChest.get();
-        BlockPos placePos = placementEngine.findPlacement(
-            placeRange.get(), airPlace.get(), preferSolidBlock.get(), failedPositions, needsSecondSpot);
+        BlockPos placePos = placeAboveHead.get() ? aboveHeadCell() : null;
         if (placePos == null) {
-            info("No valid placement position found within range.");
+            placePos = placementEngine.findPlacement(
+                placeRange.get(), airPlace.get(), preferSolidBlock.get(), failedPositions, needsSecondSpot);
+        }
+        if (placePos == null) {
+            if (debug.get()) info("No valid placement position found within range.");
             stage = Stage.IDLE;
             resetState();
             delayTicks = 20;
@@ -518,7 +543,7 @@ public class AutoLoader extends Module {
 
         firstPos = placePos;
 
-        Vec3 hitVec = airPlace.get()
+        Vec3 hitVec = useAirPlace(placePos)
             ? Vec3.atCenterOf(placePos)
             : new Vec3(placePos.getX() + 0.5, placePos.getY(), placePos.getZ() + 0.5);
 
@@ -581,7 +606,7 @@ public class AutoLoader extends Module {
 
         ItemStack handStack = mc.player.getInventory().getItem(containerHotbarSlot);
         if (handStack.isEmpty() || handStack.getItem() != Items.ENDER_CHEST) {
-            info("Second ender chest item is gone, opening first only.");
+            if (debug.get()) info("Second ender chest item is gone, opening first only.");
             placedPos = firstPos;
             stage = Stage.OPEN;
             delayTicks = 2;
@@ -589,7 +614,7 @@ public class AutoLoader extends Module {
         }
 
         if (!placementEngine.isValidSecondPos(firstPos, placePos, leftDir)) {
-            info("Can't place the second ender chest, opening first only.");
+            if (debug.get()) info("Can't place the second ender chest, opening first only.");
             placedPos = firstPos;
             stage = Stage.OPEN;
             delayTicks = 2;
@@ -597,7 +622,7 @@ public class AutoLoader extends Module {
         }
 
         if (++secondPlaceAttempts > maxSecondPlaceAttempts.get()) {
-            info("Failed to place the second ender chest after " + maxSecondPlaceAttempts.get() + " attempts, opening first only.");
+            if (debug.get()) info("Failed to place the second ender chest after " + maxSecondPlaceAttempts.get() + " attempts, opening first only.");
             placedPos = firstPos;
             stage = Stage.OPEN;
             delayTicks = 2;
@@ -620,7 +645,7 @@ public class AutoLoader extends Module {
     private void doPrepareSecondEchest() {
         int secondSlot = searchInventory();
         if (secondSlot < 0) {
-            info("Only one ender chest in inventory.. opening first chest only.");
+            if (debug.get()) info("Only one ender chest in inventory.. opening first chest only.");
             stage = Stage.OPEN;
             return;
         }
@@ -628,7 +653,7 @@ public class AutoLoader extends Module {
         if (containerInvSlot >= 9) {
             int tgt = resolveHotbarSlot();
             if (tgt == -1) {
-                info("No free hotbar slot for the second ender chest.. opening first only.");
+                if (debug.get()) info("No free hotbar slot for the second ender chest.. opening first only.");
                 stage = Stage.OPEN;
                 return;
             }
@@ -681,16 +706,16 @@ public class AutoLoader extends Module {
                 BlockPos retry = placementEngine.findPlacement(
                     placeRange.get(), airPlace.get(), preferSolidBlock.get(), failedPositions, needsSecondSpot);
                 if (retry == null) {
-                    info("Timed out waiting for the container GUI to open, and no other placement spot found.");
+                    if (debug.get()) info("Timed out waiting for the container GUI to open, and no other placement spot found.");
                     stage = Stage.IDLE;
                     resetState();
                     return;
                 }
-                info("Placement at previous spot failed (likely blocked by your own hitbox), retrying elsewhere.");
+                if (debug.get()) info("Placement at previous spot failed (likely blocked by your own hitbox), retrying elsewhere.");
                 firstPos = retry;
                 placedPos = retry;
                 openAttempts = 0;
-                Vec3 hitVec = airPlace.get()
+                Vec3 hitVec = useAirPlace(retry)
                     ? Vec3.atCenterOf(retry)
                     : new Vec3(retry.getX() + 0.5, retry.getY(), retry.getZ() + 0.5);
                 firstYaw = (float) Rotations.getYaw(hitVec);
@@ -709,7 +734,7 @@ public class AutoLoader extends Module {
         }
 
         if (mc.player.distanceToSqr(Vec3.atCenterOf(placedPos)) > 25.0) {
-            info("Container was placed out of interaction range.");
+            if (debug.get()) info("Container was placed out of interaction range.");
             stage = Stage.IDLE;
             resetState();
             return;
@@ -765,7 +790,7 @@ public class AutoLoader extends Module {
         // one and nothing can merge into a partial stack): leave it for the
         // player instead of silently breaking the container with its contents.
         if (!hasRoomForContents(handler)) {
-            info("No room in inventory for the container's items, leaving for manual take.");
+            if (debug.get()) info("No room in inventory for the container's items, leaving for manual take.");
             stage = Stage.WAIT_CLOSE;
             return;
         }
@@ -876,7 +901,7 @@ public class AutoLoader extends Module {
         }
 
         if (++breakAttempts > maxBreakAttempts.get()) {
-            info("Timed out while breaking the container.");
+            if (debug.get()) info("Timed out while breaking the container.");
             restorePreBreakSlot();
             stage = Stage.IDLE;
             resetState();
@@ -973,9 +998,35 @@ public class AutoLoader extends Module {
         resetState();
     }
 
+    /**
+     * Above-head placement cell (two blocks above the feet, directly above the head), or null when that
+     * cell holds a solid block. Used by {@code place-above-head} to make the broken container drop onto
+     * the player.
+     */
+    private BlockPos aboveHeadCell() {
+        if (mc.player == null || mc.level == null) return null;
+        BlockPos cell = mc.player.blockPosition().above(2);
+        return mc.level.getBlockState(cell).canBeReplaced() ? cell : null;
+    }
+
+    /**
+     * True when {@code pos} is the above-head cell and {@code place-above-head} is on.
+     */
+    private boolean isAboveHeadPos(BlockPos pos) {
+        if (pos == null || !placeAboveHead.get() || mc.player == null) return false;
+        return pos.equals(mc.player.blockPosition().above(2));
+    }
+
+    /**
+     * Air-place is used when the setting is on OR the target is the above-head cell (ghost placement).
+     */
+    private boolean useAirPlace(BlockPos pos) {
+        return airPlace.get() || isAboveHeadPos(pos);
+    }
+
     private void placeBlock(BlockPos pos) {
         Vec3 hitVec = Vec3.atCenterOf(pos);
-        if (airPlace.get()) {
+        if (useAirPlace(pos)) {
             BlockHitResult hit = new BlockHitResult(hitVec, Direction.UP, pos, false);
             int rev = mc.player.containerMenu.getStateId();
             if (rotate.get())
@@ -1001,7 +1052,7 @@ public class AutoLoader extends Module {
 
     private void placeMirrored(BlockPos pos, float yaw) {
         Vec3 hitVec = Vec3.atCenterOf(pos);
-        if (airPlace.get()) {
+        if (useAirPlace(pos)) {
             BlockHitResult hit = new BlockHitResult(hitVec, Direction.UP, pos, false);
             int rev = mc.player.containerMenu.getStateId();
             float pitch = (float) Rotations.getPitch(hitVec);

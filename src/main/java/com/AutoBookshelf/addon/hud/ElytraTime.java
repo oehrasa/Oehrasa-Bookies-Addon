@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.hud;
 
 import com.AutoBookshelf.addon.Addon;
@@ -185,6 +190,9 @@ public class ElytraTime extends HudElement {
         }
     }
 
+    private Double cachedWidth = null;
+    private String cachedWidthFor = null;
+
     @Override
     public void render(HudRenderer renderer) {
         long now = System.currentTimeMillis();
@@ -192,7 +200,12 @@ public class ElytraTime extends HudElement {
             lastCalcMs = now;
             calculateElytraTime();
         }
-        setSize(forceDefaultFont.width(renderer, displayText, true), forceDefaultFont.height(renderer, true));
+        // The text only changes on elytra ticks; measure the width once per text instead of per frame.
+        if (this.cachedWidth == null || !displayText.equals(this.cachedWidthFor)) {
+            this.cachedWidth = forceDefaultFont.width(renderer, displayText, true);
+            this.cachedWidthFor = displayText;
+        }
+        setSize(this.cachedWidth, forceDefaultFont.height(renderer, true));
         forceDefaultFont.text(renderer, displayText, x, y, Color.WHITE, true);
     }
 }

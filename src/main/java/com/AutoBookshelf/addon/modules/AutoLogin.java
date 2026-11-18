@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
@@ -33,6 +38,13 @@ import java.util.List;
 
 public class AutoLogin extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
+
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
 
     private final Setting<Boolean> fromFile = sgGeneral.add(new BoolSetting.Builder()
         .name("from-file")
@@ -87,6 +99,7 @@ public class AutoLogin extends Module {
         .defaultValue(true)
         .build()
     );
+
 
     boolean work;
     private int timer;
@@ -326,9 +339,9 @@ public class AutoLogin extends Module {
     public void cancelBookExtraction() {
         if (isProcessingBook) {
             cleanupBook();
-            info("Book extraction cancelled.");
+            if (debug.get()) info("Book extraction cancelled.");
         } else {
-            info("No active book extraction.");
+            if (debug.get()) info("No active book extraction.");
         }
     }
 
@@ -356,7 +369,7 @@ public class AutoLogin extends Module {
     }
 
     private void sendMessage(String msg) {
-        info(msg);
+        if (debug.get()) info(msg);
         if (mc.player != null) {
             mc.player.sendOverlayMessage(Component.literal(msg));
         }
@@ -406,7 +419,7 @@ public class AutoLogin extends Module {
             e.printStackTrace();
         }
 
-        info("Oops, password seems missing.");
+        if (debug.get()) info("Oops, password seems missing.");
     }
 
     @EventHandler

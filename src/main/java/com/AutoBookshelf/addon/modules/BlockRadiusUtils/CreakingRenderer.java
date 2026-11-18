@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules.BlockRadiusUtils;
 
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
@@ -156,15 +161,18 @@ public class CreakingRenderer {
             double dx = Mth.lerp(event.tickDelta, link.entity.xOld, link.entity.getX()) - link.entity.getX();
             double dy = Mth.lerp(event.tickDelta, link.entity.yOld, link.entity.getY()) - link.entity.getY();
             double dz = Mth.lerp(event.tickDelta, link.entity.zOld, link.entity.getZ()) - link.entity.getZ();
-            AABB lerped = box.move(dx, dy, dz);
+            double minX = box.minX + dx, minY = box.minY + dy, minZ = box.minZ + dz;
+            double maxX = box.maxX + dx, maxY = box.maxY + dy, maxZ = box.maxZ + dz;
+            double centerX = (minX + maxX) * 0.5;
+            double centerY = (minY + maxY) * 0.5;
+            double centerZ = (minZ + maxZ) * 0.5;
 
-            boolean entityVisible = cam.distanceToSqr(lerped.getCenter()) <= maxDistSq;
+            boolean entityVisible = com.AutoBookshelf.addon.utils.DistanceUtil.distanceSq(cam, centerX, centerY, centerZ) <= maxDistSq;
             boolean heartVisible = link.heartBox.distanceSq(cam) <= maxDistSq;
 
             if (entityVisible) {
                 shared.renderBox(event.renderer,
-                    lerped.minX, lerped.minY, lerped.minZ,
-                    lerped.maxX, lerped.maxY, lerped.maxZ,
+                    minX, minY, minZ, maxX, maxY, maxZ,
                     link.sideColor, link.lineColor);
             }
 
@@ -176,9 +184,8 @@ public class CreakingRenderer {
             }
 
             if (showCreakingConnection.get() && (entityVisible || heartVisible)) {
-                Vec3 entityCenter = lerped.getCenter();
                 event.renderer.line(
-                    entityCenter.x, entityCenter.y, entityCenter.z,
+                    centerX, centerY, centerZ,
                     link.heartCenter.x, link.heartCenter.y, link.heartCenter.z,
                     link.lineColor);
             }

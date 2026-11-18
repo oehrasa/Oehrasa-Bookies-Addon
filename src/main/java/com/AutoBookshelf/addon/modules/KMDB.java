@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -200,6 +205,13 @@ public class KMDB extends Module {
     private final SettingGroup sgIronGolem = settings.createGroup("Iron Golem");
     private final SettingGroup sgCopper = settings.createGroup("Copper Golem");
     private final SettingGroup sgCreaking = settings.createGroup("Creaking");
+
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
 
     private final Setting<BuildMode> buildMode = sgGeneral.add(new EnumSetting.Builder<BuildMode>()
         .name("build-mode")
@@ -474,6 +486,7 @@ public class KMDB extends Module {
         .build()
     );
 
+
     /**
      * A wither is a flat T: 4 soul sand/soil with 3 skulls on the far side, so the
      * whole thing lives in the plane spanned by up (base -> skulls) and cross (the
@@ -705,14 +718,12 @@ public class KMDB extends Module {
     }
 
     /**
-     * Every cell of the staged Wither close enough for the server to place it.
+     * Every cell of the staged Wither passes the same click-distance test the server
+     * applies.
      */
     private boolean withinReach(Wither wither) {
-        double limit = reachLimit() * reachLimit();
-        Vec3 from = mc.player.position();
         for (int stage = 0; stage <= 6; stage++) {
-            BlockPos pos = wither.pos(stage);
-            if (pos.distToCenterSqr(from.x, from.y, from.z) > limit) return false;
+            if (!preflightReachable(wither.pos(stage))) return false;
         }
         return true;
     }
@@ -806,7 +817,7 @@ public class KMDB extends Module {
         }
 
         int radius = placementSearchRadius.get();
-        if (!useCache) return findClearFootPosition(relativeOffsets, radius);
+        if (!useCache) return findClearFootPosition(relativeOffsets, placedOffsets, radius);
 
         int hash = footprintHash(relativeOffsets);
         BlockPos playerPos = mc.player.blockPosition();
@@ -828,7 +839,7 @@ public class KMDB extends Module {
             footCacheValid = false;
         }
 
-        BlockPos found = findClearFootPosition(relativeOffsets, radius);
+        BlockPos found = findClearFootPosition(relativeOffsets, placedOffsets, radius);
         footCacheFoot = found;
         footCacheHash = hash;
         footCacheRadius = radius;
@@ -930,23 +941,43 @@ public class KMDB extends Module {
     }
 
     /**
-     * Whether every cell of the structure is close enough for the server to accept a
-     * placement there. A golem is two blocks deep, so the base can sit inside the
-     * interaction range while the far arm does not, and that far block would silently
-     * fail to place.
+     * Pre-flight reach check: whether the server would accept a placement click for one
+     * cell. Meteor's BlockUtils.place resolves a support face first (getPlaceSide) and
+     * clicks that neighbour; when no face qualifies it falls back to the cell itself with
+     * Direction.UP and clicks the cell. Player#isWithinBlockInteractionRange(clickedPos,
+     * 1.0) is the exact rule the server applies (blockInteractionRange + 1.0, measured
+     * from the eye to the clicked block's AABB). Air placing always clicks the placed
+     * cell itself, so the target is the clicked cell there.
      */
-    private boolean structureWithinReach(BlockPos pos, List<int[]> relativeOffsets) {
-        double limit = reachLimit() * reachLimit();
-        Vec3 from = mc.player.position();
-        for (int[] rel : relativeOffsets) {
-            BlockPos check = pos.offset(rel[0], rel[1], rel[2]);
-            if (check.distToCenterSqr(from.x, from.y, from.z) > limit) return false;
-        }
-        return true;
+    private boolean preflightReachable(BlockPos pos) {
+        if (airPlace.get()) return mc.player.isWithinBlockInteractionRange(pos, 1.0);
+        Direction face = BlockUtils.getPlaceSide(pos);
+        BlockPos clicked = face != null ? pos.relative(face) : pos;
+        return mc.player.isWithinBlockInteractionRange(clicked, 1.0);
     }
 
-    private double reachLimit() {
-        return airPlace.get() ? airPlaceRange.get() : mc.player.blockInteractionRange();
+    /**
+     * Whether every cell the build places would be accepted by the server. Returns the
+     * first cell the server would drop a click for, or null when the build clicks
+     * cleanly. The server silently discards clicks that fail its range rule, so a
+     * placement into an out-of-reach cell produces half a structure and the pumpkin,
+     * skulls or heart it carries arrive into nothing. Manual placement rejects the
+     * build instead of producing it.
+     */
+    private BlockPos manualBuildUnreachable(BlockPos anchor, List<int[]> placedOffsets) {
+        for (int[] rel : placedOffsets) {
+            BlockPos check = anchor.offset(rel[0], rel[1], rel[2]);
+            if (!preflightReachable(check)) return check;
+        }
+        return null;
+    }
+
+    /**
+     * Whether every cell of the structure passes the same click-distance test the
+     * server applies. Used to walk the distance in during foot selection.
+     */
+    private boolean structureWithinReach(BlockPos pos, List<int[]> relativeOffsets) {
+        return manualBuildUnreachable(pos, relativeOffsets) == null;
     }
 
     /**
@@ -988,7 +1019,7 @@ public class KMDB extends Module {
         return null;
     }
 
-    private BlockPos findClearFootPosition(List<int[]> relativeOffsets, int searchRadius) {
+    private BlockPos findClearFootPosition(List<int[]> relativeOffsets, List<int[]> placedOffsets, int searchRadius) {
         Direction facing = mc.player.getDirection();
         BlockPos preferred = mc.player.blockPosition().relative(facing, placementDistance.get());
 
@@ -1000,7 +1031,7 @@ public class KMDB extends Module {
 
                     if (!airPlace.get() && !hasSupportAt(pos)) continue;
 
-                    if (structureFits(pos, relativeOffsets)) candidates.add(pos);
+                    if (structureFits(pos, relativeOffsets) && structureWithinReach(pos, placedOffsets)) candidates.add(pos);
                 }
             }
         }
@@ -1241,6 +1272,16 @@ public class KMDB extends Module {
 
         int delay = witherPlaceDelay.get();
         if (delay == 0) {
+            // Atomic for the whole T: the whole structure lands within one tick, so
+            // checking every stage upfront cannot tear the build either.
+            for (int i = 0; i <= 6; i++) {
+                if (!preflightReachable(currentWither.pos(i))) {
+                    error("Cannot build here: the Wither is out of reach.");
+                    // Disarm-ish: same as the other failure exits - do not repeat.
+                    currentWither = null;
+                    return;
+                }
+            }
             for (int i = 0; i <= 6; i++) placeWitherBlock(soulSand, witherSkull, i);
             // Disarm before the toggle check, same as the staged branch below. Leaving
             // it armed keeps stage at 0, so the next tick runs this loop again and
@@ -1254,6 +1295,15 @@ public class KMDB extends Module {
             }
             blockTicksWaited = 0;
             if (currentWither.stage <= 6) {
+                // The player can walk out of range between stages (wither-place-delay > 0).
+                // If the next block is now out of reach, abort with an error and disarm
+                // instead of emitting clicks the server would silently drop, which would
+                // stop the T halfway.
+                if (!preflightReachable(currentWither.pos(currentWither.stage))) {
+                    error("Cannot continue the Wither here: the next block is out of reach.");
+                    startWither();
+                    return;
+                }
                 placeWitherBlock(soulSand, witherSkull, currentWither.stage);
                 currentWither.stage++;
             }
@@ -1281,9 +1331,16 @@ public class KMDB extends Module {
             return;
         }
 
+        boolean sawUnreachable = false;
         for (Direction cross : crossCandidates(up)) {
             Wither candidate = new Wither().set(foot, up, cross);
             if (!isValidWitherSpawn(candidate)) continue;
+            // Pre-flight: the server silently drops clicks that fail its range rule,
+            // which would stop the staged T halfway. Refuse the build instead.
+            if (manualMode() && !withinReach(candidate)) {
+                sawUnreachable = true;
+                continue;
+            }
 
             FindItemResult soulSand = findSoulBlock();
             FindItemResult witherSkull = InvUtils.findInHotbar(Items.WITHER_SKELETON_SKULL);
@@ -1297,10 +1354,14 @@ public class KMDB extends Module {
             blockTicksWaited = 0;
             // Not "placed" -> the T is still staged over the coming ticks, and the last
             // skull is what actually spawns it.
-            info("Building Wither...");
+            if (debug.get()) info("Building Wither...");
             return;
         }
 
+        if (sawUnreachable) {
+            error("Cannot build here: some blocks are out of reach.");
+            return;
+        }
         error("That spot cannot hold a Wither. it needs clear space for the whole shape.");
     }
 
@@ -1428,11 +1489,22 @@ public class KMDB extends Module {
         // would try to put a block in mid-air with nothing to click, since with air-place off
         // BlockUtils.place needs an existing face. Base first, then the body against the
         // base's now-solid underside.
+        // Pre-flight: every placed cell must be one the server would accept a click
+        // for, otherwise the countdown to the pumpkin leaves the iron sitting and
+        // nothing spawns. Manual placement refuses the build instead.
+        if (manualMode()) {
+            BlockPos unreachable = manualBuildUnreachable(base, ironGolemPlacedOffsets(up, cross));
+            if (unreachable != null) {
+                error("Cannot build here: a block is out of reach at %d, %d, %d.", unreachable.getX(), unreachable.getY(), unreachable.getZ());
+                return;
+            }
+        }
+
         for (BlockPos pos : golem.ironPositions()) place(pos, iron);
         // Lastly a pumpkin, that is what triggers the spawn, and placing it over
         // an incomplete T just does nothing.
         place(golem.pumpkin(), pumpkin);
-        info("Iron golem built.");
+        if (debug.get()) info("Iron golem built.");
     }
 
     private void buildSnowGolem() {
@@ -1453,10 +1525,18 @@ public class KMDB extends Module {
             return;
         }
 
+        if (manualMode()) {
+            BlockPos unreachable = manualBuildUnreachable(base, snowGolemFootprint());
+            if (unreachable != null) {
+                error("Cannot build here: a block is out of reach at %d, %d, %d.", unreachable.getX(), unreachable.getY(), unreachable.getZ());
+                return;
+            }
+        }
+
         place(base, snow);
         place(base.above(), snow);
         place(base.above(2), pumpkin);
-        info("Snow golem built.");
+        if (debug.get()) info("Snow golem built.");
     }
 
     private void buildCopperGolem() {
@@ -1486,9 +1566,17 @@ public class KMDB extends Module {
             return;
         }
 
+        if (manualMode()) {
+            BlockPos unreachable = manualBuildUnreachable(foot, copperGolemFootprint());
+            if (unreachable != null) {
+                error("Cannot build here: a block is out of reach at %d, %d, %d.", unreachable.getX(), unreachable.getY(), unreachable.getZ());
+                return;
+            }
+        }
+
         place(foot, copper);
         place(foot.above(), pumpkin);
-        info("Copper golem built.");
+        if (debug.get()) info("Copper golem built.");
     }
 
     private void buildCreaking() {
@@ -1536,6 +1624,16 @@ public class KMDB extends Module {
 
         List<int[]> footprint = creakingFootprint();
 
+        // Pre-flight: the heart and both logs must all be ones the server would accept
+        // a click for, or the build settles on two half finished logs and no heart.
+        if (manualMode()) {
+            BlockPos unreachable = manualBuildUnreachable(foot, footprint);
+            if (unreachable != null) {
+                error("Cannot build here: a block is out of reach at %d, %d, %d.", unreachable.getX(), unreachable.getY(), unreachable.getZ());
+                return;
+            }
+        }
+
         // Footprint is always log, heart, log, so the heart sits at index 1.
         BlockPos logPosA = foot.offset(footprint.get(0)[0], footprint.get(0)[1], footprint.get(0)[2]);
         BlockPos heartPos = foot.offset(footprint.get(1)[0], footprint.get(1)[1], footprint.get(1)[2]);
@@ -1568,7 +1666,7 @@ public class KMDB extends Module {
     private void reportCreaking() {
         if (creakingFailed) return;
 
-        info("Creaking heart built on the " + creakingAxis.get().name().toLowerCase() + " axis.");
+        if (debug.get()) info("Creaking heart built on the " + creakingAxis.get().name().toLowerCase() + " axis.");
     }
 
     /**

@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -21,6 +26,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemOnPacket;
+import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
@@ -52,10 +58,18 @@ import java.util.*;
  * the spoofed rotation before getStateForPlacement runs (RedstonePlacement+ technique).
  */
 public class HandyPlace extends Module {
+    private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRotation = settings.createGroup("Rotation");
     private final SettingGroup sgHalf = settings.createGroup("Stair/Slab Half");
     private final SettingGroup sgSkinny = settings.createGroup("Skinny Blocks");
     private final SettingGroup sgDisplay = settings.createGroup("Display");
+
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
 
     // Rotation part
     private final Setting<Direction> direction = sgRotation.add(new EnumSetting.Builder<Direction>()
@@ -241,6 +255,7 @@ public class HandyPlace extends Module {
         .build()
     );
 
+
     // Delayed placement system for proper rotation synchronization (RedstonePlacement+ technique:
     // cancel the use-item-on packet, send rotation packets for delayTicks ticks, then send placement).
     private final Queue<DelayedPlacement> delayedPlacements = new ArrayDeque<>();
@@ -291,7 +306,7 @@ public class HandyPlace extends Module {
     private float savedPitch = 0F;
     private boolean restorePending = false;
     private boolean cycleKeyWasPressed = false;
-    private long lastVerticalWarnMs = 0L;
+    private long lastDirectionWarnMs = 0L;
 
     public HandyPlace() {
         super(Addon.CATEGORY, "Handy-Place", "Controls how directional block were to be placed and skinny-block full-cube placement.");
@@ -314,8 +329,6 @@ public class HandyPlace extends Module {
         restorePending = false;
         cycleKeyWasPressed = false;
     }
-
-    // ---------- Events ----------
 
     @EventHandler
     private void onCrosshairTarget(ItemUseCrosshairTargetEvent event) {
@@ -784,9 +797,12 @@ public class HandyPlace extends Module {
             case Trapdoor -> trapdoor(hit, cell, cellChanged, chosen);
             case Horizontal -> horizontal(hit, cell, cellChanged, dominant, chosen);
             case HorizontalDirect -> horizontalDirect(hit, cell, cellChanged, dominant, chosen);
+            case HorizontalClockwise -> horizontalClockwise(hit, cell, cellChanged, dominant, chosen);
             case Face -> face(hit, cell, cellChanged, chosen);
+            case FaceOpposite -> faceOpposite(hit, cell, cellChanged, chosen);
             case Axis -> axis(hit, cell, cellChanged, chosen);
             case Slab -> slab(hit, cell, cellChanged, chosen);
+            case FaceAttached -> faceAttached(hit, cell, cellChanged, chosen);
             case Plain -> plain(cell, cellChanged, dominant);
         };
     }
@@ -842,16 +858,36 @@ public class HandyPlace extends Module {
         if (block instanceof PistonBaseBlock || block instanceof ObserverBlock || block instanceof DispenserBlock
             || block instanceof CrafterBlock || block instanceof BarrelBlock) return Family.Look6;
         if (block instanceof StairBlock) return Family.Stair;
+        // FACING = getHorizontalDirection().getOpposite() (javap-verified on 26.2). Chests covers
+        // copper and trapped chests too, both extend AbstractChestBlock.
         if (block instanceof AbstractChestBlock || block instanceof AbstractFurnaceBlock) return Family.Horizontal;
         if (block instanceof DiodeBlock || block instanceof GlazedTerracottaBlock) return Family.Horizontal;
         // verified on 26.2 getStateForPlacement: LecternBlock does
         // getHorizontalDirection().getOpposite() -> same inversion as chest/furnace.
         if (block instanceof LecternBlock) return Family.Horizontal;
+        // Also getHorizontalDirection().getOpposite(), each read out of the 26.2 bytecode.
+        if (block instanceof StonecutterBlock || block instanceof LoomBlock
+            || block instanceof ChiseledBookShelfBlock || block instanceof ShelfBlock
+            || block instanceof VaultBlock || block instanceof BeehiveBlock
+            || block instanceof CarvedPumpkinBlock || block instanceof CopperGolemStatueBlock
+            || block instanceof BigDripleafBlock || block instanceof SmallDripleafBlock
+            || block instanceof DriedGhastBlock || block instanceof EndPortalFrameBlock) return Family.Horizontal;
         // verified: FenceGateBlock (extends HorizontalDirectionalBlock) calls
-        // getHorizontalDirection() with NO getOpposite, so it is the other rotation rule.
-        if (block instanceof FenceGateBlock) return Family.HorizontalDirect;
+        // getHorizontalDirection() with NO getOpposite, so it is the other rotation rule. Same
+        // rule for beds, doors, decorated pots, campfires and calibrated sculk sensors, so
+        // treating any of them as Family.Horizontal places them 180 degrees wrong.
+        if (block instanceof FenceGateBlock || block instanceof BedBlock || block instanceof DoorBlock
+            || block instanceof DecoratedPotBlock || block instanceof CampfireBlock
+            || block instanceof CalibratedSculkSensorBlock) return Family.HorizontalDirect;
+        // verified on 26.2: AnvilBlock does getHorizontalDirection().getClockWise(), a third rule.
+        if (block instanceof AnvilBlock) return Family.HorizontalClockwise;
         if (block instanceof ShulkerBoxBlock || block instanceof EndRodBlock || block instanceof LightningRodBlock) return Family.Face;
+        // verified on 26.2: HopperBlock does getClickedFace().getOpposite(), collapsing a vertical
+        // click to DOWN.
+        if (block instanceof HopperBlock) return Family.FaceOpposite;
         if (block instanceof TrapDoorBlock) return Family.Trapdoor;
+
+        if (block instanceof FaceAttachedHorizontalDirectionalBlock) return Family.FaceAttached;
 
         BlockState defaultState = block.defaultBlockState();
         if (defaultState.hasProperty(BlockStateProperties.AXIS)) return Family.Axis;
@@ -953,7 +989,7 @@ public class HandyPlace extends Module {
 
     private Intercept horizontal(BlockHitResult hit, BlockPos cell, boolean cellChanged, Direction dominant, Direction chosen) {
         if (!chosen.getAxis().isHorizontal()) {
-            warnVerticalDirection("this block only faces horizontally");
+            warnDirectionNotUsable("this block only faces horizontally");
             if (cellChanged) return Intercept.replace(fabricated(cell, dominant), cell);
             return null;
         }
@@ -979,7 +1015,7 @@ public class HandyPlace extends Module {
     private Intercept horizontalDirect(BlockHitResult hit, BlockPos cell, boolean cellChanged,
                                        Direction dominant, Direction chosen) {
         if (!chosen.getAxis().isHorizontal()) {
-            warnVerticalDirection("this block only faces horizontally");
+            warnDirectionNotUsable("this block only faces horizontally");
             if (cellChanged) return Intercept.replace(fabricated(cell, dominant), cell);
             return null;
         }
@@ -995,9 +1031,139 @@ public class HandyPlace extends Module {
         return null;
     }
 
+    /**
+     * Blocks whose FACING is getHorizontalDirection().getClockWise() (verified for AnvilBlock on
+     * 26.2). To end up with FACING == chosen the player has to look at chosen's counter-clockwise
+     * neighbour, not at chosen and not at its opposite.
+     */
+    private Intercept horizontalClockwise(BlockHitResult hit, BlockPos cell, boolean cellChanged,
+                                          Direction dominant, Direction chosen) {
+        if (!chosen.getAxis().isHorizontal()) {
+            warnDirectionNotUsable("this block only faces horizontally");
+            if (cellChanged) return Intercept.replace(fabricated(cell, dominant), cell);
+            return null;
+        }
+
+        Direction natural = mc.player.getDirection().getClockWise();
+        boolean rotateNeeded = chosen != natural;
+
+        if (rotateNeeded) {
+            BlockHitResult resend = cellChanged ? fabricated(cell, dominant) : hit;
+            return Intercept.rotate(resend, yawOf(chosen.getCounterClockWise()), mc.player.getXRot(), cell);
+        }
+        if (cellChanged) return Intercept.replace(fabricated(cell, dominant), cell);
+        return null;
+    }
+
     private Intercept face(BlockHitResult hit, BlockPos cell, boolean cellChanged, Direction chosen) {
         if (chosen == hit.getDirection() && !cellChanged) return null;
         return Intercept.replace(fabricated(cell, chosen), cell);
+    }
+
+    /**
+     * Blocks whose FACING is getClickedFace().getOpposite(), with a vertical click collapsing to
+     * DOWN (verified for HopperBlock on 26.2). The facing is face-derived, so the hit is fabricated
+     * rather than the look being spoofed. A hopper has no UP state, so UP is refused.
+     */
+    private Intercept faceOpposite(BlockHitResult hit, BlockPos cell, boolean cellChanged, Direction chosen) {
+        if (chosen == Direction.UP) {
+            warnDirectionNotUsable("this block cannot face up");
+            if (cellChanged) return Intercept.replace(fabricated(cell, hit.getDirection()), cell);
+            return null;
+        }
+
+        // Compare against the facing vanilla would pick, not against the hit face: a click on
+        // UP or DOWN both yield DOWN, so asking for DOWN while clicking DOWN needs no intercept.
+        Direction vanillaFacing = hit.getDirection().getAxis() == Direction.Axis.Y
+            ? Direction.DOWN
+            : hit.getDirection().getOpposite();
+        if (vanillaFacing == chosen && !cellChanged) return null;
+
+        // UP and DOWN both collapse to DOWN, so either vertical face produces the wanted facing.
+        Direction face = chosen == Direction.DOWN ? Direction.UP : chosen.getOpposite();
+        return Intercept.replace(fabricated(cell, face), cell);
+    }
+
+    /**
+     * Blocks extending FaceAttachedHorizontalDirectionalBlock (lever, button, ...). Their state has
+     * two components: an attach face (wall/floor/ceiling) and a horizontal FACING.
+     * <p>
+     * vanilla on 26.2, verified against FaceAttachedHorizontalDirectionalBlock#getStateForPlacement
+     * and BlockPlaceContext#getNearestLookingDirections: the candidates are the look order with
+     * the clicked face's opposite promoted to the front, unless the clicked block is replaceable,
+     * and the first candidate that survives wins. A vertical candidate attaches to the floor or
+     * the ceiling and takes its FACING from the yaw; a horizontal candidate attaches to a wall
+     * and takes its FACING from the candidate.
+     * <p>
+     * So the click decides whenever a solid block was clicked directly: the clicked face's
+     * opposite is promoted, its candidate wins (the wall is the support) and the FACING is the
+     * clicked face. A yaw spoof cannot change that - it only swings the player's view. When the
+     * clicked block is replaceable the look decides instead, and there the support check follows
+     * the look as well, so a spoof would move the support with it and the placement would land on
+     * something else or not at all. Either way a wall attachment keeps the facing vanilla gives
+     * it, and only the floor and the ceiling take the direction setting.
+     * <p>
+     * Vertical chosen cannot be a horizontal FACING, so it is refused.
+     */
+    private Intercept faceAttached(BlockHitResult hit, BlockPos cell, boolean cellChanged, Direction chosen) {
+        if (!chosen.getAxis().isHorizontal()) {
+            warnDirectionNotUsable("this block only faces horizontally");
+            if (cellChanged) return Intercept.replace(fabricated(cell, hit.getDirection()), cell);
+            return null;
+        }
+
+        BlockHitResult resend = cellChanged ? fabricated(cell, hit.getDirection()) : hit;
+
+        // vanilla picks the attach face by walking the same candidate list: the look order,
+        // with the clicked face's opposite promoted to the front when a solid block was clicked.
+        // Each candidate needs a sturdy face to attach to, so the first supported one is used;
+        // if none is supported there is no placement.
+        Direction[] look = Direction.orderedByNearest(mc.player);
+        Direction[] candidates;
+        boolean solidClicked = !cellChanged && !mc.level.getBlockState(hit.getBlockPos()).canBeReplaced();
+        if (solidClicked) {
+            Direction promoted = hit.getDirection().getOpposite();
+            candidates = new Direction[look.length];
+            candidates[0] = promoted;
+            int i = 1;
+            for (Direction d : look) if (d != promoted) candidates[i++] = d;
+        } else {
+            // The clicked block is replaceable: the look order stands.
+            candidates = look;
+        }
+        for (Direction cand : candidates) {
+            BlockPos support = cell.relative(cand);
+            if (!mc.level.getBlockState(support).isFaceSturdy(mc.level, support, cand.getOpposite())) continue;
+            if (cand.getAxis().isHorizontal()) {
+                // A wall: the FACING comes from the candidate, not from the yaw.
+                Direction natural = cand.getOpposite();
+                if (chosen != natural) {
+                    warnDirectionNotUsable("a wall decides the facing, not the direction setting");
+                }
+                if (cellChanged) return Intercept.replace(resend, cell);
+                return null;
+            }
+
+            // The floor or the ceiling: the FACING comes from the yaw, and the support is below or
+            // above. Rotating the yaw reorders the look candidates the server resolves with the
+            // spoofed look, so a sturdy wall at cell.relative(chosen) could jump ahead of this
+            // vertical candidate and take the attachment. A solid block clicked directly promotes
+            // the clicked face's opposite to the front of the look order regardless of yaw, so the
+            // check gets the same promotion when it applies.
+            Direction natural = mc.player.getDirection();
+            if (chosen != natural) {
+                Direction promoted = solidClicked ? hit.getDirection().getOpposite() : null;
+                if (chosenWallOutranksVertical(cell, chosen, cand, promoted)) {
+                    warnDirectionNotUsable("a sturdy wall at " + chosen + " would take the attachment");
+                    if (cellChanged) return Intercept.replace(resend, cell);
+                    return null;
+                }
+                return Intercept.rotate(resend, yawOf(chosen), mc.player.getXRot(), cell);
+            }
+            if (cellChanged) return Intercept.replace(resend, cell);
+            return null;
+        }
+        return null;
     }
 
     private Intercept axis(BlockHitResult hit, BlockPos cell, boolean cellChanged, Direction chosen) {
@@ -1094,11 +1260,88 @@ public class HandyPlace extends Module {
         return -Math.toDegrees(Math.asin(dir.getStepY()));
     }
 
-    private void warnVerticalDirection(String why) {
+    /**
+     * The vanilla look-candidate order (Direction.orderedByNearest) for a rotation already
+     * spoofed to {@code yaw} with {@code pitch}: the three axis candidates in order of strength,
+     * followed by their opposites. Re-implements the formula on the merged jar (26.2) exactly so
+     * the module can predict what the server would attach to once the yaw is spoofed.
+     */
+    private static Direction[] spoofedLookOrder(float yaw, float pitch) {
+        float xRot = pitch * 0.017453292f;          // getViewXRot radians
+        float yRot = -yaw * 0.017453292f;           // getViewYRot, negated like the jar does
+        float sinPitch = Mth.sin(xRot);
+        float cosPitch = Mth.cos(xRot);
+        float sinYaw = Mth.sin(yRot);
+        float cosYaw = Mth.cos(yRot);
+
+        boolean xPositive = sinYaw > 0;
+        boolean upward = sinPitch < 0;
+        boolean zPositive = cosYaw > 0;
+
+        float xWeight = xPositive ? sinYaw : -sinYaw;
+        float verticalWeight = upward ? -sinPitch : sinPitch;
+        float zWeight = zPositive ? cosYaw : -cosYaw;
+
+        float xComponent = xWeight * cosPitch;
+        float zComponent = zWeight * cosPitch;
+
+        Direction xDir = xPositive ? Direction.EAST : Direction.WEST;
+        Direction vertical = upward ? Direction.UP : Direction.DOWN;
+        Direction zDir = zPositive ? Direction.SOUTH : Direction.NORTH;
+
+        if (xWeight > zWeight) {
+            if (verticalWeight > xComponent) return withOpposites(new Direction[]{vertical, xDir, zDir});
+            if (zComponent > verticalWeight) return withOpposites(new Direction[]{xDir, zDir, vertical});
+            return withOpposites(new Direction[]{xDir, vertical, zDir});
+        }
+        if (verticalWeight > zComponent) return withOpposites(new Direction[]{vertical, zDir, xDir});
+        if (xComponent > verticalWeight) return withOpposites(new Direction[]{zDir, xDir, vertical});
+        return withOpposites(new Direction[]{zDir, vertical, xDir});
+    }
+
+    private static Direction[] withOpposites(Direction[] first) {
+        Direction[] out = new Direction[6];
+        System.arraycopy(first, 0, out, 0, 3);
+        out[3] = first[2].getOpposite();
+        out[4] = first[1].getOpposite();
+        out[5] = first[0].getOpposite();
+        return out;
+    }
+
+    /**
+     * True when spoofing the player to {@code chosen}'s yaw would let a sturdy wall at the
+     * chosen horizontal cell outrank the vertical candidate that would win this placement.
+     * When a solid block was clicked, vanilla promotes the clicked face's opposite to the
+     * front regardless of yaw, so the same promotion is applied to the spoofed order here.
+     */
+    private boolean chosenWallOutranksVertical(BlockPos cell, Direction chosen, Direction verticalCandidate, @org.jetbrains.annotations.Nullable Direction promoted) {
+        BlockPos support = cell.relative(chosen);
+        if (!mc.level.getBlockState(support).isFaceSturdy(mc.level, support, chosen.getOpposite())) return false;
+        Direction[] order = spoofedLookOrder((float) yawOf(chosen), mc.player.getXRot());
+        if (promoted != null) {
+            Direction[] promotedOrder = new Direction[order.length];
+            promotedOrder[0] = promoted;
+            int i = 1;
+            for (Direction d : order) if (d != promoted) promotedOrder[i++] = d;
+            order = promotedOrder;
+        }
+        int chosenIdx = -1, verticalIdx = -1;
+        for (int i = 0; i < order.length; i++) {
+            if (order[i] == chosen) chosenIdx = i;
+            if (order[i] == verticalCandidate) verticalIdx = i;
+        }
+        return chosenIdx >= 0 && verticalIdx >= 0 && chosenIdx < verticalIdx;
+    }
+
+    /**
+     * The direction setting cannot be honoured here. One message every two seconds: the same
+     * click repeats the case.
+     */
+    private void warnDirectionNotUsable(String why) {
         long now = System.currentTimeMillis();
-        if (now - lastVerticalWarnMs < 2000) return;
-        lastVerticalWarnMs = now;
-        info("§eDirection " + direction.get().name() + " is not usable here: " + why + ".");
+        if (now - lastDirectionWarnMs < 2000) return;
+        lastDirectionWarnMs = now;
+        if (debug.get()) info("§eDirection " + direction.get().name() + " is not usable here: " + why + ".");
     }
 
     // Display / cycling
@@ -1118,7 +1361,7 @@ public class HandyPlace extends Module {
         // section codes would win over the colour argument and silently ignore the setting).
         displayText = "§r[§bHandyPlace§r] §fDir: §e" + direction.get().name()
             + " §7| §fRot: §e" + rotationMode.get().name();
-        if (showMode.get().showsChat()) info(displayText);
+        if (debug.get() && (showMode.get().showsChat())) info(displayText);
     }
 
     private enum Family {
@@ -1127,9 +1370,12 @@ public class HandyPlace extends Module {
         Trapdoor,
         Horizontal,
         HorizontalDirect,
+        HorizontalClockwise,
         Face,
+        FaceOpposite,
         Axis,
         Slab,
+        FaceAttached,
         Plain
     }
 

@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules.livemessage.util;
 
 import com.AutoBookshelf.addon.modules.livemessage.LiveMessage;
@@ -204,6 +209,9 @@ public class LivemessageUtil {
     private static final Pattern BIDI_CONTROLS = Pattern.compile(
         "[\\u200E-\\u200F\\u202A-\\u202E\\u2066-\\u2069\\u001B]"
     );
+    // Whitespace controls are handled separately: they are replaced with a space so adjacent
+    // words stay separated instead of merging into one.
+    private static final Pattern WHITESPACE_CONTROLS = Pattern.compile("[\\r\\n\\t]");
     private static final Pattern HEX_COLOR_CODE = Pattern.compile("§x§[0-9a-fA-F](?:§[0-9a-fA-F]){5}");
     private static final Pattern LEGACY_COLOR_CODE = Pattern.compile("(?i)§[0-9a-fk-orx]");
     private static final Pattern SAFE_USERNAME = Pattern.compile("^[A-Za-z0-9_]{1,16}$");
@@ -217,6 +225,7 @@ public class LivemessageUtil {
         stripped = LEGACY_COLOR_CODE.matcher(stripped).replaceAll("");
         stripped = stripped.replace("§", "");
         stripped = BIDI_CONTROLS.matcher(stripped).replaceAll("");
+        stripped = WHITESPACE_CONTROLS.matcher(stripped).replaceAll(" ");
         stripped = HEAD_MARKER.matcher(stripped).replaceAll("");
         stripped = TIMESTAMP_PREFIX.matcher(stripped).replaceFirst("");
         return stripped;

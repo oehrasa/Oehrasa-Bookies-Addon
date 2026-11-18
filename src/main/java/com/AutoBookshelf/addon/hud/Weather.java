@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.hud;
 
 import com.AutoBookshelf.addon.Addon;
@@ -28,6 +33,10 @@ public class Weather extends HudElement {
 
     private final ForceDefaultFont forceDefaultFont = new ForceDefaultFont(sgGeneral);
 
+    private double cachedSizeWidth = -1;
+    private double cachedPrefixWidth = -1;
+    private double cachedForScale = -1;
+
     public Weather() {
         super(INFO);
         mc = Minecraft.getInstance();
@@ -35,8 +44,13 @@ public class Weather extends HudElement {
 
     @Override
     public void render(HudRenderer renderer) {
-        String textWidth = "Weather:            ";
-        setSize(forceDefaultFont.width(renderer, textWidth, true, scale.get()), forceDefaultFont.height(renderer, true, scale.get()));
+        double scaleValue = scale.get();
+        if (cachedSizeWidth < 0 || cachedForScale != scaleValue) {
+            cachedForScale = scaleValue;
+            cachedSizeWidth = forceDefaultFont.width(renderer, "Weather:            ", true, scaleValue);
+            cachedPrefixWidth = forceDefaultFont.width(renderer, "Weather: ", true, scaleValue);
+        }
+        setSize(cachedSizeWidth, forceDefaultFont.height(renderer, true, scaleValue));
         String weather = "None";
         if (mc.level != null && mc.level.canHaveWeather()) {
             if (mc.level.isThundering()) {
@@ -47,7 +61,7 @@ public class Weather extends HudElement {
                 weather = "Clear";
             }
         }
-        forceDefaultFont.text(renderer, "Weather: ", x, y, Color.WHITE, true, scale.get());
-        forceDefaultFont.text(renderer, weather, forceDefaultFont.width(renderer, "Weather: ", true, scale.get()) + x, y, Color.LIGHT_GRAY, true, scale.get());
+        forceDefaultFont.text(renderer, "Weather: ", x, y, Color.WHITE, true, scaleValue);
+        forceDefaultFont.text(renderer, weather, cachedPrefixWidth + x, y, Color.LIGHT_GRAY, true, scaleValue);
     }
 }

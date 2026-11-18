@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -23,6 +28,7 @@ public class ItemDespawn extends Module {
     // See ItemEntity.tick(): "if (this.age != -32768) this.age++;" and the discard check
     // "this.age >= 6000". An age of -32768 means the item never increments and never
     // despawns; extended-lifetime items start at -6000 (get an extra 6000 ticks).
+    // UNLIMITED_LIFETIME_AGE items are skipped rather than rendered near-infinite life.
     private static final int UNLIMITED_LIFETIME_AGE = -32768;
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -30,7 +36,7 @@ public class ItemDespawn extends Module {
 
     private final Setting<Integer> warnThreshold = sgGeneral.add(new IntSetting.Builder()
         .name("warn-threshold")
-        .description("Ticks remaining before despawn at which to start highlighting (vanilla despawn is fixed at 6000 total ticks).")
+        .description("Ticks remaining before despawn at which to start highlighting (vanilla despawn is fixed at 6000; extended-lifetime items can reach 12000).")
         .defaultValue(6000)
         .min(100)
         .max(12000) // extended-lifetime items can have up to 12000 effective ticks
@@ -110,19 +116,41 @@ public class ItemDespawn extends Module {
     // Bounded max-heap keyed by squared distance (farthest at the top). Used to keep only
     // the closest `max` candidates without sorting the full candidate set.
     private final java.util.PriorityQueue<ItemEntity> closestHeap = new java.util.PriorityQueue<>(11,
-        (a, b) -> Double.compare(mc.player.distanceToSqr(b), mc.player.distanceToSqr(a)));
+        (a, b) -> Double.compare(distSqOf(b), distSqOf(a)));
+
+    /**
+     * Per-frame distance cache for the heap comparator: comparing spent one distanceToSqr
+     * per operand per comparison (~N·log N per frame). Filled while the heap is built.
+     */
+    private final java.util.IdentityHashMap<ItemEntity, Double> distSqScratch = new java.util.IdentityHashMap<>();
+
+    private double distSqOf(ItemEntity item) {
+        Double cached = this.distSqScratch.get(item);
+        return cached != null ? cached : mc.player.distanceToSqr(item);
+    }
 
     private static final int SCAN_INTERVAL = 20; // frames between world item rescans
     private final List<ItemEntity> itemCache = new ArrayList<>();
     private int frameCounter = SCAN_INTERVAL;
 
     public ItemDespawn() {
-        super(Addon.CATEGORY2, "Item-Despawn", "Highlights items that are about to despawn.");
+        super(Addon.CATEGORY2, "Item-Despawn", "Highlights items that are about to despawn (item age is client-tracked, so items that predate this client appear younger than they are).");
+    }
+
+    /**
+     * Red→green ramp for the warn window: 1.0 while far from despawn (green), 0.0 right before
+     * (red). Computed straight from the clamped fraction each frame; allocations here are one
+     * or two Color objects per item per frame, negligible next to the box the renderer emits.
+     */
+    private static Color despawnColor(double percent, int opacity) {
+        double p = Math.clamp(percent, 0.0, 1.0);
+        return new Color((int) (255 * (1.0 - p)), (int) (255 * p), 0, opacity);
     }
 
     @Override
     public void onDeactivate() {
         closestHeap.clear();
+        distSqScratch.clear();
         itemCache.clear();
         frameCounter = SCAN_INTERVAL;
     }
@@ -144,12 +172,16 @@ public class ItemDespawn extends Module {
 
         if (useHeap) {
             closestHeap.clear();
+            distSqScratch.clear();
 
             for (ItemEntity item : itemCache) {
-                if (!isRenderableItem(item, rangeSq, warn)) continue;
+                double distSq = mc.player.distanceToSqr(item);
+                if (!isRenderableItem(item, rangeSq, warn, distSq)) continue;
+                distSqScratch.put(item, distSq);
                 closestHeap.offer(item);
                 if (closestHeap.size() > max) {
-                    closestHeap.poll(); // discard farthest
+                    ItemEntity farthest = closestHeap.poll(); // discard farthest
+                    distSqScratch.remove(farthest);
                 }
             }
 
@@ -161,7 +193,8 @@ public class ItemDespawn extends Module {
             int rendered = 0;
 
             for (ItemEntity item : itemCache) {
-                if (!isRenderableItem(item, rangeSq, warn)) continue;
+                double distSq = mc.player.distanceToSqr(item);
+                if (!isRenderableItem(item, rangeSq, warn, distSq)) continue;
 
                 renderItem(event, item, warn);
 
@@ -184,8 +217,12 @@ public class ItemDespawn extends Module {
     }
 
     private boolean isRenderableItem(ItemEntity item, double rangeSq, int warn) {
+        return isRenderableItem(item, rangeSq, warn, mc.player.distanceToSqr(item));
+    }
+
+    private boolean isRenderableItem(ItemEntity item, double rangeSq, int warn, double distSq) {
         if (item.isRemoved()) return false;
-        if (mc.player.distanceToSqr(item) > rangeSq) return false;
+        if (distSq > rangeSq) return false;
 
         int age = item.getAge();
         if (age == UNLIMITED_LIFETIME_AGE) return false;
@@ -197,12 +234,19 @@ public class ItemDespawn extends Module {
     private void renderItem(Render3DEvent event, ItemEntity item, int warn) {
         int timeLeft = VANILLA_LIFETIME - item.getAge();
 
-        Color color = computeColorFromTime.get()
-            ? despawnColor(timeLeft, warn)
-            : customColor.get();
-
-        Color sideColor = new Color(color.r, color.g, color.b, sideOpacity.get());
-        Color lineColor = new Color(color.r, color.g, color.b, lineOpacity.get());
+        // Both branches allocate at most two Color objects per item per frame; negligible
+        // next to the box the renderer emits.
+        Color sideColor;
+        Color lineColor;
+        if (computeColorFromTime.get()) {
+            double percent = (double) timeLeft / warn;
+            sideColor = despawnColor(percent, sideOpacity.get());
+            lineColor = despawnColor(percent, lineOpacity.get());
+        } else {
+            Color color = customColor.get();
+            sideColor = new Color(color.r, color.g, color.b, sideOpacity.get());
+            lineColor = new Color(color.r, color.g, color.b, lineOpacity.get());
+        }
 
         // Meteor ESP's tick interpolation: getBoundingBox() is the box as of the last tick, so
         // offset it to where the item is drawn this frame. Dropped items drift and fall, so
@@ -215,14 +259,5 @@ public class ItemDespawn extends Module {
             x + box.minX, y + box.minY, z + box.minZ,
             x + box.maxX, y + box.maxY, z + box.maxZ,
             sideColor, lineColor, shapeMode.get(), 0);
-    }
-
-    private Color despawnColor(int timeLeft, int warnWindow) {
-        double percent = (double) timeLeft / warnWindow;
-        percent = Math.clamp(percent, 0.0, 1.0);
-
-        int r = (int) (255 * (1.0 - percent));
-        int g = (int) (255 * percent);
-        return new Color(r, g, 0);
     }
 }

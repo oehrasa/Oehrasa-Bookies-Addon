@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.utils;
 
 import baritone.api.BaritoneAPI;
@@ -67,7 +72,9 @@ public class ShulkerRestockEngine {
         // After breaking the shulker, pathfind to the dropped box item and pick it up.
         boolean collectDroppedShulker,
         // Let the collector use Baritone for the walk when it is available.
-        boolean useBaritone
+        boolean useBaritone,
+        // Place the container directly above the player's head (requires air-place). Drops land on the player.
+        boolean placeAboveHead
     ) {
     }
 
@@ -318,12 +325,17 @@ public class ShulkerRestockEngine {
         avoid.addAll(failedPositions);
         avoid.addAll(config.excludedPositions());
 
-        BlockPos placePos = placementEngine.findPlacement(
-            config.placeRange(), config.airPlace(), config.preferSolidBlock(), avoid);
+        boolean aboveHead = config.placeAboveHead();
+        BlockPos placePos = aboveHead ? aboveHeadCell(avoid) : null;
+        if (placePos == null) {
+            placePos = placementEngine.findPlacement(
+                config.placeRange(), config.airPlace(), config.preferSolidBlock(), avoid);
+        }
         if (placePos == null) {
             abort(null);
             return;
         }
+        boolean useGhostPlacement = config.airPlace() || (aboveHead && placePos.equals(mc.player.blockPosition().above(2)));
 
         placedShulkerPos = placePos;
         Vec3 hitVec = Vec3.atCenterOf(placePos);
@@ -337,7 +349,7 @@ public class ShulkerRestockEngine {
         // as soon as the packet is on the wire - the server resumes holding build material instead
         // of a shulker. In the rotate branches the packet is deferred to the movement phase, so the
         // hand-back happens inside the callback, after it.
-        if (config.airPlace()) {
+        if (useGhostPlacement) {
             BlockHitResult hit = new BlockHitResult(hitVec, Direction.UP, placePos, false);
             int revision = mc.player.containerMenu.getStateId();
 
@@ -381,6 +393,18 @@ public class ShulkerRestockEngine {
         // anything
         stateTicks = 0;
         stage = Stage.WAIT_FOR_PLACEMENT;
+    }
+
+    /**
+     * Position two blocks above the player's feet (directly above the head), or null when that cell
+     * holds something solid. Used by {@code placeAboveHead} to make the broken box drop onto the player.
+     */
+    private BlockPos aboveHeadCell(List<BlockPos> avoid) {
+        if (mc.player == null || mc.level == null) return null;
+        BlockPos cell = mc.player.blockPosition().above(2);
+        // A failed/excluded above-head cell must fall back to findPlacement, not be retried.
+        if (avoid != null && avoid.contains(cell)) return null;
+        return mc.level.getBlockState(cell).canBeReplaced() ? cell : null;
     }
 
     private void waitForPlacement() {
@@ -439,8 +463,11 @@ public class ShulkerRestockEngine {
             return;
         }
 
-        double reach = (double) config.placeRange();
-        if (mc.player.distanceToSqr(Vec3.atCenterOf(placedShulkerPos)) > reach * reach) {
+        // Vanilla interaction range is measured from the eye, not the feet; placeRange is only
+        // the placement search radius, so it must not double as the open reach limit (an
+        // above-head cell is ~2.5 from the feet but <1 from the eye).
+        double reach = mc.player.blockInteractionRange();
+        if (mc.player.getEyePosition().distanceToSqr(Vec3.atCenterOf(placedShulkerPos)) > reach * reach) {
             abort("Shulker is too far to open. Resetting.");
             return;
         }

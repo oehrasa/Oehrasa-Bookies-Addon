@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -44,8 +49,8 @@ public class PressItemFrame extends Module {
 
     private final Setting<Boolean> rotate = sgGeneral.add(new BoolSetting.Builder()
         .name("rotate")
-        .description("Rotate player's head to look at the item frame briefly.")
-        .defaultValue(true)
+        .description("Rotate player's head to look at the item frame briefly (off performs better wow).")
+        .defaultValue(false)
         .build()
     );
 
@@ -81,10 +86,23 @@ public class PressItemFrame extends Module {
         timer = 0;
     }
 
+    private boolean stillViable(ItemFrame frame, Vec3 eyes) {
+        if (frame.isRemoved()) return false;
+        if (!PlayerUtils.isWithinReach(frame)) return false;
+        if (!canSee(frame, eyes)) return false;
+        return true;
+    }
+
     private boolean canSee(ItemFrame frame, Vec3 eyes) {
         // Accurate centre of the frame's bounding box
         Vec3 center = frame.getBoundingBox().getCenter();
-        // Direction the frame's front is facing (opposite of the attached wall/ceiling/floor)
+        // Direction the frame's painted face is facing, away from the wall/floor/ceiling it
+        // hangs on. `getDirection()` is that direction: the frame is placed in the air cell in
+        // front of the clicked face with the clicked face as its direction, and the support
+        // block is found at -direction (HangingEntity#calculateSupportBox,
+        // ItemFrame#createBoundingBox puts the body at pos - direction*0.46875).
+        // Anchoring the target along -direction lands inside the support block and the ray
+        // would always collide with it (canSee would always say "blocked").
         Vec3 facing = Vec3.atLowerCornerOf(frame.getDirection().getUnitVec3i());
         // Move the target 0.1 blocks outward so the ray doesn't hit the solid block behind
         Vec3 target = center.add(facing.scale(0.1));
@@ -140,7 +158,7 @@ public class PressItemFrame extends Module {
             return;
         }
 
-        double reach = mc.player.entityInteractionRange();
+        double reach = mc.player.blockInteractionRange();
         boolean onlyWith = onlyWithItem.get();
         boolean rot = rotate.get();
         Vec3 eyes = mc.player.getEyePosition();
@@ -198,12 +216,20 @@ public class PressItemFrame extends Module {
         }
 
         final String finalCmd = rawCmd;
+        final ItemFrame viabilityTarget = target;
         if (rotate.get()) {
             Vec3 center = target.position().add(0, target.getBbHeight() / 2.0, 0);
             Rotations.rotate(Rotations.getYaw(center), Rotations.getPitch(center), () -> {
+                // The rotation is sent a few ticks later than the decision to shoot; re-check
+                // reach/visibility at the send tick so a frame that moved out of range during
+                // the rotation is not fired at blindly.
+                if (!stillViable(viabilityTarget, mc.player.getEyePosition())) return;
                 mc.player.connection.sendCommand(finalCmd);
             });
         } else {
+            // The straight-line path sends within the same tick, but a frame that left reach
+            // since the predicate pass should not get the command either.
+            if (!stillViable(target, mc.player.getEyePosition())) return;
             mc.player.connection.sendCommand(finalCmd);
         }
 

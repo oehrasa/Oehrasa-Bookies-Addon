@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -232,6 +237,13 @@ public class BookshelfFiller extends Module {
     private final SettingGroup sgCounter = settings.createGroup("Book Counter");
     private final SettingGroup sgBookLog = settings.createGroup("Book Log");
 
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
+
     private final Setting<Integer> delay = sgGeneral.add(new IntSetting.Builder()
         .name("delay")
         .description("Delay between actions in ticks.")
@@ -292,7 +304,7 @@ public class BookshelfFiller extends Module {
         .onChanged(value -> {
             if (value) {
                 resetAllCounts();
-                info("§aCounts reset! You can now turn this setting off.");
+                if (debug.get()) info("§aCounts reset! You can now turn this setting off.");
             }
         })
         .build()
@@ -533,6 +545,7 @@ public class BookshelfFiller extends Module {
         .build()
     );
 
+
     private enum ExtractMode {
         ALL("All Books"),
         LIMITED("Limited Amount.");
@@ -658,7 +671,7 @@ public class BookshelfFiller extends Module {
                 }
 
                 if (showCountMessages.get()) {
-                    info("§aLoaded cache: §f" + savedCounts.size() + " §aworlds");
+                    if (debug.get()) info("§aLoaded cache: §f" + savedCounts.size() + " §aworlds");
                 }
             }
         } catch (Exception e) {
@@ -1002,7 +1015,8 @@ public class BookshelfFiller extends Module {
         int strikes = refillStrikeCount.getOrDefault(refillKey, 0);
         if (strikes >= REFILL_MAX_STRIKES) {
             if (strikes == REFILL_MAX_STRIKES) {
-                info("§cRefill: gave up on slot " + (task.slot + 1) + " (" + BookUtils.sanitizeForChat(task.title) + ") - placement keeps failing");
+                if (debug.get())
+                    info("§cRefill: gave up on slot " + (task.slot + 1) + " (" + BookUtils.sanitizeForChat(task.title) + ") - placement keeps failing");
                 refillStrikeCount.put(refillKey, strikes + 1); // log once per give-up
             }
             return true;
@@ -1272,7 +1286,7 @@ public class BookshelfFiller extends Module {
                 }
                 sendMessage("§7Total tracked: §f" + worldCounts.size() + " §7bookshelves, §f" + totalBooks + " §7books");
             } else {
-                info("§e[Book Counter] No changes detected in this area.");
+                if (debug.get()) info("§e[Book Counter] No changes detected in this area.");
                 int totalBooks = worldCounts.values().stream().mapToInt(Integer::intValue).sum();
                 sendMessage("§eTotal tracked: §f" + worldCounts.size() + " §ebookshelves, §f" + totalBooks + " §ebooks");
             }
@@ -1332,15 +1346,17 @@ public class BookshelfFiller extends Module {
         if (selectionClaimsClick) {
             AreaSelector.Result result = areaSelector.handleClick(pos);
             switch (result) {
-                case POS1_SET -> info("§aPos1 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
+                case POS1_SET -> {
+                    if (debug.get()) info("§aPos1 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
+                }
                 case COMPLETE -> {
-                    info("§aPos2 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
-                    info("§aSelection complete! now filling.");
+                    if (debug.get()) info("§aPos2 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
+                    if (debug.get()) info("§aSelection complete! now filling.");
                     initializeGrid();
                 }
                 case RESET -> {
                     fullReset();
-                    info("§eSelection reset.");
+                    if (debug.get()) info("§eSelection reset.");
                 }
             }
             event.cancel();
@@ -1619,18 +1635,18 @@ public class BookshelfFiller extends Module {
 
         if (!rows.isEmpty()) {
             int totalBookshelves = rows.stream().mapToInt(List::size).sum();
-            info("§aFound §f" + rows.size() + " §arows with §f" + totalBookshelves + " §abookshelves total");
+            if (debug.get()) info("§aFound §f" + rows.size() + " §arows with §f" + totalBookshelves + " §abookshelves total");
             if (enableFilter.get()) {
-                info("§7Filter enabled -> sorting by first number first.");
-                info("§7Books found: §f" + sortedBookSlots.size());
+                if (debug.get()) info("§7Filter enabled -> sorting by first number first.");
+                if (debug.get()) info("§7Books found: §f" + sortedBookSlots.size());
             }
             if (fillLayout.get() == FillLayout.BOTTOM_FIRST) {
-                info("§7Layout: lowest Y layer of the wall first, bottom row of each shelf first (fills upward).");
+                if (debug.get()) info("§7Layout: lowest Y layer of the wall first, bottom row of each shelf first (fills upward).");
             } else {
-                info("§7Layout: highest Y layer of the wall first, top row of each shelf first (fills downward).");
+                if (debug.get()) info("§7Layout: highest Y layer of the wall first, top row of each shelf first (fills downward).");
             }
             if (useDedicatedSlot.get()) {
-                info("§7Using dedicated swap slot: §f" + (dedicatedSwapSlot + 1));
+                if (debug.get()) info("§7Using dedicated swap slot: §f" + (dedicatedSwapSlot + 1));
             }
         }
     }
@@ -1726,7 +1742,7 @@ public class BookshelfFiller extends Module {
                 }
             }
             if (sortedBookSlots.size() > 10) {
-                info("§7  ... and " + (sortedBookSlots.size() - 10) + " more");
+                if (debug.get()) info("§7  ... and " + (sortedBookSlots.size() - 10) + " more");
             }
         }
     }
@@ -1815,7 +1831,7 @@ public class BookshelfFiller extends Module {
                 currentBookTitle = "";
                 currentBookAuthor = "";
                 currentBookSlot = -1;
-                info("§aAll bookshelves are full!");
+                if (debug.get()) info("§aAll bookshelves are full!");
                 setDisplayText("All bookshelves are full!");
             }
             fullReset();
@@ -1840,7 +1856,7 @@ public class BookshelfFiller extends Module {
         if (currentRow >= rows.size()) {
             allFull = true;
             isFilling = false;
-            info("§aAll bookshelves are completely full!");
+            if (debug.get()) info("§aAll bookshelves are completely full!");
             setDisplayText("All bookshelves full!");
             return;
         }
@@ -1855,9 +1871,9 @@ public class BookshelfFiller extends Module {
                 retryCount = 0;
                 stuckCounter = 0;
                 if (fillLayout.get() == FillLayout.BOTTOM_FIRST) {
-                    info("§aFinished bottom half of row " + (currentRow + 1) + ", now filling top half...");
+                    if (debug.get()) info("§aFinished bottom half of row " + (currentRow + 1) + ", now filling top half...");
                 } else {
-                    info("§aFinished top half of row " + (currentRow + 1) + ", now filling bottom half...");
+                    if (debug.get()) info("§aFinished top half of row " + (currentRow + 1) + ", now filling bottom half...");
                 }
                 delayLeft = delay.get();
                 return;
@@ -1877,7 +1893,8 @@ public class BookshelfFiller extends Module {
         BlockState state = mc.level.getBlockState(pos);
 
         if (state.getBlock() != Blocks.CHISELED_BOOKSHELF) {
-            info("§cWarning: Block at " + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + " is no longer a bookshelf! Skipping");
+            if (debug.get())
+                info("§cWarning: Block at " + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + " is no longer a bookshelf! Skipping");
             currentCol++;
             retryCount = 0;
             stuckCounter = 0;
@@ -1954,7 +1971,7 @@ public class BookshelfFiller extends Module {
                     delayLeft = delay.get();
                     return;
                 } else {
-                    info("§cNo " + kind + " found! Stopping. Enable 'continuous-checking' to continue.");
+                    if (debug.get()) info("§cNo " + kind + " found! Stopping. Enable 'continuous-checking' to continue.");
                     allFull = true;
                     isFilling = false;
                     return;
@@ -2129,7 +2146,7 @@ public class BookshelfFiller extends Module {
         }
 
         String authorText = (author != null && !author.isEmpty()) ? " by §f" + author : "";
-        info("§7Placing: §f" + title + "§7" + authorText);
+        if (debug.get()) info("§7Placing: §f" + title + "§7" + authorText);
     }
 
     private void updateCurrentBookStatus(int slot) {
@@ -2389,7 +2406,7 @@ public class BookshelfFiller extends Module {
     }
 
     private void sendMessage(String msg) {
-        info(msg);
+        if (debug.get()) info(msg);
         if (mc.player != null) mc.player.sendOverlayMessage(Component.literal(msg));
     }
 
@@ -2403,12 +2420,12 @@ public class BookshelfFiller extends Module {
 
     public void setPos1(BlockPos pos) {
         areaSelector.setPos1(pos);
-        info("§aPos1 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
+        if (debug.get()) info("§aPos1 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
     }
 
     public void setPos2(BlockPos pos) {
         areaSelector.setPos2(pos);
-        info("§aPos2 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
+        if (debug.get()) info("§aPos2 set to: §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
     }
 
     @Override
@@ -2423,27 +2440,27 @@ public class BookshelfFiller extends Module {
         String toolName = areaSelector.getSelectionToolItem().getName(ItemStack.EMPTY).getString();
         String extractToolName = extractTool.get().getName(ItemStack.EMPTY).getString();
         String counterToolName = counterTool.get().getName(ItemStack.EMPTY).getString();
-        info("§aBookshelf Filler is activated.");
-        info("§7- §f" + toolName + " §7= select area & fill");
-        info("§7- §f" + extractToolName + " §7= extract books from a bookshelf");
-        info("§7- §f" + counterToolName + " §7= count books in selected area");
+        if (debug.get()) info("§aBookshelf Filler is activated.");
+        if (debug.get()) info("§7- §f" + toolName + " §7= select area & fill");
+        if (debug.get()) info("§7- §f" + extractToolName + " §7= extract books from a bookshelf");
+        if (debug.get()) info("§7- §f" + counterToolName + " §7= count books in selected area");
         if (areaSelector.requiresToolInHand()) {
-            info("§7Hold the tool to use it");
+            if (debug.get()) info("§7Hold the tool to use it");
         }
         if (enableFilter.get()) {
-            info("§7Filter enabled -> automatically sort numbers from titles");
+            if (debug.get()) info("§7Filter enabled -> automatically sort numbers from titles");
         }
         if (showOnScreen.get()) {
-            info("§7Status will be shown on screen");
+            if (debug.get()) info("§7Status will be shown on screen");
         }
         if (continuousChecking.get()) {
-            info("§7Continuous checking §aENABLED §7-> will wait for books if no books are found");
+            if (debug.get()) info("§7Continuous checking §aENABLED §7-> will wait for books if no books are found");
         }
         if (useDedicatedSlot.get()) {
-            info("§7Using dedicated swap slot: §f" + (dedicatedSwapSlotIndex.get() + 1));
+            if (debug.get()) info("§7Using dedicated swap slot: §f" + (dedicatedSwapSlotIndex.get() + 1));
         }
         if (persistentCache.get()) {
-            info("§7Book counts will be saved to file");
+            if (debug.get()) info("§7Book counts will be saved to file");
         }
     }
 

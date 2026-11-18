@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 // V5
 
@@ -20,6 +25,7 @@ import net.minecraft.client.multiplayer.PlayerInfo;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntitySelector;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.projectile.arrow.Arrow;
 import net.minecraft.world.entity.projectile.arrow.SpectralArrow;
@@ -49,6 +55,13 @@ public class ArenaM extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgThreats = settings.createGroup("Threats");
     private final SettingGroup sgRender = settings.createGroup("Render");
+
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
 
     private final Setting<Integer> maxRange = sgGeneral.add(new IntSetting.Builder()
         .name("max-range")
@@ -200,6 +213,7 @@ public class ArenaM extends Module {
         .build()
     );
 
+
     // Physical constants for the interceptor
     private static final double WIND_SPEED = 1.5;        // blocks/tick
     // The wind charge's real hitbox (AbstractWindCharge.makeBoundingBox): width 0.3125,
@@ -222,6 +236,9 @@ public class ArenaM extends Module {
     // Real-hit tracking constants. These only drive updateChargeTracking(), which
     // is a debug-render concern, not the detection/solver hot path.
     private static final int CHARGE_SPAWN_SEARCH_TICKS = 5;
+    // Wind-charge spawn-search box half-extent. Deliberately separate from maxRange, which keeps
+    // its threat/intercept role; this only has to cover the charge's travel across the spawn window.
+    private static final double CHARGE_DISCOVERY_RANGE = 16.0;
     private static final int CHARGE_TRACK_TIMEOUT_TICKS = MAX_LEAD + 10;
     private static final int CONFIRMED_HIT_DISPLAY_TICKS = 20;
     // How fast the learned spawn-latency average adapts to new samples (EMA alpha).
@@ -248,6 +265,11 @@ public class ArenaM extends Module {
     private Solution lastSolution;
     private Threat aimingTarget;
     private boolean pendingShotCancelled;
+    // Solver memo: cached Solution plus the key it was computed from (threat id, flight clock,
+    // eye position, threat state); an identical input set reuses the cached Solution instead of
+    // re-running the candidate sweep.
+    private Solution memoizedSolution;
+    private String memoKey = "";
     private int preSlot = -1;
     private int preSwapSlot = -1;   // charge's slot when pre-slotting via quick-swap; -1 = plain select-swap
     private net.minecraft.world.item.Item expectedPreSwapItem = null; // item preSlotWindCharge left in preSwapSlot, for safe reversal
@@ -520,8 +542,16 @@ public class ArenaM extends Module {
     private Threat findMostDangerousThreat(Vec3 eyePos) {
         List<Threat> threats = new ArrayList<>();
         double rangeSq = maxRange.get() * (double) maxRange.get();
+        double range = maxRange.get();
 
-        for (Entity entity : mc.level.entitiesForRendering()) {
+        // One box query around the player's eye replaces the full entity-list iteration; the
+        // box is the eye +/- range, which contains the whole in-range sphere the per-entity range
+        // filter accepted. The two-argument getEntities(null, box) this replaced runs NO_SPECTATORS
+        // (EntityGetter's default), so the predicate has to exclude them too - a spectator's hitbox
+        // must not be scanned as a threat. Same accept set as the loop, minus the out-of-range ones.
+        for (Entity entity : mc.level.getEntities((Entity) null,
+            new AABB(eyePos.x - range, eyePos.y - range, eyePos.z - range, eyePos.x + range, eyePos.y + range, eyePos.z + range),
+            EntitySelector.NO_SPECTATORS)) {
             if (!isThreat(entity)) continue;
             if (!interceptOwnProjectiles.get() && isOwnedByPlayer(entity)) continue;
 
@@ -621,9 +651,18 @@ public class ArenaM extends Module {
     }
 
     private Solution solveIntercept(Threat target, Vec3 eyePos) {
+        int latencyTicks = getEffectiveLatencyTicks();
         Vec3[] path = target.path();
         Entity threatEntity = target.entity();
-        int latencyTicks = getEffectiveLatencyTicks();
+
+        String solveKey = threatEntity.getId() + "|" + latencyTicks + "|"
+            + eyePos.x + "," + eyePos.y + "," + eyePos.z + "|"
+            + threatEntity.position().x + "," + threatEntity.position().y + "," + threatEntity.position().z + "|"
+            + threatEntity.getDeltaMovement().x + "," + threatEntity.getDeltaMovement().y + "," + threatEntity.getDeltaMovement().z + "|"
+            + threatEntity.tickCount;
+        if (solveKey.equals(memoKey)) {
+            return memoizedSolution;
+        }
 
         // Index the loop by the charge's *impact tick* t, not by the aim anchor. The pre-2026-10-17
         // solver looped tau and tested t in {tau, tau+1} while aiming at path[tau], which is exactly
@@ -634,6 +673,7 @@ public class ArenaM extends Module {
             if (t >= path.length || path[t] == null) break; // path ends here; larger t can't help either
 
             int flightTicks = t - latencyTicks;
+            if (flightTicks <= 0) continue;
             double reach = WIND_SPEED * flightTicks;
             double margin = threatMargin(threatEntity, t);
             Vec3 a = path[t - 1];
@@ -644,12 +684,20 @@ public class ArenaM extends Module {
             // clips it against the charge's box inflated by the projectile margin. Note
             // Solution.ticksToImpact() means "how long the real charge actually flies", not t.
             Vec3 direction = rayTo(eyePos, a);
-            if (direction != null && rayClipsSegment(eyePos, direction, reach, a, b, margin))
-                return new Solution(direction, flightTicks);
+            if (direction != null && rayClipsSegment(eyePos, direction, reach, a, b, margin)) {
+                Solution hit = new Solution(direction, flightTicks);
+                memoizedSolution = hit;
+                memoKey = solveKey;
+                return hit;
+            }
 
             direction = rayTo(eyePos, b);
-            if (direction != null && rayClipsSegment(eyePos, direction, reach, a, b, margin))
-                return new Solution(direction, flightTicks);
+            if (direction != null && rayClipsSegment(eyePos, direction, reach, a, b, margin)) {
+                Solution hit = new Solution(direction, flightTicks);
+                memoizedSolution = hit;
+                memoKey = solveKey;
+                return hit;
+            }
 
             // Third candidate: the point where this tick's segment crosses the sphere of radius
             // `reach` around the eye. The charge cannot fall short of or overshoot its own reach, so
@@ -669,12 +717,18 @@ public class ArenaM extends Module {
                         double s = (k == 0 ? -halfB - root : -halfB + root) / len2;
                         if (s < 0.0 || s > 1.0) continue;
                         direction = rayTo(eyePos, a.add(ab.scale(s)));
-                        if (direction != null && rayClipsSegment(eyePos, direction, reach, a, b, margin))
-                            return new Solution(direction, flightTicks);
+                        if (direction != null && rayClipsSegment(eyePos, direction, reach, a, b, margin)) {
+                            Solution hit = new Solution(direction, flightTicks);
+                            memoizedSolution = hit;
+                            memoKey = solveKey;
+                            return hit;
+                        }
                     }
                 }
             }
         }
+        memoizedSolution = null;
+        memoKey = solveKey;
         return null;
     }
 
@@ -799,8 +853,16 @@ public class ArenaM extends Module {
 
     private void beginChargeTracking(Entity threatEntity) {
         preThrowChargeIds.clear();
-        for (Entity e : mc.level.entitiesForRendering()) {
-            if (e instanceof WindCharge) preThrowChargeIds.add(e.getId());
+        // One wind-charge-typed query replaces the full entity-list iteration; the box is the
+        // eye +/- CHARGE_DISCOVERY_RANGE, which holds a just-thrown charge (same containment
+        // reasoning as the threat scan, but on the dedicated charge-discovery range).
+        Vec3 chargeEye = mc.player.getEyePosition();
+        double chargeRange = CHARGE_DISCOVERY_RANGE;
+        for (Entity e : mc.level.getEntities((Entity) null,
+            new AABB(chargeEye.x - chargeRange, chargeEye.y - chargeRange, chargeEye.z - chargeRange,
+                chargeEye.x + chargeRange, chargeEye.y + chargeRange, chargeEye.z + chargeRange),
+            e -> e instanceof WindCharge)) {
+            preThrowChargeIds.add(e.getId());
         }
         trackedThreatEntity = threatEntity;
         trackedThreatEntityId = threatEntity.getId();
@@ -825,8 +887,12 @@ public class ArenaM extends Module {
         if (awaitingChargeSpawn) {
             spawnSearchTimer--;
             ticksWaitedForSpawn++;
-            for (Entity e : mc.level.entitiesForRendering()) {
-                if (!(e instanceof WindCharge)) continue;
+            Vec3 chargeEye = mc.player.getEyePosition();
+            double chargeRange = CHARGE_DISCOVERY_RANGE;
+            for (Entity e : mc.level.getEntities((Entity) null,
+                new AABB(chargeEye.x - chargeRange, chargeEye.y - chargeRange, chargeEye.z - chargeRange,
+                    chargeEye.x + chargeRange, chargeEye.y + chargeRange, chargeEye.z + chargeRange),
+                e -> e instanceof WindCharge)) {
                 if (preThrowChargeIds.contains(e.getId())) continue;
                 if (!isOwnedByPlayer(e)) continue;
                 trackedCharge = e;
@@ -889,7 +955,18 @@ public class ArenaM extends Module {
 
         if (!logStats.get()) return;
 
-        ChatUtils.info(String.format(
+        if (!hit && lastSolution != null && trackedThreatEntity != null) {
+            double dist = trackedThreatEntity.position().distanceTo(mc.player.getEyePosition());
+            Vec3 vel = trackedThreatEntity.getDeltaMovement();
+            if (debug.get()) ChatUtils.info(String.format(
+                "[Arena-M] MISS detail: flightTicks=%d threatDist=%.1f threatY=%.1f lat=%d spawnLat=%d vel=(%.2f,%.2f,%.2f) age=%d",
+                lastSolution.ticksToImpact(), dist, trackedThreatEntity.getY(),
+                getEffectiveLatencyTicks(), ticksWaitedForSpawn,
+                vel.x, vel.y, vel.z, trackedThreatEntity.tickCount
+            ));
+        }
+
+        if (debug.get()) ChatUtils.info(String.format(
             "[Arena-M] %s (%s) Normal: %d/%d (%.0f pct) lat avg=%.2f [%d-%d] | QuickSwap: %d/%d (%.0f pct) lat avg=%.2f [%d-%d]",
             hit ? "HIT" : "MISS",
             trackedUsedQuickSwap ? "quick-swap" : "normal",

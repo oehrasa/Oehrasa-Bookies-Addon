@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -55,6 +60,13 @@ public class Fatamorgana extends Module {
     private final SettingGroup sgDeposit = settings.createGroup("Deposit");
     private final SettingGroup sgRender = settings.createGroup("Render");
     private final SettingGroup sgDebug = settings.createGroup("Debug");
+
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
 
     private final Setting<Double> range = sgGeneral.add(new DoubleSetting.Builder()
         .name("range")
@@ -198,6 +210,7 @@ public class Fatamorgana extends Module {
         .build()
     );
 
+
     // Mutable state.
     private Stage stage = Stage.SEARCHING;
 
@@ -287,10 +300,10 @@ public class Fatamorgana extends Module {
                 if (!slot.getItem().isEmpty() && isDepositItem(slot.getItem())) playerDepositSlots++;
             }
 
-            info("Container opened. container-filled-slots=%d/%d, player-deposit-slots-seen=%d, settle-delay=%d ticks",
+            if (debug.get()) info("Container opened. container-filled-slots=%d/%d, player-deposit-slots-seen=%d, settle-delay=%d ticks",
                 containerFilled, containerSlots, playerDepositSlots, depositSettleDelay.get());
         } else {
-            info("Container closed. stage=%s", stage);
+            if (debug.get()) info("Container closed. stage=%s", stage);
         }
     }
 

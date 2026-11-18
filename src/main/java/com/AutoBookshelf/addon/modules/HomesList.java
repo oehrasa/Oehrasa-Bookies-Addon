@@ -1,5 +1,10 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
-//26.2 mojmap
+
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.JoinPayload;
 import com.google.gson.*;
@@ -162,12 +167,20 @@ public class HomesList extends Module {
 
     private final SettingGroup sgQueue = settings.createGroup("Teleport Queue");
 
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
+
     private final Setting<Boolean> queueTeleports = sgQueue.add(new BoolSetting.Builder()
         .name("queue-teleports")
         .description("If a teleport is on cooldown, wait it out and automatically resend the command.")
         .defaultValue(true)
         .build()
     );
+
 
     private static final java.util.regex.Pattern COOLDOWN_PATTERN = java.util.regex.Pattern.compile(
         "wait\\s+(?:(\\d+)h)?\\s*(?:(\\d+)m)?\\s*(?:(\\d+(?:\\.\\d+)?)s)?\\s+to teleport again"
@@ -377,7 +390,7 @@ public class HomesList extends Module {
         waitingForServerHomes = false;
         save();
         needsTableRebuild = true;
-        if (debugMode.get()) info("Loaded " + serverHomes.size() + " homes from server.");
+        if (debug.get() && (debugMode.get())) info("Loaded " + serverHomes.size() + " homes from server.");
     }
 
     public List<HomeEntry> getHomes() {
@@ -424,7 +437,7 @@ public class HomesList extends Module {
         }
         lastDebugLine = message;
         lastDebugTime = now;
-        info(message);
+        if (debug.get()) info(message);
     }
 
     private void handleCooldownMessage(String msg) {
@@ -455,7 +468,7 @@ public class HomesList extends Module {
         newName = newName == null ? "" : newName.trim();
         if (newName.isEmpty()) return;
         if (newName.matches(".*\\s.*")) {
-            info("Home names cannot contain spaces.");
+            if (debug.get()) info("Home names cannot contain spaces.");
             return;
         }
 
@@ -471,7 +484,7 @@ public class HomesList extends Module {
         sortHomes();
         save();
 
-        if (debugMode.get()) info("Renamed home to " + newName);
+        if (debug.get() && (debugMode.get())) info("Renamed home to " + newName);
     }
 
     public void deleteHome(HomeEntry entry) {
@@ -485,7 +498,7 @@ public class HomesList extends Module {
         homes.remove(entry);
         save();
 
-        if (debugMode.get()) info("Deleted home " + entry.originalName);
+        if (debug.get() && (debugMode.get())) info("Deleted home " + entry.originalName);
     }
 
     /**
@@ -783,23 +796,30 @@ public class HomesList extends Module {
             }
 
             int keyCode = input.key();
+            if (keyCode == GLFW.GLFW_KEY_UP || keyCode == GLFW.GLFW_KEY_DOWN
+                || keyCode == GLFW.GLFW_KEY_LEFT || keyCode == GLFW.GLFW_KEY_RIGHT) {
+                if (selectedIndex < 0) {
+                    // Freshly opened screen: the first arrow pick selects the first
+                    // item without displacing it (like the scroll wheel), instead of
+                    // applying a whole column/row step from index 0.
+                    selectedIndex = 0;
+                    scrollIndex = 0;
+                    return true;
+                }
+            }
             if (keyCode == GLFW.GLFW_KEY_UP) {
-                if (selectedIndex < 0) selectedIndex = 0;
                 selectedIndex = Math.floorMod(selectedIndex - columns, homes.size());
                 scrollIndex = linearToColumnMajor(selectedIndex);
                 return true;
             } else if (keyCode == GLFW.GLFW_KEY_DOWN) {
-                if (selectedIndex < 0) selectedIndex = 0;
                 selectedIndex = Math.floorMod(selectedIndex + columns, homes.size());
                 scrollIndex = linearToColumnMajor(selectedIndex);
                 return true;
             } else if (keyCode == GLFW.GLFW_KEY_LEFT) {
-                if (selectedIndex < 0) selectedIndex = 0;
                 selectedIndex = Math.floorMod(selectedIndex - 1, homes.size());
                 scrollIndex = linearToColumnMajor(selectedIndex);
                 return true;
             } else if (keyCode == GLFW.GLFW_KEY_RIGHT) {
-                if (selectedIndex < 0) selectedIndex = 0;
                 selectedIndex = Math.floorMod(selectedIndex + 1, homes.size());
                 scrollIndex = linearToColumnMajor(selectedIndex);
                 return true;

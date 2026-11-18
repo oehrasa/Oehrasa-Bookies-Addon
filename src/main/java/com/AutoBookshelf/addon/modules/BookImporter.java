@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -22,7 +27,6 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.client.gui.screens.inventory.AbstractSignEditScreen;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.FormattedText;
 import net.minecraft.network.protocol.game.ServerboundEditBookPacket;
 import net.minecraft.network.protocol.game.ServerboundSignUpdatePacket;
 import net.minecraft.server.network.Filterable;
@@ -51,6 +55,13 @@ public class BookImporter extends Module {
     private final SettingGroup sgRemote = settings.createGroup("Remote Library");
     private final SettingGroup sgResume = settings.createGroup("Resume");
     private final SettingGroup sgSign = settings.createGroup("Group Sign (Remote Mode)");
+
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
 
     private final Setting<String> importFolder = sgGeneral.add(new StringSetting.Builder()
         .name("import-folder")
@@ -88,6 +99,16 @@ public class BookImporter extends Module {
         .name("manifest-url")
         .description("URL to index.json on GitHub Page.")
         .defaultValue("https://oehrasa.github.io/Ashurbanipal/index.json")
+        .build()
+    );
+
+    private final Setting<Integer> screenWidth = sgRemote.add(new IntSetting.Builder()
+        .name("screen-width")
+        .description("Minimum width of the remote library selection screen, in pixels. Useful when your manifest has long titles.")
+        .defaultValue(480)
+        .min(200)
+        .max(1200)
+        .sliderRange(200, 1200)
         .build()
     );
 
@@ -177,11 +198,8 @@ public class BookImporter extends Module {
         .build()
     );
 
+
     // Page constraints
-    private static final int MAX_PAGE_CHARS = 1024;
-    private static final int MAX_PAGE_WIDTH = 114;
-    private static final int MAX_PAGE_HEIGHT = 128;
-    private static final String LINE_SEPARATOR = "\n";
     private static final int MAX_SIGN_LINE_WIDTH = 90;
 
     // State
@@ -346,7 +364,7 @@ public class BookImporter extends Module {
                 // it's cleared either by onRemoteSelectionConfirmed()
                 // finishing its download phase, or by the cancel callback
                 // below if the player closes the screen without picking anything.
-                mc.gui.setScreen(new RemoteBookSelectScreen(entries, this::onRemoteSelectionConfirmed, () -> remoteBusy = false));
+                mc.gui.setScreen(new RemoteBookSelectScreen(entries, this::onRemoteSelectionConfirmed, () -> remoteBusy = false, pagesPerBook.get(), screenWidth.get()));
             }));
     }
 
@@ -381,7 +399,7 @@ public class BookImporter extends Module {
                 List<ImportTask> queued = new ArrayList<>();
                 for (Map.Entry<BookEntry, List<String>> e : fetched.entrySet()) {
                     BookEntry entry = e.getKey();
-                    List<String> pages = convertLinesToPages(e.getValue());
+                    List<String> pages = com.AutoBookshelf.addon.utils.BookPages.convertLinesToPages(e.getValue());
                     if (pages.isEmpty()) continue;
 
                     String baseTitle = entry.title != null ? entry.title : entry.file;
@@ -575,7 +593,7 @@ public class BookImporter extends Module {
             }
             try {
                 List<String> lines = Files.readAllLines(file.toPath());
-                List<String> pages = convertLinesToPages(lines);
+                List<String> pages = com.AutoBookshelf.addon.utils.BookPages.convertLinesToPages(lines);
                 if (pages.isEmpty()) {
                     sendMessage("§cFile is empty.");
                     return false;
@@ -632,7 +650,7 @@ public class BookImporter extends Module {
             if (file == null) continue;
             try {
                 List<String> lines = Files.readAllLines(file.toPath());
-                List<String> pages = convertLinesToPages(lines);
+                List<String> pages = com.AutoBookshelf.addon.utils.BookPages.convertLinesToPages(lines);
                 if (pages.isEmpty()) {
                     error("File is empty: " + file.getName());
                     continue;
@@ -675,7 +693,7 @@ public class BookImporter extends Module {
                 selectedFilePath.set(path);
                 useSelectedFile.set(true);
                 importSource.set(ImportSource.LocalFolder);
-                info("Selected file: " + path);
+                if (debug.get()) info("Selected file: " + path);
             }
         };
 
@@ -685,7 +703,7 @@ public class BookImporter extends Module {
             selectedFilePath.set("");
             useSelectedFile.set(false);
             importSource.set(ImportSource.LocalFolder);
-            info("Cleared manual file selection.");
+            if (debug.get()) info("Cleared manual file selection.");
         };
 
         WButton browseRemoteBtn = row.add(theme.button("Browse Remote Library")).widget();
@@ -942,99 +960,9 @@ public class BookImporter extends Module {
     }
 
     private void sendMessage(String msg) {
-        info(msg);
+        if (debug.get()) info(msg);
         if (mc.player != null) {
             mc.player.sendSystemMessage(Component.literal(msg));
         }
-    }
-
-    // Page conversion
-    private List<String> convertLinesToPages(List<String> lines) {
-        List<String> pages = new ArrayList<>();
-        StringBuilder currentPage = new StringBuilder();
-        for (String line : lines) {
-            processLine(line, currentPage, pages);
-        }
-        if (!currentPage.isEmpty()) {
-            pages.add(currentPage.toString());
-        }
-        return pages;
-    }
-
-    private void processLine(String line, StringBuilder currentPage, List<String> pages) {
-        boolean lineFitsOnCurrentPage = fitsOnPage(currentPage + line + LINE_SEPARATOR);
-        if (lineFitsOnCurrentPage) {
-            addLineToPage(line, currentPage);
-            return;
-        }
-        boolean lineFitsOnNewPage = fitsOnPage(line);
-        if (lineFitsOnNewPage) {
-            startNewPage(currentPage, pages);
-            addLineToPage(line, currentPage);
-            return;
-        }
-        processLineLongerThanPage(line, currentPage, pages);
-    }
-
-    private void addLineToPage(String line, StringBuilder currentPage) {
-        currentPage.append(line).append(LINE_SEPARATOR);
-    }
-
-    private void startNewPage(StringBuilder currentPage, List<String> pages) {
-        if (currentPage.length() > 0) {     // only add if not empty
-            pages.add(currentPage.toString());
-        }
-        currentPage.setLength(0);
-    }
-
-    private void processLineLongerThanPage(String line, StringBuilder currentPage, List<String> pages) {
-        String[] words = line.split(" ");
-        StringBuilder linePartForCurrentPage = new StringBuilder();
-        for (String word : words) {
-            boolean pageHasRoomForWord = fitsOnPage(currentPage.toString() + linePartForCurrentPage.toString() + word + " ");
-            if (pageHasRoomForWord) {
-                linePartForCurrentPage.append(word).append(" ");
-                continue;
-            }
-            boolean pageHasContents = !currentPage.isEmpty() || !linePartForCurrentPage.isEmpty();
-            if (pageHasContents) {
-                currentPage.append(linePartForCurrentPage);
-                startNewPage(currentPage, pages);
-                linePartForCurrentPage.setLength(0);
-            }
-            boolean blankPageCanHoldWord = fitsOnPage(word);
-            if (blankPageCanHoldWord) {
-                linePartForCurrentPage.append(word).append(" ");
-                continue;
-            }
-            splitLongWordAcrossPages(word, currentPage, pages);
-        }
-        String leftover = linePartForCurrentPage.toString();
-        if (!leftover.isEmpty() || !currentPage.isEmpty()) {
-            if (!fitsOnPage(currentPage.toString() + leftover + LINE_SEPARATOR)) {
-                startNewPage(currentPage, pages);
-            }
-            addLineToPage(leftover, currentPage);
-        }
-    }
-
-    private void splitLongWordAcrossPages(String word, StringBuilder currentPage, List<String> pages) {
-        char[] chars = word.toCharArray();
-        for (char c : chars) {
-            if (!fitsOnPage(currentPage.toString() + c)) {
-                startNewPage(currentPage, pages);
-            }
-            currentPage.append(c);
-        }
-        if (fitsOnPage(currentPage + " ")) {
-            currentPage.append(" ");
-        } else {
-            startNewPage(currentPage, pages);
-        }
-    }
-
-    private boolean fitsOnPage(String text) {
-        return text.length() < MAX_PAGE_CHARS
-            && mc.font.wordWrapHeight(FormattedText.of(text), MAX_PAGE_WIDTH) <= MAX_PAGE_HEIGHT;
     }
 }

@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules.livemessage.gui;
 
 import com.AutoBookshelf.addon.modules.livemessage.LiveMessage;
@@ -32,6 +37,22 @@ import java.util.regex.Pattern;
 public class ChatWindow extends LiveWindow {
     private static final Gson GSON = new Gson();
     private static final DateFormat DATE_FORMAT = new SimpleDateFormat("MMMM dd, yyyy");
+
+    /**
+     * Cached day label for the GUI's "current day" early-out; refreshed once a second.
+     */
+    private String cachedDay;
+    private long cachedDayAt = 0L;
+
+    private String currentDay() {
+        long now = System.currentTimeMillis();
+        if (this.cachedDay != null && now - this.cachedDayAt < 1000L) {
+            return this.cachedDay;
+        }
+        this.cachedDay = DATE_FORMAT.format(new Date(now));
+        this.cachedDayAt = now;
+        return this.cachedDay;
+    }
     private static final DateFormat TIME_FORMAT = new SimpleDateFormat("<HH:mm> ");
 
     // How close two (sentByMe, message) entries' timestamps have to be treated as
@@ -150,7 +171,7 @@ public class ChatWindow extends LiveWindow {
             this.maxLineBytes = Math.max(1, 256 - GuiUtil.utf8ByteLength(this.msgString));
             this.inputBox.setMaxTotalLength(this.maxLineBytes * 8); // room for several queued lines
             this.inputBox.setMaxVisibleSegments(MAX_VISIBLE_INPUT_LINES);
-            this.inputFocused = true;
+            this.inputFocused = LiveMessage.INSTANCE.autoFocus.get();
             this.scrollToBottom();
             this.animateInStart = System.currentTimeMillis();
         }
@@ -674,6 +695,12 @@ public class ChatWindow extends LiveWindow {
     @Override
     public void keyTyped(char typedChar, int keyCode) {
         this.markAsRead();
+        // An unfocused input box does not edit on keystrokes; the key falls to the
+        // window-cycling handler so Tab can move between windows.
+        if (!this.inputFocused) {
+            super.keyTyped(typedChar, keyCode);
+            return;
+        }
         int inputWidth = this.w - 18;
         boolean shift = this.isShiftHeld();
         boolean ctrl = this.isCtrlHeld();
@@ -990,6 +1017,21 @@ public class ChatWindow extends LiveWindow {
         this.syncHistoryFromFile();
         this.scrollToBottom();
         super.activateWindow();
+        // The focus is cleared on every chat window when the GUI closes, so a chat that is
+        // activated later -> after a reopen, or from the buddy list - would have no caret and
+        // its keystrokes would go nowhere. Taking the focus here covers every path: opening a
+        // chat, re-activating one and restoring one - unless auto-focus is off.
+        if (LiveMessage.INSTANCE.autoFocus.get()) {
+            LivemessageGui.focusChatInput(this);
+        }
+    }
+
+    @Override
+    public void deactivateWindow() {
+        // A GUI has one focus. A window that is no longer the active one gives its caret up,
+        // so only the window the player is looking at can swallow the keys.
+        this.inputFocused = false;
+        super.deactivateWindow();
     }
 
     public void markAsRead() {
@@ -1062,7 +1104,7 @@ public class ChatWindow extends LiveWindow {
     // chatScrollPosition indexes into the full rendered-line list for the whole history, so the
     // list is cached and only rebuilt when the history, window width, or current day changes.
     private List<ChatWindow.RenderedLine> getRenderedLines() {
-        String day = DATE_FORMAT.format(new Date(System.currentTimeMillis()));
+        String day = currentDay();
         if (this.renderedCacheVersion != this.historyVersion
             || this.renderedCacheWidth != this.w
             || !this.renderedCacheDay.equals(day)) {
@@ -1122,8 +1164,10 @@ public class ChatWindow extends LiveWindow {
             }
 
             if (line.messageIndex >= 0) {
-                int textWidth = this.getTextWidth(line.text);
-                this.clickableChatLines.add(new ClickableChatLine(this.x + line.x, this.y + y, textWidth, this.getTextHeight(), line.messageIndex));
+                if (line.textWidth < 0) {
+                    line.textWidth = this.getTextWidth(line.text);
+                }
+                this.clickableChatLines.add(new ClickableChatLine(this.x + line.x, this.y + y, line.textWidth, this.getTextHeight(), line.messageIndex));
             }
 
             y += MESSAGE_LINE_HEIGHT;
@@ -1520,6 +1564,11 @@ public class ChatWindow extends LiveWindow {
         private final int color;
         private final boolean urls;
         private final int messageIndex; // index into chatHistory this line came from; -1 for date separators
+        /**
+         * Cached pixel width; filled lazily in the draw path, then reused every frame the
+         * line survives (a new history rebuild replaces the lines anyway).
+         */
+        private int textWidth = -1;
 
         private RenderedLine(String text, int x, int color, boolean urls, int messageIndex) {
             this.text = text;

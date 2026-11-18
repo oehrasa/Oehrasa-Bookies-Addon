@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules.livemessage.notes;
 
 import com.AutoBookshelf.addon.modules.livemessage.gui.GuiUtil;
@@ -55,7 +60,10 @@ public class NotesWindow extends LiveWindow {
         this.inputField = new EditBox(this.mc.font, 9, this.h - 16, this.w - 18, 12, Component.literal(""));
         this.inputField.setMaxLength(MAX_INPUT_LENGTH);
         this.inputField.setBordered(false);
-        this.inputField.setFocused(true);
+        this.inputField.setFocused(
+            com.AutoBookshelf.addon.modules.livemessage.LiveMessage.INSTANCE == null
+                || com.AutoBookshelf.addon.modules.livemessage.LiveMessage.INSTANCE.autoFocus.get()
+        );
         this.inputField.setTextColor(-1);
         this.inputField.setTextColorUneditable(-8355712);
         this.initButtons();

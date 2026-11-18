@@ -1,5 +1,12 @@
+// SPDX-License-Identifier: GPL-3.0-only AND MIT AND Apache-2.0
+// Portions adapted from PathSeeker by FaxHack (https://github.com/FaxHack/PathSeeker),
+// licensed under the Apache License 2.0, which is a Meteor port of shulker-view
+// by cattyn (https://github.com/cattyngmd/shulker-view), licensed under the MIT License.
+// Modified substantially. Copyright cattyn and FaxHack.
+// See third-party/licenses/LICENSE-Apache-2.0.txt, third-party/licenses/LICENSE-MIT.txt
+// and THIRD_PARTY_NOTICES.md.
 package com.AutoBookshelf.addon.modules;
-//26.2 mojmap
+
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.events.ScreenRenderEvent;
 import com.AutoBookshelf.addon.utils.ShulkerInfo;
@@ -247,7 +254,7 @@ public class InventoryInfo extends Module {
     }
 
     public InventoryInfo() {
-        super(Addon.CATEGORY, "Inventory-Info", "prigozhinplugg");
+        super(Addon.CATEGORY, "Inventory-Info", "Improves shulker management by showing interactive shulker content on GUI");
     }
     //TODO
     // Make proper component display.

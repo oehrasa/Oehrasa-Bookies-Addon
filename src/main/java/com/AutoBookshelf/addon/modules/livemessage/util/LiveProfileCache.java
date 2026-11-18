@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules.livemessage.util;
 
 import com.AutoBookshelf.addon.modules.livemessage.LiveMessage;
@@ -92,7 +97,8 @@ public class LiveProfileCache {
         LiveProfileCache.LiveProfile liveProfile = new LiveProfileCache.LiveProfile();
         liveProfile.uuid = uuid;
         liveProfile.username = getUsernameFromTab(uuid);
-        if (liveProfile.username == null && chatSettings.lastName != null) {
+        if (liveProfile.username == null && chatSettings.lastName != null
+            && LivemessageUtil.isSafeUsername(chatSettings.lastName)) {
             liveProfile.username = chatSettings.lastName;
             liveProfile.weakCache = true;
         }

@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -20,6 +25,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.network.protocol.game.ServerboundInteractPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
+import net.minecraft.network.protocol.game.ServerboundSwingPacket;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.tags.TagKey;
@@ -74,6 +80,13 @@ public class ForceAccess extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgMining = settings.createGroup("Mining");
     private final SettingGroup sgESP = settings.createGroup("ESP");
+
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
 
     private final Setting<Double> maxRange = sgGeneral.add(new DoubleSetting.Builder()
         .name("max-range")
@@ -172,6 +185,35 @@ public class ForceAccess extends Module {
         .visible(packetBreak::get)
         .build());
 
+    private enum GravityBreakMode {Burst, Rebreak}
+
+    private final Setting<GravityBreakMode> gravityBreakMode = sgMining.add(new EnumSetting.Builder<GravityBreakMode>()
+        .name("gravity-break-mode")
+        .description("How to break gravity blocks (sand/gravel/concrete powder). Burst sends the full packet burst; Rebreak uses single-break plus sequenced remine (InstantRebreak style) for slow-mining blocks.")
+        .defaultValue(GravityBreakMode.Burst)
+        .visible(packetBreak::get)
+        .build());
+
+    private final Setting<Integer> rebreakDelay = sgMining.add(new IntSetting.Builder()
+        .name("rebreak-delay")
+        .description("Ticks before the re-break is committed. The server works on the block on its own; the commit makes it destroy the block as soon as the break time has passed.")
+        .defaultValue(0)
+        .min(0)
+        .max(20)
+        .sliderRange(0, 20)
+        .visible(() -> packetBreak.get() && gravityBreakMode.get() == GravityBreakMode.Rebreak)
+        .build());
+
+    private final Setting<Integer> rebreakTimeout = sgMining.add(new IntSetting.Builder()
+        .name("rebreak-timeout")
+        .description("Ticks a re-break may take before the block is given up on. The cap counts elapsed ticks, so a slow block still gets the time it needs.")
+        .defaultValue(60)
+        .min(5)
+        .max(200)
+        .sliderRange(5, 120)
+        .visible(() -> packetBreak.get() && gravityBreakMode.get() == GravityBreakMode.Rebreak)
+        .build());
+
     private final Setting<Boolean> espEnabled = sgESP.add(new BoolSetting.Builder()
         .name("ESP-enabled")
         .description("Highlight the container and its obstruction blocks.")
@@ -198,6 +240,7 @@ public class ForceAccess extends Module {
         .defaultValue(new SettingColor(255, 200, 0, 200))
         .visible(espEnabled::get)
         .build());
+
 
     private enum Phase {IDLE, MINE, OPEN}
 
@@ -237,6 +280,9 @@ public class ForceAccess extends Module {
     private static final class Target {
         private BlockPos pos;
         private int attempts;
+        private int rebreakTicks;
+        private boolean rebreakStarted;
+        private boolean rebreakStopped;
     }
 
     public ForceAccess() {
@@ -416,18 +462,33 @@ public class ForceAccess extends Module {
         }
     }
 
+    private static double distanceToBlockSqr(Vec3 eye, BlockPos pos) {
+        double dx = pos.getX() + 0.5 - eye.x;
+        double dy = pos.getY() + 0.5 - eye.y;
+        double dz = pos.getZ() + 0.5 - eye.z;
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    private static double distanceToBoxSqr(Vec3 eye, double minX, double minY, double minZ,
+                                           double maxX, double maxY, double maxZ) {
+        double dx = (minX + maxX) * 0.5 - eye.x;
+        double dy = (minY + maxY) * 0.5 - eye.y;
+        double dz = (minZ + maxZ) * 0.5 - eye.z;
+        return dx * dx + dy * dy + dz * dz;
+    }
+
     @EventHandler
     private void onRender(Render3DEvent event) {
         if (!espEnabled.get() || mc.player == null || mc.level == null) return;
         Vec3 eye = mc.player.getEyePosition();
         double maxSq = 16 * 16;
 
-        if (container != null && eye.distanceToSqr(Vec3.atCenterOf(container)) < maxSq) {
+        if (container != null && distanceToBlockSqr(eye, container) < maxSq) {
             event.renderer.box(container, sideColor.get(), lineColor.get(), shapeMode.get(), 0);
         }
 
         for (BlockPos pos : espBoxes) {
-            if (eye.distanceToSqr(Vec3.atCenterOf(pos)) < maxSq) {
+            if (distanceToBlockSqr(eye, pos) < maxSq) {
                 event.renderer.box(pos, sideColor.get(), lineColor.get(), shapeMode.get(), 0);
             }
         }
@@ -443,7 +504,8 @@ public class ForceAccess extends Module {
             double z = Mth.lerp(event.tickDelta, openEntity.zOld, openEntity.getZ()) - openEntity.getZ();
             AABB lerped = box.move(x, y, z);
 
-            if (eye.distanceToSqr(lerped.getCenter()) < maxSq) {
+            if (distanceToBoxSqr(eye, lerped.minX, lerped.minY, lerped.minZ,
+                lerped.maxX, lerped.maxY, lerped.maxZ) < maxSq) {
                 event.renderer.box(
                     x + box.minX, y + box.minY, z + box.minZ,
                     x + box.maxX, y + box.maxY, z + box.maxZ,
@@ -765,7 +827,16 @@ public class ForceAccess extends Module {
         // is the next obstruction. Compare tools for mining.pos vs next.
         if (mining != null && mining.pos != null && mining2 == null && doubleBreak.get() && packetBreak.get() && !queue.isEmpty()) {
             BlockPos next = queue.peekFirst();
-            if (!autoTool.get() || findToolSlot(mining.pos) == findToolSlot(next)) {
+            // Rebreak mode mines gravity blocks one at a time: the rebreak path only aims for the
+            // primary target, so a paired target would be broken without the aim. Skip the
+            // double-break pop when either side is a gravity block in rebreak mode.
+            boolean rebreakMode = gravityBreakMode.get() == GravityBreakMode.Rebreak;
+            boolean primaryIsGravityRebreak = rebreakMode && mining.pos != null
+                && mc.level.getBlockState(mining.pos).getBlock() instanceof net.minecraft.world.level.block.FallingBlock;
+            boolean nextIsGravityRebreak = rebreakMode
+                && mc.level.getBlockState(next).getBlock() instanceof net.minecraft.world.level.block.FallingBlock;
+            if (!primaryIsGravityRebreak && !nextIsGravityRebreak
+                && (!autoTool.get() || findToolSlot(mining.pos) == findToolSlot(next))) {
                 mining2 = pop();
             }
         }
@@ -808,7 +879,18 @@ public class ForceAccess extends Module {
         Target target = new Target();
         target.pos = queue.pollFirst();
         target.attempts = 0;
+        target.rebreakTicks = 0;
+        target.rebreakStarted = false;
+        target.rebreakStopped = false;
         return target;
+    }
+
+    /**
+     * The effective rebreak timeout. It can never be shorter than the delay before the commit,
+     * or the block would be abandoned before the STOP that commits the break goes out.
+     */
+    private int rebreakTimeout() {
+        return Math.max(rebreakTimeout.get(), rebreakDelay.get() + 1);
     }
 
     /**
@@ -828,6 +910,47 @@ public class ForceAccess extends Module {
 
         if (packetBreak.get()) {
             if (waiting) return;
+
+            // Rebreak mode for gravity blocks: single break + sequenced remine (InstantRebreak style).
+            boolean isGravityRebreak = target.pos != null
+                && mc.level.getBlockState(target.pos).getBlock() instanceof net.minecraft.world.level.block.FallingBlock
+                && gravityBreakMode.get() == GravityBreakMode.Rebreak;
+
+            if (isGravityRebreak) {
+                // In 26.2 the server works on the block on its own: START_DESTROY_BLOCK sets
+                // the break going and the server ticks the progress until the block is gone.
+                // STOP_DESTROY_BLOCK does not cancel that - it switches the server to the
+                // delayed destroy, which destroys the block as soon as the break time has
+                // passed. So the rebreak only has to start the break, wait, and give the
+                // block the time it needs.
+                if (!target.rebreakStarted) {
+                    Vec3 center = Vec3.atCenterOf(target.pos);
+                    if (rotate.get() && target == mining) {
+                        Rotations.rotate(Rotations.getYaw(center), Rotations.getPitch(center), -100, null);
+                    }
+                    refreshToolSlot();
+                    breakAction(ServerboundPlayerActionPacket.Action.START_DESTROY_BLOCK, target.pos, face(target.pos));
+                    target.rebreakStarted = true;
+                    target.rebreakTicks = 0;
+                    target.rebreakStopped = false;
+                    mc.player.swing(InteractionHand.MAIN_HAND);
+                    return;
+                }
+
+                target.rebreakTicks++;
+                if (!target.rebreakStopped && target.rebreakTicks >= rebreakDelay.get()) {
+                    // The commit: the server destroys the block now if the break time has passed.
+                    target.rebreakStopped = true;
+                    breakAction(ServerboundPlayerActionPacket.Action.STOP_DESTROY_BLOCK, target.pos, face(target.pos));
+                    mc.player.connection.send(new ServerboundSwingPacket(InteractionHand.MAIN_HAND));
+                }
+                if (target.rebreakTicks > rebreakTimeout()) {
+                    // The block did not break in time. Give up on it; the cap counts elapsed
+                    // ticks, so a slow block is not abandoned before it could break.
+                    target.pos = null;
+                }
+                return;
+            }
 
             if (++target.attempts > maxAttempts.get()) {
                 target.pos = null;
@@ -995,7 +1118,7 @@ public class ForceAccess extends Module {
             // mine-obstruction setting). Without that the module would queue a
             // mine here anyway, silently ignoring the user's switch.
             if (!allowMine) {
-                info("Can't open: the obstruction stays and mining is disabled.");
+                if (debug.get()) info("Can't open: the obstruction stays and mining is disabled.");
                 reset();
                 return;
             }
@@ -1006,12 +1129,12 @@ public class ForceAccess extends Module {
             BlockPos gravity = gravityObstruction();
             if (gravity != null) {
                 if (minedThisPhase == 0) {
-                    info("Gravity column isn't clearing, giving up.");
+                    if (debug.get()) info("Gravity column isn't clearing, giving up.");
                     reset();
                     return;
                 }
                 if (++gravityPasses > 96) {
-                    info("Gravity column isn't clearing, giving up.");
+                    if (debug.get()) info("Gravity column isn't clearing, giving up.");
                     reset();
                     return;
                 }
@@ -1021,7 +1144,7 @@ public class ForceAccess extends Module {
                 return;
             }
             if (openTries >= OPEN_TRIES) {
-                info("Couldn't clear the obstruction, giving up.");
+                if (debug.get()) info("Couldn't clear the obstruction, giving up.");
                 reset();
                 return;
             }

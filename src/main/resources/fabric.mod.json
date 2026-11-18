@@ -37,5 +37,9 @@
     "java": ">=${jdk_version}",
     "minecraft": "${minecraft_version}",
     "meteor-client": "*"
+  },
+  "suggests": {
+    "baritone-meteor": "*",
+    "baritone": "*"
   }
 }

@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.utils;
 
 import com.google.gson.JsonArray;
@@ -447,6 +452,31 @@ public class BookUtils {
             mc.gui.setScreen(screen);
             if (targetIndex != 0) screen.setPage(targetIndex);
         });
+    }
+
+    /**
+     * Builds a written book from pre-built pages (each list entry is one page of the
+     * book, exactly as the import pipeline produced them). Unlike {@link #createWrittenBook},
+     * this does NOT re-split the pages — used by the remote preview so its contents match
+     * what the importer signs into a writable book.
+     */
+    public static ItemStack createWrittenBookFromPages(String title, String author, List<String> pages) {
+        List<Filterable<Component>> filteredPages = new ArrayList<>();
+        for (String pageContent : pages) {
+            filteredPages.add(Filterable.passThrough(Component.literal(pageContent)));
+        }
+
+        WrittenBookContent content = new WrittenBookContent(
+            Filterable.passThrough(truncateTitle(title)),
+            author,
+            0,
+            filteredPages,
+            true
+        );
+
+        ItemStack book = new ItemStack(Items.WRITTEN_BOOK);
+        book.set(DataComponents.WRITTEN_BOOK_CONTENT, content);
+        return book;
     }
 
     /**

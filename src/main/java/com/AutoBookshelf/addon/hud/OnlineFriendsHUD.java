@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.hud;
 
 import com.AutoBookshelf.addon.Addon;
@@ -14,7 +19,9 @@ import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import net.minecraft.client.multiplayer.PlayerInfo;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
 
@@ -61,6 +68,14 @@ public class OnlineFriendsHUD extends HudElement {
 
     private final ForceDefaultFont forceDefaultFont = new ForceDefaultFont(sgGeneral);
 
+    /**
+     * Cached widths for the two constant titles and per-friend names. The titles are the
+     * same two strings on every render; hashing them per frame is avoidable.
+     */
+    private double noFriendsTitleWidth = -1;
+    private double onlineTitleWidth = -1;
+    private final Map<String, Double> friendWidthCache = new HashMap<>();
+
     public OnlineFriendsHUD() {
         super(INFO);
     }
@@ -77,8 +92,11 @@ public class OnlineFriendsHUD extends HudElement {
     }
 
     private void renderOffline(HudRenderer renderer) {
+        if (this.noFriendsTitleWidth < 0) {
+            this.noFriendsTitleWidth = forceDefaultFont.width(renderer, "No Friends Online", true);
+        }
         String title = "No Friends Online";
-        double width = forceDefaultFont.width(renderer, title, true);
+        double width = this.noFriendsTitleWidth;
         double height = forceDefaultFont.height(renderer, true);
 
         setSize(width, height);
@@ -93,13 +111,24 @@ public class OnlineFriendsHUD extends HudElement {
 
     private void renderFriendsList(HudRenderer renderer, List<String> onlineFriends) {
         String title = onlineFriends.isEmpty() ? "No Friends Online" : "Online Friends";
-        double titleWidth = forceDefaultFont.width(renderer, title, true);
+        if (this.noFriendsTitleWidth < 0) {
+            this.noFriendsTitleWidth = forceDefaultFont.width(renderer, "No Friends Online", true);
+        }
+        if (this.onlineTitleWidth < 0) {
+            this.onlineTitleWidth = forceDefaultFont.width(renderer, "Online Friends", true);
+        }
+        double titleWidth = onlineFriends.isEmpty() ? this.noFriendsTitleWidth : this.onlineTitleWidth;
         double lineHeight = forceDefaultFont.height(renderer, true);
 
         // Calculate dimensions
         double maxWidth = titleWidth;
         for (String friend : onlineFriends) {
-            double friendWidth = forceDefaultFont.width(renderer, friend, false);
+            Double cached = friendWidthCache.get(friend);
+            double friendWidth = cached != null ? cached : forceDefaultFont.width(renderer, friend, false);
+            if (cached == null) {
+                if (friendWidthCache.size() > 256) friendWidthCache.clear();
+                friendWidthCache.put(friend, friendWidth);
+            }
             if (friendWidth > maxWidth) maxWidth = friendWidth;
         }
 

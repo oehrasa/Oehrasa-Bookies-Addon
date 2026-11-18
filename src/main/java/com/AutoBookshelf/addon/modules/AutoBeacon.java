@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import baritone.api.BaritoneAPI;
@@ -6,6 +11,7 @@ import baritone.api.pathing.goals.GoalXZ;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.DistanceUtil;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
+import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.renderer.ShapeMode;
 import meteordevelopment.meteorclient.settings.*;
@@ -21,18 +27,23 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntitySelector;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class AutoBeacon extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -40,6 +51,13 @@ public class AutoBeacon extends Module {
     private final SettingGroup sgControls = settings.createGroup("Controls");
     private final SettingGroup sgPlacement = settings.createGroup("Placement");
     private final SettingGroup sgBaritone = settings.createGroup("Baritone");
+
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
 
     public enum OriginMode { PlayerPosition, SelectedBlock }
 
@@ -84,12 +102,12 @@ public class AutoBeacon extends Module {
     private final Setting<Boolean> useBaritone = sgBaritone.add(new BoolSetting.Builder()
         .name("use-baritone")
         .description("Use Baritone to move to out-of-reach block positions.")
-        .defaultValue(false)
+        .defaultValue(true)
         .build());
 
     private final Setting<Boolean> jumpWhenStuck = sgBaritone.add(new BoolSetting.Builder()
         .name("jump-when-stuck")
-        .description("Jump if no block has been placed for 5 seconds while building.")
+        .description("Jump and re-path after 5 seconds without a verified placement.")
         .defaultValue(true)
         .build());
 
@@ -103,7 +121,9 @@ public class AutoBeacon extends Module {
     private final Setting<Integer> delayTicks = sgGeneral.add(new IntSetting.Builder()
         .name("place-delay")
         .description("Ticks between each block placement.")
-        .defaultValue(2).min(0).max(10)
+        .defaultValue(2)
+        .min(0)
+        .max(10)
         .build());
 
     private final Setting<Integer> blocksPerTick = sgGeneral.add(new IntSetting.Builder()
@@ -118,26 +138,83 @@ public class AutoBeacon extends Module {
         .defaultValue(true)
         .build());
 
+    /**
+     * Which part of the build forces the player to sneak, suppressing any interactive-block
+     * GUI (beacon, chest, ...) that would otherwise open from the click face.
+     */
+    public enum SneakLockScope {BeaconPlacement, EntireBuild}
+
+    private final Setting<Boolean> sneakLock = sgGeneral.add(new BoolSetting.Builder()
+        .name("sneak-lock")
+        .description("Force the player to sneak so placement can't open nearby interactive-block accidentally.")
+        .defaultValue(true)
+        .build());
+
+    private final Setting<SneakLockScope> sneakLockScope = sgGeneral.add(new EnumSetting.Builder<SneakLockScope>()
+        .name("sneak-lock-scope")
+        .description("Which portion of the build to sneak: the 4 beacon placement only, or the whole pyramid + beacon placement.")
+        .defaultValue(SneakLockScope.BeaconPlacement)
+        .visible(() -> sneakLock.get())
+        .build());
+
     private final Setting<Boolean> render = sgRender.add(new BoolSetting.Builder()
-        .name("render").description("Render the remaining blocks.")
-        .defaultValue(true).build());
+        .name("render")
+        .description("Render the remaining blocks.")
+        .defaultValue(true)
+        .build());
+
     private final Setting<ShapeMode> shapeMode = sgRender.add(new EnumSetting.Builder<ShapeMode>()
-        .name("shape-mode").defaultValue(ShapeMode.Both).build());
+        .name("shape-mode")
+        .defaultValue(ShapeMode.Both)
+        .build());
+
     private final Setting<SettingColor> sideColor = sgRender.add(new ColorSetting.Builder()
-        .name("side-color").defaultValue(new SettingColor(255, 255, 255, 20)).build());
+        .name("side-color")
+        .defaultValue(new SettingColor(255, 255, 255, 20))
+        .build());
+
     private final Setting<SettingColor> lineColor = sgRender.add(new ColorSetting.Builder()
-        .name("line-color").defaultValue(new SettingColor(255, 255, 255, 200)).build());
+        .name("line-color")
+        .defaultValue(new SettingColor(255, 255, 255, 200))
+        .build());
+
     private final Setting<SettingColor> previewColor = sgRender.add(new ColorSetting.Builder()
         .name("preview-color")
         .description("Color of the preview boxes before building starts.")
-        .defaultValue(new SettingColor(0, 255, 0, 70)).visible(preview::get).build());
+        .defaultValue(new SettingColor(0, 255, 0, 70)).visible(preview::get)
+        .build());
+
 
     private BlockPos origin = null;
     private List<BlockPos> blocksToPlace = new ArrayList<>();
     private List<BlockPos> beaconsToPlace = new ArrayList<>();
     private List<BlockPos> remainingBlocks = new ArrayList<>();
+    /**
+     * Neighbor block state only — whether a cell is non-replaceable (usable as a support).
+     * Reach verdicts are re-evaluated per scan so a moving player re-checks against the
+     * current eye position; this cache only removes the getBlockState call.
+     */
+    private final Map<Long, Boolean> neighborBlockCache = new HashMap<>();
     private boolean placingBeacons = false;
     private boolean building = false;
+    /**
+     * Whether this module forced the sneak on, and the pre-lock states to restore later.
+     * Both the key mapping (which drives the sneak flag on the wire) and the local player
+     * field (which drives the client-side pose/prediction) are forced, so the module
+     * actually sends ServerboundPlayerInputPacket(shift=true) for placements.
+     */
+    private boolean sneakLockActive = false;
+    private boolean sneakLockPreviousPlayer = false;
+    private boolean sneakLockPreviousKey = false;
+    /**
+     * Target a Baritone goal was last issued for, and ticks before re-issuing the same goal.
+     */
+    private long lastPathTargetKey = -1;
+    private int repathCooldown = 0;
+    /**
+     * Throttles the "everything is blocked" warning and the identical no-progress repath.
+     */
+    private int blockedWarnCooldown = 0;
     private boolean originSet = false;
     private int placeTimer = 0;
     private boolean waitingForBaritone = false;
@@ -149,7 +226,7 @@ public class AutoBeacon extends Module {
 
     private int currentLayer = 0;
     private int baseY = 0;
-    private int stuckTicks = 0;
+    private int noProgressTicks = 0;
     private int cachedBlockSlot = -1;
     private int cachedBeaconSlot = -1;
 
@@ -172,12 +249,91 @@ public class AutoBeacon extends Module {
         }
     }
 
+    /**
+     * Throttled notice when every remaining cell is blocked (by an entity or by being
+     * otherwise unreachable). Called from both no-target branches; the counter keeps it
+     * to one line every 200 ticks so the chat is not flooded while the mob stands still.
+     */
+    private void warnBlockedComplete() {
+        if (blockedWarnCooldown > 0) return;
+        if (debug.get()) info("All remaining blocks are blocked or unreachable; waiting for the obstruction to clear.");
+        blockedWarnCooldown = 200;
+    }
+
+    /**
+     * Repath-debounced Baritone request: does not re-issue a goal for the same fallback
+     * target within repathCooldown ticks. Sets waitingForBaritone if the target is already
+     * in-flight and returns false so callers know a goal was not posted this tick.
+     */
+    private boolean requestBaritonePath(BlockPos fallback) {
+        long key = fallback.asLong();
+        if (lastPathTargetKey == key && repathCooldown > 0) {
+            waitingForBaritone = true;
+            return false;
+        }
+        BlockPos approach = findApproachPositionForBlock(fallback);
+        waitingForBaritone = true;
+        currentTargetPos = approach;
+        lastPathTargetKey = key;
+        repathCooldown = 40;
+        baritone.getCustomGoalProcess().setGoalAndPath(new GoalXZ(approach.getX(), approach.getZ()));
+        return true;
+    }
+
+    /**
+     * Applies sneak while the build phase that wants it is active, and releases it when the
+     * phase ends or the module resets. The release restores the pre-lock sneak state, so a
+     * user who was already sneaking is not forced out, and a user who was not is not left
+     * sneaking afterwards.
+     */
+    private void refreshSneakLock() {
+        boolean want = sneakLock.get() && building
+            && (sneakLockScope.get() == SneakLockScope.EntireBuild || placingBeacons);
+        if (want == this.sneakLockActive) return;
+        if (mc.player == null) {
+            setSneakLock(false);
+            return;
+        }
+        if (want) {
+            setSneakLock(true);
+        } else {
+            setSneakLock(false);
+        }
+    }
+
+    /**
+     * Engages/releases the sneak using the key mapping (wire) and the player field.
+     */
+    private void setSneakLock(boolean on) {
+        if (on) {
+            this.sneakLockPreviousKey = mc.options != null && mc.options.keyShift.isDown();
+            this.sneakLockPreviousPlayer = mc.player != null && mc.player.isShiftKeyDown();
+            if (mc.options != null) mc.options.keyShift.setDown(true);
+            if (mc.player != null) mc.player.setShiftKeyDown(true);
+            this.sneakLockActive = true;
+        } else {
+            if (mc.options != null) mc.options.keyShift.setDown(this.sneakLockPreviousKey);
+            if (mc.player != null) mc.player.setShiftKeyDown(this.sneakLockPreviousPlayer);
+            this.sneakLockActive = false;
+        }
+    }
+
+    /**
+     * Force-unlock sneak, restoring the pre-lock state; used on reset paths.
+     */
+    private void forceSneakLockOff() {
+        if (!this.sneakLockActive) return;
+        setSneakLock(false);
+    }
+
     private void resetState() {
         blocksToPlace.clear();
         beaconsToPlace.clear();
         remainingBlocks.clear();
         placingBeacons = false;
         building = false;
+        // Drop the sneak-lock too, or toggle-off mid-build leaves the player visually sneaking.
+        forceSneakLockOff();
         originSet = false;
         placeTimer = 0;
         waitingForBaritone = false;
@@ -186,9 +342,13 @@ public class AutoBeacon extends Module {
         pendingVerification = null;
         preferredBlock = null;
         currentLayer = 0;
-        stuckTicks = 0;
+        noProgressTicks = 0;
+        lastPathTargetKey = -1;
+        repathCooldown = 0;
+        blockedWarnCooldown = 0;
         cachedBlockSlot = -1;
         cachedBeaconSlot = -1;
+        neighborBlockCache.clear();
     }
 
     @Override
@@ -205,7 +365,7 @@ public class AutoBeacon extends Module {
         currentLayer = 0;
         remainingBlocks.clear();
         remainingBlocks.addAll(getBlocksForLayer(currentLayer));
-        info("Starting layer 1 (Y=" + baseY + ").");
+        if (debug.get()) info("Starting layer 1 (Y=" + baseY + ").");
     }
 
     private List<BlockPos> getBlocksForLayer(int layer) {
@@ -270,8 +430,21 @@ public class AutoBeacon extends Module {
     }
 
     @EventHandler
+    private void onTickPre(TickEvent.Pre event) {
+        if (mc.player == null || mc.level == null) return;
+        // Sneak must be on the wire BEFORE the player ticks, because KeyboardInput.tick()
+        // builds the ServerboundPlayerInputPacket from keyShift.isDown() during LocalPlayer.tick(),
+        // which runs before TickEvent.Post. Setting it here ensures the server sees shift=true
+        // on the same tick the placement packet goes out (inside the Rotations.rotate callback).
+        refreshSneakLock();
+    }
+
+    @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.level == null) return;
+
+        if (repathCooldown > 0) repathCooldown--;
+        if (blockedWarnCooldown > 0) blockedWarnCooldown--;
 
         if (originMode.get() == OriginMode.SelectedBlock) {
             if (!originSet && setOriginKey.get().isPressed()) {
@@ -281,9 +454,9 @@ public class AutoBeacon extends Module {
                     baseY = origin.getY() + verticalOffset.get();
                     generateBlockList();
                     originSet = true;
-                    info("Build origin set to " + origin.getX() + ", " + origin.getY() + ", " + origin.getZ() +
+                    if (debug.get()) info("Build origin set to " + origin.getX() + ", " + origin.getY() + ", " + origin.getZ() +
                         " (bottom layer starts " + verticalOffset.get() + " blocks above).");
-                    info("Press your build key to start constructing.");
+                    if (debug.get()) info("Press your build key to start constructing.");
                 } else {
                     error("You must look at a block to set origin.");
                 }
@@ -298,19 +471,27 @@ public class AutoBeacon extends Module {
         if (!building) return;
 
         // Periodic cleanup of already-placed blocks
-        if (mc.level.getGameTime() % 100 == 0)
+        if (mc.level.getGameTime() % 100 == 0) {
             remainingBlocks.removeIf(pos -> isBlockCorrectAtPosition(mc.level.getBlockState(pos)));
+            // Neighbor block-state entries changed too; the next scan reloads them.
+            neighborBlockCache.clear();
+        }
 
         // Verify previous placement
         if (pendingVerification != null) {
             if (isBlockCorrectAtPosition(mc.level.getBlockState(pendingVerification)))
                 remainingBlocks.remove(pendingVerification);
             pendingVerification = null;
+            // Our placement changed the neighbor set; cached verdicts are stale.
+            neighborBlockCache.clear();
             placeTimer = delayTicks.get();
             return;
         }
 
         if (waitingForBaritone && baritone != null && useBaritone.get()) {
+            // Pausing to path is legitimate progress, not a wedge: reset so this
+            // does not fire the unstuck branch mid-navigation.
+            noProgressTicks = 0;
             if (!baritone.getPathingBehavior().isPathing() && baritoneArrived()) {
                 waitingForBaritone = false;
                 baritone.getPathingBehavior().cancelEverything();
@@ -320,11 +501,21 @@ public class AutoBeacon extends Module {
             return;
         }
 
-        if (jumpWhenStuck.get()) {
-            if (stuckTicks >= 100) {
-                mc.player.jumpFromGround();
-                stuckTicks = 0;
-            } else if (placeTimer == 0) stuckTicks++;
+        // Advance on "no verified progress", not on a placeTimer clock: resetting this
+        // in the verify / placement paths above leaves it growing whenever the module
+        // is effectively wedged, including the player standing inside the built cells.
+        noProgressTicks++;
+        if (building && noProgressTicks >= 100) {
+            if (jumpWhenStuck.get() && mc.player.onGround()) mc.player.jumpFromGround();
+            BlockPos fallback = findNearestClearTarget();
+            if (useBaritone.get() && baritone != null && fallback != null && !waitingForBaritone) {
+                if (requestBaritonePath(fallback)) {
+                    if (debug.get()) info("No progress; pathing toward the nearest clear cell.");
+                }
+            } else if (fallback == null) {
+                warnBlockedComplete();
+            }
+            noProgressTicks = 0;
         }
 
         if (placeTimer > 0) {
@@ -337,18 +528,14 @@ public class AutoBeacon extends Module {
             for (int i = 0; i < blocksPerTick.get() && !remainingBlocks.isEmpty(); i++) {
                 BlockPos target = findNextPlaceable();
                 if (target == null) {
-                    if (useBaritone.get() && baritone != null && !waitingForBaritone) {
-                        BlockPos closest = findClosestBlock();
-                        if (closest != null) {
-                            BlockPos approach = findApproachPositionForBlock(closest);
-                            waitingForBaritone = true;
-                            currentTargetPos = approach; // track standing position
-                            baritone.getCustomGoalProcess().setGoalAndPath(
-                                new GoalXZ(approach.getX(), approach.getZ()));
-                            info("Moving to approach position " + approach.toShortString()
-                                + " for block at " + closest.toShortString());
-                            return;
-                        }
+                    BlockPos fallback = findNearestClearTarget();
+                    if (useBaritone.get() && baritone != null && fallback != null
+                        && !waitingForBaritone && requestBaritonePath(fallback)) {
+                        if (debug.get()) info("Moving to approach position for block at " + fallback.toShortString());
+                        return;
+                    }
+                    if (fallback == null) {
+                        warnBlockedComplete();
                     }
                     break;
                 }
@@ -356,7 +543,7 @@ public class AutoBeacon extends Module {
                     pendingVerification = target;
                     placeTimer = delayTicks.get() + 5;
                     placedSomething = true;
-                    stuckTicks = 0;
+                    noProgressTicks = 0;
                     return;
                 } else {
                     return;
@@ -377,17 +564,17 @@ public class AutoBeacon extends Module {
                         placingBeacons = true;
                         remainingBlocks.clear();
                         remainingBlocks.addAll(beaconsToPlace);
-                        info("Pyramid done — placing beacons...");
+                        if (debug.get()) info("Pyramid done — placing beacons...");
                     } else {
                         remainingBlocks.clear();
                         remainingBlocks.addAll(getBlocksForLayer(currentLayer));
-                        info("Layer complete, starting layer " + (currentLayer + 1)
+                        if (debug.get()) info("Layer complete, starting layer " + (currentLayer + 1)
                             + " (Y=" + (baseY + currentLayer) + ").");
                     }
                 } else {
                     remainingBlocks.clear();
                     remainingBlocks.addAll(stillMissing);
-                    info("Rechecking layer, " + stillMissing.size() + " blocks still missing.");
+                    if (debug.get()) info("Rechecking layer, " + stillMissing.size() + " blocks still missing.");
                 }
             }
         } else {
@@ -395,25 +582,21 @@ public class AutoBeacon extends Module {
             for (int i = 0; i < blocksPerTick.get() && !remainingBlocks.isEmpty(); i++) {
                 BlockPos target = findNextPlaceable();
                 if (target == null) {
-                    if (useBaritone.get() && baritone != null && !waitingForBaritone) {
-                        BlockPos closest = findClosestBlock();
-                        if (closest != null) {
-                            BlockPos approach = findApproachPositionForBlock(closest);
-                            waitingForBaritone = true;
-                            currentTargetPos = approach;
-                            baritone.getCustomGoalProcess().setGoalAndPath(
-                                new GoalXZ(approach.getX(), approach.getZ()));
-                            info("Moving to approach position " + approach.toShortString()
-                                + " for beacon at " + closest.toShortString());
-                            return;
-                        }
+                    BlockPos fallback = findNearestClearTarget();
+                    if (useBaritone.get() && baritone != null && fallback != null
+                        && !waitingForBaritone && requestBaritonePath(fallback)) {
+                        if (debug.get()) info("Moving to approach position for beacon at " + fallback.toShortString());
+                        return;
+                    }
+                    if (fallback == null) {
+                        warnBlockedComplete();
                     }
                     break;
                 }
                 if (placeBeacon(target)) {
                     pendingVerification = target;
                     placeTimer = delayTicks.get() + 5;
-                    stuckTicks = 0;
+                    noProgressTicks = 0;
                     return;
                 } else {
                     return;
@@ -425,8 +608,29 @@ public class AutoBeacon extends Module {
 
     private BlockPos findNextPlaceable() {
         for (BlockPos pos : remainingBlocks)
-            if (canPlaceAtPosition(pos) && isPosPlaceableThroughWall(pos)) return pos;
+            if (isPlaceableNow(pos) && isPosPlaceableThroughWall(pos)) return pos;
         return null;
+    }
+
+    /**
+     * Last-resort pick for the no-progress fallback: the closest target the player is
+     * not standing in (or that no live entity occupies), even if it's not clickable yet.
+     * Pathing to its approach is what actually breaks the wedge.
+     */
+    private BlockPos findNearestClearTarget() {
+        BlockPos playerPos = mc.player.blockPosition();
+        double closestDist = Double.MAX_VALUE;
+        BlockPos closest = null;
+        for (BlockPos pos : remainingBlocks) {
+            if (!canPlaceAtPosition(pos) || isCellBlocked(pos)) continue;
+            double dist = pos.distSqr(playerPos);
+            if (dist < closestDist) {
+                closestDist = dist;
+                closest = pos;
+            }
+        }
+        // No unobstructed candidate at all: fall back to the plain closest one.
+        return closest != null ? closest : findClosestBlock();
     }
 
     private BlockPos findClosestBlock() {
@@ -443,6 +647,23 @@ public class AutoBeacon extends Module {
         return closest;
     }
 
+    private boolean isPlaceableNow(BlockPos pos) {
+        if (!canPlaceAtPosition(pos)) return false;
+        return !isCellBlocked(pos);
+    }
+
+    /**
+     * True if the cell intersects an alive entity (players included), so a block placed
+     * there would rest on / inside a living hitbox and be rejected or corrupt the build.
+     */
+    private boolean isCellBlocked(BlockPos pos) {
+        AABB box = new AABB(pos);
+        for (Entity e : mc.level.getEntities((Entity) null, box, EntitySelector.NO_SPECTATORS)) {
+            if (e.isAlive() && box.intersects(e.getBoundingBox())) return true;
+        }
+        return false;
+    }
+
     private boolean canPlaceAtPosition(BlockPos pos) {
         BlockState state = mc.level.getBlockState(pos);
         if (state.isAir()) return true;
@@ -455,10 +676,22 @@ public class AutoBeacon extends Module {
     private boolean isPosPlaceableThroughWall(BlockPos pos) {
         for (Direction dir : Direction.values()) {
             BlockPos neighbor = pos.relative(dir);
-            BlockState neighborState = mc.level.getBlockState(neighbor);
-            if (!neighborState.canBeReplaced() && PlayerUtils.isWithinReach(neighbor)) return true;
+            // The neighbor block state is cacheable; the reach verdict is not -> it depends on
+            // where the player is standing right now.
+            if (!neighborNonReplaceable(neighbor)) continue;
+            if (PlayerUtils.isWithinReach(neighbor)) return true;
         }
         return false;
+    }
+
+    private boolean neighborNonReplaceable(BlockPos pos) {
+        long key = pos.asLong();
+        Boolean cached = neighborBlockCache.get(key);
+        if (cached != null) return cached;
+        boolean nonReplaceable = !mc.level.getBlockState(pos).canBeReplaced();
+        if (neighborBlockCache.size() > 4096) neighborBlockCache.clear();
+        neighborBlockCache.put(key, nonReplaceable);
+        return nonReplaceable;
     }
 
     private boolean isBlockCorrectAtPosition(BlockState state) {
@@ -632,9 +865,19 @@ public class AutoBeacon extends Module {
     }
 
     private void finish() {
-        info("Beacon pyramid built successfully!");
+        if (debug.get()) info("Beacon pyramid built successfully!");
         building = false;
         toggle();
+    }
+
+    @EventHandler
+    private void onBlockUpdate(BlockUpdateEvent event) {
+        // isPosPlaceableThroughWall(pos) reads the six neighbours of pos; a neighbour's
+        // block-state change can flip all of them. Unconditionally drop the affected verdicts.
+        neighborBlockCache.remove(event.pos.asLong());
+        for (Direction dir : Direction.values()) {
+            neighborBlockCache.remove(event.pos.relative(dir).asLong());
+        }
     }
 
     @EventHandler

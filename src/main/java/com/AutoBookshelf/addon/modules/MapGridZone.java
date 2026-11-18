@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -17,6 +22,13 @@ import java.util.List;
 
 public class MapGridZone extends Module {
     private final SettingGroup sgDefault = settings.getDefaultGroup();
+
+    private final Setting<Boolean> debug = sgDefault.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
 
     public final Setting<Boolean> mapZoneRender = sgDefault.add(new BoolSetting.Builder()
         .name("map-zones")
@@ -74,6 +86,7 @@ public class MapGridZone extends Module {
         .sliderRange(0, 10)
         .build());
 
+
     private final List<double[]> mapQuads = new ArrayList<>();
     private int ticks = 0;
 
@@ -86,7 +99,7 @@ public class MapGridZone extends Module {
         // Keybind to set the map grid Y start to current player Y
         if (setYKey.get().isPressed()) {
             mapZoneYStart.set(mc.player.getBlockY());
-            info("Map zone Y start set to " + mc.player.getBlockY());
+            if (debug.get()) info("Map zone Y start set to " + mc.player.getBlockY());
         }
 
         if (ticks < refreshDelay.get()) {

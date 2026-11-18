@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import baritone.api.BaritoneAPI;
@@ -48,6 +53,13 @@ public class PlatformBuilder extends Module {
     private final SettingGroup sgBaritone = settings.createGroup("Baritone");
     private final SettingGroup sgRestock = settings.createGroup("Restock");
 
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
+
     private final AreaSelector areaSelector = new AreaSelector(sgSelection, sgSelectionRender, Items.NETHERITE_HOE);
 
     private final PlacementEngine placementEngine = new PlacementEngine();
@@ -56,13 +68,13 @@ public class PlatformBuilder extends Module {
         new ShulkerRestockEngine.RestockCallback() {
             @Override
             public void onInfo(String message) {
-                info(message);
+                if (debug.get()) info(message);
             }
 
             @Override
             public void onFinished(boolean success) {
                 if (success && !restockEngine.wasShulkerFullyEmptied()) {
-                    info("§eShulker still had items when broken, some were left behind.");
+                    if (debug.get()) info("§eShulker still had items when broken, some were left behind.");
                 }
                 // The dropped-shulker walk (when enabled) already ran inside the engine before
                 // this fired, so there is nothing left to start here.
@@ -300,6 +312,14 @@ public class PlatformBuilder extends Module {
         .build()
     );
 
+    private final Setting<Boolean> restockPlaceAboveHead = sgRestock.add(new BoolSetting.Builder()
+        .name("shulker-place-above-head")
+        .description("Place the shulker directly above your head (requires ghost placement). Drops land on you when broken. Falls back to normal placement if occupied.")
+        .defaultValue(false)
+        .visible(autoRestock::get)
+        .build()
+    );
+
     private final Setting<Boolean> restockBreakAfterFill = sgRestock.add(new BoolSetting.Builder()
         .name("shulker-break-after-fill")
         .description("Break the shulker after restocking. Disable to leave it placed.")
@@ -410,6 +430,7 @@ public class PlatformBuilder extends Module {
         .build()
     );
 
+
     private final HashSet<BlockPos> pendingPlacements = new HashSet<>();
 
     /**
@@ -424,6 +445,15 @@ public class PlatformBuilder extends Module {
      * broken while still in reach is also re-detected by {@link #reachableTargets()} and re-placed.
      */
     private int completionScanIndex = 0;
+
+    /**
+     * The reachable-cell array for this tick, shared by the waiting-for-Baritone check and the
+     * placement pass. Rebuilt lazily on the first {@link #reachableTargets()} call each tick and
+     * dropped at the top of the next; a cell made wrong by a placement this tick (now solid) must
+     * not be handed to the placement loop again, but both call sites want the same snapshot, not
+     * two different walks over the whole cuboid.
+     */
+    private BlockPos[] tickReachableTargets;
 
     private static final int RESTOCK_CHECK_INTERVAL = 20;
 
@@ -588,10 +618,10 @@ public class PlatformBuilder extends Module {
             case POS1_SET -> {
                 yLevel.set(pos.getY());
                 if (buildShape.get() == BuildShape.Flat) {
-                    info("§aPlatform pos1 set to §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ()
+                    if (debug.get()) info("§aPlatform pos1 set to §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ()
                         + " §7(build level set to Y=" + yLevel.get() + ")");
                 } else {
-                    info("§aPlatform pos1 set to §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ()
+                    if (debug.get()) info("§aPlatform pos1 set to §f" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ()
                         + " §7(click second corner at any height)");
                 }
             }
@@ -600,17 +630,23 @@ public class PlatformBuilder extends Module {
                 int minY = areaSelector.minY();
                 int maxY = areaSelector.maxY();
                 switch (buildShape.get()) {
-                    case Flat ->
-                        info("§aPlatform area selected! Press the start-build key to begin building at y=§f" + yLevel.get() + " §7(" + count + " blocks)");
-                    case Walls ->
-                        info("§aPlatform walls selected §7(" + count + " blocks, Y: " + minY + " → " + maxY + ")! Press the start-build key to begin building.");
-                    case Solid ->
-                        info("§aPlatform cuboid selected §7(" + count + " blocks, Y: " + minY + " → " + maxY + ")! Press the start-build key to begin building.");
+                    case Flat -> {
+                        if (debug.get())
+                            info("§aPlatform area selected! Press the start-build key to begin building at y=§f" + yLevel.get() + " §7(" + count + " blocks)");
+                    }
+                    case Walls -> {
+                        if (debug.get())
+                            info("§aPlatform walls selected §7(" + count + " blocks, Y: " + minY + " → " + maxY + ")! Press the start-build key to begin building.");
+                    }
+                    case Solid -> {
+                        if (debug.get())
+                            info("§aPlatform cuboid selected §7(" + count + " blocks, Y: " + minY + " → " + maxY + ")! Press the start-build key to begin building.");
+                    }
                 }
             }
             case RESET -> {
                 buildStarted = false;
-                info("§ePlatform selection reset.");
+                if (debug.get()) info("§ePlatform selection reset.");
             }
         }
         event.cancel();
@@ -626,18 +662,22 @@ public class PlatformBuilder extends Module {
     public void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.level == null) return;
 
+        // The reachable snapshot is valid for this tick only: a placement later in the same tick
+        // changes the world, but both call sites in this handler want the same pre-placement view.
+        tickReachableTargets = null;
+
         if (baritoneGoalCooldown > 0) baritoneGoalCooldown--;
 
         if (moveUpKey.get().isPressed()) {
             yLevel.set(Math.min(yLevel.get() + moveStep.get(), 319));
             if (buildStarted && yLevelAffectsBuild()) cancelBuild("§cBuild cancelled as the Y-level changed.");
-            info("Platform level moved up to Y=" + yLevel.get());
+            if (debug.get()) info("Platform level moved up to Y=" + yLevel.get());
         }
 
         if (moveDownKey.get().isPressed()) {
             yLevel.set(Math.max(yLevel.get() - moveStep.get(), -64));
             if (buildStarted && yLevelAffectsBuild()) cancelBuild("§cBuild cancelled as the Y-level changed.");
-            info("Platform level moved down to Y=" + yLevel.get());
+            if (debug.get()) info("Platform level moved down to Y=" + yLevel.get());
         }
 
         if (resetSelectionKey.get().isPressed()) {
@@ -646,7 +686,7 @@ public class PlatformBuilder extends Module {
             if (buildStarted) {
                 cancelBuild("§ePlatform selection reset.");
             } else {
-                info("§ePlatform selection reset.");
+                if (debug.get()) info("§ePlatform selection reset.");
             }
         }
 
@@ -674,11 +714,17 @@ public class PlatformBuilder extends Module {
                 layerIndex = 0;
                 int count = getBuildCells().size();
                 switch (buildShape.get()) {
-                    case Flat -> info("§aBuild confirmed. start platform construction at y=§f" + yLevel.get() + " §7(" + count + " blocks)");
-                    case Walls ->
-                        info("§aBuild confirmed. start walls construction §7(" + count + " blocks, Y: " + areaSelector.minY() + " → " + areaSelector.maxY() + ")");
-                    case Solid ->
-                        info("§aBuild confirmed. start solid construction §7(" + count + " blocks, Y: " + areaSelector.minY() + " → " + areaSelector.maxY() + ")");
+                    case Flat -> {
+                        if (debug.get()) info("§aBuild confirmed. start platform construction at y=§f" + yLevel.get() + " §7(" + count + " blocks)");
+                    }
+                    case Walls -> {
+                        if (debug.get())
+                            info("§aBuild confirmed. start walls construction §7(" + count + " blocks, Y: " + areaSelector.minY() + " → " + areaSelector.maxY() + ")");
+                    }
+                    case Solid -> {
+                        if (debug.get())
+                            info("§aBuild confirmed. start solid construction §7(" + count + " blocks, Y: " + areaSelector.minY() + " → " + areaSelector.maxY() + ")");
+                    }
                 }
             } else {
                 return;
@@ -770,7 +816,7 @@ public class PlatformBuilder extends Module {
                     // than an XZ column that ignores whether there's a floor at all.
                     baritone.getCustomGoalProcess().setGoalAndPath(
                         new GoalBlock(safeGoal.getX(), safeGoal.getY() + 1, safeGoal.getZ()));
-                    info("Moving to reach platform section near " + safeGoal.toShortString());
+                    if (debug.get()) info("Moving to reach platform section near " + safeGoal.toShortString());
                 }
             }
             return;
@@ -855,7 +901,7 @@ public class PlatformBuilder extends Module {
         currentTargetPos = null;
         pendingPlacements.clear();
         stuckTicks = 0;
-        info("§aPlatform construction complete!");
+        if (debug.get()) info("§aPlatform construction complete!");
     }
 
     private void cancelBuild(String message) {
@@ -874,7 +920,7 @@ public class PlatformBuilder extends Module {
             restockEngine.reset();
         }
         restockCooldown = 0;
-        info(message);
+        if (debug.get()) info(message);
     }
 
     /**
@@ -1133,7 +1179,7 @@ public class PlatformBuilder extends Module {
         // Otherwise a stale cooldown stalls the walk onto the new layer for up to
         // BARITONE_GOAL_COOLDOWN ticks.
         baritoneGoalCooldown = 0;
-        if (staging()) info("§7Layer at Y=" + finishedY + " complete, starting the next layer.");
+        if (debug.get() && (staging())) info("§7Layer at Y=" + finishedY + " complete, starting the next layer.");
     }
 
     /**
@@ -1183,6 +1229,7 @@ public class PlatformBuilder extends Module {
     }
 
     private BlockPos[] reachableTargets() {
+        if (tickReachableTargets != null) return tickReachableTargets;
         int layerY = currentLayerY();
         List<BlockPos> positions = new ArrayList<>();
         for (BlockPos pos : collectReachableCells()) {
@@ -1198,7 +1245,8 @@ public class PlatformBuilder extends Module {
             if (layerY != NO_LAYER && placementEngine.intersectsPlayer(pos)) continue;
             positions.add(pos);
         }
-        return positions.toArray(new BlockPos[0]);
+        tickReachableTargets = positions.toArray(new BlockPos[0]);
+        return tickReachableTargets;
     }
 
 
@@ -1377,7 +1425,8 @@ public class PlatformBuilder extends Module {
             restockPacketBreak.get(),
             restockPacketBreakGrim.get(),
             restockCollectDropped.get(),
-            useBaritone.get()
+            useBaritone.get(),
+            restockPlaceAboveHead.get()
         );
     }
 }

@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules.BlockRadiusUtils;
 
 import com.AutoBookshelf.addon.utils.DistanceUtil;
@@ -289,6 +294,20 @@ public class SplashPotionAoE {
 
     private final Map<Integer, Tracked> trackedSplash = new HashMap<>();
     private final Map<Integer, Tracked> trackedLingering = new HashMap<>();
+    /**
+     * Scratch set of ids seen in the last walk (scan); used to drop vanished potions
+     * and stale cloud bindings without one entitiesForRendering() per lookup.
+     */
+    private final Set<Integer> presentScratch = new HashSet<>();
+    /**
+     * Scratch set of live cloud ids in the current rebuild.
+     */
+    private final Set<Integer> cloudIdsScratch = new HashSet<>();
+    /**
+     * Scratch entity lookup rebuilt per render pass: hit ids resolve without one walk
+     * per hit per frame.
+     */
+    private final Map<Integer, Entity> renderEntityLut = new HashMap<>();
 
     /**
      * Cloud entity id -> the potion stack of the throw that created it.
@@ -437,12 +456,25 @@ public class SplashPotionAoE {
      * first would overwrite it with the already-applied effect and reintroduce the race.
      */
     private void detectBursts(Map<Integer, Tracked> tracked, boolean splash) {
+        // One walk does both jobs: it records which potion ids are still present and
+        // refreshes the tracking table for live projectiles. A tracked potion that vanished
+        // detonated where we last saw it (its entity is gone from the list), so the removal
+        // below checks against the recorded set instead of issuing a findEntity() lookup per
+        // tracked potion.
+        presentScratch.clear();
+        for (Entity e : mc.level.entitiesForRendering()) {
+            if (e.isRemoved()) continue;
+            presentScratch.add(e.getId());
+            if (splash ? e instanceof ThrownSplashPotion : e instanceof ThrownLingeringPotion) {
+                tracked.put(e.getId(), new Tracked(e.position(), e.tickCount, getItemOf(e)));
+            }
+        }
+
         Iterator<Map.Entry<Integer, Tracked>> it = tracked.entrySet().iterator();
         while (it.hasNext()) {
             Map.Entry<Integer, Tracked> entry = it.next();
-            if (findEntity(entry.getKey()) != null) continue;
+            if (presentScratch.contains(entry.getKey())) continue; // still flying
             it.remove();
-
             Tracked t = entry.getValue();
             if (t.stack() == null || t.stack().isEmpty()) continue;
 
@@ -451,13 +483,6 @@ public class SplashPotionAoE {
                 // the next scan can bind that specific stack to the cloud it spawned.
             else pendingClouds.add(new PendingCloud(t.pos(), t.stack(),
                 mc.level.getGameTime() + CLOUD_ADOPT_TIMEOUT_TICKS));
-        }
-
-        for (Entity e : mc.level.entitiesForRendering()) {
-            if (e.isRemoved()) continue;
-            if (splash ? e instanceof ThrownSplashPotion : e instanceof ThrownLingeringPotion) {
-                tracked.put(e.getId(), new Tracked(e.position(), e.tickCount, getItemOf(e)));
-            }
         }
 
         if (splash) refreshPreBurst(tracked);
@@ -725,10 +750,13 @@ public class SplashPotionAoE {
         }
 
         // Drop bindings for clouds that are gone, so the map does not grow without bound.
+        // The live cloud list is in hand here, so the lookup costs one pass over it.
         if (!cloudInfo.isEmpty()) {
+            cloudIdsScratch.clear();
+            for (AreaEffectCloud c : live) cloudIdsScratch.add(c.getId());
             Iterator<Map.Entry<Integer, PotionInfo>> it = cloudInfo.entrySet().iterator();
             while (it.hasNext()) {
-                if (findEntity(it.next().getKey()) == null) it.remove();
+                if (!cloudIdsScratch.contains(it.next().getKey())) it.remove();
             }
         }
 
@@ -761,11 +789,6 @@ public class SplashPotionAoE {
             if (e instanceof AreaEffectCloud cloud && !cloud.isRemoved()) cloudScratch.add(cloud);
         }
         return cloudScratch;
-    }
-
-    private Entity findEntity(int id) {
-        for (Entity e : mc.level.entitiesForRendering()) if (e.getId() == id) return e;
-        return null;
     }
 
     private static List<MobEffectInstance> effectsOf(ItemStack stack, List<MobEffectInstance> out) {
@@ -907,8 +930,15 @@ public class SplashPotionAoE {
         SettingColor weakFill = translucent(weak, HIT_FILL_ALPHA);
         SettingColor directFill = translucent(direct, HIT_FILL_ALPHA);
 
+        // One walk builds the lookup for this frame, so a crowd of hits costs one pass, not
+        // one entitiesForRendering() per hit.
+        renderEntityLut.clear();
+        for (Entity entity : mc.level.entitiesForRendering()) {
+            if (!entity.isRemoved()) renderEntityLut.put(entity.getId(), entity);
+        }
+
         for (Hit hit : hits) {
-            Entity e = findEntity(hit.entityId());
+            Entity e = renderEntityLut.get(hit.entityId());
             if (e == null) continue;
 
             // Two outcomes: the potion overwrote the entity's effect (full) or it did nothing to

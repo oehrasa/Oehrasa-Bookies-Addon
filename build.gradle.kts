@@ -91,6 +91,15 @@ tasks {
         from("LICENSE") {
             rename { "${it}_$baseName" }
         }
+        // The vendored AGPL, Apache and MIT texts for the portions under those terms, plus
+        // the notice that attributes them. All ship inside the jar.
+        from("third-party/licenses") {
+            into("META-INF/licenses")
+        }
+        from("THIRD_PARTY_NOTICES.md") {
+            into("META-INF")
+            rename { "THIRD_PARTY_NOTICES_$baseName.md" }
+        }
     }
 
     withType<JavaCompile>().configureEach {

@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules.livemessage.gui;
 
 import com.AutoBookshelf.addon.modules.livemessage.LiveMessage;
@@ -113,6 +118,7 @@ public class LivemessageGui extends Screen {
         }
 
         this.restoreLastActiveChatWindow();
+        applyAutoFocus();
     }
 
     public void removed() {
@@ -149,11 +155,71 @@ public class LivemessageGui extends Screen {
             liveWindows.remove(lastActiveChatWindow);
             liveWindows.add(lastActiveChatWindow);
             lastActiveChatWindow.activateWindow();
-            if (lastActiveChatWindow instanceof ChatWindow chatWindow) {
-                chatWindow.inputFocused = true;
-            } else if (lastActiveChatWindow instanceof NotesWindow notesWindow && notesWindow.inputField != null) {
-                notesWindow.inputField.setFocused(true);
+            if (LiveMessage.INSTANCE != null && LiveMessage.INSTANCE.autoFocus.get()) {
+                if (lastActiveChatWindow instanceof ChatWindow chatWindow) {
+                    chatWindow.inputFocused = true;
+                } else if (lastActiveChatWindow instanceof NotesWindow notesWindow && notesWindow.inputField != null) {
+                    notesWindow.inputField.setFocused(true);
+                }
             }
+        }
+    }
+
+    /**
+     * Points the focus at a chat window's input and takes it away from the other text fields.
+     *
+     * <p>The focus of every chat window is cleared when the GUI closes, so a chat that is activated
+     * later - after a reopen, or from the buddy list - would have no caret and its keystrokes
+     * would go nowhere. The other text fields give the focus up as well: two carets would mean
+     * the keys go to one field and the caret is drawn in the other.
+     */
+    public static void focusChatInput(ChatWindow window) {
+        if (window == null) return;
+
+        for (LiveWindow live : liveWindows) {
+            if (live instanceof ChatWindow other && other != window) other.inputFocused = false;
+            if (live instanceof NotesWindow notes && notes.inputField != null) notes.inputField.setFocused(false);
+        }
+        if (ManeWindow.searchField != null) ManeWindow.searchField.setFocused(false);
+
+        window.inputFocused = true;
+    }
+
+    /**
+     * Blurs every text field in every live window, then - when the auto-focus setting is on -
+     * focuses the field of the top-most window. Covers the ManeWindow's search field too, so its
+     * auto-focus stops being a one-shot constructor default. Used on GUI open and whenever the
+     * setting changes.
+     */
+    public static void applyAutoFocus() {
+        clearAllTextFieldFocus();
+        if (LiveMessage.INSTANCE == null || !LiveMessage.INSTANCE.autoFocus.get()) return;
+        if (liveWindows.isEmpty()) return;
+        focusWindowField(liveWindows.get(liveWindows.size() - 1));
+    }
+
+    /**
+     * Blurs every text field in every live window.
+     */
+    public static void clearAllTextFieldFocus() {
+        for (LiveWindow live : liveWindows) {
+            if (live instanceof ChatWindow chatWindow) {
+                chatWindow.inputFocused = false;
+            } else if (live instanceof NotesWindow notesWindow && notesWindow.inputField != null) {
+                notesWindow.inputField.setFocused(false);
+            } else if (live instanceof ManeWindow && ManeWindow.searchField != null) {
+                ManeWindow.searchField.setFocused(false);
+            }
+        }
+    }
+
+    private static void focusWindowField(LiveWindow window) {
+        if (window instanceof ChatWindow chatWindow) {
+            chatWindow.inputFocused = true;
+        } else if (window instanceof NotesWindow notesWindow && notesWindow.inputField != null) {
+            notesWindow.inputField.setFocused(true);
+        } else if (window instanceof ManeWindow && ManeWindow.searchField != null) {
+            ManeWindow.searchField.setFocused(true);
         }
     }
 

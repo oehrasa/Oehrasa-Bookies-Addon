@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import baritone.api.BaritoneAPI;
@@ -71,6 +76,13 @@ public class AutoSex extends Module {
     private final SettingGroup sgMobs = settings.createGroup("Mob Targeting");
     private final SettingGroup sgSex = settings.createGroup("Auto Sex");
     private final SettingGroup sgMovement = settings.createGroup("Movement");
+
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
 
     private final Setting<Mode> targetMode = sgGeneral.add(new EnumSetting.Builder<Mode>()
         .name("target-mode")
@@ -331,6 +343,7 @@ public class AutoSex extends Module {
         .visible(message::get)
         .build()
     );
+
 
     private int messageI, timer;
     private boolean isFollowing = false;
@@ -794,14 +807,14 @@ public class AutoSex extends Module {
 
     private void startFollowing() {
         if (baritone != null && targetEntity != null) {
-            info("§aNow following §f" + targetName);
-            info("§7Friend filter: §f" + friendFilter.get());
-            info("§7Mode: §f" + approachMode.get());
+            if (debug.get()) info("§aNow following §f" + targetName);
+            if (debug.get()) info("§7Friend filter: §f" + friendFilter.get());
+            if (debug.get()) info("§7Mode: §f" + approachMode.get());
             if (autoLook.get()) {
-                info("§7Auto-look: §aON §7- Continuously looking at back of head.");
+                if (debug.get()) info("§7Auto-look: §aON §7- Continuously looking at back of head.");
             }
             if (twerkWhenClose.get()) {
-                info("§7Twerk delay: §f" + twerkDelay.get() / 20.0 + " §7seconds");
+                if (debug.get()) info("§7Twerk delay: §f" + twerkDelay.get() / 20.0 + " §7seconds");
             }
             lastTargetPos = null;
             lastTargetPosVec = null;
@@ -828,7 +841,7 @@ public class AutoSex extends Module {
         pathCooldown = 0;
         isInPosition = false;
         positionStableTimer = 0;
-        info("§aStopped following.");
+        if (debug.get()) info("§aStopped following.");
     }
 
     private String subjectFormOf(String pronoun) {

@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -99,6 +104,11 @@ public class ShulkBookRestock extends Module {
     private int timer = 0;
     private int[] previousCounts = new int[9];
     private Item[] previousItems = new Item[9];
+    /**
+     * The name of the stack, flattened for comparison. The original matcher compared
+     * display text (style-blind); it still does but as a String stored once per slot, not
+     * a re-flattened string per match check.
+     */
     private String[] previousNames = new String[9];
     private boolean pendingRestock = false;
     private int slotToRestock = -1;
@@ -187,9 +197,8 @@ public class ShulkBookRestock extends Module {
                 if (stack != null && isValidItem(stack)) {
                     previousCounts[i] = stack.getCount();
                     previousItems[i] = stack.getItem();
-                    previousNames[i] = stack.get(DataComponents.CUSTOM_NAME) != null
-                        ? stack.get(DataComponents.CUSTOM_NAME).getString()
-                        : null;
+                    var cn = stack.get(DataComponents.CUSTOM_NAME);
+                    previousNames[i] = cn != null ? cn.getString() : null;
                 } else {
                     previousCounts[i] = 0;
                     previousItems[i] = null;
@@ -218,9 +227,8 @@ public class ShulkBookRestock extends Module {
                     }
                     previousCounts[i] = currentCount;
                     previousItems[i] = stack.getItem();
-                    previousNames[i] = stack.get(DataComponents.CUSTOM_NAME) != null
-                        ? stack.get(DataComponents.CUSTOM_NAME).getString()
-                        : null;
+                    var cn = stack.get(DataComponents.CUSTOM_NAME);
+                    previousNames[i] = cn != null ? cn.getString() : null;
                 } else {
                     if (previousCounts[i] > 0) {
                         lastUsedSlot = i;

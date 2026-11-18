@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules.livemessage;
 
 import com.AutoBookshelf.addon.Addon;
@@ -7,23 +12,33 @@ import com.AutoBookshelf.addon.modules.livemessage.gui.LivemessageGui;
 import com.AutoBookshelf.addon.modules.livemessage.gui.ManeWindow;
 import com.AutoBookshelf.addon.modules.livemessage.util.*;
 import com.AutoBookshelf.addon.utils.QueueUtil;
+import com.mojang.blaze3d.platform.InputConstants;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
 import meteordevelopment.meteorclient.events.game.ReceiveMessageEvent;
 import meteordevelopment.meteorclient.events.game.SendMessageEvent;
+import meteordevelopment.meteorclient.events.meteor.KeyInputEvent;
+import meteordevelopment.meteorclient.events.meteor.MouseClickEvent;
+import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.KeybindSetting.Builder;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.misc.Keybind;
+import meteordevelopment.meteorclient.utils.misc.input.Input;
+import meteordevelopment.meteorclient.utils.misc.input.KeyAction;
 import meteordevelopment.orbit.EventHandler;
+import meteordevelopment.orbit.EventPriority;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.multiplayer.PlayerInfo;
+import net.minecraft.util.Mth;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class LiveMessage extends Module {
     public static final Logger LOG = LoggerFactory.getLogger("Livemessage");
@@ -180,6 +195,21 @@ public class LiveMessage extends Module {
                 .defaultValue("ignore")
                 .build()
         );
+    public final Setting<Boolean> autoFocus = this.sgGeneral
+        .add(
+            new meteordevelopment.meteorclient.settings.BoolSetting.Builder()
+                .name("auto-focus")
+                .description("Automatically focus the text field of the active Livemessage window when the GUI opens or this is enabled.")
+                .defaultValue(true)
+                .onChanged(aBoolean -> {
+                    if (Boolean.TRUE.equals(aBoolean)) {
+                        LivemessageGui.applyAutoFocus();
+                    } else {
+                        LivemessageGui.clearAllTextFieldFocus();
+                    }
+                })
+                .build()
+        );
     public final Setting<Boolean> toastsEnabled = this.sgNotifications
         .add(
             new meteordevelopment.meteorclient.settings.BoolSetting.Builder()
@@ -219,7 +249,7 @@ public class LiveMessage extends Module {
                 .name("blocked-dm-patterns")
                 .description("Incoming DMs containing any of these (case-insensitive) are blocked when block-advertisers is on.")
                 .defaultValue(java.util.List.of(
-                    "discord.gg", "discord.com", "gg/", "% off", ".store", ".shop",
+                    "gg/", "% off", ".store", ".shop",
                     "cheapest price", "cheap price", "use code", "at checkout", "join now"
                 ))
                 .visible(this.blockAdvertisers::get)
@@ -228,14 +258,6 @@ public class LiveMessage extends Module {
     /**
      * Blocks spoofed 'From <player>:' lines in public chat from creating unread counts, toasts, files, or reply targets.
      */
-    public final Setting<Boolean> verifySenderInTab = this.sgAntiSpam
-        .add(
-            new meteordevelopment.meteorclient.settings.BoolSetting.Builder()
-                .name("verify-sender-in-tab")
-                .description("Only treat a chat line as an incoming DM when the sender is a valid username in the tab list. Blocks spoofed 'From <player>:' lines in public chat.")
-                .defaultValue(true)
-                .build()
-        );
     public final Setting<Boolean> debugRejectedCapture = this.sgPatterns
         .add(
             new meteordevelopment.meteorclient.settings.BoolSetting.Builder()
@@ -363,8 +385,89 @@ public class LiveMessage extends Module {
                 .build()
         );
 
+    // GUI move: keep walking while the Livemessage GUI is open.
+    private final SettingGroup sgGuiMove = this.settings.createGroup("GUI Move");
+    public final Setting<Boolean> guiMoveMovement = this.sgGuiMove
+        .add(
+            new meteordevelopment.meteorclient.settings.BoolSetting.Builder()
+                .name("movement")
+                .description("Keep moving with WASD while the Livemessage GUI is open.")
+                .defaultValue(false)
+                .onChanged(aBoolean -> {
+                    if (Boolean.TRUE.equals(aBoolean)) return;
+                    if (mc == null || mc.options == null) return;
+                    this.releaseForwardedBind(mc.options.keyUp);
+                    this.releaseForwardedBind(mc.options.keyDown);
+                    this.releaseForwardedBind(mc.options.keyLeft);
+                    this.releaseForwardedBind(mc.options.keyRight);
+                })
+                .build()
+        );
+    public final Setting<Boolean> guiMoveJump = this.sgGuiMove
+        .add(
+            new meteordevelopment.meteorclient.settings.BoolSetting.Builder()
+                .name("jump")
+                .description("Allows you to jump while the Livemessage GUI is open.")
+                .defaultValue(false)
+                .onChanged(aBoolean -> {
+                    if (isActive() && !Boolean.TRUE.equals(aBoolean)) this.releaseForwardedBind(mc.options.keyJump);
+                })
+                .build()
+        );
+    public final Setting<Boolean> guiMoveSneak = this.sgGuiMove
+        .add(
+            new meteordevelopment.meteorclient.settings.BoolSetting.Builder()
+                .name("sneak")
+                .description("Allows you to sneak while the Livemessage GUI is open.")
+                .defaultValue(false)
+                .onChanged(aBoolean -> {
+                    if (isActive() && !Boolean.TRUE.equals(aBoolean)) this.releaseForwardedBind(mc.options.keyShift);
+                })
+                .build()
+        );
+    public final Setting<Boolean> guiMoveSprint = this.sgGuiMove
+        .add(
+            new meteordevelopment.meteorclient.settings.BoolSetting.Builder()
+                .name("sprint")
+                .description("Allows you to sprint while the Livemessage GUI is open.")
+                .defaultValue(false)
+                .onChanged(aBoolean -> {
+                    if (isActive() && !Boolean.TRUE.equals(aBoolean)) this.releaseForwardedBind(mc.options.keySprint);
+                })
+                .build()
+        );
+    public final Setting<Boolean> guiMoveArrowsRotate = this.sgGuiMove
+        .add(
+            new meteordevelopment.meteorclient.settings.BoolSetting.Builder()
+                .name("arrows-rotate")
+                .description("Allows you to use your arrow keys to rotate while the Livemessage GUI is open.")
+                .defaultValue(false)
+                .build()
+        );
+    public final Setting<Double> guiMoveRotateSpeed = this.sgGuiMove
+        .add(
+            new meteordevelopment.meteorclient.settings.DoubleSetting.Builder()
+                .name("rotate-speed")
+                .description("Rotation speed while the Livemessage GUI is open.")
+                .defaultValue(4)
+                .min(0)
+                .build()
+        );
+
     private int queueScanTicks = 0;
     private boolean openGuiOnChatKey = false;
+    // Movement keys this module forwarded a press for. Ownership is recorded at forward time so
+    // a later release can be cleaned up even when the skip state did not change between press and
+    // release; unpressGuiMove forces a release without dropping ownership so re-assertion can
+    // resume it on the next non-skip tick; clearForwardedMovementKeys() drops ownership (called
+    // on deactivation).
+    private final Set<KeyMapping> forwardedMovementKeys = new HashSet<>();
+    // GUI-session rotation state. The base is captured once per GUI opening; the LOWEST-priority
+    // rotation handler advances it per frame, so holding an arrow key never restarts the
+    // rotation from the tick values; and no stale value can leak between sessions.
+    private float guiMoveAccumYaw = 0;
+    private float guiMoveAccumPitch = 0;
+    private boolean guiMoveAccumValid = false;
 
     public LiveMessage() {
         super(Addon.CATEGORY2, "Livemessage", "Advanced DM management system with GUI.");
@@ -380,6 +483,148 @@ public class LiveMessage extends Module {
     @Override
     public void onDeactivate() {
         this.openGuiOnChatKey = false;
+        this.guiMoveAccumValid = false;
+        this.clearForwardedMovementKeys();
+    }
+
+    // --- GUI move -------------------------------------------------------------
+    // The Livemessage GUI is a screen, so it swallows the movement keys. Passing them into the
+    // key mappings keeps the player walking while it is open. The caret always wins: a DM that is
+    // being typed in is never disturbed.
+
+    @EventHandler
+    private void onGuiMoveKey(KeyInputEvent event) {
+        if (this.guiMoveSkip()) return;
+        this.passGuiMove(mc.options.keyUp, event.key(), event.action);
+        this.passGuiMove(mc.options.keyDown, event.key(), event.action);
+        this.passGuiMove(mc.options.keyLeft, event.key(), event.action);
+        this.passGuiMove(mc.options.keyRight, event.key(), event.action);
+        if (this.guiMoveJump.get()) this.passGuiMove(mc.options.keyJump, event.key(), event.action);
+        if (this.guiMoveSneak.get()) this.passGuiMove(mc.options.keyShift, event.key(), event.action);
+        if (this.guiMoveSprint.get()) this.passGuiMove(mc.options.keySprint, event.key(), event.action);
+    }
+
+    @EventHandler
+    private void onGuiMoveMouse(MouseClickEvent event) {
+        if (this.guiMoveSkip()) return;
+        // The mouse buttons are only a source for the movement keys a mouse button is bound
+        // to. The attack key is deliberately not passed: a click inside the GUI must not
+        // make the player attack.
+        this.passGuiMove(mc.options.keyUp, event.button(), event.action);
+        this.passGuiMove(mc.options.keyDown, event.button(), event.action);
+        this.passGuiMove(mc.options.keyLeft, event.button(), event.action);
+        this.passGuiMove(mc.options.keyRight, event.button(), event.action);
+        if (this.guiMoveJump.get()) this.passGuiMove(mc.options.keyJump, event.button(), event.action);
+        if (this.guiMoveSneak.get()) this.passGuiMove(mc.options.keyShift, event.button(), event.action);
+        if (this.guiMoveSprint.get()) this.passGuiMove(mc.options.keySprint, event.button(), event.action);
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    private void onGuiMoveRender(Render3DEvent event) {
+        // LOWEST so this runs after any other module's rotation this frame. The Livemessage
+        // GUI owns the rotation here: keep a per-session accumulator and advance it by the
+        // frame delta, or leave it alone when rotation is disabled. Frame deltas accumulate
+        // across frames instead of restarting from the tick base.
+        if (mc.player == null) return;
+        if (mc.gui == null || !(mc.gui.screen() instanceof LivemessageGui)) {
+            // GUI gone: the next opening re-initializes the session's base.
+            this.guiMoveAccumValid = false;
+            return;
+        }
+
+        final boolean active = !this.guiMoveSkip() && this.guiMoveArrowsRotate.get();
+        if (!active) {
+            // Rotation is inactive: the GUI does not own the player's view, so anything stale
+            // in the session accumulator must not leak back in when arrow rotation re-engages.
+            this.guiMoveAccumValid = false;
+            return;
+        }
+
+        if (!this.guiMoveAccumValid) {
+            this.guiMoveAccumYaw = mc.player.getYRot();
+            this.guiMoveAccumPitch = mc.player.getXRot();
+            this.guiMoveAccumValid = true;
+        }
+
+        float rotationDelta = (float) Math.min(this.guiMoveRotateSpeed.get() * event.frameTime * 20f, 100);
+        float yaw = this.guiMoveAccumYaw;
+        float pitch = this.guiMoveAccumPitch;
+
+        if (Input.isKeyPressed(InputConstants.KEY_LEFT)) yaw -= rotationDelta;
+        if (Input.isKeyPressed(InputConstants.KEY_RIGHT)) yaw += rotationDelta;
+        if (Input.isKeyPressed(InputConstants.KEY_UP)) pitch -= rotationDelta;
+        if (Input.isKeyPressed(InputConstants.KEY_DOWN)) pitch += rotationDelta;
+
+        this.guiMoveAccumYaw = yaw;
+        this.guiMoveAccumPitch = Mth.clamp(pitch, -90, 90);
+        mc.player.setYRot(yaw);
+        mc.player.setXRot(this.guiMoveAccumPitch);
+    }
+
+    private void passGuiMove(KeyMapping bind, int key, KeyAction action) {
+        if (Input.getKey(bind) != key) return;
+        if (action == KeyAction.Press) {
+            bind.setDown(true);
+            this.forwardedMovementKeys.add(bind);
+        }
+        if (action == KeyAction.Release) {
+            bind.setDown(false);
+            this.forwardedMovementKeys.remove(bind);
+        }
+    }
+
+    /**
+     * True when the GUI move must not act: the setting is off, another screen is open, or a caret is in use.
+     */
+    public boolean guiMoveSkip() {
+        if (!this.isActive() || !this.guiMoveMovement.get()) return true;
+        if (mc.gui == null || !(mc.gui.screen() instanceof LivemessageGui gui)) return true;
+        // A text field has the caret: the keys belong to it, not to the player.
+        return gui.isAnyTextFieldFocused();
+    }
+
+    /**
+     * Releases the movement keys this module forwarded, and only those.
+     */
+    private void unpressGuiMove() {
+        if (mc == null || mc.options == null) return;
+        for (KeyMapping bind : this.forwardedMovementKeys) {
+            bind.setDown(false);
+        }
+        // Ownership is kept so the module can re-assert held state when the GUI re-engages;
+        // clearForwardedMovementKeys() drops the ownership, called from onDeactivate.
+    }
+
+    /**
+     * Dropped bits of ownership and forced release; called on deactivation.
+     */
+    private void clearForwardedMovementKeys() {
+        if (mc == null || mc.options == null) return;
+        for (KeyMapping bind : this.forwardedMovementKeys) {
+            bind.setDown(false);
+        }
+        this.forwardedMovementKeys.clear();
+    }
+
+    /**
+     * Re-assert the physical held state on every owned bind; restores movement when a
+     * text field loses focus while a key is still physically held.
+     */
+    private void repressOwnedMovementKeys() {
+        if (mc == null || mc.options == null || this.forwardedMovementKeys.isEmpty()) return;
+        for (KeyMapping bind : this.forwardedMovementKeys) {
+            int code = Input.getKey(bind);
+            bind.setDown(code != -1 && Input.isKeyPressed(code));
+        }
+    }
+
+    /**
+     * Releases one bind when this module forwarded it (and prunes the ownership set).
+     */
+    private void releaseForwardedBind(KeyMapping bind) {
+        if (bind == null) return;
+        bind.setDown(false);
+        this.forwardedMovementKeys.remove(bind);
     }
 
     @EventHandler
@@ -425,6 +670,26 @@ public class LiveMessage extends Module {
         if (this.openGuiOnChatKey) {
             this.openGuiOnChatKey = false;
             this.mc.gui.setScreen(new LivemessageGui());
+        }
+
+        // A key that was held while the GUI move was active has to be released when it stops
+        // applying, or the player keeps walking after the GUI closed. When the GUI move is
+        // active we re-assert the physical held state on every bind we own, so a key held
+        // through a focus change continues to move the player when focus returns.
+        boolean skipped = this.guiMoveSkip();
+        if (skipped) this.unpressGuiMove();
+        else this.repressOwnedMovementKeys();
+
+        if (this.mc.gui != null && this.mc.player != null && this.mc.gui.screen() instanceof LivemessageGui) {
+            // GUI-session rotation base: captured once per opening, never stale.
+            if (!this.guiMoveAccumValid) {
+                this.guiMoveAccumYaw = this.mc.player.getYRot();
+                this.guiMoveAccumPitch = this.mc.player.getXRot();
+                this.guiMoveAccumValid = true;
+            }
+        } else {
+            // GUI not open: the session's base is stale, the next opening re-initializes it.
+            this.guiMoveAccumValid = false;
         }
 
         if (!this.isActive() || this.mc.getConnection() == null) return;
@@ -503,31 +768,37 @@ public class LiveMessage extends Module {
         }
     }
 
-    public String getPmCommand() {
-        String command = this.pmCommand.get().trim();
-        if (command.startsWith("/")) {
-            command = command.substring(1);
+    /**
+     * Validates a server command name. The name is interpolated into a command, so it must not
+     * contain whitespace or a slash - a space would add an argument and a separator would start a
+     * second command. Digits, underscores, dots, hyphens and a namespace are legitimate.
+     */
+    private static String validCommand(String raw, String fallback, String setting) {
+        String command = raw == null ? "" : raw.trim();
+        if (command.startsWith("/")) command = command.substring(1);
+        if (command.isEmpty() || !command.matches("^[a-zA-Z0-9_.:-]+$")) {
+            if (!invalidCommands.contains(setting)) {
+                invalidCommands.add(setting);
+                LOG.warn("Invalid {} '{}', falling back to '{}'.", setting, raw, fallback);
+            }
+            return fallback;
         }
+        invalidCommands.remove(setting);
+        return command;
+    }
 
-        return command.isEmpty() ? "msg" : command;
+    private static final Set<String> invalidCommands = ConcurrentHashMap.newKeySet();
+
+    public String getPmCommand() {
+        return validCommand(this.pmCommand.get(), "msg", "pm-command");
     }
 
     public String getTpaCommand() {
-        String command = this.tpaCommand.get().trim();
-        if (command.startsWith("/")) {
-            command = command.substring(1);
-        }
-
-        return command.isEmpty() ? "tpa" : command;
+        return validCommand(this.tpaCommand.get(), "tpa", "tpa-command");
     }
 
     public String getIgnoreCommand() {
-        String command = this.ignoreCommand.get().trim();
-        if (command.startsWith("/")) {
-            command = command.substring(1);
-        }
-
-        return command.isEmpty() ? "ignore" : command;
+        return validCommand(this.ignoreCommand.get(), "ignore", "ignore-command");
     }
 
     public void closeFocusedWindow() {

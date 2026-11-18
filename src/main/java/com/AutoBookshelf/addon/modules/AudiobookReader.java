@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -39,6 +44,13 @@ public class AudiobookReader extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgVoice = settings.createGroup("Voice Settings");
     private final SettingGroup sgDisplay = settings.createGroup("Display");
+
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
 
     // General settings
     private final Setting<Keybind> playKey = sgGeneral.add(new KeybindSetting.Builder()
@@ -93,6 +105,7 @@ public class AudiobookReader extends Module {
         .build()
     );
 
+
     private Narrator narrator;
     private ScheduledExecutorService executor;
     private ScheduledFuture<?> currentTask;
@@ -121,7 +134,7 @@ public class AudiobookReader extends Module {
         try {
             narrator = Narrator.getNarrator();
             executor = Executors.newSingleThreadScheduledExecutor();
-            info("§aAudiobook Reader activated.");
+            if (debug.get()) info("§aAudiobook Reader activated.");
         } catch (Exception e) {
             error("§cFailed to initialize: " + e.getMessage());
         }
@@ -210,7 +223,7 @@ public class AudiobookReader extends Module {
 
     private void sendMessage(String msg) {
         if (displayMode.get() == DisplayMode.CHAT || displayMode.get() == DisplayMode.BOTH) {
-            info(msg);
+            if (debug.get()) info(msg);
         }
     }
 
@@ -237,7 +250,7 @@ public class AudiobookReader extends Module {
         String progressText = String.format("Reading page %d/%d", pageNumber, totalPages);
 
         if (displayMode.get() == DisplayMode.CHAT || displayMode.get() == DisplayMode.BOTH) {
-            info("§7" + progressText);
+            if (debug.get()) info("§7" + progressText);
         }
 
         if (displayMode.get() == DisplayMode.SCREEN || displayMode.get() == DisplayMode.BOTH) {

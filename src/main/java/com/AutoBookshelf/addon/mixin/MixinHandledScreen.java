@@ -1,7 +1,16 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only AND MIT AND Apache-2.0
+ * Portions adapted from PathSeeker by FaxHack (https://github.com/FaxHack/PathSeeker),
+ * a Meteor port of shulker-view by cattyn (https://github.com/cattyngmd/shulker-view).
+ * See third-party/licenses and THIRD_PARTY_NOTICES.md.
+ */
 package com.AutoBookshelf.addon.mixin;
 
 import com.AutoBookshelf.addon.events.ScreenRenderEvent;
 import com.AutoBookshelf.addon.modules.InventoryInfo;
+import com.AutoBookshelf.addon.modules.MapartSort;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -58,6 +67,13 @@ public abstract class MixinHandledScreen extends Screen {
     @Inject(method = "keyPressed", at = @At("HEAD"), cancellable = true)
     private void onKeyPressed(KeyEvent input, CallbackInfoReturnable<Boolean> cir) {
         InventoryInfo m = Modules.get().get(InventoryInfo.class);
+        boolean searchFocused = m != null && m.isActive() && m.isSearchFocused();
+        MapartSort mapart = Modules.get().get(MapartSort.class);
+        if (!searchFocused && mapart != null && mapart.isActive() && mapart.handleSortKey(input)) {
+            cir.setReturnValue(true);
+            cir.cancel();
+            return;
+        }
         if (m == null || !m.isActive()) return;
 
         boolean wasFocused = m.isSearchFocused();

@@ -36,9 +36,9 @@ Tested successfully with these mods.
 
 ## Features
 
-**53 modules**, **9 commands**, **10 HUD elements**, **14 mixin**, and **23 Utils**
+**56 modules**, **9 commands**, **10 HUD elements**, **25 mixin**, and **23 Utils**
 
-## Modules (53 total)
+## Modules (56 total)
 <details>
 <summary><b>Modules</b> (Bookies modules)</summary>
 
@@ -56,54 +56,57 @@ Tested successfully with these mods.
 12. **B36-Peacemaker** - Created this to make peace. Named after Convair B-36 Peacemaker
 13. **BDSM-Mask** - Dispenses carved pumpkins with Curse of Binding onto players/mobs
 14. **Block-Radius** - Renders the range of potions, beacons, lightning rods, conduits, linked creakings, Wardens, potent-sulfur geyser, and sponges
-15. **Better-BoatFly** - Transforms your boat into a plane
-16. **BLU-27/B-Napalm** - Burns any flammable blocks nearby with flint and steel, I love the smell of Napalm in the morning, Commit some trolling
+15. **Boat-Phase** - Fly a boat through blocks. WASD steering, Left Control for descent
+16. **Boat-Shot** - Fire a bow during a vertical boat burst
+17. **BLU-27/B-Napalm** - Burns any flammable blocks nearby with flint and steel, I love the smell of Napalm in the morning, Commit some trolling
     against the Vietnamese
-17. **Bookshelf-Filler** - oeh Yuri romcom bookshelves restocker
-18. **Book-Import** - Automatically imports text files into signed books
-19. **Chest-Tracker** - Track items in containers
-20. **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block, Shelf block too
-21. **Dried-Ghast** - Give these cute and tiny little creatures a second chances
-22. **DoubleCrystalPopper** - Attacks a locked target then pops two crystals with configurable delays
-23. **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
-24. **Fatamorgana** - Maho x Miho, Miho x Yukari, Maho x Erika
-25. **Force-Access** - Mines the block that keeps a container from opening, then opens it, also works through walls
-26. **Get-Preview** - Shows an item preview overlay on bundles, shulkers, and books
-27. **Homes-List** - Manage and teleport to your server homes with a GUI
-28. **Handy-Place** - Controls how directional block were to be placed and skinny-block full-cube placement
-29. **Item-Despawn** - Highlights items that are about to despawn
-30. **Inventory-Info** - SHoiGu!! GEraShimov!!!
-31. **InventoryTracker** - Tracks and shows the equipment/slot history of other players in render distance (use .invsee to open screen)
-32. **KMDB** - Builds Wither, Iron Golem, Snow Golem, or Copper Golem, or Creaking automatically
-33. **LiveMessage** - Advanced DM management system with GUI
-34. **MURADAESA** - Detects likely player activity outside 128 blocks by scoring world-change packet patterns
-35. **Minecart-Placer** - Places any minecarts on any rails in range
-36. **Map-Grid** - Highlights map grid boundaries around the player
-37. **Mapart-Namer** - Auto names maps based on inventory slot layout
-38. **Mats-Refill** - Automatically restocks materials from shulker boxes
-39. **Mob-Owner** - Shows entity owner by saving into cache
-40. **PacketEat** - Allows you to eat without interrupting other actions
-41. **PzH200** - With just a bow and this module, It can fire shells at a high velocity aided by a laser rangefinder
-42. **Platform** - Build a platform within a selected area at a given y-level
-43. **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
-44. **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in
+18. **Bookshelf-Filler** - oeh Yuri romcom bookshelves restocker
+19. **Book-Import** - Automatically imports text files into signed books
+20. **Chest-Tracker** - Track items in containers
+21. **Container-Peek** - Displays the tracked contents from Chest-Tracker when you look at the block, Shelf block too
+22. **Dried-Ghast** - Give these cute and tiny little creatures a second chances
+23. **DoubleCrystalPopper** - Attacks a locked target then pops two crystals with configurable delays
+24. **Elytra-Path** - Shows your elytra flight path to destination with smooth movement. better luck next time, Pilots
+25. **Fatamorgana** - Maho x Miho, Miho x Yukari, Maho x Erika
+26. **Force-Access** - Mines the block that keeps a container from opening, then opens it, also works through walls
+27. **Get-Preview** - Shows an item preview overlay on bundles, shulkers, and books
+28. **Homes-List** - Manage and teleport to your server homes with a GUI
+29. **Handy-Place** - Controls how directional block were to be placed and skinny-block full-cube placement
+30. **Item-Despawn** - Highlights items that are about to despawn
+31. **Inventory-Info** - Improves shulker management by showing interactive shulker content on GUI
+32. **InventoryTracker** - Tracks and shows the equipment/slot history of other players in render distance (use .invsee to open screen)
+33. **KMDB** - Builds Wither, Iron Golem, Snow Golem, or Copper Golem, or Creaking automatically
+34. **Lance** - Spear strikes from above on a ten tick beat
+35. **LiveMessage** - Advanced DM management system with GUI. Press Enter in the Mane window to open the ChatWindow for the matched buddy
+36. **MURADAESA** - Detects likely player activity outside 128 blocks by scoring world-change packet patterns
+37. **Minecart-Placer** - Places any minecarts on any rails in range
+38. **Map-Grid** - Highlights map grid boundaries around the player
+39. **Mapart-Namer** - Auto names maps based on inventory slot layout
+40. **Mapart-Sort** - Sorts filled map arts into their grid frame inside container/inventory
+41. **Mats-Refill** - Automatically restocks materials from shulker boxes
+42. **Mob-Owner** - Shows entity owner by saving into cache
+43. **PacketEat** - Allows you to eat without interrupting other actions
+44. **PzH200** - With just a bow and this module, It can fire shells at a high velocity aided by a laser rangefinder
+45. **Platform** - Build a platform within a selected area at a given y-level
+46. **Press-Frame** - Flatten any nearby item frame because You're an Elite Rank
+47. **Portal-Cave** - Scans for the shapes of broken/removed Nether Portals within the cave air blocks found in caves and underground structures in
     1.13+ chunks
-45. **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
-46. **Sculk-Range** - Shows the detection range of normal or calibrated sculk sensors and shriekers
-47. **SignRender** - Renders sign text through walls with advanced clustering
-48. **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
-49. **Tnt-Fuse-Esp** - Shows the fuse time of lit tnt
-50. **Trajectory-Plus** - Smooth projectile prediction and tracking
-51. **Tsundere-Furry** - Transforms outgoing chat messages into animal sounds, tsundere, or both :>
-52. **Unwax-Aura** - Automatically removes wax from copper blocks and copper golem and optionally breaks them
-53. **Yuri-Asmr** - Streams a random ASMR search result through yt-dlp + ffmpeg with integrated HUD
+48. **SBB-Restock** - Automatically restocks shulkers and books in your hotbar when used
+49. **Sculk-Range** - Shows the detection range of normal or calibrated sculk sensors and shriekers
+50. **SignRender** - Renders sign text through walls with advanced clustering
+51. **Throw-Shulkers** - Automatically throws shulker boxes based on their contents
+52. **Tnt-Fuse-Esp** - Shows the fuse time of lit tnt
+53. **Trajectory-Plus** - Smooth projectile prediction and tracking
+54. **Tsundere-Furry** - Transforms outgoing chat messages into animal sounds, tsundere, or both :>
+55. **Unwax-Aura** - Automatically removes wax from copper blocks and copper golem and optionally breaks them
+56. **Yuri-Asmr** - Streams a random ASMR search result through yt-dlp + ffmpeg with integrated HUD
 
 </details>
 
 <details>
 <summary><b>Display of the addon</b> (in-game)</summary>
 <h1 align="left">
-  <img src="https://github.com/user-attachments/assets/7bc5eda9-044a-427f-a5f5-bc006bff42b8" alt="Header Image" style="width:70%; max-width:600px;"/>
+  <img src="https://github.com/user-attachments/assets/84a49191-971f-4a61-a841-14315943d685" alt="Header Image" style="width:70%; max-width:600px;"/>
 </h1>
 </details>
 
@@ -164,7 +167,8 @@ https://github.com/user-attachments/assets/f9d2825f-a3c3-4b94-a5f9-1155b09b4c64
 2. Put the .txt file into folder : `\minecraft\AutoBookshelf\books` or use the [Remote Source](https://github.com/oehrasa/Ashurbanipal)
 3. _Recommend to use alongside Bookshelf-Filler module_
 4. Press set key in the module settings to continue to next file
-> I post the Python code [here](https://github.com/oehrasa/Auto-Written-Book)
+
+> The Python code is posted [here](https://github.com/oehrasa/Auto-Written-Book)
 </details>
 
 <details>
@@ -214,7 +218,8 @@ https://youtu.be/tDzfNo_uWMA
 <b>Buddy/Mane window</b>
 
 1. Tab in the search field = autocomplete a buddy name ; Ctrl+Tab = cycle windows
-2. Page Up / Page Down = scroll the buddy list by 10 lines
+2. Enter in the search field = open the ChatWindow for the matched buddy (exact, or unique-prefix, match)
+3. Page Up / Page Down = scroll the buddy list by 10 lines
 
 <b>Notes window</b>
 
@@ -230,7 +235,8 @@ https://youtu.be/tDzfNo_uWMA
 1. Position mapart in inventory grid
 2. Enable the module
 3. Open up anvil
-4. Note : If the mapart has a longer column (Y) take out the current map (that had been named) and position (stitch) new map to same grid then redo
+4. Note : If the mapart has a longer column (Y) then take out the current map (that had been named) then position the new map to the same slot grid
+   then redo
 
 </details>
 
@@ -242,7 +248,8 @@ https://youtu.be/uZQGECqCU_A
 </details>
 
 ## Credits
-List of addons I used as reference(skid? mwhehe), You should check them out it's pretty awesome!
+
+List of addons/mods I used as reference (skid? inspiration? mwhehe), You should check them out it's pretty awesome!
 
 - **[FileAutoLogin](https://github.com/DortyTheGreat/FileAutoLogin)** - Base of this addon
 - **[Clarity](https://github.com/ck-clarity/addon)** - Image HUD
@@ -253,16 +260,20 @@ List of addons I used as reference(skid? mwhehe), You should check them out it's
 - **[Noratweak](https://github.com/noramibu/Nora-Tweaks)** - AutoFarm module
 - **[meteor community addon](https://github.com/lapoliciarobomiquesofrances/meteor-community-addon)** - AutoSex base
 - **[hybridious mod](https://github.com/Hybridious/hybridious_mod)** - B36, AutoMoss
+- **[quiettee-utils](https://github.com/shyalboi/quiettee-utilss)** - Lance, BoatPhase, BoatShot
 - **[lu public](https://github.com/CunnyCorp/lu-public)** - Auto Animal, Highlighter
 - **[nerv printer addon](https://github.com/Julflips/nerv-printer-addon)** - Map Namer base reference
 - **[JanitorAddon](https://github.com/Sleeepyv/JanitorAddon)** - ThrowEmptyShulker
 - **[delirious](https://github.com/underscore-zi/delirious)** - Platform Builder
 - **[Trouser](https://github.com/etianl/Trouser-Streak)** - PortalPatternFinder
-- **[PathSeeker](https://github.com/FaxHack/PathSeeker)** - InventoryInfo
+- **[PathSeeker](https://github.com/FaxHack/PathSeeker)** - InventoryInfo (Meteor port of [shulker-view](https://github.com/cattyngmd/shulker-view))
 - **[MeteorPlusPlus](https://github.com/zychen027/MeteorPlusPlusAddon)** - PacketEat
 - **[MeteorEnemies](https://github.com/crosby-moe/MeteorEnemies)** - Enemy tab
+- **[Entity Tracker](https://github.com/liangforstudy/entity-tracker)** - ChestTracker module
 - **[6Bees](https://github.com/Powie69/6Bees)** - Hidden map id's tooltip, Base system, 6bees-data
 - **[Hyperglide](https://github.com/Ark223/Hyperglide)** - EasyAccess
+- **[yuri-asmr](https://github.com/vlensys/yuri-asmr)** - YuriAsmr
+- **[livemessage](https://github.com/rebane2001/livemessage)** - Livemessage
 
 ## Contributing
 
@@ -278,6 +289,9 @@ If you use **ANY** code from the source:
   from this project (even partially) in a closed-source and/or obfuscated application.
 - You must state clearly and obviously to all end users that you are using code from this project.
 - Your application must also be licensed under the same license.
+
+For portions adapted from other projects and their individual license terms, see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+and [third-party/licenses/](third-party/licenses/).
 
 >## Disclaimer
 >Designed for anarchy servers like 6b6t.org. Use responsibly.

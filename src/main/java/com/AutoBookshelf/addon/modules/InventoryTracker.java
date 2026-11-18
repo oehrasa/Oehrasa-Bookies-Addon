@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -150,6 +155,13 @@ public class InventoryTracker extends Module {
 
     private final SettingGroup sgBooks = settings.createGroup("Books");
 
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
+
     private final Setting<Boolean> announceHeldBooks = sgBooks.add(new BoolSetting.Builder()
         .name("announce-held-books")
         .description("Prints a tracked player's held book contents to chat when they change.")
@@ -164,6 +176,7 @@ public class InventoryTracker extends Module {
         .build()
     );
 
+
     public final Map<UUID, ItemStack> lastHeldBook = new HashMap<>();
     private final Map<UUID, List<String>> lastBookPages = new HashMap<>();
     private UUID predictingUuid = null;
@@ -175,7 +188,7 @@ public class InventoryTracker extends Module {
     private static final ItemStack[] CONTAINER_PREVIEW = new ItemStack[27];
 
     public InventoryTracker() {
-        super(Addon.CATEGORY, "Inventory-Tracker",
+        super(Addon.CATEGORY2, "Inventory-Tracker",
             "Tracks and shows the equipment/slot history of other players in render distance (use .invsee to open screen).");
     }
 
@@ -198,13 +211,13 @@ public class InventoryTracker extends Module {
     private void onTick(TickEvent.Post event) {
         if (mc.level == null || mc.player == null) return;
 
-        Set<UUID> seenUUIDs = new HashSet<>();
+        seenUUIDsScratch.clear();
 
         for (Player player : mc.level.players()) {
             if (!(player instanceof RemotePlayer)) continue;
 
             UUID uuid = player.getUUID();
-            seenUUIDs.add(uuid);
+            seenUUIDsScratch.add(uuid);
 
             ItemStack[] current = snapshotEquipment(player);
             ItemStack[] last = lastEquipment.get(uuid);
@@ -245,10 +258,10 @@ public class InventoryTracker extends Module {
             }
         }
 
-        lastEquipment.keySet().retainAll(seenUUIDs);
-        renderPreviews.keySet().retainAll(seenUUIDs);
-        lastHeldBook.keySet().retainAll(seenUUIDs);
-        lastBookPages.keySet().retainAll(seenUUIDs);
+        lastEquipment.keySet().retainAll(seenUUIDsScratch);
+        renderPreviews.keySet().retainAll(seenUUIDsScratch);
+        lastHeldBook.keySet().retainAll(seenUUIDsScratch);
+        lastBookPages.keySet().retainAll(seenUUIDsScratch);
     }
 
     private void checkHeldBook(UUID uuid, Player player, ItemStack stack) {
@@ -260,7 +273,7 @@ public class InventoryTracker extends Module {
         lastHeldBook.put(uuid, stack.copy());
 
         if (announceHeldBooks.get() && !pages.equals(previous)) {
-            info("§6=== " + player.getName().getString() + "'s book ===");
+            if (debug.get()) info("§6=== " + player.getName().getString() + "'s book ===");
             BookUtils.printBookInfo(content, this::info);
         }
 
@@ -306,15 +319,21 @@ public class InventoryTracker extends Module {
         }
     }
 
+    /**
+     * Scratch equipment snapshot (6 slots): reused every tick, the caller only reads it.
+     */
+    private final ItemStack[] equipmentScratch = new ItemStack[6];
+    private final Set<UUID> seenUUIDsScratch = new HashSet<>();
+
     private ItemStack[] snapshotEquipment(Player player) {
-        return new ItemStack[]{
-            player.getMainHandItem(),
-            player.getOffhandItem(),
-            player.getItemBySlot(EquipmentSlot.HEAD),
-            player.getItemBySlot(EquipmentSlot.CHEST),
-            player.getItemBySlot(EquipmentSlot.LEGS),
-            player.getItemBySlot(EquipmentSlot.FEET)
-        };
+        ItemStack[] current = this.equipmentScratch;
+        current[0] = player.getMainHandItem();
+        current[1] = player.getOffhandItem();
+        current[2] = player.getItemBySlot(EquipmentSlot.HEAD);
+        current[3] = player.getItemBySlot(EquipmentSlot.CHEST);
+        current[4] = player.getItemBySlot(EquipmentSlot.LEGS);
+        current[5] = player.getItemBySlot(EquipmentSlot.FEET);
+        return current;
     }
 
     private ItemStack[] copySnapshot(ItemStack[] src) {

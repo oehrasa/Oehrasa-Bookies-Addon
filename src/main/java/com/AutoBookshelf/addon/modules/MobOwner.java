@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -42,6 +47,13 @@ public class MobOwner extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgCache = settings.createGroup("Cache");
     private final SettingGroup sgDebug = settings.createGroup("Debug");
+
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
 
     private final Setting<Double> scale = sgGeneral.add(new DoubleSetting.Builder()
         .name("scale")
@@ -92,6 +104,7 @@ public class MobOwner extends Module {
         .defaultValue(true)
         .build()
     );
+
 
     private final Vector3d pos = new Vector3d();
 
@@ -173,7 +186,7 @@ public class MobOwner extends Module {
                         }
                     }
                 }
-                info("§aLoaded cache: §f" + ownerNameCache.size() + " §anames, §f"
+                if (debug.get()) info("§aLoaded cache: §f" + ownerNameCache.size() + " §anames, §f"
                     + (mobToOwner.size() + pearlOwnerByThrower.size()) + " §aassignments");
             }
         } catch (Exception e) {

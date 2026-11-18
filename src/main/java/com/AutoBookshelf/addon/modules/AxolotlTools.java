@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -48,9 +53,17 @@ public class AxolotlTools extends Module {
 
     public enum VariantBehavior {@SuppressWarnings("unused") Esp, Interact, Both, None}
 
+    private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgEsp = settings.createGroup("Esp Settings");
     private final SettingGroup sgAuto = settings.createGroup("AutoCatch/Breed Settings");
     private final SettingGroup sgVariantChoices = settings.createGroup("Variant Settings");
+
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
     private final Setting<Boolean> espVariants = sgEsp.add(
         new BoolSetting.Builder()
             .name("ESP")
@@ -239,6 +252,7 @@ public class AxolotlTools extends Module {
             })
             .build()
     );
+
     private int timer = 0;
     private int rotPriority = 69420;
     private final Set<String> interactVariants = new HashSet<>();
@@ -251,7 +265,7 @@ public class AxolotlTools extends Module {
         long now = System.currentTimeMillis();
         Long last = msgCooldowns.get(key);
         if (last == null || now - last >= MSG_COOLDOWN_MS) {
-            info(message);
+            if (debug.get()) info(message);
             msgCooldowns.put(key, now);
         }
     }

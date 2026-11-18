@@ -1,15 +1,21 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules.BlockRadiusUtils;
 
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.renderer.Renderer3D;
 import meteordevelopment.meteorclient.settings.*;
+import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
-import net.minecraft.world.entity.AnimationState;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.monster.warden.AngerLevel;
 import net.minecraft.world.entity.monster.warden.Warden;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -42,6 +48,8 @@ public class WardenEsp {
     private final Setting<SettingColor> wardenLockedColor;
     private final Setting<SettingColor> wardenDiggingColor;
     private final Setting<SettingColor> wardenOtherTargetColor;
+    private final Setting<Boolean> sonicBlastShape;
+    private final Setting<Boolean> targetGuess;
 
     private record WardenState(SettingColor baseColor, String label, boolean locked,
                                boolean sniffing, boolean digging, boolean emerging,
@@ -50,10 +58,24 @@ public class WardenEsp {
 
     private final List<LivingEntity> wardens = new ArrayList<>();
     private final Map<Integer, Integer> lastAnger = new HashMap<>();
-    private final Map<Integer, Long> attackExpiry = new HashMap<>();
     private final Map<Integer, Long> angerTrendExpiry = new HashMap<>();
     private final Map<Integer, Boolean> angerTrendUp = new HashMap<>();
     private static final long ANGER_TREND_HOLD_TICKS = 30L; // ~1.5s
+    private static final int BLAST_RING_SEGMENTS = 24;
+    private static final double BLAST_RADIUS = 15.0;
+    private static final double BLAST_HALF_HEIGHT = 20.0;
+    private static final double[] BLAST_COS;
+    private static final double[] BLAST_SIN;
+
+    static {
+        BLAST_COS = new double[BLAST_RING_SEGMENTS];
+        BLAST_SIN = new double[BLAST_RING_SEGMENTS];
+        for (int i = 0; i < BLAST_RING_SEGMENTS; i++) {
+            double angle = (Math.PI * 2.0 * i) / BLAST_RING_SEGMENTS;
+            BLAST_COS[i] = Math.cos(angle);
+            BLAST_SIN[i] = Math.sin(angle);
+        }
+    }
 
     public WardenEsp(SettingGroup sgWarden, BlockRadiusShared shared) {
         this.shared = shared;
@@ -187,13 +209,28 @@ public class WardenEsp {
             .visible(showWardens::get)
             .build()
         );
+        //(15-block radius, 20 blocks above/below the warden) while angry; flashes red during the blast
+        sonicBlastShape = sgWarden.add(new BoolSetting.Builder()
+            .name("sonic-blast-shape")
+            .description("Draws a 24-segment vertical cylinder of the sonic-boom blast radius.")
+            .defaultValue(true)
+            .visible(showWardens::get)
+            .build()
+        );
+
+        targetGuess = sgWarden.add(new BoolSetting.Builder()
+            .name("warden-target-guess")
+            .description("During sonic charge, guess who it is aimed at by warden's head to player")
+            .defaultValue(true)
+            .visible(showWardens::get)
+            .build()
+        );
     }
 
     public void scan() {
         wardens.clear();
         if (!showWardens.get()) {
             lastAnger.clear();
-            attackExpiry.clear();
             angerTrendExpiry.clear();
             angerTrendUp.clear();
             return;
@@ -211,7 +248,6 @@ public class WardenEsp {
 
         // Drop tracking state for wardens that despawned/died between scans.
         lastAnger.keySet().removeIf(id -> !seen.contains(id));
-        attackExpiry.keySet().removeIf(id -> !seen.contains(id));
         angerTrendExpiry.keySet().removeIf(id -> !seen.contains(id));
         angerTrendUp.keySet().removeIf(id -> !seen.contains(id));
     }
@@ -219,7 +255,6 @@ public class WardenEsp {
     public void clear() {
         wardens.clear();
         lastAnger.clear();
-        attackExpiry.clear();
         angerTrendExpiry.clear();
         angerTrendUp.clear();
     }
@@ -239,21 +274,25 @@ public class WardenEsp {
             lastAnger.put(w.getId(), anger);
             long nowTick = warden.tickCount;
 
+            // EntityUtils has no lerped-box helper; interpolate manually. One set of locals,
+            // shared by the trend path, the shape path, the tracer, the labels and the
+            // sniffing fallback: before, each of them recomputed the same interpolation.
+            Vec3 lerpedPos = w.getPosition(event.tickDelta);
+            Vec3 offset = lerpedPos.subtract(w.position());
+            AABB lerped = w.getBoundingBox().move(offset);
+            double centerX = (lerped.minX + lerped.maxX) * 0.5;
+            double centerY = (lerped.minY + lerped.maxY) * 0.5;
+            double centerZ = (lerped.minZ + lerped.maxZ) * 0.5;
+
             if (showAngerTrend.get()) {
                 try {
-                    // EntityUtils has no lerped-box helper; interpolate manually.
-                    Vec3 lerpedPos = w.getPosition(event.tickDelta);
-                    AABB lerpedForTrend = w.getBoundingBox().move(lerpedPos.subtract(w.position()));
-                    renderAngerTrend(event, w.getId(), anger, prev, nowTick, lerpedForTrend);
+                    renderAngerTrend(event, w.getId(), anger, prev, nowTick, lerped);
                 } catch (Throwable t) {
                     // isolated: a trend-render failure must never block the rest of this warden's rendering
                 }
             }
 
             try {
-                // EntityUtils has no lerped-box helper; interpolate manually.
-                Vec3 lerpedPos = w.getPosition(event.tickDelta);
-                AABB lerped = w.getBoundingBox().move(lerpedPos.subtract(w.position()));
 
                 // Derive from the synced client anger value (the same `anger`
                 // used for the trend indicator) rather than
@@ -267,24 +306,45 @@ public class WardenEsp {
 
                 // 26.1.2's AnimationState dropped isRunning(); isStarted() is the public
                 // equivalent (it checks the startTick sentinel, unlike getTimeInMillis
-                // which is >0 on any unstarted state once tickDelta is nonzero).
-                boolean sonicCharge = isAnimationPlaying(warden.sonicBoomAnimationState);
-                boolean attackAnim = isAnimationPlaying(warden.attackAnimationState);
-                boolean imminent = sonicCharge || attackAnim;
-
-                if (imminent)
-                    attackExpiry.put(w.getId(), nowTick + 100L);
-                long expiry = attackExpiry.getOrDefault(w.getId(), 0L);
-                boolean attackFlash = nowTick <= expiry && !state.digging() && !state.emerging();
+                // which is >0 on any unstarted state once tickDelta is nonzero). But isStarted()
+                // never flips back to false on the client — after the first trigger it stays
+                // true forever, so detection of a *fresh* attack must use the animation's age
+                // instead. getTimeInMillis returns (ageInTicks - startTick) * 50 ms, so a fresh
+                // trigger resets it back to 0 automatically.
+                boolean sonicActive = warden.sonicBoomAnimationState.isStarted()
+                    && warden.sonicBoomAnimationState.getTimeInMillis((float) w.tickCount) < 3250L; // 60-tick window + 5 extra ticks
+                boolean attackActive = warden.attackAnimationState.isStarted()
+                    && warden.attackAnimationState.getTimeInMillis((float) w.tickCount) < 1500L;   // melee swing ~30 ticks
+                boolean imminent = sonicActive || attackActive;
+                boolean attackFlash = imminent && !state.digging() && !state.emerging();
 
                 if (attackFlash)
                     color = getFastPulseColor(wardenLockedColor.get(), 0.35F);
 
+                if (sonicBlastShape.get() && (state.locked() || imminent)) {
+                    boolean blasting = attackFlash;
+                    SettingColor cylinderColor = blasting
+                        ? getFastPulseColor(wardenLockedColor.get(), 0.15F)
+                        : wardenSearchingColor.get();
+                    renderBlastCylinder(event.renderer, centerX, centerY, centerZ, cylinderColor);
+                }
+
+                if (targetGuess.get() && imminent) {
+                    LivingEntity guessed = guessTarget(warden);
+                    if (guessed != null) {
+                        String name = guessed.getName().getString();
+                        if (name.isBlank()) name = guessed.getType().getDescription().getString();
+                        double gx = guessed.getX(), gy = guessed.getY() + guessed.getBbHeight() + 0.35, gz = guessed.getZ();
+                        shared.drawWorldLabel(event.matrices, "target? " + name,
+                            gx, gy, gz, wardenOtherTargetColor.get(),
+                            0.9F * wardenLabelScale.get().floatValue(), 0, event.tickDelta);
+                    }
+                }
+
                 if (drawShape) {
-                    int fillAlpha = drawFill ? 40 : 0;
-                    SettingColor boxColor = drawFill
-                        ? new SettingColor(color.r, color.g, color.b, fillAlpha)
-                        : color;
+                    // Shared cache: the fill alpha is constant (40), so the entry is built once
+                    // per (color, alpha) pair and reused from the cache after that.
+                    SettingColor boxColor = drawFill ? shared.translucent(color, 40) : color;
                     meteordevelopment.meteorclient.renderer.ShapeMode mode = drawFill
                         ? meteordevelopment.meteorclient.renderer.ShapeMode.Both
                         : meteordevelopment.meteorclient.renderer.ShapeMode.Lines;
@@ -315,19 +375,15 @@ public class WardenEsp {
                     if (wardenTracerFlash.get())
                         tracerColor = flashColor(tracerColor);
 
-                    Vec3 eyes = mc.player.getEyePosition(event.tickDelta);
-                    Vec3 center = lerped.getCenter();
-                    event.renderer.line(eyes.x, eyes.y, eyes.z,
-                        center.x, center.y, center.z, tracerColor);
+                    event.renderer.line(RenderUtils.center.x, RenderUtils.center.y, RenderUtils.center.z,
+                        centerX, centerY, centerZ, tracerColor);
                 }
 
                 if (state.sniffing() && showSniffingPulse.get()) {
                     float pulse = (float) (0.5
                         + 0.5 * Math.sin(System.currentTimeMillis() / 200.0));
                     int alpha = (int) (clamp01(pulse) * 255);
-                    SettingColor fill = new SettingColor(
-                        wardenAgitatedColor.get().r, wardenAgitatedColor.get().g,
-                        wardenAgitatedColor.get().b, alpha);
+                    SettingColor fill = shared.translucent(wardenAgitatedColor.get(), alpha);
                     event.renderer.box(lerped, fill, fill,
                         meteordevelopment.meteorclient.renderer.ShapeMode.Sides, 0);
                 }
@@ -340,14 +396,14 @@ public class WardenEsp {
 
                 if (attackFlash && showImminentIndicator.get()) {
                     shared.drawWorldLabel(event.matrices, "! ATTACK",
-                        lerped.getCenter().x, lerped.getCenter().y + baseOffset,
-                        lerped.getCenter().z, wardenLockedColor.get(),
+                        centerX, centerY + baseOffset,
+                        centerZ, wardenLockedColor.get(),
                         1.15F * labelScaleValue, -lineSpacing * line, event.tickDelta);
                     line += 1;
                 }
 
-                shared.drawWorldLabel(event.matrices, state.label(), lerped.getCenter().x,
-                    lerped.getCenter().y + baseOffset, lerped.getCenter().z,
+                shared.drawWorldLabel(event.matrices, state.label(), centerX,
+                    centerY + baseOffset, centerZ,
                     color, labelScaleValue, -lineSpacing * line, event.tickDelta);
                 line += 1;
 
@@ -361,24 +417,24 @@ public class WardenEsp {
                         ? (attackFlash ? getFastPulseColor(wardenLockedColor.get(), 0.35F)
                            : getPulseColor(wardenLockedColor.get(), 0.6F))
                         : wardenOtherTargetColor.get();
-                    shared.drawWorldLabel(event.matrices, tgt, lerped.getCenter().x,
-                        lerped.getCenter().y + baseOffset, lerped.getCenter().z,
+                    shared.drawWorldLabel(event.matrices, tgt, centerX,
+                        centerY + baseOffset, centerZ,
                         tc, 0.95F * labelScaleValue, -lineSpacing * line, event.tickDelta);
                     line += 1;
                 }
 
                 if (state.sniffing() && showSniffingPulse.get()) {
                     shared.drawWorldLabel(event.matrices, "SNIFFING",
-                        lerped.getCenter().x, lerped.getCenter().y + baseOffset,
-                        lerped.getCenter().z, new SettingColor(255, 255, 170),
+                        centerX, centerY + baseOffset,
+                        centerZ, new SettingColor(255, 255, 170),
                         0.9F * labelScaleValue, -lineSpacing * line, event.tickDelta);
                     line += 1;
                 }
 
                 if (state.digging() || state.emerging()) {
                     String label = state.digging() ? "DIGGING" : "EMERGING";
-                    shared.drawWorldLabel(event.matrices, label, lerped.getCenter().x,
-                        lerped.getCenter().y + baseOffset, lerped.getCenter().z,
+                    shared.drawWorldLabel(event.matrices, label, centerX,
+                        centerY + baseOffset, centerZ,
                         wardenDiggingColor.get(), 0.9F * labelScaleValue,
                         -lineSpacing * line, event.tickDelta);
                     line += 1;
@@ -387,6 +443,9 @@ public class WardenEsp {
                 // ignore per-entity errors
             }
         }
+
+        // Flush all labels submitted for this frame in one feature pass.
+        shared.flushWorldLabels();
     }
 
     /**
@@ -396,20 +455,31 @@ public class WardenEsp {
      * never does (brain memory is not synced), so the honest answer is UNKNOWN rather than a guess -
      * the ANGRY state label already communicates that something has its attention.
      */
+    private final java.util.IdentityHashMap<LivingEntity, String> targetLabelCache = new java.util.IdentityHashMap<>();
+
     private String targetLabel(WardenState state) {
         if (state.lockedOnYou()) return "TARGET: YOU";
 
         LivingEntity target = state.target();
         if (target == null) return "TARGET: UNKNOWN";
 
+        // Cache the built label per target identity: it is drawn every frame, while the
+        // name text only changes if the warden changes targets. Identity keys are safe.
+        String cached = targetLabelCache.get(target);
+        if (cached != null) {
+            return cached;
+        }
+
         var name = target.getName();
         String who = name == null ? "" : name.getString();
         if (who.isBlank()) who = target.getType().getDescription().getString();
-        return "TARGET: " + (who.isBlank() ? "UNKNOWN" : who);
-    }
+        String built = "TARGET: " + (who.isBlank() ? "UNKNOWN" : who);
 
-    private boolean isAnimationPlaying(AnimationState state) {
-        return state.isStarted();
+        if (targetLabelCache.size() > 64) {
+            targetLabelCache.clear();
+        }
+        targetLabelCache.put(target, built);
+        return built;
     }
 
     /**
@@ -461,6 +531,67 @@ public class WardenEsp {
                 r.line(ex[i], ey[i], ez[i], ex[j], ey[j], ez[j], lineColor);
             }
         }
+    }
+
+    /**
+     * Wireframe of the actual sonic-boom blast volume around a warden: a vertical cylinder of
+     * radius {@value #BLAST_RADIUS} around its XZ position, {@value #BLAST_HALF_HEIGHT} blocks
+     * above and below its centre (matching the {@code closerThan(15, 20)} hit rule the server
+     * uses). Drawn in 24 segments; two rim rings plus eight vertical struts.
+     */
+    private void renderBlastCylinder(Renderer3D r, double x, double y, double z, SettingColor color) {
+        int n = BLAST_RING_SEGMENTS;
+        double top = y + BLAST_HALF_HEIGHT;
+        double bottom = y - BLAST_HALF_HEIGHT;
+
+        for (int i = 0; i < n; i++) {
+            int j = (i + 1) % n;
+            r.line(x + BLAST_COS[i] * BLAST_RADIUS, top, z + BLAST_SIN[i] * BLAST_RADIUS,
+                x + BLAST_COS[j] * BLAST_RADIUS, top, z + BLAST_SIN[j] * BLAST_RADIUS,
+                color);
+            r.line(x + BLAST_COS[i] * BLAST_RADIUS, bottom, z + BLAST_SIN[i] * BLAST_RADIUS,
+                x + BLAST_COS[j] * BLAST_RADIUS, bottom, z + BLAST_SIN[j] * BLAST_RADIUS,
+                color);
+        }
+
+        for (int i = 0; i < n; i += n / 8) {
+            double strutX = x + BLAST_COS[i] * BLAST_RADIUS;
+            double strutZ = z + BLAST_SIN[i] * BLAST_RADIUS;
+            r.line(strutX, bottom, strutZ,
+                strutX, top, strutZ,
+                color);
+        }
+    }
+
+    /**
+     * Guesses which player the warden is about to blast, by finding whichever living player is
+     * most aligned with the warden's eye vector (view direction is synced, but the target id is
+     * never sent to the client, so a direct answer is impossible). Returns null when nothing is
+     * within ~23 degrees of the look ray.
+     */
+    private LivingEntity guessTarget(Warden warden) {
+        Vec3 eye = warden.getEyePosition();
+        Vec3 view = warden.getViewVector(1.0F);
+        if (view.lengthSqr() == 0) return null;
+        view = view.normalize();
+
+        LivingEntity best = null;
+        double bestCos = 0.92F;
+        for (Entity candidate : mc.level.entitiesForRendering()) {
+            if (!(candidate instanceof Player choice) || candidate == warden) continue;
+            double d2 = choice.distanceToSqr(warden);
+            if (d2 > 1024 || d2 < 1) continue; // within 32 blocks, not overlapping the warden itself
+
+            Vec3 to = choice.getEyePosition().subtract(eye);
+            double len2 = to.lengthSqr();
+            if (len2 == 0) continue;
+            double cos = view.dot(to.normalize());
+            if (cos > bestCos) {
+                bestCos = cos;
+                best = choice;
+            }
+        }
+        return best;
     }
 
     private WardenState classifyWarden(Warden warden, int anger, AngerLevel angriness) {
@@ -537,15 +668,16 @@ public class WardenEsp {
         boolean up = angerTrendUp.getOrDefault(id, true);
         SettingColor col = up ? wardenSearchingColor.get() : wardenCalmColor.get();
 
-        Vec3 base = lerped.getCenter().add(0, lerped.getYsize() / 2.0 + 0.1, 0);
-        Vec3 tip = base.add(0, up ? 1.0 : -1.0, 0);
-        event.renderer.line(base.x, base.y, base.z, tip.x, tip.y, tip.z, col);
+        double centerX = (lerped.minX + lerped.maxX) * 0.5;
+        double centerY = (lerped.minY + lerped.maxY) * 0.5;
+        double centerZ = (lerped.minZ + lerped.maxZ) * 0.5;
+        double baseY = centerY + lerped.getYsize() / 2.0 + 0.1;
+        double tipY = baseY + (up ? 1.0 : -1.0);
 
+        event.renderer.line(centerX, baseY, centerZ, centerX, tipY, centerZ, col);
         double arm = 0.25, armY = up ? -arm : arm;
-        Vec3 armA = tip.add(-arm, armY, 0);
-        Vec3 armB = tip.add(arm, armY, 0);
-        event.renderer.line(tip.x, tip.y, tip.z, armA.x, armA.y, armA.z, col);
-        event.renderer.line(tip.x, tip.y, tip.z, armB.x, armB.y, armB.z, col);
+        event.renderer.line(centerX, tipY, centerZ, centerX - arm, tipY + armY, centerZ, col);
+        event.renderer.line(centerX, tipY, centerZ, centerX + arm, tipY + armY, centerZ, col);
     }
 
     private static SettingColor flashColor(SettingColor color) {

@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-3.0-only AND AGPL-3.0-only
+// Portions adapted from hybridious_mod by Hybridious (https://github.com/Hybridious/hybridious_mod),
+// licensed under the GNU Affero General Public License version 3. Modified substantially. Copyright Hybridious.
+// See third-party/licenses/LICENSE-AGPL-3.0.txt and THIRD_PARTY_NOTICES.md. The AGPL-covered portions remain under AGPL-3.0;
+// the rest of this addon remains under GPL-3.0 as before (AGPL-3.0 section 13 permits the combined work).
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;

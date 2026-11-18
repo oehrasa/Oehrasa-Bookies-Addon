@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.hud;
 
 import com.AutoBookshelf.addon.Addon;
@@ -389,14 +394,29 @@ public class EntityList extends HudElement {
         return text;
     }
 
+    /**
+     * Cached width of the literal "Entity List" title; only re-measured when the
+     * text-scale setting or shadow changes.
+     */
+    private double cachedTitleWidth = -1;
+    private double cachedTitleForScale = -1;
+    private boolean cachedTitleShadow = false;
+
     @Override
     public void render(HudRenderer renderer) {
-        // lol
+        boolean shadow = textShadow.get();
+        double scl = textScale.get();
+        if (cachedTitleWidth < 0 || cachedTitleForScale != scl || cachedTitleShadow != shadow) {
+            cachedTitleWidth = forceDefaultFont.width(renderer, "Entity List", shadow, scl);
+            cachedTitleForScale = scl;
+            cachedTitleShadow = shadow;
+        }
+
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) {
             if (isInEditor()) {
                 String title = "Entity List";
-                double titleWidth = forceDefaultFont.width(renderer, title, textShadow.get(), textScale.get());
+                double titleWidth = cachedTitleWidth;
                 double titleHeight = forceDefaultFont.height(renderer, textShadow.get(), textScale.get());
                 setSize(titleWidth, titleHeight);
 
@@ -418,7 +438,7 @@ public class EntityList extends HudElement {
 
         if (showTitle.get()) {
             String title = "Entity List";
-            double titleWidth = forceDefaultFont.width(renderer, title, textShadow.get(), textScale.get());
+            double titleWidth = cachedTitleWidth;
             lines.add(new Line(title, titleColor.get(), titleWidth, 0));
             maxWidth = Math.max(maxWidth, titleWidth);
             totalHeight += textHeight + spacing;

@@ -1,9 +1,17 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
-import com.AutoBookshelf.addon.modules.chesttracker.ChestTrackerDataV2;
 import com.AutoBookshelf.addon.modules.chesttracker.ChestTrackerModule;
-import com.AutoBookshelf.addon.modules.chesttracker.TrackedContainer;
+import com.AutoBookshelf.addon.modules.chesttracker.TrackerServices;
+import com.AutoBookshelf.addon.modules.chesttracker.data.ContainerRecord;
+import com.AutoBookshelf.addon.modules.chesttracker.data.ItemData;
+import com.AutoBookshelf.addon.modules.chesttracker.data.MemoryBank;
+import com.AutoBookshelf.addon.modules.chesttracker.data.Notes;
 import com.AutoBookshelf.addon.utils.ShelfTooltip;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -21,10 +29,10 @@ import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.decoration.ItemFrame;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
@@ -264,12 +272,32 @@ public class ContainerPeek extends Module {
         .build()
     );
 
-    private final ChestTrackerDataV2 data = new ChestTrackerDataV2();
+    private ContainerRecord lastContainer;
     private BlockPos lastTargetedPos;
-    private TrackedContainer lastContainer;
     private Level lastWorld;
 
     private Entity lastEntity;
+    /**
+     * Block position of {@link #lastEntity} when its preview was built; moves force a rebuild.
+     */
+    private BlockPos lastEntityPos;
+    /**
+     * Fingerprint of the armor stand's equipment; a re-equipped stand forces a rebuild.
+     */
+    private long lastArmorFingerprint = 0;
+    /**
+     * The bank revision the current preview was built from.
+     */
+    private int lastBankRevision = -1;
+
+    /**
+     * The revision of the open chest tracker bank, or -1 when there is none.
+     */
+    private int currentBankRevision() {
+        ChestTrackerModule tracker = Modules.get().get(ChestTrackerModule.class);
+        MemoryBank bank = (tracker != null && tracker.isActive()) ? tracker.getBank() : (TrackerServices.banks() == null ? null : TrackerServices.banks().bank());
+        return bank == null ? -1 : bank.revision();
+    }
 
     private boolean lastShulkerIconSetting = shulkerIconPreview.get();
     private boolean lastShowEmptySetting = showEmpty.get();
@@ -295,6 +323,7 @@ public class ContainerPeek extends Module {
         BlockPos pos,
         Component titleText,
         Component posText,
+        @Nullable Component noteText,
         int panelWidth,
         int panelHeight,
         List<ItemStack> stacks,
@@ -311,7 +340,6 @@ public class ContainerPeek extends Module {
 
     @Override
     public void onActivate() {
-        data.loadData();
         lastWorld = mc.level;
     }
 
@@ -320,6 +348,7 @@ public class ContainerPeek extends Module {
         lastTargetedPos = null;
         lastContainer = null;
         lastEntity = null;
+        lastEntityPos = null;
         currentPreview = null;
         resetShelfTooltip();
     }
@@ -328,10 +357,11 @@ public class ContainerPeek extends Module {
     private void onTick(TickEvent.Post event) {
         if (mc.level != lastWorld) {
             lastWorld = mc.level;
-            if (mc.level != null) data.loadData();
+            if (mc.level != null) { /* bank loads via ChestTrackerModule */ }
             lastTargetedPos = null;
             lastContainer = null;
             lastEntity = null;
+            lastEntityPos = null;
             currentPreview = null;
             resetShelfTooltip();
         }
@@ -340,6 +370,7 @@ public class ContainerPeek extends Module {
 
         if (lastEntity != null && (lastEntity.isRemoved() || !lastEntity.isAlive())) {
             lastEntity = null;
+            lastEntityPos = null;
             currentPreview = null;
         }
 
@@ -361,6 +392,7 @@ public class ContainerPeek extends Module {
         // Block containers
         if (mc.hitResult != null && mc.hitResult.getType() == HitResult.Type.BLOCK) {
             lastEntity = null;
+            lastEntityPos = null;
 
             BlockHitResult hit = (BlockHitResult) mc.hitResult;
             BlockPos pos = hit.getBlockPos();
@@ -387,8 +419,14 @@ public class ContainerPeek extends Module {
             resetShelfTooltip();
 
             BlockPos canonicalPos = getCanonicalChestPos(pos);
-            if (pos.equals(lastTargetedPos) && !shulkerSettingChanged && !styleChanged) return;
+            // The block preview comes from the bank too, so a bank change (the contents
+            // re-read) has to rebuild it - the guard only knew about the position and the
+            // shulker or style settings.
+            int bankRevision = currentBankRevision();
+            boolean bankChanged = bankRevision != lastBankRevision;
+            if (pos.equals(lastTargetedPos) && !shulkerSettingChanged && !styleChanged && !bankChanged) return;
             lastTargetedPos = pos;
+            lastBankRevision = bankRevision;
 
             double dist = Math.sqrt(mc.player.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5));
             if (dist > maxDistance.get()) {
@@ -400,7 +438,9 @@ public class ContainerPeek extends Module {
             Block block = mc.level.getBlockState(pos).getBlock();
             if (!(block instanceof ChestBlock || block instanceof BarrelBlock
                 || block instanceof ShulkerBoxBlock || block instanceof EnderChestBlock
-                || block instanceof DispenserBlock || block instanceof DropperBlock)) {
+                || block instanceof DispenserBlock || block instanceof DropperBlock
+                || block instanceof DecoratedPotBlock || block instanceof JukeboxBlock
+                || block instanceof ChiseledBookShelfBlock || block instanceof LecternBlock)) {
                 lastContainer = null;
                 currentPreview = null;
                 return;
@@ -408,9 +448,12 @@ public class ContainerPeek extends Module {
 
             String dimension = mc.level.dimension().identifier().toString();
             ChestTrackerModule tracker = Modules.get().get(ChestTrackerModule.class);
-            lastContainer = (tracker != null && tracker.isActive())
-                ? tracker.getData().getContainer(canonicalPos, dimension)
-                : data.getContainer(canonicalPos, dimension);
+            MemoryBank bank = (tracker != null && tracker.isActive()) ? tracker.getBank() : (TrackerServices.banks() == null ? null : TrackerServices.banks().bank());
+            if (bank != null) {
+                lastContainer = bank.getBlockAt(dimension, canonicalPos);
+            } else {
+                lastContainer = null;
+            }
 
             if (lastContainer != null) {
                 buildContainerPreview(pos, lastContainer);
@@ -423,10 +466,43 @@ public class ContainerPeek extends Module {
         // Entity item frame
         if (mc.hitResult != null && mc.hitResult instanceof EntityHitResult entityHit) {
             resetShelfTooltip();
+            // The block branch remembers the last targeted block, and its guard skips the rebuild
+            // when the same block is looked at again. Looking at an entity in between must clear
+            // it, or returning to the block would keep the preview it had before.
+            lastTargetedPos = null;
             Entity entity = entityHit.getEntity();
-            if (entity == lastEntity && !branchInputsChanged) return;
+            // Same max-distance gate the block path has: walking past the limit hides the preview
+            // even if the target has not changed since the last frame.
+            double entityDist = Math.sqrt(mc.player.distanceToSqr(entity.position()));
+            if (entityDist > maxDistance.get()) {
+                lastEntity = null;
+                lastEntityPos = null;
+                currentPreview = null;
+                return;
+            }
+            // An armor stand can be re-equipped without moving: someone puts a helmet on it, a
+            // dispenser fills it. The entity and its block position are then unchanged, so the
+            // guard below would keep the stale preview. Fingerprint the equipment instead.
+            boolean equipmentChanged = false;
+            if (entity instanceof net.minecraft.world.entity.decoration.ArmorStand stand) {
+                long fingerprint = armorFingerprint(stand);
+                equipmentChanged = fingerprint != lastArmorFingerprint;
+                lastArmorFingerprint = fingerprint;
+            } else {
+                lastArmorFingerprint = 0;
+            }
+            // A tracked entity (donkey, chest boat/minecart) can walk/drift while targeted: the
+            // preview is anchored at the position it was built at, so a move must rebuild it. The
+            // preview of a tracked entity also comes from the bank, so a change in the bank has to
+            // rebuild it too - the donkey's contents can be re-read without the entity moving.
+            int bankRevision = currentBankRevision();
+            boolean bankChanged = bankRevision != lastBankRevision;
+            if (entity == lastEntity && !branchInputsChanged && !equipmentChanged && !bankChanged
+                && entity.blockPosition().equals(lastEntityPos)) return;
 
             lastEntity = entity;
+            lastEntityPos = entity.blockPosition();
+            lastBankRevision = bankRevision;
 
             if (entity instanceof ItemFrame frame) {
                 ItemStack stack = frame.getItem();
@@ -455,9 +531,46 @@ public class ContainerPeek extends Module {
                         return;
                     }
                 }
+            } else if (entity instanceof ArmorStand stand) {
+                // Build a preview from the stand's six slots, like a container.
+                List<ItemStack> stacks = new ArrayList<>();
+                for (net.minecraft.world.entity.EquipmentSlot slot : new net.minecraft.world.entity.EquipmentSlot[]{
+                    net.minecraft.world.entity.EquipmentSlot.HEAD, net.minecraft.world.entity.EquipmentSlot.CHEST,
+                    net.minecraft.world.entity.EquipmentSlot.LEGS, net.minecraft.world.entity.EquipmentSlot.FEET,
+                    net.minecraft.world.entity.EquipmentSlot.MAINHAND, net.minecraft.world.entity.EquipmentSlot.OFFHAND}) {
+                    ItemStack s = stand.getItemBySlot(slot);
+                    if (!s.isEmpty()) stacks.add(s.copy());
+                }
+                if (!stacks.isEmpty() || showEmpty.get()) {
+                    buildEntityPreview(entity, stacks, "armor_stand", stand.getDisplayName().getString());
+                    return;
+                }
+            } else if (entity instanceof net.minecraft.world.Container
+                || entity instanceof net.minecraft.world.entity.animal.equine.AbstractChestedHorse) {
+                // Tracked entity container (donkey, chest minecart, chest boat...): show its
+                // remembered contents from the bank when available.
+                ChestTrackerModule tracker = Modules.get().get(ChestTrackerModule.class);
+                MemoryBank bank = (tracker != null && tracker.isActive()) ? tracker.getBank()
+                    : (TrackerServices.banks() == null ? null : TrackerServices.banks().bank());
+                if (bank != null) {
+                    ContainerRecord rec = bank.get(entity.getUUID());
+                    if (rec != null) {
+                        var ops = mc.level.registryAccess().createSerializationContext(com.mojang.serialization.JsonOps.INSTANCE);
+                        List<ItemStack> stacks = new ArrayList<>();
+                        for (ContainerRecord.SlotItem si : rec.items) {
+                            ItemStack s = ItemData.decode(ops, si.stack());
+                            if (!s.isEmpty()) stacks.add(s);
+                        }
+                        if (!stacks.isEmpty() || showEmpty.get()) {
+                            buildEntityPreview(entity, stacks, rec.type, rec.name != null ? rec.name : entity.getDisplayName().getString());
+                            return;
+                        }
+                    }
+                }
             }
 
             lastEntity = null;
+            lastEntityPos = null;
             currentPreview = null;
             return;
         }
@@ -466,6 +579,7 @@ public class ContainerPeek extends Module {
         lastTargetedPos = null;
         lastContainer = null;
         lastEntity = null;
+        lastEntityPos = null;
         currentPreview = null;
         resetShelfTooltip();
     }
@@ -500,6 +614,24 @@ public class ContainerPeek extends Module {
             tripleSpacing.get(),
             transparent.get()
         );
+    }
+
+    /**
+     * A cheap fingerprint of an armor stand's equipment, so a stand that is re-equipped without
+     * moving still rebuilds its preview. Item, count and the stack's data components (shulker
+     * contents included) all contribute: the preview shows the stack itself.
+     */
+    private static long armorFingerprint(net.minecraft.world.entity.decoration.ArmorStand stand) {
+        long fingerprint = 1;
+        for (net.minecraft.world.entity.EquipmentSlot slot : net.minecraft.world.entity.EquipmentSlot.values()) {
+            ItemStack stack = stand.getItemBySlot(slot);
+            // PatchedDataComponentMap.hashCode() is patch-aware, so two shulkers filled differently
+            // fingerprint differently even with the same item id and count.
+            long s = stack.isEmpty() ? 0 : stack.getItem().hashCode() * 31L + stack.getCount() * 31L
+                                           + stack.getComponents().hashCode();
+            fingerprint = fingerprint * 31 + s;
+        }
+        return fingerprint;
     }
 
     private void resetShelfTooltip() {
@@ -580,26 +712,25 @@ public class ContainerPeek extends Module {
         return cmp <= 0 ? pos : other;
     }
 
-    private void buildContainerPreview(BlockPos pos, TrackedContainer container) {
-        List<ItemStack> stacks = container.getItemStacks();
-        String title = container.getCustomName() != null ? container.getCustomName() : container.getContainerType();
+    private void buildContainerPreview(BlockPos pos, ContainerRecord container) {
+        var ops = mc.level.registryAccess().createSerializationContext(com.mojang.serialization.JsonOps.INSTANCE);
+        List<ItemStack> stacks = new ArrayList<>();
+        for (ContainerRecord.SlotItem si : container.items) {
+            ItemStack s = ItemData.decode(ops, si.stack());
+            if (!s.isEmpty()) stacks.add(s);
+        }
+        String title = container.name != null ? container.name : container.type;
 
         Map<Integer, ItemStack> dominantMap = new HashMap<>();
 
-        if (shulkerIconPreview.get()) {
-            for (Map.Entry<Integer, String> entry : container.getDominantItems().entrySet()) {
-                Identifier id = Identifier.tryParse(entry.getValue());
-                if (id == null) continue;
-                Item item = BuiltInRegistries.ITEM.getValue(id);
-                if (item != null) {
-                    dominantMap.put(entry.getKey(), new ItemStack(item));
-                }
-            }
-        }
-
         dominantMap.putAll(computeDominantMap(stacks));
 
-        buildPreview(pos, title, stacks, false, dominantMap);
+        // Migrated records only ever stored item ids: nested shulker contents were never saved,
+        // so the preview would show an empty shulker. Say so instead of looking empty.
+        String note = container.flags.contains(Notes.IMPORTED)
+            ? "Imported, reopen to refresh"
+            : null;
+        buildPreview(pos, title, stacks, dominantMap, note);
     }
 
     /**
@@ -617,7 +748,7 @@ public class ContainerPeek extends Module {
     private void buildEntityPreview(Entity entity, List<ItemStack> stacks, String type, String title) {
         BlockPos pos = entity.blockPosition();
         Map<Integer, ItemStack> dominantMap = computeDominantMap(stacks);
-        buildPreview(pos, title != null ? title : type, stacks, false, dominantMap);
+        buildPreview(pos, title != null ? title : type, stacks, dominantMap, null);
     }
 
     private Map<Integer, ItemStack> computeDominantMap(List<ItemStack> stacks) {
@@ -646,8 +777,8 @@ public class ContainerPeek extends Module {
             .orElse(null);
     }
 
-    private void buildPreview(BlockPos pos, String title, List<ItemStack> stacks, boolean isShulker,
-                              Map<Integer, ItemStack> dominantMap) {
+    private void buildPreview(BlockPos pos, String title, List<ItemStack> stacks,
+                              Map<Integer, ItemStack> dominantMap, @Nullable String note) {
         int itemsPerRow = maxItemsPerRow.get();
         int total = stacks.size();
         int pad = 2;
@@ -669,6 +800,7 @@ public class ContainerPeek extends Module {
 
         Component titleText = Component.literal(title);
         Component posText = Component.literal(String.format("%d, %d, %d", pos.getX(), pos.getY(), pos.getZ()));
+        Component noteText = note == null ? null : Component.literal(note);
 
         // Also make sure the panel is wide enough for the title/position text.
         int textLines = 0;
@@ -681,13 +813,17 @@ public class ContainerPeek extends Module {
             textLines++;
             textWidth = Math.max(textWidth, mc.font.width(posText));
         }
+        if (noteText != null) {
+            textLines++;
+            textWidth = Math.max(textWidth, mc.font.width(noteText));
+        }
 
         int w = Math.max(gridWidth, textWidth + pad * 2);
         int h = gridHeight + (10 * textLines); // exact: no leftover slack vs the draw loop below
 
         float itemScale = iconSize.get() / 16.0f;
 
-        currentPreview = new PreviewData(pos, titleText, posText, w, h, stacks,
+        currentPreview = new PreviewData(pos, titleText, posText, noteText, w, h, stacks,
             itemsPerRow, itemScale, dominantMap, style.get());
     }
 
@@ -729,6 +865,10 @@ public class ContainerPeek extends Module {
         }
         if (showPosition.get()) {
             context.text(mc.font, preview.posText, panelX + pad, textY, 0xFFCCCCCC);
+            textY += 10;
+        }
+        if (preview.noteText() != null) {
+            context.text(mc.font, preview.noteText(), panelX + pad, textY, 0xFFE8B04A);
             textY += 10;
         }
 
@@ -835,6 +975,10 @@ public class ContainerPeek extends Module {
         }
         if (showPosition.get()) {
             context.text(mc.font, preview.posText, panelX + pad, textY, 0xFFCCCCCC);
+            textY += 10;
+        }
+        if (preview.noteText() != null) {
+            context.text(mc.font, preview.noteText(), panelX + pad, textY, 0xFFE8B04A);
             textY += 10;
         }
 

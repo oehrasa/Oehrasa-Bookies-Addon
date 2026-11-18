@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 /*
  * This code partially adapted from Meteor Rejects
  * Original source: https://github.com/AntiCope/meteor-rejects/
@@ -16,6 +17,7 @@ import meteordevelopment.meteorclient.utils.player.FindItemResult;
 import meteordevelopment.meteorclient.utils.player.InvUtils;
 import meteordevelopment.meteorclient.utils.player.Rotations;
 import meteordevelopment.meteorclient.utils.world.BlockIterator;
+import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -39,6 +41,7 @@ public class AutoFarm extends Module {
     private final SettingGroup sgHarvest = settings.createGroup("Harvest Crops");
     private final SettingGroup sgTallCrops = settings.createGroup("Harvest Tall Crops");
     private final SettingGroup sgPlant = settings.createGroup("Plant");
+    private final SettingGroup sgBamboo = settings.createGroup("Plant Bamboo");
     private final SettingGroup sgBonemeal = settings.createGroup("Bonemeal");
 
     private final Setting<Integer> range = sgGeneral.add(new IntSetting.Builder()
@@ -163,6 +166,49 @@ public class AutoFarm extends Module {
         .build()
     );
 
+    private final Setting<Boolean> plantBamboo = sgBamboo.add(new BoolSetting.Builder()
+        .name("plant-bamboo")
+        .description("Plant bamboo saplings in a square around the player.")
+        .defaultValue(false)
+        .build()
+    );
+
+    private final Setting<Integer> bambooAreaSize = sgBamboo.add(new IntSetting.Builder()
+        .name("bamboo-area-size")
+        .description("Width and length of the square planting area.")
+        .defaultValue(5)
+        .range(1, 15)
+        .sliderRange(1, 15)
+        .visible(plantBamboo::get)
+        .build()
+    );
+
+    private final Setting<Integer> bambooPlaceDelay = sgBamboo.add(new IntSetting.Builder()
+        .name("bamboo-place-delay")
+        .description("Ticks between successful bamboo placements.")
+        .defaultValue(2)
+        .range(0, 20)
+        .sliderRange(0, 20)
+        .visible(plantBamboo::get)
+        .build()
+    );
+
+    private final Setting<Boolean> bambooRotate = sgBamboo.add(new BoolSetting.Builder()
+        .name("bamboo-rotate")
+        .description("Rotate server-side toward each placement.")
+        .defaultValue(true)
+        .visible(plantBamboo::get)
+        .build()
+    );
+
+    private final Setting<Boolean> bambooSwing = sgBamboo.add(new BoolSetting.Builder()
+        .name("bamboo-swing")
+        .description("Swing the hand when placing bamboo.")
+        .defaultValue(true)
+        .visible(plantBamboo::get)
+        .build()
+    );
+
     private final Setting<Boolean> bonemeal = sgBonemeal.add(new BoolSetting.Builder()
         .name("bonemeal")
         .description("Bonemeal crops.")
@@ -184,11 +230,17 @@ public class AutoFarm extends Module {
     private final List<BlockPos.MutableBlockPos> blocks = new ArrayList<>();
     private int actions = 0;
     private int tickCounter = 0;
+    private int bambooCooldown = 0;
     private static final int REPLANT_CLEANUP_INTERVAL = 100;
     private static final double REPLANT_MAX_DISTANCE = 32.0;
 
     public AutoFarm() {
         super(Addon.CATEGORY, "Auto-Farm", "Welcome to the rice fields, Motha fucka.");
+    }
+
+    @Override
+    public void onActivate() {
+        bambooCooldown = 0;
     }
 
     @Override
@@ -217,6 +269,8 @@ public class AutoFarm extends Module {
         actions = 0;
         tickCounter++;
 
+        if (bambooCooldown > 0) bambooCooldown--;
+
         if (tickCounter >= REPLANT_CLEANUP_INTERVAL) {
             cleanupReplantMap();
             tickCounter = 0;
@@ -228,12 +282,20 @@ public class AutoFarm extends Module {
             sortBlocksByDistance();
             processBlocks();
             freeBlockPool();
+            plantBamboo();
         });
     }
 
     private void collectBlocks() {
+        // Squared distances order identically and skip the Vec3 allocation pair per voxel;
+        // the callback runs once per voxel per tick.
+        Vec3 eye = mc.player.getEyePosition();
+        double rangeSq = range.get() * range.get();
         BlockIterator.register(range.get(), range.get(), (pos, state) -> {
-            if (isWithinRange(pos)) {
+            double dx = pos.getX() + 0.5 - eye.x;
+            double dy = pos.getY() + 0.5 - eye.y;
+            double dz = pos.getZ() + 0.5 - eye.z;
+            if (dx * dx + dy * dy + dz * dz <= rangeSq) {
                 blocks.add(blockPosPool.get().set(pos));
             }
         });
@@ -457,6 +519,54 @@ public class AutoFarm extends Module {
         return true;
     }
 
+    private void plantBamboo() {
+        if (!plantBamboo.get()) return;
+        if (mc.player == null || mc.level == null || mc.gameMode == null) return;
+        if (bambooCooldown > 0) return;
+        if (actions >= bpt.get()) return;
+
+        FindItemResult bamboo = InvUtils.findInHotbar(Items.BAMBOO);
+        if (!bamboo.found()) return;
+
+        for (BlockPos target : bambooTargetsNearestFirst()) {
+            if (!canPlantBamboo(target)) continue;
+            if (BlockUtils.place(target, bamboo, bambooRotate.get(), 10, bambooSwing.get(), true)) {
+                actions++;
+                bambooCooldown = bambooPlaceDelay.get();
+                return;
+            }
+        }
+    }
+
+    private List<BlockPos> bambooTargetsNearestFirst() {
+        int size = bambooAreaSize.get();
+        int start = -(size / 2);
+        int end = start + size;
+        int plantingY = mc.player.blockPosition().getY();
+        BlockPos center = mc.player.blockPosition();
+        List<BlockPos> targets = new ArrayList<>(size * size);
+
+        for (int x = start; x < end; x++) {
+            for (int z = start; z < end; z++) {
+                targets.add(new BlockPos(center.getX() + x, plantingY, center.getZ() + z));
+            }
+        }
+
+        // The area square can extend past the module's range; only nearest-first targets
+        // inside the established interaction range are reachable.
+        targets.removeIf(pos -> !isWithinRange(pos));
+        targets.sort(Comparator.comparingDouble(pos -> pos.distToCenterSqr(mc.player.position())));
+        return targets;
+    }
+
+    private boolean canPlantBamboo(BlockPos target) {
+        if (!mc.level.getBlockState(target).isAir()) return false;
+        BlockState below = mc.level.getBlockState(target.below());
+        if (below.is(Blocks.BAMBOO) || below.is(Blocks.BAMBOO_SAPLING)) return false;
+        return Blocks.BAMBOO_SAPLING.defaultBlockState().canSurvive(mc.level, target)
+            && BlockUtils.canPlace(target);
+    }
+
     private void performInteraction(BlockPos pos, FindItemResult item) {
         Runnable action = () -> {
             boolean wasSneaking = mc.player.isShiftKeyDown();
@@ -477,15 +587,13 @@ public class AutoFarm extends Module {
     }
 
     private boolean isWithinRange(BlockPos pos) {
-        return getPlayerDistance(pos) <= range.get();
-    }
-
-    private double getPlayerDistance(BlockPos pos) {
-        //? if >=1.21.9 {
-        return mc.player.getEyePosition().distanceTo(Vec3.atCenterOf(pos));
-        //?} else
-        /*return mc.player.getPos().distanceTo(Vec3d.ofCenter(pos));
-         */
+        // Squared distances compare identically and skip the Vec3 allocation pair.
+        Vec3 eye = mc.player.getEyePosition();
+        double dx = pos.getX() + 0.5 - eye.x;
+        double dy = pos.getY() + 0.5 - eye.y;
+        double dz = pos.getZ() + 0.5 - eye.z;
+        double range = this.range.get();
+        return dx * dx + dy * dy + dz * dz <= range * range;
     }
 
     private boolean isWaterNearby(LevelReader world, BlockPos pos) {
@@ -532,6 +640,11 @@ public class AutoFarm extends Module {
             return state.getValue(NetherWartBlock.AGE) >= 3;
         } else if (block instanceof PitcherCropBlock) {
             return state.getValue(PitcherCropBlock.AGE) >= 4;
+        } else if (block == Blocks.PUMPKIN || block == Blocks.MELON) {
+            // Pumpkins and melons are the fruit, not the stem: they have no age of their own,
+            // so they were never considered mature and were never broken. Treat the fruit itself
+            // as always harvestable so continueDestroyBlock actually runs on it.
+            return true;
         }
 
         return false;

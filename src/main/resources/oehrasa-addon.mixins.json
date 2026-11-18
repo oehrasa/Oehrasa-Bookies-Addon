@@ -5,7 +5,14 @@
   "client": [
     "BetterTabMixin",
     "BlockStateBaseMixin",
+    "BoatPhaseMixin",
+    "BoatPhaseNetworkMixin",
+    "BoatShotInputMixin",
+    "ChestTrackerMerchantMixin",
+    "ChestTrackerOpenInventoryMixin",
+    "ClientPlayNetworkHandlerMixin",
     "DrawContextMixin",
+    "GUIMoveMixin",
     "HandledScreenMixin",
     "InGameHudMixin",
     "InventoryScreenMixin",
@@ -14,9 +21,13 @@
     "PlayerInventoryAccessor",
     "PlayerUtilsMixin",
     "TntEntityRendererMixin",
+    "accessor.AbstractContainerScreenAccessor",
     "accessor.AbstractSignEditScreenAccessor",
     "accessor.BlockAttachedEntityAccessor",
-    "accessor.MultiPlayerGameModeAccessor"
+    "accessor.LivingEntityAccessor",
+    "accessor.MountScreenHandlerAccessor",
+    "accessor.MultiPlayerGameModeAccessor",
+    "accessor.PlayerMoveC2SPacketAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

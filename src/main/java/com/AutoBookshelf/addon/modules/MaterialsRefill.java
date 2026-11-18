@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -22,7 +27,7 @@ public class MaterialsRefill extends Module {
         new ShulkerRestockEngine.RestockCallback() {
             @Override
             public void onInfo(String message) {
-                info(message);
+                if (debug.get()) info(message);
             }
 
             @Override
@@ -58,6 +63,13 @@ public class MaterialsRefill extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgControls = settings.createGroup("Controls");
     private final SettingGroup sgRetries = settings.createGroup("Retries");
+
+    private final Setting<Boolean> debug = sgGeneral.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Print debug messages in chat.")
+        .defaultValue(false)
+        .build()
+    );
 
     private final Setting<List<Item>> targetItems = sgGeneral.add(new ItemListSetting.Builder()
         .name("target-items")
@@ -96,6 +108,13 @@ public class MaterialsRefill extends Module {
         .description("When air place is on, prefer positions sitting on a full block (glass and leaves included) over mid-air ones.")
         .defaultValue(true)
         .visible(airPlace::get)
+        .build()
+    );
+
+    private final Setting<Boolean> placeAboveHead = sgGeneral.add(new BoolSetting.Builder()
+        .name("place-above-head")
+        .description("Place the shulker directly above your head (requires ghost placement). Drops land on you when broken. Falls back to normal placement if occupied.")
+        .defaultValue(false)
         .build()
     );
 
@@ -217,7 +236,7 @@ public class MaterialsRefill extends Module {
             if (!isActive()) return;
             ItemStack held = mc.player.getMainHandItem();
             if (held.isEmpty()) {
-                info("§eNothing held to remove.");
+                if (debug.get()) info("§eNothing held to remove.");
                 return;
             }
             List<Item> current = new ArrayList<>(targetItems.get());
@@ -225,9 +244,9 @@ public class MaterialsRefill extends Module {
                 targetItems.set(current);
                 // Drop any failure suppression for it too, so re-adding later starts clean.
                 itemFailCooldowns.remove(held.getItem());
-                info("Removed target item: " + held.getHoverName().getString());
+                if (debug.get()) info("Removed target item: " + held.getHoverName().getString());
             } else {
-                info("§e" + held.getHoverName().getString() + " is not a target item.");
+                if (debug.get()) info("§e" + held.getHoverName().getString() + " is not a target item.");
             }
         })
         .build()
@@ -246,14 +265,15 @@ public class MaterialsRefill extends Module {
                 if (!current.contains(held.getItem())) {
                     current.add(held.getItem());
                     targetItems.set(current);
-                    info("Added target item: " + held.getHoverName().getString());
+                    if (debug.get()) info("Added target item: " + held.getHoverName().getString());
                 } else {
-                    info("Item already in target list.");
+                    if (debug.get()) info("Item already in target list.");
                 }
             }
         })
         .build()
     );
+
 
     public MaterialsRefill() {
         super(Addon.CATEGORY2, "Mats-Refill",
@@ -296,8 +316,17 @@ public class MaterialsRefill extends Module {
     }
 
     private void tickFailCooldowns() {
-        itemFailCooldowns.entrySet().removeIf(entry -> entry.getValue() <= 0);
-        itemFailCooldowns.replaceAll((item, ticks) -> ticks - 1);
+        // Single pass, in-place decrement: the old removeIf + replaceAll walked the
+        // entries twice a tick and allocated an Integer per item per tick.
+        for (Iterator<Map.Entry<Item, Integer>> it = itemFailCooldowns.entrySet().iterator(); it.hasNext(); ) {
+            Map.Entry<Item, Integer> entry = it.next();
+            int remaining = entry.getValue() - 1;
+            if (remaining <= 0) {
+                it.remove();
+            } else {
+                entry.setValue(remaining);
+            }
+        }
     }
 
     private void checkStock() {
@@ -359,7 +388,8 @@ public class MaterialsRefill extends Module {
             packetBreak.get(),
             packetBreakGrim.get(),
             collectDroppedShulker.get(),
-            false
+            false,
+            placeAboveHead.get()
         );
     }
 }

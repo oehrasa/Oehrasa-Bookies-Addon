@@ -1,3 +1,8 @@
+/*
+ * This file is part of the AutoBookshelf addon distribution (https://github.com/oehrasa/Oehrasa-Bookies-Addon).
+ * Copyright (c) oehrasa and AutoBookshelf contributors.
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
@@ -17,6 +22,8 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.protocol.game.*;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.food.FoodProperties;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -52,6 +59,19 @@ public class PacketEat extends Module {
      * laggy connection.
      */
     private static final int POST_CONSUME_CONFIRM_TICKS = 4;
+
+    /**
+     * How long the anti-double-eat latch may hold a new bite before it expires on its own.
+     * <p>
+     * The food level is what says the server's stat update arrived, because eating changes it.
+     * It cannot change, though, when it is already at the cap: a meal taken at a full hunger
+     * bar leaves it at 20, so a latch waiting for it to move would never be released and the
+     * module would stop eating for good. The expiry is the way out of that, and it is longer
+     * than any plausible update latency - the server sends the update in the tick it processes
+     * the eat and the client sees it one round trip later - so the ordinary case is still
+     * covered by the food level.
+     */
+    private static final int EAT_LATCH_EXPIRY_TICKS = 40;
 
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgAutoEat = settings.createGroup("Auto Eat");
@@ -139,6 +159,16 @@ public class PacketEat extends Module {
         .description("While an eat cycle is active, cancel block-placement packets from third-party mods. Mining and attacking are never suppressed.")
         .defaultValue(false)
         .visible(autoEat::get)
+        .build()
+    );
+
+    private final Setting<Integer> interruptGrace = sgAutoEat.add(new IntSetting.Builder()
+        .name("interrupt-grace")
+        .description("Ticks without an attack, use or interact packet before an interrupted silent eat restarts. 0 restarts immediately.")
+        .defaultValue(0)
+        .range(0, 200)
+        .sliderRange(0, 40)
+        .visible(() -> autoEat.get() && silent.get())
         .build()
     );
 
@@ -286,10 +316,40 @@ public class PacketEat extends Module {
     private final List<Class<? extends Module>> emergencyPausedInteractions = new ArrayList<>();
 
     // Anti-double-eat latch: the client hunger/health stats lag the server, so
-    // right after a meal the trigger flag is still set. Remember the levels at
-    // the start of the last cycle and refuse to eat again on the same crossing.
-    private float lastCycleHealth = -1;
+    // right after a meal the trigger flag is still set. Remember the level at
+    // the start of the last cycle and refuse to eat again until the client's
+    // food level moves away from it, i.e. until the server's update has arrived.
     private int lastCycleHunger = -1;
+
+    /**
+     * Ticks the anti-double-eat latch has been holding. It is only read while the food level
+     * still sits at the baseline; once the latch is released the counter is reset with it.
+     */
+    private int eatLatchTicks = 0;
+
+    /**
+     * Ticks since the last packet that interrupts a silent eat cycle (attack, use, interact or a
+     * held-item action). Only {@code interrupt-grace} reads it, to wait for the player to stop
+     * clicking before restarting. Saturates instead of wrapping.
+     */
+    private int foreignActionAge = Integer.MAX_VALUE;
+
+    /**
+     * True when a silent eat cycle was interrupted by a foreign action and its restart is still
+     * waiting out {@code interrupt-grace}. The grace holds back that restart only: a first eat
+     * after a click is never delayed by it, so clicking between meals does not stop the module
+     * from eating.
+     */
+    private boolean restartPending = false;
+
+    /**
+     * True once the food stack of the current cycle has dropped, i.e. the server has
+     * consumed at least one bite of it. The client's hunger/health stats lag the server,
+     * so a cycle that ate something must keep the anti-double-eat baseline: the stat
+     * update is still on its way, and treating the stale stat as the truth would let
+     * the module eat a second time. Reset when the next cycle starts.
+     */
+    private boolean cycleConsumedBite = false;
 
     public PacketEat() {
         super(Addon.CATEGORY2, "PacketEat", "Eat without interrupting movement or combat.");
@@ -305,8 +365,10 @@ public class PacketEat extends Module {
         // never leaves the paused auras off.
         resumeAuras();
         postEatCooldown = 0;
-        lastCycleHealth = -1;
         lastCycleHunger = -1;
+        eatLatchTicks = 0;
+        foreignActionAge = Integer.MAX_VALUE;
+        restartPending = false;
     }
 
     @EventHandler
@@ -407,13 +469,52 @@ public class PacketEat extends Module {
         boolean attack = event.packet instanceof ServerboundAttackPacket;
         boolean useItem = event.packet instanceof ServerboundUseItemPacket;
         boolean interact = event.packet instanceof ServerboundInteractPacket;
+        boolean blockUse = event.packet instanceof ServerboundUseItemOnPacket;
+
+        // Age the interrupt-grace counter from every foreign action, cycle or not: the setting
+        // holds the restart until the player has stopped clicking for that many ticks.
+        // A block-use packet counts too - placing blocks is clicking. It only counts while no
+        // silent cycle is live: during one the spoof guard cancels those packets, so they never
+        // reach the server and the player is not actually placing anything. The module's own
+        // screen-click use is excluded for the same reason.
+        if (silent.get() && autoEat.get() && !sendingSilentSlot && !sendingOwnUse
+            && (heldItemAction || attack || useItem || interact
+            || (blockUse && !silentSpoof && !eatingViaScreenClick))) {
+            foreignActionAge = 0;
+        }
+
         if (silentSpoof && !sendingSilentSlot && !sendingOwnUse
             && (heldItemAction || attack || useItem || interact)) {
+            // An active cycle is being interrupted, so its restart owes the grace. A foreign
+            // action outside a cycle only ages the counter; it does not make the next eat a
+            // restart, so it must not delay the first eat.
+            restartPending = true;
+            // The server may already have consumed a bite even if the tick handler has not
+            // seen the stack drop yet (the inventory sync and the health sync arrive in the
+            // same batch but the packet send is handled before the tick). Read the count
+            // before the cycle state is torn down.
+            boolean consumedBite = cycleConsumedBite
+                || (eatSlot != -1 && eatStackCountAtStart != -1
+                && getStackCount(player, eatSlot) < eatStackCountAtStart);
             stopAutoEating();
+            // A cycle that ate something keeps the anti-double-eat baseline: the client's
+            // stats still lag the server, so eating again on the stale values would take a
+            // second bite for the same meal. A cycle that ate nothing never produced that
+            // lag, so its baseline would only block the restart.
+            if (!consumedBite) clearEatLatch();
+            else armEatLatch();
         }
     }
 
     private void handleAutoEat(LocalPlayer player) {
+        if (foreignActionAge < Integer.MAX_VALUE) foreignActionAge++;
+        // The latch ages on every tick, not only on the ticks it is consulted, so its
+        // expiry is a real timeout and not a function of how often the module happens
+        // to look at its stats.
+        if (eatLatchTicks < EAT_LATCH_EXPIRY_TICKS) eatLatchTicks++;
+        // The grace has run out, so the interrupted cycle's restart is no longer pending: the
+        // next eat is a first eat and is not delayed by it.
+        if (restartPending && foreignActionAge >= interruptGrace.get()) restartPending = false;
         boolean wasBlocking = emergencyBlocking;
         emergencyActive = emergencyMode.get() && player.getHealth() <= emergencyHealth.get() * 2;
 
@@ -451,6 +552,7 @@ public class PacketEat extends Module {
             if (stackConsumed) {
                 eatStackCountAtStart = count;
                 postConsumeTicks = 0;   // start confirmation window
+                cycleConsumedBite = true;
             }
 
             // Confirmation window: after the stack drops, wait POST_CONSUME_CONFIRM_TICKS
@@ -476,22 +578,50 @@ public class PacketEat extends Module {
             }
 
             if (readyToStop) {
+                // The latch covers a consumed bite whose stat update is still on its way.
+                // A stop that consumed nothing has no such update to wait for, so the
+                // start-of-cycle baseline must not gate the next attempt - whatever the
+                // stop was. A cycle that consumed a bite keeps it: the server has already
+                // applied that food, and the client's stats still lag it, so the baseline
+                // is what stops the module from eating a second time for the same meal.
                 stopAutoEating();
+                if (!cycleConsumedBite) clearEatLatch();
+                else armEatLatch();
                 postEatCooldown = computeCooldown();
                 return;
             }
 
             // A bite finished and more food is still needed -> chain-eat the next
-            // item in the stack from the same slot, without leaving it. While the stats
-            // have already recovered (and no emergency is forcing it) the only reason we
-            // are still here is the confirm-finish window, so wait it out instead of
-            // eating another item.
-            if (stackConsumed && (!recovered || emergencyActive)) {
+            // item in the stack from the same slot, without leaving it. The chain decision
+            // is taken at the end of the confirm window (not on the stack-drop tick), so
+            // the server's stat + effect packets for this bite have arrived by the time we
+            // decide whether more eating is justified. `cycleConsumedBite` persists from
+            // the bite being evaluated until we stop or chain, unlike the per-tick
+            // `stackConsumed` drop detection.
+            if (cycleConsumedBite && (!recovered || emergencyActive)) {
+                // Non-emergency path: hold the chain until POST_CONSUME_CONFIRM_TICKS have
+                // elapsed since the drop. Emergency still chains immediately regardless.
+                if (!emergencyActive) {
+                    if (!confirmed) return;
+                    // The server has already accepted the bite by this point (stat/effect
+                    // batch fired). If the body can heal its way to the threshold with the
+                    // regen it already holds, chaining another bite is food-wastage, not
+                    // survival: Regen II from an EGA is 1 HP per 25 ticks, and the
+                    // fully-fed saturation path heals too. Only hunger is never
+                    // self-covering (food is the only source), so it always chains.
+                    if (projectedRecoveryClearsShortfall(player)) {
+                        stopAutoEating();
+                        armEatLatch();
+                        postEatCooldown = computeCooldown();
+                        return;
+                    }
+                }
                 eatTicks = 0;
                 // Restart the confirmation window with the new bite: `confirmed` has to describe
                 // the bite that lands next, not the one we just chained away from, or a cycle
                 // whose stats recovered between bites would stop on the stale counter.
                 postConsumeTicks = -1;
+                cycleConsumedBite = false;
                 useSelectedFood(player);
             }
             return;
@@ -522,6 +652,10 @@ public class PacketEat extends Module {
 
         // Phase 3: check if eating is needed. Emergency bypasses the slow
         // shouldEat threshold entirely.
+        // The interrupt grace only holds back the restart of an interrupted cycle. A first eat
+        // after a click is not a restart, so it must not be delayed by the grace.
+        if (!emergencyActive && silent.get() && restartPending
+            && foreignActionAge < interruptGrace.get()) return;
         if (!emergencyActive && !shouldEat(player)) return;
 
         int slot = findSlot(player, emergencyActive);
@@ -591,11 +725,12 @@ public class PacketEat extends Module {
         // Record the stack count baseline right before we start consuming, so the
         // per-tick guard in handleAutoEat can detect the moment it drops.
         eatStackCountAtStart = getStackCount(player, eatSlot);
+        cycleConsumedBite = false;
 
         // Remember where the stats were when the cycle started, for the
         // anti-double-eat latch in shouldEat.
-        lastCycleHealth = player.getHealth();
         lastCycleHunger = player.getFoodData().getFoodLevel();
+        eatLatchTicks = 0;
 
         autoEating = true;
         eatTicks = 0;
@@ -770,6 +905,27 @@ public class PacketEat extends Module {
         emergencyPausedBaritone = false;
     }
 
+    /**
+     * Drops the anti-double-eat baseline. It only has to cover the window where the client's stats
+     * still lag the server after a consumed bite, so a cycle that consumed nothing can drop it
+     * straight away: there is no pending stat update, and keeping the baseline would gate the next
+     * attempt on the client's stats never moving.
+     */
+    private void clearEatLatch() {
+        lastCycleHunger = -1;
+        eatLatchTicks = 0;
+    }
+
+    /**
+     * Keeps the anti-double-eat baseline and restarts its window. The window is the time
+     * the server's stat update for the bite is expected in, and it starts when the latch
+     * starts blocking - not when the cycle started, because the cycle itself takes a
+     * couple of dozen ticks and the update belongs to the bite, not to the cycle.
+     */
+    private void armEatLatch() {
+        eatLatchTicks = 0;
+    }
+
     private int computeCooldown() {
         int cooldown = cooldownTicks.get();
         if (eatFoodAlwaysEat && preventAlwaysEatSpam.get()) {
@@ -847,38 +1003,88 @@ public class PacketEat extends Module {
         return thresholdMode.get().test(health, hunger);
     }
 
+    /**
+     * Projected HP from the active Regeneration effect over its remaining duration.
+     * 26.2-verified: regen heals 1 HP every {@code 50 >> amplifier} ticks while hurt, so the
+     * full-effect caller sees how much healing the body will accept before the effect runs out.
+     * An EGA grants a 5-second Regen II, i.e. ~12 HP's worth of projected healing at amp 1,
+     * even if the client never sees a single regen tick before the confirm window closes.
+     */
+    private float projectedRegenerationHp(LocalPlayer player) {
+        MobEffectInstance regen = player.getEffect(MobEffects.REGENERATION);
+        if (regen == null) return 0f;
+        int duration = regen.getDuration();
+        if (duration <= 0) return 0f;
+        int period = Math.max(1, 50 >> regen.getAmplifier());
+        return duration / (float) period;
+    }
+
+    /**
+     * Projected HP from the fully-fed saturation path. 26.2 bytecode in FoodData.tick: when
+     * foodLevel >= 20 and saturation > 0 and the player is hurt, the server heals at
+     * {@code min(saturation, 6.0f) / 6.0f} HP per 10 ticks until saturation runs out (1 saturation
+     * per healed HP). We cap at one 6-saturation bucket as a bare conservative floor; the slow
+     * fallback (foodLevel >= 18 -> 1 HP per 80 ticks) is ignored, it's within budget of one
+     * bite and isn't needed for the chain decision.
+     */
+    private float projectedSaturationHp(LocalPlayer player) {
+        int food = player.getFoodData().getFoodLevel();
+        if (food < 20) return 0f;
+        float saturation = player.getFoodData().getSaturationLevel();
+        return Math.max(0f, Math.min(saturation, 6.0f));
+    }
+
+    /**
+     * The chain-eat / stop decision for the confirm boundary, non-emergency only. Returns
+     * true when chaining another bite is justified (health still short of threshold, or the
+     * projection thinks us below it even after the regen already granted). Returns false when
+     * the body can heal its way to the threshold on its own, which is what stops the
+     * "3 enchanted golden apples for one meal" over-eat.
+     */
+    private boolean projectedRecoveryClearsShortfall(LocalPlayer player) {
+        boolean hungerLimiting = thresholdMode.get() != ThresholdMode.Health
+            && player.getFoodData().getFoodLevel() <= hungerThreshold.get();
+        if (hungerLimiting) return false;   // hunger is food-only; chain on regardless of HP
+        boolean healthLimiting = thresholdMode.get() != ThresholdMode.Hunger
+            && player.getHealth() <= healthThreshold.get();
+        if (!healthLimiting) return false;
+        double missing = Math.max(0.0, healthThreshold.get() - player.getHealth());
+        double projected = projectedRegenerationHp(player) + projectedSaturationHp(player);
+        return projected >= missing;
+    }
+
     private boolean shouldEat(LocalPlayer player) {
         if (!belowThreshold(player)) {
             // Both stats have recovered above their thresholds, so the client is
-            // no longer lagging behind a meal. Clear the anti-double-eat latch:
-            // leaving it set would make the next cycle compare against this healed
-            // baseline and stall in Both mode, where health rarely drops below it
-            // at the same time hunger does.
-            if (lastCycleHealth != -1) {
-                lastCycleHealth = -1;
-                lastCycleHunger = -1;
-            }
+            // no longer lagging behind a meal and the latch has nothing to cover.
+            clearEatLatch();
             return false;
         }
 
-        // Anti-double-eat: the client hunger/health values lag the server.
-        if (lastCycleHealth != -1) {
-            boolean healthWorse = player.getHealth() < lastCycleHealth;
-            boolean hungerWorse = player.getFoodData().getFoodLevel() < lastCycleHunger;
-            switch (thresholdMode.get()) {
-                case Health -> {
-                    if (!healthWorse) return false;
-                }
-                case Hunger -> {
-                    if (!hungerWorse) return false;
-                }
-                case Any -> {
-                    if (!healthWorse && !hungerWorse) return false;
-                }
-                case Both -> {
-                    if (!healthWorse || !hungerWorse) return false;
-                }
+        // Anti-double-eat: the client hunger/health lag the server, so a cycle that
+        // consumed a bite leaves the trigger flag set on stale values. The baseline is
+        // the food level at the start of that cycle: while the client still shows exactly
+        // that value the server's update has not arrived, and eating again would take a
+        // second bite for the same meal. Once the food level has moved the update has
+        // landed, so the baseline must not gate the next attempt any more - otherwise the
+        // module would wait for a stat to fall below the pre-meal level even though the
+        // player is still below the threshold.
+        //
+        // Only the FOOD LEVEL is the signal. The health is not: the client learns about
+        // both in the same packet, so a damage packet the server sent BEFORE it processed
+        // the eat carries the old food level - and releasing the latch on that would take
+        // a second bite for the same meal. Eating changes the food level, so the food
+        // level is what says the meal update arrived.
+        //
+        // The one case the food level cannot express is a meal taken at a full hunger bar:
+        // the level is capped, so it never moves and the latch would never be released.
+        // The expiry is the way out of that.
+        if (lastCycleHunger != -1) {
+            if (player.getFoodData().getFoodLevel() == lastCycleHunger
+                && eatLatchTicks < EAT_LATCH_EXPIRY_TICKS) {
+                return false;
             }
+            clearEatLatch();
         }
 
         return true;
