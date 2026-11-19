@@ -12,6 +12,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 
 import java.util.List;
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 
 /**
  * The remote library preview: one part of a previewed book shown as a read-only
@@ -51,7 +52,7 @@ public class PreviewBookScreen extends BookViewScreen {
         int prev = (currentPart - 1 + partBooks.size()) % partBooks.size();
         int next = (currentPart + 1) % partBooks.size();
         addRenderableWidget(Button.builder(Component.literal("<"),
-                b -> minecraft.gui.setScreen(new PreviewBookScreen(partBooks, prev, parent, entry)))
+                b -> ScreenUtil.set(new PreviewBookScreen(partBooks, prev, parent, entry)))
             .pos(4, y).size(28, 16).build());
         Button labelButton = Button.builder(Component.literal("< Part " + (currentPart + 1) + " / " + partBooks.size()),
             b -> {
@@ -59,10 +60,10 @@ public class PreviewBookScreen extends BookViewScreen {
         labelButton.active = false;
         addRenderableWidget(labelButton);
         addRenderableWidget(Button.builder(Component.literal(">"),
-                b -> minecraft.gui.setScreen(new PreviewBookScreen(partBooks, next, parent, entry)))
+                b -> ScreenUtil.set(new PreviewBookScreen(partBooks, next, parent, entry)))
             .pos(132, y).size(28, 16).build());
         addRenderableWidget(Button.builder(Component.literal("Back"),
-                b -> minecraft.gui.setScreen(parent))
+                b -> ScreenUtil.set(parent))
             .pos(4, y + 20).size(120, 16).build());
     }
 
@@ -104,6 +105,6 @@ public class PreviewBookScreen extends BookViewScreen {
 
     @Override
     public void onClose() {
-        minecraft.gui.setScreen(parent);
+        ScreenUtil.set(parent);
     }
 }

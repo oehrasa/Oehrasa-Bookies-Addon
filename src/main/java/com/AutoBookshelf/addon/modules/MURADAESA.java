@@ -384,9 +384,10 @@ public class MURADAESA extends Module {
         // Physics: falling / drifting blocks
         Blocks.SAND, Blocks.RED_SAND, Blocks.GRAVEL,
         Blocks.SUSPICIOUS_SAND,
-        // Concrete powder hardens on its own schedule. There is NO bare
-        // Blocks.CONCRETE_POWDER constant -> it is a ColorCollection<Block> record of the 16
-        // dyed variants, so all 16 accessor calls are listed individually.
+        // Concrete powder hardens on its own schedule. 26.2 consolidated the dyed constants
+        // into a ColorCollection<Block> record (Blocks.CONCRETE_POWDER.white() etc.); 26.1.x
+        // keeps the flat constants instead. Gate picks the right shape.
+        //? if >=26.2 {
         Blocks.CONCRETE_POWDER.white(), Blocks.CONCRETE_POWDER.orange(),
         Blocks.CONCRETE_POWDER.magenta(), Blocks.CONCRETE_POWDER.lightBlue(),
         Blocks.CONCRETE_POWDER.yellow(), Blocks.CONCRETE_POWDER.lime(),
@@ -395,6 +396,16 @@ public class MURADAESA extends Module {
         Blocks.CONCRETE_POWDER.purple(), Blocks.CONCRETE_POWDER.blue(),
         Blocks.CONCRETE_POWDER.brown(), Blocks.CONCRETE_POWDER.green(),
         Blocks.CONCRETE_POWDER.red(), Blocks.CONCRETE_POWDER.black(),
+        //?} else {
+        /*Blocks.WHITE_CONCRETE_POWDER, Blocks.ORANGE_CONCRETE_POWDER,
+        Blocks.MAGENTA_CONCRETE_POWDER, Blocks.LIGHT_BLUE_CONCRETE_POWDER,
+        Blocks.YELLOW_CONCRETE_POWDER, Blocks.LIME_CONCRETE_POWDER,
+        Blocks.PINK_CONCRETE_POWDER, Blocks.GRAY_CONCRETE_POWDER,
+        Blocks.LIGHT_GRAY_CONCRETE_POWDER, Blocks.CYAN_CONCRETE_POWDER,
+        Blocks.PURPLE_CONCRETE_POWDER, Blocks.BLUE_CONCRETE_POWDER,
+        Blocks.BROWN_CONCRETE_POWDER, Blocks.GREEN_CONCRETE_POWDER,
+        Blocks.RED_CONCRETE_POWDER, Blocks.BLACK_CONCRETE_POWDER,
+        *///?}
         // Crops (the four the substring version used to miss) + nether growth
         Blocks.WHEAT, Blocks.CARROTS, Blocks.POTATOES,
         Blocks.BEETROOTS, Blocks.TORCHFLOWER_CROP, Blocks.PITCHER_CROP,

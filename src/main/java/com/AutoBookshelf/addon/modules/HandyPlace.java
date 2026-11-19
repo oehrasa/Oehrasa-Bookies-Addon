@@ -5,6 +5,8 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.EntityUtil;
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
 import meteordevelopment.meteorclient.events.entity.player.ItemUseCrosshairTargetEvent;
@@ -398,7 +400,11 @@ public class HandyPlace extends Module {
         // Only intercept the placement this pending click produced. A stale pending from an
         // earlier click must never cancel an unrelated placement (that was the "can't place
         // anything" bug: one rotate click poisoned every later click).
+//? if >=26.3 {
+        /*if (!useItemOn.hitResult().getBlockPos().equals(pendingHit.getBlockPos())) return;
+*///?} else {
         if (!useItemOn.getHitResult().getBlockPos().equals(pendingHit.getBlockPos())) return;
+//?}
 
         // ...and a stale pending must not survive long enough to be *matched* either. pos equality
         // alone is not enough: aiming at the same block twice (the normal repetitive case) will
@@ -557,11 +563,11 @@ public class HandyPlace extends Module {
         tickStartPitch = mc.player.getXRot();
 
         // Poll the cycle key as well as relying on KeybindSetting.action(). The action callback
-        // alone was unreliable in practice (it fires on the GLFW key path, which can be missed
+        // alone was unreliable in practice (it fires on the engine key path, which can be missed
         // when the key is held across a tick boundary or when another module consumes it first),
         // which is why the key "did nothing". Edge-detect on the down state so one press is
         // still one step.
-        if (mc.gui.screen() == null) {
+        if (ScreenUtil.current() == null) {
             boolean pressed = cycleKey.get().isPressed();
             if (pressed && !cycleKeyWasPressed) cycleDirection(1);
             cycleKeyWasPressed = pressed;
@@ -674,7 +680,11 @@ public class HandyPlace extends Module {
                     mc.getConnection().send(new ServerboundMovePlayerPacket.Rot(
                         mc.player.getYRot(), mc.player.getXRot(),
                         mc.player.onGround(), mc.player.horizontalCollision));
-                    mc.player.swing(InteractionHand.MAIN_HAND);
+                    //? if >=26.3 {
+                    /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                    *///?} else {
+                    EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                    //?}
                 }
             });
         }
@@ -707,7 +717,7 @@ public class HandyPlace extends Module {
     @EventHandler
     private void onMouseScroll(MouseScrollEvent event) {
         if (!scrollCycle.get()) return;
-        if (mc.player == null || mc.gui.screen() != null) return;
+        if (mc.player == null || ScreenUtil.current() != null) return;
 
         // Gate on actually holding something this module would act on. Cancelling unconditionally
         // meant that turning scroll-cycle on killed hotbar scrolling for every item, including

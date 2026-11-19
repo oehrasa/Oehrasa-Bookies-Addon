@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.hud;
 
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -27,7 +28,11 @@ import net.minecraft.resources.Identifier;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryUtil;
+//? if >=26.3 {
+/*import com.AutoBookshelf.addon.utils.FileDialogs;
+*///?} else {
 import org.lwjgl.util.tinyfd.TinyFileDialogs;
+//?}
 
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
@@ -460,12 +465,19 @@ public class AnimePics extends HudElement {
 
         String suggestedName = currentImageName != null ? currentImageName : "animepic.png";
 
+        //? if >=26.3 {
+        /*String path = FileDialogs.saveFile(
+            "Save Image",
+            new File(MeteorClient.FOLDER, suggestedName).getAbsolutePath()
+        );
+        *///?} else {
         String path = TinyFileDialogs.tinyfd_saveFileDialog(
             "Save Image",
             new File(MeteorClient.FOLDER, suggestedName).getAbsolutePath(),
             saveFilters,
             null
         );
+        //?}
 
         if (path == null) return;   // user cancelled
 
@@ -478,12 +490,21 @@ public class AnimePics extends HudElement {
     }
 
     private void selectLocalFolder() {
+        //? if >=26.3 {
+        /*String path = FileDialogs.chooseDirectory(
+            "Choose image folder",
+            localFolderPath.get().isEmpty()
+                ? new File(MeteorClient.FOLDER, "images").getAbsolutePath()
+                : localFolderPath.get()
+        );
+        *///?} else {
         String path = TinyFileDialogs.tinyfd_selectFolderDialog(
             "Choose image folder",
             localFolderPath.get().isEmpty()
                 ? new File(MeteorClient.FOLDER, "images").getAbsolutePath()
                 : localFolderPath.get()
         );
+        //?}
         if (path != null) {
             localFolderPath.set(path);
             source.set(Source.LocalFolder);
@@ -526,9 +547,13 @@ public class AnimePics extends HudElement {
             if (liveRefreshDebounceTicks < 0) refreshNow();
         }
 
+//? if >=26.2 {
         if (mc.gui.hud.isHidden()) return;
+//?} else {
+        /*if (mc.options.hideGui) return;*/
+//?}
 
-        boolean menuOpen = mc.gui.screen() != null;
+        boolean menuOpen = ScreenUtil.current() != null;
         if (menuOpen && !animateInMenus.get()) return;
 
         // Advance GIF animation at tick resolution (20Hz ceiling) rather than every render call, so

@@ -686,8 +686,12 @@ public class Lance extends Module {
         }
 
         if (target != null) {
+//? if >=26.3 {
+            /*vPos = target.getPosition(1.0F);
+*///?} else {
             InterpolationHandler pi = target.getInterpolation();
             vPos = pi != null ? pi.position() : target.position();
+//?}
             if (target != histTarget) {
                 histLen = 0;
                 histIdx = 0;
@@ -1589,17 +1593,30 @@ public class Lance extends Module {
         if (relightArmed && event.packet instanceof ServerboundMovePlayerPacket rp && rp.hasPosition() && !rp.isOnGround())
             relightAirborneMove = true;
         if (event.packet instanceof ServerboundUseItemOnPacket block && sendingWeb != null) {
+//? if >=26.3 {
+            /*webSentSequence = block.sequence();
+            BlockHitResult hit = block.hitResult();
+*///?} else {
             webSentSequence = block.getSequence();
             BlockHitResult hit = block.getHitResult();
+//?}
             dbg("BLOCK-SENT intended=%s clicked=%s side=%s hit=%s ghostDistance=%.3f sequence=%d selected=%d active=%s using=%b",
                 sendingWeb.pos.toShortString(), hit.getBlockPos().toShortString(), hit.getDirection(), hit.getLocation(),
-                lastWire == null ? -1 : lastWire.add(0, EYE, 0).distanceTo(hit.getLocation()), block.getSequence(),
+                lastWire == null ? -1 : lastWire.add(0, EYE, 0).distanceTo(hit.getLocation()), //? if >=26.3 {
+                /*block.sequence(),
+*///?} else {
+                block.getSequence(),
+//?}
                 mc.player.getInventory().getSelectedSlot(), mc.player.getUseItem().getItem(), mc.player.isUsingItem());
         } else if (event.packet instanceof ServerboundSetCarriedItemPacket slot) {
             dbg("ITEM-SENT SLOT slot=%d selected=%d active=%s using=%b key=%b weave=%b", slot.getSlot(),
                 mc.player.getInventory().getSelectedSlot(), mc.player.getUseItem().getItem(), mc.player.isUsingItem(), mc.options.keyUse.isDown(), weavingTier != null);
         } else if (event.packet instanceof ServerboundUseItemPacket use) {
+//? if >=26.3 {
+            /*dbg("ITEM-SENT USE hand=%s sequence=%d selected=%d active=%s using=%b key=%b gen=%d", use.hand(), use.sequence(),
+*///?} else {
             dbg("ITEM-SENT USE hand=%s sequence=%d selected=%d active=%s using=%b key=%b gen=%d", use.getHand(), use.getSequence(),
+//?}
                 mc.player.getInventory().getSelectedSlot(), mc.player.getUseItem().getItem(), mc.player.isUsingItem(), mc.options.keyUse.isDown(), couchGeneration);
         } else if (event.packet instanceof ServerboundPlayerActionPacket action && action.getAction() == ServerboundPlayerActionPacket.Action.RELEASE_USE_ITEM) {
             dbg("ITEM-SENT RELEASE selected=%d active=%s using=%b key=%b gen=%d", mc.player.getInventory().getSelectedSlot(),
@@ -2136,7 +2153,11 @@ public class Lance extends Module {
                     dbg("WEB-ATTEMPT intended=%s sequence=%d clientAccepted=%b", placement.pos.toShortString(), webSentSequence, result.consumesAction());
                     if (result.consumesAction()) {
                         accepted++;
-                        mc.getConnection().send(new ServerboundSwingPacket(InteractionHand.MAIN_HAND));
+    //? if >=26.3 {
+                    /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+*///?} else {
+                    mc.getConnection().send(new ServerboundSwingPacket(InteractionHand.MAIN_HAND));
+//?}
                     }
                 } finally {
                     sendingWeb = null;
@@ -2272,8 +2293,12 @@ public class Lance extends Module {
         for (Player player : mc.level.players()) {
             if (player == mc.player || !player.isAlive() || player.isRemoved() || player.isSpectator()
                 || !Friends.get().shouldAttack(player)) continue;
+//? if >=26.3 {
+            /*Vec3 observed = player.getPosition(1.0F);
+*///?} else {
             InterpolationHandler interpolator = player.getInterpolation();
             Vec3 observed = interpolator != null ? interpolator.position() : player.position();
+//?}
             double reach = player.blockInteractionRange();
             if (observed.distanceToSqr(vPos) > (reach + 12) * (reach + 12)) continue;
             placers.add(new CrystalPlacer(crystalPoint(observed.add(0, player.getEyeHeight(player.getPose()), 0)), reach));

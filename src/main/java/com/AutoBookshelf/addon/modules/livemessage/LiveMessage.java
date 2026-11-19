@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules.livemessage;
 
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.modules.livemessage.gui.ChatWindow;
 import com.AutoBookshelf.addon.modules.livemessage.gui.LiveWindow;
@@ -526,7 +527,7 @@ public class LiveMessage extends Module {
         // frame delta, or leave it alone when rotation is disabled. Frame deltas accumulate
         // across frames instead of restarting from the tick base.
         if (mc.player == null) return;
-        if (mc.gui == null || !(mc.gui.screen() instanceof LivemessageGui)) {
+        if (!(ScreenUtil.current() instanceof LivemessageGui)) {
             // GUI gone: the next opening re-initializes the session's base.
             this.guiMoveAccumValid = false;
             return;
@@ -578,7 +579,7 @@ public class LiveMessage extends Module {
      */
     public boolean guiMoveSkip() {
         if (!this.isActive() || !this.guiMoveMovement.get()) return true;
-        if (mc.gui == null || !(mc.gui.screen() instanceof LivemessageGui gui)) return true;
+        if (!(ScreenUtil.current() instanceof LivemessageGui gui)) return true;
         // A text field has the caret: the keys belong to it, not to the player.
         return gui.isAnyTextFieldFocused();
     }
@@ -669,7 +670,7 @@ public class LiveMessage extends Module {
     private void onTick(TickEvent.Post event) {
         if (this.openGuiOnChatKey) {
             this.openGuiOnChatKey = false;
-            this.mc.gui.setScreen(new LivemessageGui());
+            ScreenUtil.set(new LivemessageGui());
         }
 
         // A key that was held while the GUI move was active has to be released when it stops
@@ -680,7 +681,7 @@ public class LiveMessage extends Module {
         if (skipped) this.unpressGuiMove();
         else this.repressOwnedMovementKeys();
 
-        if (this.mc.gui != null && this.mc.player != null && this.mc.gui.screen() instanceof LivemessageGui) {
+        if (this.mc.player != null && ScreenUtil.current() instanceof LivemessageGui) {
             // GUI-session rotation base: captured once per opening, never stale.
             if (!this.guiMoveAccumValid) {
                 this.guiMoveAccumYaw = this.mc.player.getYRot();
@@ -802,7 +803,7 @@ public class LiveMessage extends Module {
     }
 
     public void closeFocusedWindow() {
-        if (this.mc.gui.screen() instanceof LivemessageGui gui) {
+        if (ScreenUtil.current() instanceof LivemessageGui gui) {
             if (LivemessageGui.liveWindows.isEmpty()) return;
 
             LiveWindow top = LivemessageGui.liveWindows.get(LivemessageGui.liveWindows.size() - 1);
@@ -817,9 +818,9 @@ public class LiveMessage extends Module {
     }
 
     public void openGui() {
-        if (this.mc.gui.screen() == null) {
-            this.mc.gui.setScreen(new LivemessageGui());
-        } else if (this.mc.gui.screen() instanceof LivemessageGui gui) {
+        if (ScreenUtil.current() == null) {
+            ScreenUtil.set(new LivemessageGui());
+        } else if (ScreenUtil.current() instanceof LivemessageGui gui) {
             boolean anyFieldFocused = false;
 
             for (LiveWindow window : LivemessageGui.liveWindows) {

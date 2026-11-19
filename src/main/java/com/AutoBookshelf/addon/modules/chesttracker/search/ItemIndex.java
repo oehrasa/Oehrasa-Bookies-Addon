@@ -289,7 +289,11 @@ public final class ItemIndex {
         }
         BundleContents bundle = stack.get(DataComponents.BUNDLE_CONTENTS);
         if (bundle != null) {
+//? if >=26.3 {
+            /*bundle.itemCopies().forEach(child -> add(out, child, slot, inner, context, client, depth + 1));
+*///?} else {
             bundle.itemCopyStream().forEach(child -> add(out, child, slot, inner, context, client, depth + 1));
+//?}
         }
     }
 
@@ -306,7 +310,11 @@ public final class ItemIndex {
         ItemContainerContents container = stack.get(DataComponents.CONTAINER);
         if (container != null && container.nonEmptyItemCopyStream().anyMatch(c -> matchesDeep(c, query, depth + 1))) return true;
         BundleContents bundle = stack.get(DataComponents.BUNDLE_CONTENTS);
+//? if >=26.3 {
+        /*if (bundle != null && bundle.itemCopies().anyMatch(c -> matchesDeep(c, query, depth + 1))) return true;
+*///?} else {
         if (bundle != null && bundle.itemCopyStream().anyMatch(c -> matchesDeep(c, query, depth + 1))) return true;
+//?}
         return false;
     }
 

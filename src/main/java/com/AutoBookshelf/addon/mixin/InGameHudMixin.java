@@ -11,7 +11,11 @@ import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+//? if >=26.2 {
 import net.minecraft.client.gui.Hud;
+//?} else {
+/*import net.minecraft.client.gui.Gui;*/
+//?}
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import org.spongepowered.asm.mixin.Mixin;
@@ -19,7 +23,11 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+//? if >=26.2 {
 @Mixin(Hud.class)
+//?} else {
+/*@Mixin(Gui.class)*/
+//?}
 public class InGameHudMixin {
     @Inject(method = "extractRenderState", at = @At("TAIL"))
     private void onExtractRenderState(GuiGraphicsExtractor graphics, DeltaTracker deltaTracker, CallbackInfo ci) {

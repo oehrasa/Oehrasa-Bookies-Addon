@@ -5,6 +5,8 @@
  */
 package com.AutoBookshelf.addon.modules.AircraftPhase;
 
+import com.AutoBookshelf.addon.utils.EntityUtil;
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.events.PlayerPositionLookEvent;
 import com.AutoBookshelf.addon.modules.AttackAircraft.BoatShot;
@@ -503,6 +505,47 @@ public final class BoatPhase extends Module {
     private String status = "board a boat";
     private PrintWriter log;
 
+    // 26.3 turned the vehicle-move record's accessors into a movingTo() Component.
+    private static Vec3 vehiclePacketPos(ServerboundMoveVehiclePacket packet) {
+//? if >=26.3 {
+        /*return packet.movingTo().position();
+*///?} else {
+        return packet.position();
+//?}
+    }
+
+    private static Vec3 vehiclePacketPos(ClientboundMoveVehiclePacket packet) {
+//? if >=26.3 {
+        /*return packet.movingTo().position();
+*///?} else {
+        return packet.position();
+//?}
+    }
+
+    private static float vehiclePacketYRot(ServerboundMoveVehiclePacket packet) {
+//? if >=26.3 {
+        /*return packet.movingTo().yRot();
+*///?} else {
+        return packet.yRot();
+//?}
+    }
+
+    private static float vehiclePacketXRot(ServerboundMoveVehiclePacket packet) {
+//? if >=26.3 {
+        /*return packet.movingTo().xRot();
+*///?} else {
+        return packet.xRot();
+//?}
+    }
+
+    private static ServerboundMoveVehiclePacket vehiclePacket(Vec3 pos, float yRot, float xRot, boolean onGround) {
+        //? if >=26.3 {
+        /*return new ServerboundMoveVehiclePacket(net.minecraft.core.PositionAndRotation.of(pos, yRot, xRot), onGround);
+        *///?} else {
+        return new ServerboundMoveVehiclePacket(pos, yRot, xRot, onGround);
+        //?}
+    }
+
     private record Observation(long epoch, Connection connection, Packet<?> packet) {
     }
 
@@ -564,7 +607,7 @@ public final class BoatPhase extends Module {
     }
 
     public boolean phases(AbstractBoat candidate) {
-        return owns(candidate) && phase.get() && plannedThroughBlocks && !correcting && motion.holdTicks() == 0 && mc.gui.screen() == null;
+        return owns(candidate) && phase.get() && plannedThroughBlocks && !correcting && motion.holdTicks() == 0 && ScreenUtil.current() == null;
     }
 
     public Vec3 movement(AbstractBoat candidate, Vec3 vanilla) {
@@ -574,7 +617,7 @@ public final class BoatPhase extends Module {
         plannedShotMovement = false;
         plannedMode = travelMode();
         if (lockYaw.get()) candidate.setYRot(mc.player.getYRot());
-        if (correcting || motion.holdTicks() > 0 || mc.gui.screen() != null && !inventoryFollow) {
+        if (correcting || motion.holdTicks() > 0 || ScreenUtil.current() != null && !inventoryFollow) {
             candidate.setDeltaMovement(Vec3.ZERO);
             return Vec3.ZERO;
         }
@@ -723,13 +766,13 @@ public final class BoatPhase extends Module {
     }
 
     public boolean shotReady(AbstractBoat candidate) {
-        return isActive() && owns(candidate) && !correcting && motion.holdTicks() == 0 && mc.gui.screen() == null;
+        return isActive() && owns(candidate) && !correcting && motion.holdTicks() == 0 && ScreenUtil.current() == null;
     }
 
     private boolean travelReady(AbstractBoat candidate) {
         BoatShot shot = BoatShot.active();
         return isActive() && owns(candidate) && !correcting && motion.holdTicks() == 0
-            && (mc.gui.screen() == null || shot != null && shot.inventoryFollowAllowed());
+            && (ScreenUtil.current() == null || shot != null && shot.inventoryFollowAllowed());
     }
 
     public double shotVerticalLimit() {
@@ -1053,7 +1096,11 @@ public final class BoatPhase extends Module {
         // The server drops attacks whose eye to hitbox distance is above entityInteractionRange + 3.
         if (breakingBoat.getBoundingBox().distanceToSqr(mc.player.getEyePosition()) <= 36.0) {
             if (!breakingSwung) {
-                mc.player.swing(InteractionHand.MAIN_HAND);
+                //? if >=26.3 {
+                /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                *///?} else {
+                EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                //?}
                 breakingSwung = true;
             }
             mc.gameMode.attack(mc.player, breakingBoat);
@@ -1127,7 +1174,11 @@ public final class BoatPhase extends Module {
         // Never mount the boat we are destroying, and never swing while a break is running,
         // because the swing resets the server side attack charge the break depends on.
         if (breakingBoat != null || breakingBoat == boat) return;
-        mc.player.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+        //? if >=26.3 {
+        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        *///?} else {
+        EntityUtil.swing(mc.player, net.minecraft.world.InteractionHand.MAIN_HAND);
+        //?}
         net.minecraft.world.phys.EntityHitResult location = new net.minecraft.world.phys.EntityHitResult(boat, boat.position());
         mc.gameMode.interact(mc.player, boat, location, net.minecraft.world.InteractionHand.MAIN_HAND);
     }
@@ -1384,8 +1435,8 @@ public final class BoatPhase extends Module {
             return;
         }
         if (plannedHashTick == motion.tick() && hashReady()) {
-            Vec3 p = packet.position();
-            if (BoatPhaseHash.hash(p.x, p.y, p.z, Mth.wrapDegrees(packet.yRot()), Mth.wrapDegrees(packet.xRot())) != correctionHash) {
+            Vec3 p = vehiclePacketPos(packet);
+            if (BoatPhaseHash.hash(p.x, p.y, p.z, Mth.wrapDegrees(vehiclePacketYRot(packet)), Mth.wrapDegrees(vehiclePacketXRot(packet))) != correctionHash) {
                 event.cancel();
                 if (lastWire != null) boat.setPos(lastWire);
                 boat.setDeltaMovement(Vec3.ZERO);
@@ -1395,7 +1446,7 @@ public final class BoatPhase extends Module {
             return;
         }
         if (lastWire != null) {
-            Vec3 delta = packet.position().subtract(lastWire);
+            Vec3 delta = vehiclePacketPos(packet).subtract(lastWire);
             boolean horizontalBatch = (plannedMode == BoatPhaseTravel.Mode.SUBSTEPS || plannedMode == BoatPhaseTravel.Mode.EXTENDED)
                 && !plannedThroughBlocks;
             int horizontalCount = horizontalBatch ? BoatPhaseAirSteps.count(delta.horizontalDistance(), plannedMode == BoatPhaseTravel.Mode.EXTENDED
@@ -1418,7 +1469,7 @@ public final class BoatPhase extends Module {
                 try {
                     for (int i = 1; i <= count; i++) {
                         Vec3 end = substepOrigin.add(delta.scale((double) i / count));
-                        substepPacket = new ServerboundMoveVehiclePacket(end, packet.yRot(), packet.xRot(), packet.onGround());
+                        substepPacket = vehiclePacket(end, vehiclePacketYRot(packet), vehiclePacketXRot(packet), packet.onGround());
                         network.send(substepPacket);
                         if (lastWire.distanceTo(end) > 1e-5) break;
                     }
@@ -1437,7 +1488,7 @@ public final class BoatPhase extends Module {
                             ? BoatPhaseTravel.Mode.EXTENDED : BoatPhaseTravel.Mode.SUBSTEPS,
                         motion.tick(), lastStep.horizontalDistance(), horizontalLimit.get());
                 }
-                if (lastWire.distanceTo(packet.position()) > 1e-5) {
+                if (lastWire.distanceTo(vehiclePacketPos(packet)) > 1e-5) {
                     boat.setPos(lastWire);
                     boat.setDeltaMovement(Vec3.ZERO);
                     record("SUBSTEP-INTERRUPTED position=%s", lastWire);
@@ -1461,21 +1512,21 @@ public final class BoatPhase extends Module {
 
         if (!eventGate.vehicle(packet)) return;
         if (packet == substepPacket && splitting) {
-            meter.sent(motion.tick(), System.nanoTime(), lastWire.x, lastWire.z, packet.position().x, packet.position().y, packet.position().z);
-            record("SUBSTEP-WIRE from=%s to=%s delta=%s", lastWire, packet.position(), packet.position().subtract(lastWire));
-            lastWire = packet.position();
+            meter.sent(motion.tick(), System.nanoTime(), lastWire.x, lastWire.z, vehiclePacketPos(packet).x, vehiclePacketPos(packet).y, vehiclePacketPos(packet).z);
+            record("SUBSTEP-WIRE from=%s to=%s delta=%s", lastWire, vehiclePacketPos(packet), vehiclePacketPos(packet).subtract(lastWire));
+            lastWire = vehiclePacketPos(packet);
             sentCount++;
             return;
         }
         if (motion.alreadySent()) return;
         if (correcting) {
             motion.acknowledged();
-            record("CORRECTION-ACK position=%s", packet.position());
+            record("CORRECTION-ACK position=%s", vehiclePacketPos(packet));
             return;
         }
-        Vec3 from = lastWire == null ? packet.position() : lastWire;
-        boolean finished = motion.sent(point(from), point(packet.position()));
-        lastWire = packet.position();
+        Vec3 from = lastWire == null ? vehiclePacketPos(packet) : lastWire;
+        boolean finished = motion.sent(point(from), point(vehiclePacketPos(packet)));
+        lastWire = vehiclePacketPos(packet);
         lastStep = lastWire.subtract(from);
         meter.sent(motion.tick(), System.nanoTime(), from.x, from.z, lastWire.x, lastWire.y, lastWire.z);
         BoatPhaseTravel.Mode sentMode = plannedHashTick == motion.tick() ? BoatPhaseTravel.Mode.HASH
@@ -1504,14 +1555,14 @@ public final class BoatPhase extends Module {
         rejectFastAir();
         correcting = true;
         corrections++;
-        record("VEHICLE-CORRECTION server=%s local=%s lastWire=%s error=%.3f", packet.position(), boat.position(), lastWire,
-            packet.position().distanceTo(boat.position()));
+        record("VEHICLE-CORRECTION server=%s local=%s lastWire=%s error=%.3f", vehiclePacketPos(packet), boat.position(), lastWire,
+            vehiclePacketPos(packet).distanceTo(boat.position()));
         recover();
     }
 
     public void afterVehicleCorrection(ClientPacketListener handler, ClientboundMoveVehiclePacket packet) {
         if (handler != network || !correcting) return;
-        lastWire = packet.position();
+        lastWire = vehiclePacketPos(packet);
         if (boat != null) boat.setDeltaMovement(Vec3.ZERO);
         correcting = false;
         status = "server correction";
@@ -1573,13 +1624,25 @@ public final class BoatPhase extends Module {
             if (packet instanceof ClientboundSetPassengersPacket p && p.getVehicle() == boat.getId()) {
                 record("SERVER-PASSENGERS ids=%s", java.util.Arrays.toString(p.getPassengers()));
             } else if (packet instanceof ClientboundEntityPositionSyncPacket p && p.id() == boat.getId()) {
+//? if >=26.3 {
+                /*record("SERVER-BOAT-SYNC values=%s", p.position());
+*///?} else {
                 record("SERVER-BOAT-SYNC values=%s", p.values());
+//?}
+//? if >=26.3 {
+                /*Vec3 pos = p.position().endPosition();
+*///?} else {
                 Vec3 pos = p.values().position();
+//?}
                 meter.echo(motion.tick(), System.nanoTime(), pos.x, pos.y, pos.z);
             } else if (packet instanceof ClientboundTeleportEntityPacket p && p.id() == boat.getId()) {
                 record("SERVER-BOAT-POSITION values=%s relatives=%s", p.change(), p.relatives());
             } else if (packet instanceof ClientboundMoveEntityPacket p && p.getEntity(world) == boat && p.hasPosition()) {
+//? if >=26.3 {
+                /*record("SERVER-BOAT-DELTA steps=%d local=%s", p.getPositionDelta().stepCount(), boat.position());
+*///?} else {
                 record("SERVER-BOAT-DELTA x=%d y=%d z=%d local=%s", p.getXa(), p.getYa(), p.getZa(), boat.position());
+//?}
             }
         }
     }
@@ -1679,7 +1742,11 @@ public final class BoatPhase extends Module {
         };
         TextRenderer text = TextRenderer.get();
         if (text.isBuilding()) return;
+        //? if >=26.2 {
         text.begin(event.graphics, meterScale.get());
+//?} else {
+        /*text.begin(meterScale.get());
+*///?}
         double width = 0, lineHeight = text.getHeight() + 4;
         for (String line : lines) width = Math.max(width, text.getWidth(line, true));
         double x = Math.max(0, event.screenWidth - width - 16) * meterX.get() / 100.0;

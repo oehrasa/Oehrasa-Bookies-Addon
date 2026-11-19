@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.BlockPosUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.mixin.PlayerInventoryAccessor;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
@@ -307,7 +308,7 @@ public class AxolotlTools extends Module {
     @Nullable
     private BlockPos getNearbyWaterSource(boolean toEmpty) {
         if (mc.level == null || mc.player == null) return null;
-        for (BlockPos pos : BlockPos.withinManhattan(mc.player.blockPosition(), 4, toEmpty ? 1 : 4, 4)) {
+        for (BlockPos pos : BlockPosUtil.withinManhattan(mc.player.blockPosition(), 4, toEmpty ? 1 : 4, 4)) {
             if (mc.level.getFluidState(pos).getType() == Fluids.WATER) return pos;
         }
         return null;

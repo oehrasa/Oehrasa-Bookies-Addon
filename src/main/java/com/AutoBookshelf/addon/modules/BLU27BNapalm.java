@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.EntityUtil;
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
@@ -110,7 +111,11 @@ public class BLU27BNapalm extends Module {
                         if (state.getBlock() != Blocks.FIRE && !(state.getBlock() instanceof BaseFireBlock)) continue;
 
                         mc.gameMode.startDestroyBlock(pos, Direction.UP);
-                        mc.player.swing(InteractionHand.MAIN_HAND);
+                        //? if >=26.3 {
+                        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                        *///?} else {
+                        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                        //?}
                         mc.gameMode.continueDestroyBlock(pos, Direction.UP);
 
                         if (--blocksPerTick <= 0) return;

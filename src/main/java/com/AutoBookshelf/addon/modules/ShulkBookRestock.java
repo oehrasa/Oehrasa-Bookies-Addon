@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.BoolSetting;
@@ -143,7 +144,7 @@ public class ShulkBookRestock extends Module {
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.player.getInventory() == null) return;
 
-        if (mc.gui.screen() != null) {
+        if (ScreenUtil.current() != null) {
             // GUI open: don't track or restock. Remember that it was open so the
             // tick it closes on can resync instead of comparing across the gap.
             wasScreenOpen = true;

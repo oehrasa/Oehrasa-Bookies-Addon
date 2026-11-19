@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.EntityUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.events.ContainerContentEvent;
 import com.AutoBookshelf.addon.events.ContainerSlotEvent;
@@ -952,7 +953,11 @@ public class MinecartPlacer extends Module {
             pendingRail = railPos;
             pendingTicks = 0;
 
-            mc.player.swing(InteractionHand.MAIN_HAND);
+            //? if >=26.3 {
+            /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+            *///?} else {
+            EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+            //?}
 
             // Restore previous slot
             if (previousSlot != mc.player.getInventory().getSelectedSlot()) {

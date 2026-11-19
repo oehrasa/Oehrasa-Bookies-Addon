@@ -442,7 +442,11 @@ public class MobOwner extends Module {
     private void renderNametag(GuiGraphicsExtractor graphics, String name, Color color) {
         TextRenderer text = TextRenderer.get();
         NametagUtils.begin(pos);
+//? if >=26.2 {
         text.beginBig(graphics);
+//?} else {
+        /*text.beginBig();*/
+//?}
 
         double w = text.getWidth(name);
         double h = text.getHeight();

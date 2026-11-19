@@ -632,7 +632,11 @@ public class SplashPotionAoE {
                 // Treating them like a normal effect is why a healing/harming splash reported every
                 // target as "no effect": their duration is 1, so `scaled` was always <= 20. An
                 // infinite-duration effect is likewise never discarded (`endsWithin` returns false).
+//? if >=26.2 {
                 if (potion.getEffect().value().isInstantaneous() || potion.isInfiniteDuration()) {
+//?} else {
+                /*if (potion.getEffect().value().isInstantenous() || potion.isInfiniteDuration()) {*/
+//?}
                     applies = true;
                     if (winsAgainst(potion, potion.getDuration(), snap, useSnapshot, le)) {
                         wins = true;
@@ -1040,7 +1044,11 @@ public class SplashPotionAoE {
             if (!NametagUtils.to2D(joml, scale)) return;
 
             NametagUtils.begin(joml, event.graphics);
+            //? if >=26.2 {
             TextRenderer.get().begin(event.graphics, 1, false, true);
+//?} else {
+            /*TextRenderer.get().begin(1, false, true);
+*///?}
 
             double w = TextRenderer.get().getWidth(text) / 2;
             double h = TextRenderer.get().getHeight() / 2;

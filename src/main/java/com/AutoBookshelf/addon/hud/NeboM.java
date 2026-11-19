@@ -27,7 +27,11 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.protocol.game.*;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+//? if >=26.2 {
 import net.minecraft.world.entity.EntityTypes;
+//?} else {
+/*import net.minecraft.world.entity.EntityType;*/
+//?}
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.player.PlayerSkin;
 import net.minecraft.world.item.*;
@@ -598,21 +602,39 @@ public class NeboM extends HudElement {
 
     // Projectile types thrown via a single instant right-click (not charged like a bow).
     private boolean isThrowable(EntityType<?> type) {
+//? if >=26.2 {
         return type == EntityTypes.ENDER_PEARL
             || type == EntityTypes.SNOWBALL
             || type == EntityTypes.EGG
             || type == EntityTypes.SPLASH_POTION
             || type == EntityTypes.LINGERING_POTION
             || type == EntityTypes.EXPERIENCE_BOTTLE;
+//?} else {
+        /*return type == EntityType.ENDER_PEARL
+            || type == EntityType.SNOWBALL
+            || type == EntityType.EGG
+            || type == EntityType.SPLASH_POTION
+            || type == EntityType.LINGERING_POTION
+            || type == EntityType.EXPERIENCE_BOTTLE;*/
+//?}
     }
 
     private ItemStack getThrowableIcon(EntityType<?> type) {
+//? if >=26.2 {
         if (type == EntityTypes.ENDER_PEARL) return new ItemStack(Items.ENDER_PEARL);
         if (type == EntityTypes.SNOWBALL) return new ItemStack(Items.SNOWBALL);
         if (type == EntityTypes.EGG) return new ItemStack(Items.EGG);
         if (type == EntityTypes.SPLASH_POTION) return new ItemStack(Items.SPLASH_POTION);
         if (type == EntityTypes.LINGERING_POTION) return new ItemStack(Items.LINGERING_POTION);
         if (type == EntityTypes.EXPERIENCE_BOTTLE) return new ItemStack(Items.EXPERIENCE_BOTTLE);
+//?} else {
+        /*if (type == EntityType.ENDER_PEARL) return new ItemStack(Items.ENDER_PEARL);
+        if (type == EntityType.SNOWBALL) return new ItemStack(Items.SNOWBALL);
+        if (type == EntityType.EGG) return new ItemStack(Items.EGG);
+        if (type == EntityType.SPLASH_POTION) return new ItemStack(Items.SPLASH_POTION);
+        if (type == EntityType.LINGERING_POTION) return new ItemStack(Items.LINGERING_POTION);
+        if (type == EntityType.EXPERIENCE_BOTTLE) return new ItemStack(Items.EXPERIENCE_BOTTLE);*/
+//?}
         return ItemStack.EMPTY;
     }
 
@@ -652,7 +674,11 @@ public class NeboM extends HudElement {
             EntityType<?> type = packet.getType();
             Vec3 spawnPos = new Vec3(packet.getX(), packet.getY(), packet.getZ());
 
+//? if >=26.2 {
             if (type == EntityTypes.END_CRYSTAL) {
+//?} else {
+            /*if (type == EntityType.END_CRYSTAL) {*/
+//?}
                 Player nearest = findNearestPlayer(spawnPos, 64.0);
                 if (nearest != null) {
                     crystalPlaceTicks.put(nearest.getUUID(), actionDisplayTicks.get());

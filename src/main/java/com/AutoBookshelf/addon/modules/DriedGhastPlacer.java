@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.EntityUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.DistanceUtil;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -861,7 +862,11 @@ public class DriedGhastPlacer extends Module {
             return;
         }
         mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        //? if >=26.3 {
+        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        *///?} else {
+        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+        //?}
         iceCursor++;
         aimedIceCell = -1;
         delayTicks = 1;
@@ -990,7 +995,11 @@ public class DriedGhastPlacer extends Module {
             ((com.AutoBookshelf.addon.mixin.accessor.MultiPlayerGameModeAccessor) mc.gameMode)
                 .invokeStartPrediction(mc.level, seq -> new net.minecraft.network.protocol.game.ServerboundPlayerActionPacket(
                     net.minecraft.network.protocol.game.ServerboundPlayerActionPacket.Action.STOP_DESTROY_BLOCK, p, Direction.UP, seq));
-            mc.player.swing(InteractionHand.MAIN_HAND);
+            //? if >=26.3 {
+            /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+            *///?} else {
+            EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+            //?}
             iceSent[target] = true; // packets sent, waiting for the world to catch up
         }
 
@@ -1082,7 +1091,11 @@ public class DriedGhastPlacer extends Module {
             return;
         }
         mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        //? if >=26.3 {
+        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        *///?} else {
+        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+        //?}
         iceCursor++;
         aimedGhastCell = -1;
         delayTicks = 1;

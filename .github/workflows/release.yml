@@ -1,0 +1,84 @@
+# Publishes the stonecutter matrix artifacts as a GitHub release when a
+# version tag is pushed. One jar per stonecutter node, plus SHA256 sums and
+# build provenance attestations.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write # build provenance attestations
+  attestations: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # A tag that doesn't match mod-version would silently release a
+      # mislabeled jar — fail before the multi-node build, not after it.
+      # The stonecutter milestone tags carry a `-stonecutter` suffix
+      # (v1.2.4-stonecutter) which this strips before comparing.
+      - name: Tag must match mod-version
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          want="${want%-stonecutter}"
+          grep -q "^mod\.version = \"$want\"$" stonecutter.properties.toml || {
+            echo "tag $GITHUB_REF_NAME wants version $want, but stonecutter.properties.toml says:"
+            grep -n "^mod\.version" stonecutter.properties.toml
+            exit 1
+          }
+
+      - name: setup jdk
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'microsoft'
+          java-version: '25'
+
+      - name: make gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: build the stonecutter matrix
+        run: ./gradlew buildAndCollect
+
+      # The jars must really carry the tagged version: buildAndCollect names
+      # the output directory after mod-version, so this catches a build that
+      # somehow used another one.
+      - name: Built jars must carry the tag version
+        run: ls build/libs/"$(sed -n 's/^mod\.version = "\(.*\)"$/\1/p' stonecutter.properties.toml)"/*.jar
+
+      # The release page must show exactly one obvious jar per Minecraft
+      # version — sources jars stay on the CI artifacts, not here.
+      - name: Collect release files
+        run: |
+          ver="$(sed -n 's/^mod\.version = "\(.*\)"$/\1/p' stonecutter.properties.toml)"
+          mkdir release
+          cp build/libs/"$ver"/*.jar release/
+          rm release/*-sources.jar
+          nodes=$(sed -n 's/.*versions(\(.*\)).*/\1/p' settings.gradle.kts | grep -o '"[^"]*"' | wc -l)
+          jars=$(ls release/*.jar | wc -l)
+          [ "$jars" -eq "$nodes" ] || {
+            echo "expected $nodes jars (one per stonecutter node), got $jars:"
+            ls release
+            exit 1
+          }
+          cd release && sha256sum *.jar > SHA256SUMS.txt
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release/*
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          body_path: .github/RELEASE_BODY.md
+          draft: false
+          fail_on_unmatched_files: true
+          make_latest: true
+          generate_release_notes: true

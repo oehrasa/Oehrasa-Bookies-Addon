@@ -8,7 +8,13 @@ package com.AutoBookshelf.addon.modules.BlockRadiusUtils;
 import com.AutoBookshelf.addon.utils.DistanceUtil;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
+import meteordevelopment.meteorclient.renderer.Renderer2D;
 import meteordevelopment.meteorclient.renderer.Renderer3D;
+import meteordevelopment.meteorclient.renderer.text.TextRenderer;
+import meteordevelopment.meteorclient.utils.render.NametagUtils;
+import meteordevelopment.meteorclient.utils.render.color.Color;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import org.joml.Vector3d;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import net.minecraft.client.gui.Font;
@@ -33,6 +39,11 @@ import static meteordevelopment.meteorclient.MeteorClient.mc;
  * and the same world-space label helper -> those live here rather than being duplicated per feature.
  */
 public class BlockRadiusShared {
+    /**
+     * Reused mutable label background for the 2D pass (26.3); kept from allocating per line.
+     */
+    private final Color labelBackground = new Color();
+
     public final Setting<ShapeMode> shapeMode;
     public final Setting<Double> maxRenderDistance;
     public final Setting<Integer> searchRadius;
@@ -154,6 +165,7 @@ public class BlockRadiusShared {
               : meteordevelopment.meteorclient.renderer.ShapeMode.Both, 0);
     }
 
+//? if <26.3 {
     /**
      * The batched label collector for this frame; created lazily on the first label of the
      * frame and drained once at {@link #flushWorldLabels()} instead of once per label line.
@@ -162,11 +174,33 @@ public class BlockRadiusShared {
      */
     private SubmitNodeStorage labelCollector;
 
+    // Used on <26.2: 26.1.2 submits into the dispatcher's live SubmitNodeStorage instead of a
+    // private collector.
+    private boolean labelsSubmitted;
+
+    private SubmitNodeStorage labelTarget() {
+        //? if >=26.2 {
+        if (this.labelCollector == null) {
+            this.labelCollector = new SubmitNodeStorage();
+        }
+        return this.labelCollector;
+        //?} else {
+        /*this.labelsSubmitted = true;
+        return mc.gameRenderer.getFeatureRenderDispatcher().getSubmitNodeStorage();*/
+        //?}
+    }
+//?}
+
+//? if <26.3 {
     public void drawWorldLabel(PoseStack matrices, String text, double x,
                                double y, double z, SettingColor color, float scale, float offsetPx,
                                float tickDelta) {
         matrices.pushPose();
+        //? if >=26.2 {
         Vec3 cam = mc.gameRenderer.mainCamera().position();
+//?} else {
+        /*Vec3 cam = mc.gameRenderer.getMainCamera().position();
+*///?}
         matrices.translate(x - cam.x, y - cam.y, z - cam.z);
         Entity camEntity = mc.getCameraEntity();
         if (camEntity != null) {
@@ -188,10 +222,7 @@ public class BlockRadiusShared {
         int baseAlpha = (argb >>> 24) & 0xFF;
         int bg = (int) (0.25F * baseAlpha) << 24;
 
-        if (this.labelCollector == null) {
-            this.labelCollector = new SubmitNodeStorage();
-        }
-        this.labelCollector.submitText(
+        this.labelTarget().submitText(
             matrices,
             -w, 0,
             FormattedCharSequence.forward(text, Style.EMPTY),
@@ -211,12 +242,20 @@ public class BlockRadiusShared {
      * the next frame.
      */
     public void flushWorldLabels() {
+//? if >=26.2 {
         SubmitNodeStorage collector = this.labelCollector;
         if (collector == null) {
             return;
         }
         this.labelCollector = null;
         mc.gameRenderer.featureRenderDispatcher().renderAllFeatures(collector);
+//?} else {
+        /*if (!this.labelsSubmitted) {
+            return;
+        }
+        this.labelsSubmitted = false;
+        mc.gameRenderer.getFeatureRenderDispatcher().renderAllFeatures();*/
+//?}
     }
 
     public static float getDistanceLabelFactor(float distance) {
@@ -226,6 +265,44 @@ public class BlockRadiusShared {
             return 1.00F;
         return 0.30F + (distance - 4F) / 24F * 0.70F;
     }
+
+//?}
+
+    /**
+     * Draws a billboard label in the 2D pass. 26.3 needs a RenderPass that only the engine's
+     * frame owns, which a module cannot get, so the 26.2 world-space submit path is not
+     * available; NametagUtils gives the same camera-facing billboard from Render2DEvent.
+     * No distance factor: the screen-space form is already distance-invariant.
+     */
+//? if >=26.3 {
+    /*public void drawWorldLabel(GuiGraphicsExtractor graphics, String text, double x,
+                               double y, double z, SettingColor color, float scale, float offsetPx) {
+        Vector3d joml = new Vector3d(x, y, z);
+        if (!NametagUtils.to2D(joml, scale, false)) return;
+
+        TextRenderer tr = TextRenderer.get();
+        NametagUtils.begin(joml, graphics);
+
+        // Measure while building: both renderers size themselves from state that begin() sets, so
+        // measuring beforehand reads a stale scale. Width, height, the quad and the glyphs must
+        // come from one begin().
+        tr.begin(graphics, 1, false, false);
+        double w = tr.getWidth(text);
+        double h = tr.getHeight();
+        double top = -h + offsetPx;
+
+        int baseAlpha = (color.getPacked() >>> 24) & 0xFF;
+        labelBackground.set(0, 0, 0, (int) (0.25 * baseAlpha));
+        Renderer2D.COLOR.begin();
+        Renderer2D.COLOR.quad(-w / 2 - 1, top - 1, w + 2, h + 2, labelBackground);
+        Renderer2D.COLOR.render();
+
+        tr.render(text, -w / 2, top, color, false);
+        tr.end();
+
+        NametagUtils.end(graphics);
+    }
+*///?}
 
     public static float clamp01(float v) {
         if (Float.isNaN(v))

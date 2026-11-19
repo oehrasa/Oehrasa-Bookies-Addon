@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.JoinPayload;
 import com.google.gson.*;
@@ -44,7 +45,7 @@ import net.minecraft.server.dialog.MultiActionDialog;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import java.io.*;
 import java.lang.reflect.Type;
@@ -65,13 +66,13 @@ public class HomesList extends Module {
     public final Setting<Keybind> openGui = sgGeneral.add(new KeybindSetting.Builder()
         .name("open-gui")
         .description("Opens the homes list GUI. Press again to close.")
-        .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_H))
+        .defaultValue(Keybind.fromKey(InputConstants.KEY_H))
         .action(() -> {
-            if (MeteorClient.mc.gui.screen() instanceof HomesScreen ||
-                MeteorClient.mc.gui.screen() instanceof EditHomeScreen) {
-                MeteorClient.mc.gui.setScreen(null);
-            } else if (MeteorClient.mc.gui.screen() == null) {
-                MeteorClient.mc.gui.setScreen(new HomesScreen(GuiThemes.get(), this));
+            if (ScreenUtil.current() instanceof HomesScreen ||
+                ScreenUtil.current() instanceof EditHomeScreen) {
+                ScreenUtil.set(null);
+            } else if (ScreenUtil.current() == null) {
+                ScreenUtil.set(new HomesScreen(GuiThemes.get(), this));
             }
         })
         .build()
@@ -115,14 +116,14 @@ public class HomesList extends Module {
     public final Setting<Keybind> quickSelectKey = sgQuickSelect.add(new KeybindSetting.Builder()
         .name("quick-select-key")
         .description("Hold to open the screen. Scroll to select then release to TP to highlighted home.")
-        .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_LEFT_ALT))
+        .defaultValue(Keybind.fromKey(InputConstants.KEY_LALT))
         .build()
     );
 
     public final Setting<Keybind> quickSelectCancelKey = sgQuickSelect.add(new KeybindSetting.Builder()
         .name("cancel-key")
         .description("Press this key inside the quick-select overlay to cancel without teleporting.")
-        .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_X))
+        .defaultValue(Keybind.fromKey(InputConstants.KEY_X))
         .build()
     );
 
@@ -541,7 +542,7 @@ public class HomesList extends Module {
 
         boolean keyPressed = quickSelectKey.get().isPressed();
 
-        if (keyPressed && quickScreen == null && !quickForceClosed && MeteorClient.mc.gui.screen() == null) {
+        if (keyPressed && quickScreen == null && !quickForceClosed && ScreenUtil.current() == null) {
             List<HomeEntry> fullList = getHomes();
             if (!fullList.isEmpty()) {
                 int limit = Math.min(maxQuickSelectItems.get(), fullList.size());
@@ -551,7 +552,7 @@ public class HomesList extends Module {
                 quickScreen = new QuickSelectScreen(this, quickHomes, -1,
                     (int) MeteorClient.mc.mouseHandler.xpos(), (int) MeteorClient.mc.mouseHandler.ypos(),
                     quickSelectColumns.get());
-                MeteorClient.mc.gui.setScreen(quickScreen);
+                ScreenUtil.set(quickScreen);
             }
         } else if (!keyPressed && quickScreen != null) {
             closeQuickScreen(true);
@@ -565,7 +566,7 @@ public class HomesList extends Module {
     private void closeQuickScreen(boolean doTeleport) {
         if (quickScreen == null) return;
         quickSelectedIndex = quickScreen.getSelectedIndex();
-        MeteorClient.mc.gui.setScreen(null);
+        ScreenUtil.set(null);
         quickScreen = null;
 
         if (doTeleport && !quickCancelled && quickSelectedIndex >= 0 && quickSelectedIndex < quickHomes.size()) {
@@ -796,8 +797,8 @@ public class HomesList extends Module {
             }
 
             int keyCode = input.key();
-            if (keyCode == GLFW.GLFW_KEY_UP || keyCode == GLFW.GLFW_KEY_DOWN
-                || keyCode == GLFW.GLFW_KEY_LEFT || keyCode == GLFW.GLFW_KEY_RIGHT) {
+            if (keyCode == InputConstants.KEY_UP || keyCode == InputConstants.KEY_DOWN
+                || keyCode == InputConstants.KEY_LEFT || keyCode == InputConstants.KEY_RIGHT) {
                 if (selectedIndex < 0) {
                     // Freshly opened screen: the first arrow pick selects the first
                     // item without displacing it (like the scroll wheel), instead of
@@ -807,23 +808,23 @@ public class HomesList extends Module {
                     return true;
                 }
             }
-            if (keyCode == GLFW.GLFW_KEY_UP) {
+            if (keyCode == InputConstants.KEY_UP) {
                 selectedIndex = Math.floorMod(selectedIndex - columns, homes.size());
                 scrollIndex = linearToColumnMajor(selectedIndex);
                 return true;
-            } else if (keyCode == GLFW.GLFW_KEY_DOWN) {
+            } else if (keyCode == InputConstants.KEY_DOWN) {
                 selectedIndex = Math.floorMod(selectedIndex + columns, homes.size());
                 scrollIndex = linearToColumnMajor(selectedIndex);
                 return true;
-            } else if (keyCode == GLFW.GLFW_KEY_LEFT) {
+            } else if (keyCode == InputConstants.KEY_LEFT) {
                 selectedIndex = Math.floorMod(selectedIndex - 1, homes.size());
                 scrollIndex = linearToColumnMajor(selectedIndex);
                 return true;
-            } else if (keyCode == GLFW.GLFW_KEY_RIGHT) {
+            } else if (keyCode == InputConstants.KEY_RIGHT) {
                 selectedIndex = Math.floorMod(selectedIndex + 1, homes.size());
                 scrollIndex = linearToColumnMajor(selectedIndex);
                 return true;
-            } else if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+            } else if (keyCode == InputConstants.KEY_ESCAPE) {
                 // Fallback in addition to the configurable cancel key above.
                 module.cancelQuickSelect();
                 return true;
@@ -870,7 +871,7 @@ public class HomesList extends Module {
             refresh.action = module::refreshFromServer;
 
             WButton addNew = row.add(theme.button("Add home")).expandX().widget();
-            addNew.action = () -> MeteorClient.mc.gui.setScreen(new EditHomeScreen(theme, module, null, -1, this));
+            addNew.action = () -> ScreenUtil.set(new EditHomeScreen(theme, module, null, -1, this));
         }
 
         void rebuildTable() {
@@ -908,7 +909,7 @@ public class HomesList extends Module {
                 teleport.action = () -> module.teleportTo(home.originalName);
 
                 WButton edit = table.add(theme.button(GuiRenderer.EDIT)).widget();
-                edit.action = () -> MeteorClient.mc.gui.setScreen(
+                edit.action = () -> ScreenUtil.set(
                     new EditHomeScreen(theme, module, home, module.homes.indexOf(home), this));
 
                 WMinus delete = table.add(theme.minus()).widget();
@@ -982,12 +983,12 @@ public class HomesList extends Module {
                 }
                 if (parent != null) {
                     parent.rebuildTable();
-                    MeteorClient.mc.gui.setScreen(parent);
-                } else MeteorClient.mc.gui.setScreen(null);
+                    ScreenUtil.set(parent);
+                } else ScreenUtil.set(null);
             };
 
             WButton cancel = actions.add(theme.button("Cancel")).expandX().widget();
-            cancel.action = () -> MeteorClient.mc.gui.setScreen(parent != null ? parent : null);
+            cancel.action = () -> ScreenUtil.set(parent != null ? parent : null);
 
             // Rename and delete only apply to a home that already exists on the server.
             if (home != null) {
@@ -1011,17 +1012,17 @@ public class HomesList extends Module {
 
                 WHorizontalList deleteRow = add(theme.horizontalList()).expandX().widget();
                 WButton deleteButton = deleteRow.add(theme.button("Delete Home")).expandX().widget();
-                deleteButton.action = () -> MeteorClient.mc.gui.setScreen(new ConfirmDeleteScreen(
+                deleteButton.action = () -> ScreenUtil.set(new ConfirmDeleteScreen(
                     theme,
                     home.displayName,
                     () -> {
                         module.deleteHome(home);
                         if (parent != null) {
                             parent.rebuildTable();
-                            MeteorClient.mc.gui.setScreen(parent);
-                        } else MeteorClient.mc.gui.setScreen(null);
+                            ScreenUtil.set(parent);
+                        } else ScreenUtil.set(null);
                     },
-                    () -> MeteorClient.mc.gui.setScreen(EditHomeScreen.this)
+                    () -> ScreenUtil.set(EditHomeScreen.this)
                 ));
             }
         }

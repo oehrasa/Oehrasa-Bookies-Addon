@@ -5,6 +5,8 @@
  */
 package com.AutoBookshelf.addon.utils;
 
+import com.AutoBookshelf.addon.utils.EntityUtil;
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
 import baritone.api.pathing.goals.GoalBlock;
@@ -230,7 +232,7 @@ public class ShulkerRestockEngine {
             case START_BREAK -> startBreak();
             case WAIT_FOR_BREAK -> waitForBreak();
             case WAIT_MANUAL_CLOSE -> {
-                if (!(mc.gui.screen() instanceof AbstractContainerScreen)) stage = Stage.CLOSE_SHULKER;
+                if (!(ScreenUtil.current() instanceof AbstractContainerScreen)) stage = Stage.CLOSE_SHULKER;
             }
             case COLLECT_DROPPED_SHULKER -> {
                 if (!dropCollector.tick(config.useBaritone())) succeed();
@@ -280,7 +282,7 @@ public class ShulkerRestockEngine {
     }
 
     private void placeShulker() {
-        if (mc.gui.screen() instanceof AbstractContainerScreen) {
+        if (ScreenUtil.current() instanceof AbstractContainerScreen) {
             mc.player.closeContainer();
             delayTicks = 3;
             return;
@@ -360,7 +362,11 @@ public class ShulkerRestockEngine {
                     mc.getConnection().send(new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND, hit, revision));
                     mc.getConnection().send(new ServerboundPlayerActionPacket(
                         ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
-                    mc.player.swing(InteractionHand.MAIN_HAND);
+                    //? if >=26.3 {
+                    /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                    *///?} else {
+                    EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                    //?}
                     restoreSlotAfterPlacement();
                 });
             } else {
@@ -369,7 +375,11 @@ public class ShulkerRestockEngine {
                 mc.getConnection().send(new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND, hit, revision));
                 mc.getConnection().send(new ServerboundPlayerActionPacket(
                     ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
-                mc.player.swing(InteractionHand.MAIN_HAND);
+                //? if >=26.3 {
+                /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                *///?} else {
+                EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                //?}
                 restoreSlotAfterPlacement();
             }
         } else {
@@ -379,12 +389,20 @@ public class ShulkerRestockEngine {
             if (config.rotate()) {
                 Rotations.rotate(Rotations.getYaw(supportHit), Rotations.getPitch(supportHit), -100, () -> {
                     mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-                    mc.player.swing(InteractionHand.MAIN_HAND);
+                    //? if >=26.3 {
+                    /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                    *///?} else {
+                    EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                    //?}
                     restoreSlotAfterPlacement();
                 });
             } else {
                 mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-                mc.player.swing(InteractionHand.MAIN_HAND);
+                //? if >=26.3 {
+                /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                *///?} else {
+                EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                //?}
                 restoreSlotAfterPlacement();
             }
         }
@@ -476,14 +494,18 @@ public class ShulkerRestockEngine {
         // go straight to interacting with it.
         BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf(placedShulkerPos), Direction.UP, placedShulkerPos, false);
         mc.getConnection().send(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND, hit, 0));
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        //? if >=26.3 {
+        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        *///?} else {
+        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+        //?}
 
         stateTicks = 0;
         stage = Stage.WAIT_FOR_OPEN;
     }
 
     private void waitForOpen() {
-        if (mc.gui.screen() instanceof AbstractContainerScreen) {
+        if (ScreenUtil.current() instanceof AbstractContainerScreen) {
             stateTicks = 0;
             openAttempts = 0;
             stage = config.autoTake() ? Stage.RESTOCK : Stage.WAIT_MANUAL_CLOSE;
@@ -510,7 +532,7 @@ public class ShulkerRestockEngine {
     }
 
     private void doRestock() {
-        if (!(mc.gui.screen() instanceof AbstractContainerScreen<?> screen)) {
+        if (!(ScreenUtil.current() instanceof AbstractContainerScreen<?> screen)) {
             // GUI closed on its own (e.g. server-side kick from the container);
             // fall through to the close/break flow, which handles a
             // already-closed screen cleanly.
@@ -698,7 +720,7 @@ public class ShulkerRestockEngine {
     }
 
     private void closeShulker() {
-        if (mc.gui.screen() instanceof AbstractContainerScreen) {
+        if (ScreenUtil.current() instanceof AbstractContainerScreen) {
             mc.player.closeContainer();
             delayTicks = 2; // brief client-side settle before we re-check currentScreen
             return;
@@ -735,11 +757,19 @@ public class ShulkerRestockEngine {
                 Vec3 c = Vec3.atCenterOf(placedShulkerPos);
                 Rotations.rotate(Rotations.getYaw(c), Rotations.getPitch(c), -100, () -> {
                     sendBreakPackets(placedShulkerPos, Direction.UP);
-                    mc.player.swing(InteractionHand.MAIN_HAND);
+                    //? if >=26.3 {
+                    /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                    *///?} else {
+                    EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                    //?}
                 });
             } else {
                 sendBreakPackets(placedShulkerPos, Direction.UP);
-                mc.player.swing(InteractionHand.MAIN_HAND);
+                //? if >=26.3 {
+                /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                *///?} else {
+                EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                //?}
             }
             packetBreakSent = true;
             stateTicks = 0;
@@ -770,7 +800,11 @@ public class ShulkerRestockEngine {
         }
 
         mc.gameMode.continueDestroyBlock(placedShulkerPos, Direction.UP);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        //? if >=26.3 {
+        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        *///?} else {
+        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+        //?}
 
         stateTicks++;
         if (stateTicks >= BREAK_TIMEOUT_TICKS) {

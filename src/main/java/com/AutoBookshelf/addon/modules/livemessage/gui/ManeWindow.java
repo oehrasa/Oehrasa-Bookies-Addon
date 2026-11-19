@@ -26,7 +26,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.player.Player;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import java.io.File;
 import java.io.FileReader;
@@ -34,6 +34,7 @@ import java.io.FileWriter;
 import java.util.*;
 import java.util.Map.Entry;
 
+import com.AutoBookshelf.addon.utils.InputUtil;
 import static com.AutoBookshelf.addon.modules.livemessage.LiveMessage.logError;
 
 public class ManeWindow extends LiveWindow {
@@ -287,8 +288,8 @@ public class ManeWindow extends LiveWindow {
             if (this.openFirstSearchMatch()) return; // opened the chat window for the matched buddy
             // exact or unique-prefix match not possible: nothing, like an empty Tab completion
         } else if (keyCode == 258) { // Tab
-            boolean ctrl = GLFW.glfwGetKey(this.mc.getWindow().handle(), GLFW.GLFW_KEY_LEFT_CONTROL) == 1
-                || GLFW.glfwGetKey(this.mc.getWindow().handle(), GLFW.GLFW_KEY_RIGHT_CONTROL) == 1;
+            boolean ctrl = InputUtil.isDown(InputConstants.KEY_LCONTROL)
+                || InputUtil.isDown(InputConstants.KEY_RCONTROL);
             if (!ctrl && this.autocompleteSearch()) {
                 return; // consumed by autocomplete
             }
@@ -316,7 +317,7 @@ public class ManeWindow extends LiveWindow {
     public void mouseWheel(int mWheelState) {
         int maxVisibleLines = (this.h - (this.buddyListY + 13 + 15)) / 12;
         int maxScroll = Math.max(0, buddyListEntries.size() - maxVisibleLines);
-        boolean shift = GLFW.glfwGetKey(this.mc.getWindow().handle(), 340) == 1;
+        boolean shift = InputUtil.isDown(InputConstants.KEY_LSHIFT);
         int scrollAmount = shift ? 5 : 1;
         if (mWheelState < 0) {
             listScrollPosition = Math.min(maxScroll, listScrollPosition + scrollAmount);

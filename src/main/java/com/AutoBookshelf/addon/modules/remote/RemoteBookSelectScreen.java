@@ -22,6 +22,7 @@ import net.minecraft.world.item.ItemStack;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 
 // Lets the player search/browse the remote manifest
 // and pick one or more books to queue for import.
@@ -248,7 +249,7 @@ public class RemoteBookSelectScreen extends WindowScreen {
     }
 
     private void showPreview(List<ItemStack> partBooks, BookEntry entry) {
-        minecraft.gui.setScreen(new PreviewBookScreen(partBooks, 0, this, entry));
+        ScreenUtil.set(new PreviewBookScreen(partBooks, 0, this, entry));
     }
 
     private static String fileNameOf(BookEntry entry) {

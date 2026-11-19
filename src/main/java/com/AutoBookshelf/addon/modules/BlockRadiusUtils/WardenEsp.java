@@ -5,8 +5,10 @@
  */
 package com.AutoBookshelf.addon.modules.BlockRadiusUtils;
 
+import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.renderer.Renderer3D;
+import meteordevelopment.meteorclient.renderer.text.TextRenderer;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.utils.render.RenderUtils;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
@@ -329,18 +331,6 @@ public class WardenEsp {
                     renderBlastCylinder(event.renderer, centerX, centerY, centerZ, cylinderColor);
                 }
 
-                if (targetGuess.get() && imminent) {
-                    LivingEntity guessed = guessTarget(warden);
-                    if (guessed != null) {
-                        String name = guessed.getName().getString();
-                        if (name.isBlank()) name = guessed.getType().getDescription().getString();
-                        double gx = guessed.getX(), gy = guessed.getY() + guessed.getBbHeight() + 0.35, gz = guessed.getZ();
-                        shared.drawWorldLabel(event.matrices, "target? " + name,
-                            gx, gy, gz, wardenOtherTargetColor.get(),
-                            0.9F * wardenLabelScale.get().floatValue(), 0, event.tickDelta);
-                    }
-                }
-
                 if (drawShape) {
                     // Shared cache: the fill alpha is constant (40), so the entry is built once
                     // per (color, alpha) pair and reused from the cache after that.
@@ -388,64 +378,37 @@ public class WardenEsp {
                         meteordevelopment.meteorclient.renderer.ShapeMode.Sides, 0);
                 }
 
+//? if <26.3 {
+                if (targetGuess.get() && attackFlash) {
+                    LivingEntity guessed = guessTarget(warden);
+                    if (guessed != null) {
+                        String name = guessed.getName().getString();
+                        if (name.isBlank()) name = guessed.getType().getDescription().getString();
+                        double gx = guessed.getX(), gy = guessed.getY() + guessed.getBbHeight() + 0.35, gz = guessed.getZ();
+                        shared.drawWorldLabel(event.matrices, "target? " + name,
+                            gx, gy, gz, wardenOtherTargetColor.get(),
+                            0.9F * wardenLabelScale.get().floatValue(), 0, event.tickDelta);
+                    }
+                }
+
                 float labelScaleValue = wardenLabelScale.get().floatValue();
                 float lineSpacing = 12F * (0.9F + 0.1F * labelScaleValue);
                 float baseOffset = (float) (lerped.getYsize() / 2.0 + 0.55
                     + 0.25 * (labelScaleValue - 1.0));
-                int line = 0;
-
-                if (attackFlash && showImminentIndicator.get()) {
-                    shared.drawWorldLabel(event.matrices, "! ATTACK",
-                        centerX, centerY + baseOffset,
-                        centerZ, wardenLockedColor.get(),
-                        1.15F * labelScaleValue, -lineSpacing * line, event.tickDelta);
-                    line += 1;
+                for (LabelLine l : labelLines(state, attackFlash, labelScaleValue)) {
+                    shared.drawWorldLabel(event.matrices, l.text(), centerX, centerY + baseOffset,
+                        centerZ, l.color(), l.scale(), -lineSpacing * l.line(), event.tickDelta);
                 }
-
-                shared.drawWorldLabel(event.matrices, state.label(), centerX,
-                    centerY + baseOffset, centerZ,
-                    color, labelScaleValue, -lineSpacing * line, event.tickDelta);
-                line += 1;
-
-                // Target label keys off hasTarget(), not lockedOnYou/lockedOnOther: those require
-                // warden.getTarget() to resolve to a live entity reference, which it does on the
-                // server but is unreliable client-side. hasTarget is the same signal with one less
-                // identity comparison that can silently fail, so the label can actually appear.
-                if (state.hasTarget() && showWardenTargetLabel.get()) {
-                    String tgt = targetLabel(state);
-                    SettingColor tc = state.lockedOnYou()
-                        ? (attackFlash ? getFastPulseColor(wardenLockedColor.get(), 0.35F)
-                           : getPulseColor(wardenLockedColor.get(), 0.6F))
-                        : wardenOtherTargetColor.get();
-                    shared.drawWorldLabel(event.matrices, tgt, centerX,
-                        centerY + baseOffset, centerZ,
-                        tc, 0.95F * labelScaleValue, -lineSpacing * line, event.tickDelta);
-                    line += 1;
-                }
-
-                if (state.sniffing() && showSniffingPulse.get()) {
-                    shared.drawWorldLabel(event.matrices, "SNIFFING",
-                        centerX, centerY + baseOffset,
-                        centerZ, new SettingColor(255, 255, 170),
-                        0.9F * labelScaleValue, -lineSpacing * line, event.tickDelta);
-                    line += 1;
-                }
-
-                if (state.digging() || state.emerging()) {
-                    String label = state.digging() ? "DIGGING" : "EMERGING";
-                    shared.drawWorldLabel(event.matrices, label, centerX,
-                        centerY + baseOffset, centerZ,
-                        wardenDiggingColor.get(), 0.9F * labelScaleValue,
-                        -lineSpacing * line, event.tickDelta);
-                    line += 1;
-                }
+//?}
             } catch (Throwable t) {
                 // ignore per-entity errors
             }
         }
 
+        //? if <26.3 {
         // Flush all labels submitted for this frame in one feature pass.
         shared.flushWorldLabels();
+        //?}
     }
 
     /**
@@ -455,8 +418,113 @@ public class WardenEsp {
      * never does (brain memory is not synced), so the honest answer is UNKNOWN rather than a guess -
      * the ANGRY state label already communicates that something has its attention.
      */
+    private record LabelLine(String text, SettingColor color, float scale, int line) {
+    }
+
+    /**
+     * The warden labels in draw order; shared by the 3D and 2D passes so both draw exactly the
+     * same list. Coordinates are not in here - callers anchor at the label position.
+     */
+    private java.util.List<LabelLine> labelLines(WardenState state, boolean attackFlash, float s) {
+        java.util.List<LabelLine> lines = new java.util.ArrayList<>();
+        int line = 0;
+        if (attackFlash && showImminentIndicator.get()) {
+            lines.add(new LabelLine("! ATTACK", wardenLockedColor.get(), 1.15F * s, line++));
+        }
+        SettingColor color = attackFlash
+            ? getFastPulseColor(wardenLockedColor.get(), 0.35F)
+            : state.baseColor();
+        lines.add(new LabelLine(state.label(), color, s, line++));
+
+        // Target label keys off hasTarget(), not lockedOnYou/lockedOnOther: those require
+        // warden.getTarget() to resolve to a live entity reference, which it does on the
+        // server but is unreliable client-side. hasTarget is the same signal with one less
+        // identity comparison that can silently fail, so the label can actually appear.
+        if (state.hasTarget() && showWardenTargetLabel.get()) {
+            String tgt = targetLabel(state);
+            SettingColor tc = state.lockedOnYou()
+                ? (attackFlash ? getFastPulseColor(wardenLockedColor.get(), 0.35F)
+                   : getPulseColor(wardenLockedColor.get(), 0.6F))
+                : wardenOtherTargetColor.get();
+            lines.add(new LabelLine(tgt, tc, 0.95F * s, line++));
+        }
+
+        if (state.sniffing() && showSniffingPulse.get()) {
+            lines.add(new LabelLine("SNIFFING", new SettingColor(255, 255, 170), 0.9F * s, line++));
+        }
+
+        if (state.digging() || state.emerging()) {
+            String label = state.digging() ? "DIGGING" : "EMERGING";
+            lines.add(new LabelLine(label, wardenDiggingColor.get(), 0.9F * s, line++));
+        }
+        return lines;
+    }
+
+//? if >=26.3 {
+    /*/^*
+     * Draws the warden labels in the 2D pass. 26.3 needs a RenderPass that only the engine's frame
+     * owns, which a module cannot get, so world-space text cannot be submitted; the labels are
+     * projected from Render2DEvent instead (see BlockRadiusShared.drawWorldLabel).
+     ^/
+    public void renderLabels(Render2DEvent event) {
+        if (!showWardens.get() || wardens.isEmpty()) return;
+
+        float labelScaleValue = wardenLabelScale.get().floatValue();
+        // 2D text draws taller than the old 9px mc.font path did; pitch comes from the active
+        // renderer (both fonts draw ~18px-tall lines) so lines never overlap and the background
+        // quads do not merge into one slab.
+        float lineSpacing = (float) (TextRenderer.get().getHeight() * 1.5);
+
+        for (LivingEntity w : wardens) {
+            if (!(w instanceof Warden warden)) continue;
+            try {
+                Vec3 lerpedPos = w.getPosition(event.tickDelta);
+                AABB lerped = w.getBoundingBox().move(lerpedPos.subtract(w.position()));
+                Vec3 c = lerped.getCenter();
+
+                int anger = warden.getClientAngerLevel();
+                WardenState state = classifyWarden(warden, anger, AngerLevel.byAnger(anger));
+                boolean sonicActive = warden.sonicBoomAnimationState.isStarted()
+                    && warden.sonicBoomAnimationState.getTimeInMillis((float) w.tickCount) < 3250L;
+                boolean attackActive = warden.attackAnimationState.isStarted()
+                    && warden.attackAnimationState.getTimeInMillis((float) w.tickCount) < 1500L;
+                boolean attackFlash = (sonicActive || attackActive)
+                    && !state.digging() && !state.emerging();
+
+                if (targetGuess.get() && attackFlash) {
+                    LivingEntity guessed = guessTarget(warden);
+                    if (guessed != null) {
+                        String name = guessed.getName().getString();
+                        if (name.isBlank()) name = guessed.getType().getDescription().getString();
+                        double gx = guessed.getX(), gy = guessed.getY() + guessed.getBbHeight() + 0.35, gz = guessed.getZ();
+                        shared.drawWorldLabel(event.graphics, "target? " + name,
+                            gx, gy, gz, wardenOtherTargetColor.get(),
+                            0.9F * labelScaleValue, 0);
+                    }
+                }
+
+                float baseOffset = (float) (lerped.getYsize() / 2.0 + 0.55
+                    + 0.25 * (labelScaleValue - 1.0));
+                for (LabelLine l : labelLines(state, attackFlash, labelScaleValue)) {
+                    shared.drawWorldLabel(event.graphics, l.text(), c.x, c.y + baseOffset,
+                        c.z, l.color(), l.scale(), -lineSpacing * l.line());
+                }
+            } catch (Throwable t) {
+                // ignore per-entity errors
+            }
+        }
+    }
+*///?}
+
     private final java.util.IdentityHashMap<LivingEntity, String> targetLabelCache = new java.util.IdentityHashMap<>();
 
+    /**
+     * Names the entity the warden is targeting.
+     * <p>
+     * Only possible when getTarget() actually resolves a live reference. On vanilla it effectively
+     * never does (brain memory is not synced), so the honest answer is UNKNOWN rather than a guess -
+     * the ANGRY state label already communicates that something has its attention.
+     */
     private String targetLabel(WardenState state) {
         if (state.lockedOnYou()) return "TARGET: YOU";
 

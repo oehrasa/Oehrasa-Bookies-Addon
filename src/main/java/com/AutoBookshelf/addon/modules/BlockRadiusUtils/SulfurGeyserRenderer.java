@@ -3,6 +3,10 @@
  * Copyright (c) oehrasa and AutoBookshelf contributors.
  * SPDX-License-Identifier: GPL-3.0-only
  */
+
+//? if >=26.2 {
+// Potent sulfur geysers only exist on 26.2+. This file is empty on older nodes on purpose:
+// every caller (BlockRadius) is already gated to >=26.2, so no class is produced there.
 package com.AutoBookshelf.addon.modules.BlockRadiusUtils;
 
 import com.AutoBookshelf.addon.utils.DistanceUtil;
@@ -367,7 +371,11 @@ public class SulfurGeyserRenderer {
             Vector3d joml = new Vector3d(cx, cy, cz);
             if (!NametagUtils.to2D(joml, sulfurTextScale.get())) continue;
             NametagUtils.begin(joml, event.graphics);
+            //? if >=26.2 {
             TextRenderer.get().begin(event.graphics, 1, false, true);
+//?} else {
+            /*TextRenderer.get().begin(1, false, true);
+*///?}
 
             String text = remain + "s";
             SettingColor color = dormantLineColor.get();
@@ -380,3 +388,5 @@ public class SulfurGeyserRenderer {
         }
     }
 }
+
+//?}

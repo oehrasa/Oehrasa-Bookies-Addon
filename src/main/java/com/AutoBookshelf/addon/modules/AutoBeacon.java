@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.EntityUtil;
 import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
 import baritone.api.pathing.goals.GoalXZ;
@@ -741,7 +742,11 @@ public class AutoBeacon extends Module {
             Rotations.rotate(Rotations.getYaw(hitPos), Rotations.getPitch(hitPos), () -> {
                 InvUtils.swap(item.slot(), false);
                 mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-                mc.player.swing(InteractionHand.MAIN_HAND);
+                //? if >=26.3 {
+                /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                *///?} else {
+                EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                //?}
             });
             return true;
         }

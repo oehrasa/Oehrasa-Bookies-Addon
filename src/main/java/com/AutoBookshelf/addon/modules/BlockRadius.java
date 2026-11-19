@@ -37,7 +37,9 @@ public class BlockRadius extends Module {
     private final ConduitRenderer conduits;
     private final CreakingRenderer creakings;
     private final WardenEsp wardens;
+    //? if >=26.2 {
     private final SulfurGeyserRenderer sulfur;
+    //?}
     private final SpongeAbsorptionRenderer sponge;
     private final SplashPotionAoE potions;
 
@@ -91,8 +93,10 @@ public class BlockRadius extends Module {
         creakings = new CreakingRenderer(sgCreaking, shared);
         SettingGroup sgWarden = settings.createGroup("Warden");
         wardens = new WardenEsp(sgWarden, shared);
+        //? if >=26.2 {
         SettingGroup sgSulfur = settings.createGroup("Sulfur Geysers");
         sulfur = new SulfurGeyserRenderer(sgSulfur, shared, shapeMode);
+        //?}
         SettingGroup sgSponge = settings.createGroup("Sponge Absorption");
         sponge = new SpongeAbsorptionRenderer(sgSponge, shared, shapeMode);
         // Appended last so no existing tab shifts position in the GUI.
@@ -109,7 +113,9 @@ public class BlockRadius extends Module {
         // same reasoning) rather than trusting them on the first scan after re-activation.
         beacons.clear();
         lightningRods.clear();
+        //? if >=26.2 {
         sulfur.clear();
+        //?}
         sponge.invalidate();
         wardens.clear();
         potions.clear();
@@ -122,7 +128,9 @@ public class BlockRadius extends Module {
         conduits.clear();
         creakings.clear();
         wardens.clear();
+        //? if >=26.2 {
         sulfur.clear();
+        //?}
         sponge.invalidate();
         potions.clear();
     }
@@ -147,7 +155,9 @@ public class BlockRadius extends Module {
         conduits.scan();
         creakings.scan();
         wardens.scan();
+        //? if >=26.2 {
         sulfur.scan();
+        //?}
     }
 
     @EventHandler
@@ -183,7 +193,11 @@ public class BlockRadius extends Module {
     private void onRender(Render3DEvent event) {
         if (mc.player == null || mc.level == null) return;
 
+        //? if >=26.2 {
         Vec3 cam = mc.gameRenderer.mainCamera().position();
+//?} else {
+        /*Vec3 cam = mc.gameRenderer.getMainCamera().position();
+*///?}
         double maxDistSq = shared.maxDistSq();
 
         beacons.render(event, cam, maxDistSq);
@@ -191,7 +205,9 @@ public class BlockRadius extends Module {
         conduits.render(event, cam, maxDistSq);
         creakings.render(event, cam, maxDistSq);
         wardens.render(event);
+        //? if >=26.2 {
         sulfur.render(event, cam, maxDistSq);
+        //?}
         sponge.render(event, cam, maxDistSq);
         potions.render(event, cam, maxDistSq);
     }
@@ -200,8 +216,17 @@ public class BlockRadius extends Module {
     private void onRender2D(Render2DEvent event) {
         if (mc.player == null || mc.level == null) return;
 
+        //? if >=26.2 {
         Vec3 cam = mc.gameRenderer.mainCamera().position();
+//?} else {
+        /*Vec3 cam = mc.gameRenderer.getMainCamera().position();
+*///?}
+        //? if >=26.2 {
         sulfur.render2D(event, cam, shared.maxDistSq());
+        //?}
         potions.render2D(event, cam, shared.maxDistSq());
+        //? if >=26.3 {
+        /*wardens.renderLabels(event);
+        *///?}
     }
 }

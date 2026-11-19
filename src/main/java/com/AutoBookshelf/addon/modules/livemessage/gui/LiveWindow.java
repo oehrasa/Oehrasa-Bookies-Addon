@@ -15,9 +15,10 @@ import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.ArrayList;
+import com.AutoBookshelf.addon.utils.InputUtil;
 import java.util.List;
 
 public class LiveWindow {
@@ -104,7 +105,7 @@ public class LiveWindow {
 
     public void keyTyped(char typedChar, int keyCode) {
         if (keyCode == 258 && LivemessageGui.liveWindows.size() > 1) {
-            if (GLFW.glfwGetKey(this.mc.getWindow().handle(), 340) == 1) {
+            if (InputUtil.isDown(InputConstants.KEY_LSHIFT)) {
                 LiveWindow tempWindow = LivemessageGui.liveWindows.get(0);
                 LivemessageGui.liveWindows.remove(0);
                 tempWindow.activateWindow();

@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.BookUtils;
 import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap;
@@ -283,7 +284,7 @@ public class InventoryTracker extends Module {
     }
 
     private void refreshPredictedScreen(List<String> oldPages, List<String> newPages, ItemStack stack) {
-        if (!(mc.gui.screen() instanceof BookViewScreen)) {
+        if (!(ScreenUtil.current() instanceof BookViewScreen)) {
             predictingUuid = null; // viewer closed it themselves, stop chasing
             return;
         }
@@ -300,7 +301,7 @@ public class InventoryTracker extends Module {
 
         mc.execute(() -> {
             BookViewScreen screen = new BookViewScreen(BookViewScreen.BookAccess.fromItem(stack));
-            mc.gui.setScreen(screen);
+            ScreenUtil.set(screen);
             if (predictingPageIndex > 0) screen.setPage(predictingPageIndex);
         });
     }

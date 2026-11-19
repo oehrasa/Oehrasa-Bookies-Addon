@@ -5,6 +5,9 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.BlockPosUtil;
+import com.AutoBookshelf.addon.utils.EntityUtil;
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.mixin.accessor.MultiPlayerGameModeAccessor;
 import meteordevelopment.meteorclient.events.entity.player.DoItemUseEvent;
@@ -25,7 +28,9 @@ import net.minecraft.core.Direction;
 import net.minecraft.network.protocol.game.ServerboundInteractPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
+//? if <26.3 {
 import net.minecraft.network.protocol.game.ServerboundSwingPacket;
+//?}
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.tags.TagKey;
@@ -309,7 +314,7 @@ public class ForceAccess extends Module {
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.level == null) return;
-        if (mc.gui.screen() != null) return;
+        if (ScreenUtil.current() != null) return;
 
         if (phase == Phase.MINE) {
             tickMine();
@@ -436,7 +441,7 @@ public class ForceAccess extends Module {
                     new BlockHitResult(new Vec3(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5),
                         Direction.UP, pos, true));
                 if (result instanceof InteractionResult.Success || result instanceof InteractionResult.Fail) {
-                    mc.player.swing(hand);
+                    EntityUtil.swing(mc.player, hand);
                     event.cancel();
                     return;
                 }
@@ -553,7 +558,7 @@ public class ForceAccess extends Module {
             int r = (int) Math.ceil(blockRange);
             double maxSq = blockRange * blockRange;
 
-            for (BlockPos p : BlockPos.withinManhattan(BlockPos.containing(eye), r, r, r)) {
+            for (BlockPos p : BlockPosUtil.withinManhattan(BlockPos.containing(eye), r, r, r)) {
                 if (!container(p)) continue;
                 double distSq = eye.distanceToSqr(Vec3.atCenterOf(p));
                 if (distSq > maxSq || distSq >= bestSq) continue;
@@ -678,7 +683,11 @@ public class ForceAccess extends Module {
             || block instanceof ChiseledBookShelfBlock
             || block instanceof ComposterBlock
             || block instanceof DaylightDetectorBlock
+//? if >=26.3 {
+            /*|| block instanceof RedstoneWireBlock;
+*///?} else {
             || block instanceof RedStoneWireBlock;
+//?}
     }
 
     private boolean obstructed(BlockPos pos) {
@@ -933,7 +942,11 @@ public class ForceAccess extends Module {
                     target.rebreakStarted = true;
                     target.rebreakTicks = 0;
                     target.rebreakStopped = false;
-                    mc.player.swing(InteractionHand.MAIN_HAND);
+                    //? if >=26.3 {
+                    /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                    *///?} else {
+                    EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                    //?}
                     return;
                 }
 
@@ -942,7 +955,11 @@ public class ForceAccess extends Module {
                     // The commit: the server destroys the block now if the break time has passed.
                     target.rebreakStopped = true;
                     breakAction(ServerboundPlayerActionPacket.Action.STOP_DESTROY_BLOCK, target.pos, face(target.pos));
+//? if >=26.3 {
+                    /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+*///?} else {
                     mc.player.connection.send(new ServerboundSwingPacket(InteractionHand.MAIN_HAND));
+//?}
                 }
                 if (target.rebreakTicks > rebreakTimeout()) {
                     // The block did not break in time. Give up on it; the cap counts elapsed
@@ -963,7 +980,11 @@ public class ForceAccess extends Module {
             }
             refreshToolSlot();
             sendBreakPackets(target.pos, face(target.pos));
-            mc.player.swing(InteractionHand.MAIN_HAND);
+            //? if >=26.3 {
+            /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+            *///?} else {
+            EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+            //?}
             burstSent = true;
         } else {
             // Normal per-tick breaking: progress every tick until the server reports
@@ -975,7 +996,11 @@ public class ForceAccess extends Module {
             }
             refreshToolSlot();
             mc.gameMode.continueDestroyBlock(target.pos, face(target.pos));
-            mc.player.swing(InteractionHand.MAIN_HAND);
+            //? if >=26.3 {
+            /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+            *///?} else {
+            EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+            //?}
         }
     }
 
@@ -1210,14 +1235,22 @@ public class ForceAccess extends Module {
         // gets cancelled here by the phase != IDLE guard on our own handler.
         boolean sneak = e instanceof AbstractChestedHorse || e instanceof ContainerEntity;
         mc.player.connection.send(new ServerboundInteractPacket(e.getId(), InteractionHand.MAIN_HAND, e.position(), sneak));
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        //? if >=26.3 {
+        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        *///?} else {
+        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+        //?}
     }
 
     private void sendOpen(BlockHitResult hit) {
         // Click-through open
         phase = Phase.IDLE;
         mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        //? if >=26.3 {
+        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        *///?} else {
+        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+        //?}
     }
 
     private BlockHitResult hit(BlockPos pos) {

@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.EntityUtil;
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -375,7 +376,11 @@ public class KMDB extends Module {
     private final Setting<Item> copperBlock = sgCopper.add(new ItemSetting.Builder()
         .name("copper-block")
         .description("The copper block variant to use for the base.")
+//? if >=26.2 {
         .defaultValue(Items.COPPER_BLOCK.weathering().unaffected())
+//?} else {
+        /*.defaultValue(Items.COPPER_BLOCK)*/
+//?}
         .visible(() -> buildMode.get() == BuildMode.CopperGolem)
         .build()
     );
@@ -1182,7 +1187,7 @@ public class KMDB extends Module {
             // BlockUtils.place does for this case.
             mc.player.connection.send(new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND,
                 new BlockHitResult(Vec3.atCenterOf(pos), face, pos, false), 0));
-            mc.player.swing(InteractionHand.OFF_HAND);
+            EntityUtil.swing(mc.player, InteractionHand.OFF_HAND);
             return;
         }
 
@@ -1202,7 +1207,11 @@ public class KMDB extends Module {
         mc.player.connection.send(new ServerboundPlayerActionPacket(
             ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
 
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        //? if >=26.3 {
+        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        *///?} else {
+        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+        //?}
 
         mc.player.getInventory().setSelectedSlot(previousSlot);
         mc.player.connection.send(new ServerboundSetCarriedItemPacket(previousSlot));

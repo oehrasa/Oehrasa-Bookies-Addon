@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -234,7 +235,7 @@ public class MapartNamer extends Module {
         mapStep = -1;
 
         // If the anvil screen is already open, skip the "await interact" step
-        if (mc.gui.screen() instanceof AnvilScreen) {
+        if (ScreenUtil.current() instanceof AnvilScreen) {
             state = State.AwaitScreen;
             if (debug.get()) info("Anvil screen already open, waiting for screen detection…");
         } else {
@@ -256,13 +257,17 @@ public class MapartNamer extends Module {
 
     // Return everything else except anvil screen
     private boolean isNotAnvilScreen() {
-        return !(mc.gui.screen() instanceof AnvilScreen);
+        return !(ScreenUtil.current() instanceof AnvilScreen);
     }
 
     @EventHandler
     private void onSendPacket(PacketEvent.Send event) {
         if (state == State.AwaitInteract && event.packet instanceof ServerboundUseItemOnPacket packet) {
+//? if >=26.3 {
+            /*BlockPos blockPos = packet.hitResult().getBlockPos();
+*///?} else {
             BlockPos blockPos = packet.getHitResult().getBlockPos();
+//?}
             if (mc.level.getBlockState(blockPos).getBlock() instanceof AnvilBlock) {
                 state = State.AwaitScreen;
             }
@@ -458,7 +463,7 @@ public class MapartNamer extends Module {
     private void collectMapsAndStart() {
         // No refreshIndexLabels() here: onTick already ran it this tick (it gates on the same
         // setting), so calling it again was rebuilding the map twice on the tick the anvil opened.
-        if (mc.player == null || !(mc.gui.screen() instanceof AnvilScreen)) return;
+        if (mc.player == null || !(ScreenUtil.current() instanceof AnvilScreen)) return;
 
         List<MapSlotInfo> allMaps = new ArrayList<>();
         for (int invSlot = 0; invSlot < 36; invSlot++) {
@@ -526,7 +531,7 @@ public class MapartNamer extends Module {
         // InventoryS2CPacket timing, which was preventing the module from ever
         // reaching HandleMaps.
         if (state == State.AwaitScreen) {
-            if (mc.gui.screen() instanceof AnvilScreen) {
+            if (ScreenUtil.current() instanceof AnvilScreen) {
                 collectMapsAndStart();
             }
             return;
@@ -570,7 +575,7 @@ public class MapartNamer extends Module {
                     currentMap = null;
                     mapStep = -1;
                     state = State.AwaitInteract;
-                    if (mc.gui.screen() != null) mc.player.closeContainer();
+                    if (ScreenUtil.current() != null) mc.player.closeContainer();
                     return;
                 }
 
@@ -624,7 +629,7 @@ public class MapartNamer extends Module {
                         if (debug.get()) info("Batch finished. Next Y-offset = " + (nextBaseY + off));
                         baseY.set(nextBaseY);
                     }
-                    if (mc.gui.screen() != null) mc.player.closeContainer();
+                    if (ScreenUtil.current() != null) mc.player.closeContainer();
                     state = State.AwaitInteract;
                 } else {
                     ticks = renameDelay.get();

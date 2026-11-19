@@ -5,6 +5,8 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.EntityUtil;
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.PlacementEngine;
 import com.AutoBookshelf.addon.utils.ShulkerRestockEngine;
@@ -37,7 +39,7 @@ import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -388,8 +390,8 @@ public class AutoLoader extends Module {
         if (stage != Stage.IDLE) return;
         if (mc.player == null || mc.level == null) return;
         if (event.action != KeyAction.Press) return;
-        if (event.button() != GLFW.GLFW_MOUSE_BUTTON_RIGHT) return;
-        if (!(mc.gui.screen() instanceof AbstractContainerScreen<?> screen)) return;
+        if (event.button() != InputConstants.MOUSE_BUTTON_RIGHT) return;
+        if (!(ScreenUtil.current() instanceof AbstractContainerScreen<?> screen)) return;
 
         Slot focusedSlot = ((AbstractContainerScreenAccessor) screen).meteor$getHoveredSlot();
         if (focusedSlot == null || focusedSlot.container != mc.player.getInventory()) return;
@@ -435,7 +437,7 @@ public class AutoLoader extends Module {
             case OPEN -> doOpen();
             case AUTO_TAKE -> doAutoTake();
             case WAIT_CLOSE -> {
-                if (!(mc.gui.screen() instanceof AbstractContainerScreen)) {
+                if (!(ScreenUtil.current() instanceof AbstractContainerScreen)) {
                     if (breakAfterUse.get()) stage = Stage.BREAK;
                     else finish();
                 }
@@ -449,7 +451,7 @@ public class AutoLoader extends Module {
     }
 
     private void doSetup() {
-        if (mc.gui.screen() instanceof AbstractContainerScreen) {
+        if (ScreenUtil.current() instanceof AbstractContainerScreen) {
             mc.player.closeContainer();
             delayTicks = 5;
             return;
@@ -498,7 +500,11 @@ public class AutoLoader extends Module {
         mc.player.getInventory().setSelectedSlot(containerHotbarSlot);
         mc.getConnection().send(new ServerboundSetCarriedItemPacket(containerHotbarSlot));
         mc.gameMode.useItem(mc.player, InteractionHand.MAIN_HAND);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        //? if >=26.3 {
+        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        *///?} else {
+        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+        //?}
         if (preActionSlot >= 0 && preActionSlot <= 8 && preActionSlot != containerHotbarSlot) {
             mc.player.getInventory().setSelectedSlot(preActionSlot);
             mc.getConnection().send(new ServerboundSetCarriedItemPacket(preActionSlot));
@@ -510,7 +516,7 @@ public class AutoLoader extends Module {
      * Places the first container and locks the rotation so the second chest matches its facing.
      */
     private void doPlace() {
-        if (mc.gui.screen() instanceof AbstractContainerScreen) {
+        if (ScreenUtil.current() instanceof AbstractContainerScreen) {
             mc.player.closeContainer();
             delayTicks = 3;
             return;
@@ -574,7 +580,7 @@ public class AutoLoader extends Module {
     private int secondPlacementWaitTicks = 0;
 
     private void doPlaceSecond() {
-        if (mc.gui.screen() instanceof AbstractContainerScreen) {
+        if (ScreenUtil.current() instanceof AbstractContainerScreen) {
             mc.player.closeContainer();
             delayTicks = 3;
             return;
@@ -686,7 +692,7 @@ public class AutoLoader extends Module {
             return;
         }
 
-        if (mc.gui.screen() instanceof AbstractContainerScreen) {
+        if (ScreenUtil.current() instanceof AbstractContainerScreen) {
             openAttempts = 0;
             stage = autoTake.get() ? Stage.AUTO_TAKE : Stage.WAIT_CLOSE;
             return;
@@ -746,17 +752,25 @@ public class AutoLoader extends Module {
             Rotations.rotate(Rotations.getYaw(center), Rotations.getPitch(center), -100, () -> {
                 mc.getConnection().send(
                     new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND, hit, 0));
-                mc.player.swing(InteractionHand.MAIN_HAND);
+                //? if >=26.3 {
+                /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                *///?} else {
+                EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                //?}
             });
         } else {
             mc.getConnection().send(new ServerboundUseItemOnPacket(InteractionHand.MAIN_HAND, hit, 0));
-            mc.player.swing(InteractionHand.MAIN_HAND);
+            //? if >=26.3 {
+            /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+            *///?} else {
+            EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+            //?}
         }
         delayTicks = 4;
     }
 
     private void doAutoTake() {
-        if (!(mc.gui.screen() instanceof AbstractContainerScreen<?> screen)) {
+        if (!(ScreenUtil.current() instanceof AbstractContainerScreen<?> screen)) {
             // Already closed somehow; let WAIT_CLOSE pick up cleanly from here.
             stage = Stage.WAIT_CLOSE;
             return;
@@ -888,7 +902,7 @@ public class AutoLoader extends Module {
     }
 
     private void doBreak(boolean isSecond) {
-        if (mc.gui.screen() != null) {
+        if (ScreenUtil.current() != null) {
             mc.player.closeContainer();
             delayTicks = 2;
             return;
@@ -935,7 +949,11 @@ public class AutoLoader extends Module {
                     sendBreakPackets(secondPos, Direction.UP);
                 }
 
-                mc.player.swing(InteractionHand.MAIN_HAND);
+                //? if >=26.3 {
+                /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                *///?} else {
+                EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                //?}
                 packetBreakSent = true;
             }
             // Wait a few ticks for the server to confirm; the isAir() check at the
@@ -946,7 +964,11 @@ public class AutoLoader extends Module {
 
         // Normal break
         mc.gameMode.continueDestroyBlock(placedPos, Direction.UP);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        //? if >=26.3 {
+        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        *///?} else {
+        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+        //?}
         if (mc.level.getBlockState(placedPos).isAir()) afterBreak(isSecond);
         else delayTicks = 2;
     }
@@ -1040,11 +1062,19 @@ public class AutoLoader extends Module {
             if (rotate.get())
                 Rotations.rotate(Rotations.getYaw(supportHit), Rotations.getPitch(supportHit), -100, () -> {
                     mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-                    mc.player.swing(InteractionHand.MAIN_HAND);
+                    //? if >=26.3 {
+                    /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                    *///?} else {
+                    EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                    //?}
                 });
             else {
                 mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-                mc.player.swing(InteractionHand.MAIN_HAND);
+                //? if >=26.3 {
+                /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                *///?} else {
+                EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                //?}
             }
         }
         if (resyncAfterPlace.get()) sendResyncPacket();
@@ -1067,11 +1097,19 @@ public class AutoLoader extends Module {
             if (rotate.get())
                 Rotations.rotate(yaw, pitch, -100, () -> {
                     mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-                    mc.player.swing(InteractionHand.MAIN_HAND);
+                    //? if >=26.3 {
+                    /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                    *///?} else {
+                    EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                    //?}
                 });
             else {
                 mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-                mc.player.swing(InteractionHand.MAIN_HAND);
+                //? if >=26.3 {
+                /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                *///?} else {
+                EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                //?}
             }
         }
         if (resyncAfterPlace.get()) sendResyncPacket();
@@ -1094,7 +1132,11 @@ public class AutoLoader extends Module {
             new ServerboundUseItemOnPacket(InteractionHand.OFF_HAND, hit, revision));
         mc.getConnection().send(new ServerboundPlayerActionPacket(
             ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        //? if >=26.3 {
+        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        *///?} else {
+        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+        //?}
     }
 
     private void sendResyncPacket() {
@@ -1102,7 +1144,7 @@ public class AutoLoader extends Module {
         // Never resync while any GUI is open: a stray resync sent mid-take can
         // desync the open container's handler and make the server silently drop
         // the subsequent quick-move clicks.
-        if (mc.gui.screen() != null) return;
+        if (ScreenUtil.current() != null) return;
 
         AbstractContainerMenu handler = mc.player.containerMenu;
         Int2ObjectMap<HashedStack> modifiedStacks = new Int2ObjectOpenHashMap<>();

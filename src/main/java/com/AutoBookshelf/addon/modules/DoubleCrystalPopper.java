@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.EntityUtil;
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.entity.EntityAddedEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -257,7 +258,11 @@ public class DoubleCrystalPopper extends Module {
 
     private void attackEntity(Entity entity) {
         mc.player.connection.send(new ServerboundAttackPacket(entity.getId()));
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        //? if >=26.3 {
+        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        *///?} else {
+        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+        //?}
     }
 
     // Returns false if it couldn't place this tick (no item, no valid spot) so the caller can retry next tick.
@@ -289,7 +294,7 @@ public class DoubleCrystalPopper extends Module {
 
         Runnable place = () -> {
             mc.gameMode.useItemOn(mc.player, hand, result);
-            mc.player.swing(hand);
+            EntityUtil.swing(mc.player, hand);
         };
 
         if (rotate.get()) {

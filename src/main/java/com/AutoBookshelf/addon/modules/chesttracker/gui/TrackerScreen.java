@@ -28,7 +28,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.WrittenBookContent;
 import org.jetbrains.annotations.Nullable;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.*;
 import java.util.stream.Stream;
@@ -635,7 +635,7 @@ public final class TrackerScreen extends Screen {
     @Override
     public boolean keyPressed(KeyEvent input) {
         input = CloseKey.asEscape(this, minecraft, input);
-        if (input.key() == GLFW.GLFW_KEY_ESCAPE) {
+        if (input.key() == InputConstants.KEY_ESCAPE) {
             // Esc closes an open menu, then clears the search, and only then closes the screen.
             if (!menu.isEmpty()) {
                 closeMenu();
@@ -653,7 +653,7 @@ public final class TrackerScreen extends Screen {
         }
         // H locates the selected row in the world (like middle-click), but only when the search
         // field isn't focused, so typing "h" in a query never triggers it.
-        if (input.key() == GLFW.GLFW_KEY_H && !search.isFocused() && !showingGrid()) {
+        if (input.key() == InputConstants.KEY_H && !search.isFocused() && !showingGrid()) {
             ResultList.Entry selected = list.getSelected();
             if (selected != null && selected.row != null && !(selected.row.record() instanceof InventoryRecord)) {
                 locate(selected.row.record());
@@ -1471,8 +1471,8 @@ public final class TrackerScreen extends Screen {
                     TrackerScreen.this.refresh();
                     return true;
                 }
-                boolean ctrl = (click.modifiers() & GLFW.GLFW_MOD_CONTROL) != 0;
-                boolean shift = (click.modifiers() & GLFW.GLFW_MOD_SHIFT) != 0;
+                boolean ctrl = (click.modifiers() & InputConstants.MOD_CONTROL) != 0;
+                boolean shift = (click.modifiers() & InputConstants.MOD_SHIFT) != 0;
                 boolean selecting = selectMode || !selection.isEmpty() || ctrl || shift;
                 // Middle-click locates the container in the world (same as Detail's Done);
                 // a single left-click opens Detail instantly, so double-click can't be used here.

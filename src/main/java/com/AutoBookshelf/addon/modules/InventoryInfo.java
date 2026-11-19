@@ -7,6 +7,7 @@
 // and THIRD_PARTY_NOTICES.md.
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.events.ScreenRenderEvent;
 import com.AutoBookshelf.addon.utils.ShulkerInfo;
@@ -29,7 +30,7 @@ import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import org.joml.Vector2f;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.*;
 
@@ -262,17 +263,17 @@ public class InventoryInfo extends Module {
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
-        if (!(mc.gui.screen() instanceof AbstractContainerScreen<?>)) {
+        if (!(ScreenUtil.current() instanceof AbstractContainerScreen<?>)) {
             info.clear();
             shulkerVisibleCache = null;
             combinedCache = null;
             return;
         }
-        if (inventoryOnly.get() && !(mc.gui.screen() instanceof InventoryScreen)) {
+        if (inventoryOnly.get() && !(ScreenUtil.current() instanceof InventoryScreen)) {
             info.clear();
             return;
         }
-        AbstractContainerScreen<?> screen = (AbstractContainerScreen<?>) mc.gui.screen();
+        AbstractContainerScreen<?> screen = (AbstractContainerScreen<?>) ScreenUtil.current();
 
         // A new container has to refresh on its first tick. Carried over, the counter's
         // phase can land anywhere within REFRESH_INTERVAL and the panel shows nothing
@@ -852,14 +853,14 @@ public class InventoryInfo extends Module {
 
     public void onSearchKeyPressed(int keyCode) {
         if (!searchFocused) return;
-        if (keyCode == GLFW.GLFW_KEY_BACKSPACE && !searchQuery.isEmpty()) {
+        if (keyCode == InputConstants.KEY_BACKSPACE && !searchQuery.isEmpty()) {
             searchQuery.deleteCharAt(searchQuery.length() - 1);
             invalidateSearchCaches();
-        } else if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
+        } else if (keyCode == InputConstants.KEY_RETURN || keyCode == InputConstants.KEY_NUMPADENTER) {
             // The screen mixin cancels any key pressed while the bar has focus, so
             // without handling it here Enter was swallowed and ESC was the only way out.
             searchFocused = false;
-        } else if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+        } else if (keyCode == InputConstants.KEY_ESCAPE) {
             searchFocused = false;
         }
     }

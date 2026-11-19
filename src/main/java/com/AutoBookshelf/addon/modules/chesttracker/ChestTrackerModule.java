@@ -5,6 +5,8 @@
  */
 package com.AutoBookshelf.addon.modules.chesttracker;
 
+import com.AutoBookshelf.addon.utils.EntityUtil;
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.modules.chesttracker.data.BankStorage;
 import com.AutoBookshelf.addon.modules.chesttracker.data.BlockRecord;
@@ -48,7 +50,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3d;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.*;
 
@@ -79,9 +81,9 @@ public class ChestTrackerModule extends Module {
     private final Setting<Keybind> browserKey = sgGeneral.add(new KeybindSetting.Builder()
         .name("browser-keybind")
         .description("Open the container browser.")
-        .defaultValue(Keybind.fromKey(GLFW.GLFW_KEY_Y))
+        .defaultValue(Keybind.fromKey(InputConstants.KEY_Y))
         .action(() -> {
-            if (mc.gui.screen() == null) mc.gui.setScreen(new TrackerScreen());
+            if (ScreenUtil.current() == null) ScreenUtil.set(new TrackerScreen());
         })
         .build()
     );
@@ -782,7 +784,11 @@ public class ChestTrackerModule extends Module {
                         autoOpenPending = true;
                         autoOpenPendingTicks = 0;
                         autoOpenPendingPos = blockPos.immutable();
-                        mc.player.swing(InteractionHand.MAIN_HAND);
+                        //? if >=26.3 {
+                        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                        *///?} else {
+                        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                        //?}
                         if (debugMode.get()) info("Auto-opening container at " + blockPos.toShortString());
                         return;
                     } else if (result == InteractionResult.FAIL) {
@@ -855,7 +861,11 @@ public class ChestTrackerModule extends Module {
         // Frustum (best-effort; fall back to chunk-distance only if unavailable).
         net.minecraft.client.renderer.culling.Frustum frustum = null;
         try {
+            //? if >=26.2 {
             frustum = mc.gameRenderer.mainCamera().getCullFrustum();
+            //?} else {
+            /*frustum = mc.gameRenderer.getMainCamera().getCullFrustum();
+            *///?}
         } catch (Throwable ignored) {
             frustum = null;
         }
@@ -1105,7 +1115,7 @@ public class ChestTrackerModule extends Module {
     }
 
     private boolean isInContainerScreen() {
-        if (mc.gui.screen() == null) return false;
+        if (ScreenUtil.current() == null) return false;
         if (mc.player == null) return false;
         return mc.player.containerMenu != mc.player.inventoryMenu;
     }
@@ -1233,7 +1243,7 @@ public class ChestTrackerModule extends Module {
         WTable table = theme.table();
 
         WButton openBrowser = table.add(theme.button("Open Browser (" + browserKey.get() + ")")).expandX().widget();
-        openBrowser.action = () -> mc.gui.setScreen(new TrackerScreen());
+        openBrowser.action = () -> ScreenUtil.set(new TrackerScreen());
         table.row();
 
         WButton searchHeld = table.add(theme.button("Search Held Item")).expandX().widget();

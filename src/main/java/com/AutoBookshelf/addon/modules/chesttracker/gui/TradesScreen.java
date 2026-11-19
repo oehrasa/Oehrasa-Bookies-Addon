@@ -21,7 +21,7 @@ import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 import org.jetbrains.annotations.Nullable;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -229,11 +229,11 @@ public final class TradesScreen extends Screen {
     @Override
     public boolean keyPressed(KeyEvent input) {
         input = CloseKey.asEscape(this, minecraft, input);
-        if (input.key() == GLFW.GLFW_KEY_ESCAPE && !menu.isEmpty()) {
+        if (input.key() == InputConstants.KEY_ESCAPE && !menu.isEmpty()) {
             closeMenu();
             return true;
         }
-        if (input.key() == GLFW.GLFW_KEY_ESCAPE && !search.getValue().isEmpty()) {
+        if (input.key() == InputConstants.KEY_ESCAPE && !search.getValue().isEmpty()) {
             search.setValue("");
             return true;
         }

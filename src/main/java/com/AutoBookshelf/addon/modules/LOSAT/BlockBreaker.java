@@ -5,12 +5,17 @@
  */
 package com.AutoBookshelf.addon.modules.LOSAT;
 
+import com.AutoBookshelf.addon.utils.EntityUtil;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.utils.world.BlockUtils;
 import meteordevelopment.orbit.EventHandler;
 import meteordevelopment.orbit.EventPriority;
 import net.minecraft.core.BlockPos;
+//? if >=26.3 {
+/*import net.minecraft.world.item.component.SwingAnimation;
+*///?} else {
 import net.minecraft.network.protocol.game.ServerboundSwingPacket;
+//?}
 import net.minecraft.world.InteractionHand;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
@@ -38,14 +43,22 @@ public final class BlockBreaker {
     public static boolean breakBlock(BlockPos blockPos, boolean swing) {
         if (!BlockUtils.canBreak(blockPos, mc.level.getBlockState(blockPos))) return false;
 
-        BlockPos pos = blockPos instanceof BlockPos.MutableBlockPos ? new BlockPos(blockPos) : blockPos;
+        BlockPos pos = blockPos instanceof BlockPos.MutableBlockPos ? blockPos.immutable() : blockPos;
 
         if (mc.gameMode.isDestroying())
             mc.gameMode.continueDestroyBlock(pos, BlockUtils.getDirection(blockPos));
         else mc.gameMode.startDestroyBlock(pos, BlockUtils.getDirection(blockPos));
 
-        if (swing) mc.player.swing(InteractionHand.MAIN_HAND);
+//? if >=26.3 {
+        /*if (swing) mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
+*///?} else {
+        if (swing) EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+//?}
+//? if >=26.3 {
+        /*else mc.player.swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
+*///?} else {
         else mc.getConnection().send(new ServerboundSwingPacket(InteractionHand.MAIN_HAND));
+//?}
 
         breaking = true;
         breakingThisTick = true;

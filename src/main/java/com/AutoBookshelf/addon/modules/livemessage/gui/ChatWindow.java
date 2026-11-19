@@ -23,7 +23,7 @@ import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
 import net.minecraft.util.Mth;
 import net.minecraft.util.Util;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import java.io.*;
 import java.net.URI;
@@ -32,6 +32,7 @@ import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.regex.Matcher;
+import com.AutoBookshelf.addon.utils.InputUtil;
 import java.util.regex.Pattern;
 
 public class ChatWindow extends LiveWindow {
@@ -712,15 +713,15 @@ public class ChatWindow extends LiveWindow {
             } else {
                 this.sendOrQueue();
             }
-        } else if (keyCode == GLFW.GLFW_KEY_A && ctrl) {
+        } else if (keyCode == InputConstants.KEY_A && ctrl) {
             this.inputBox.selectAll();
-        } else if (keyCode == GLFW.GLFW_KEY_C && ctrl) {
+        } else if (keyCode == InputConstants.KEY_C && ctrl) {
             if (this.mc.keyboardHandler != null) {
                 // Selection if there is one, otherwise the whole box
                 String copied = this.inputBox.hasSelection() ? this.inputBox.getSelectedText() : this.inputBox.getText();
                 if (!copied.isEmpty()) this.mc.keyboardHandler.setClipboard(copied);
             }
-        } else if (keyCode == GLFW.GLFW_KEY_X && ctrl) {
+        } else if (keyCode == InputConstants.KEY_X && ctrl) {
             if (this.mc.keyboardHandler != null) {
                 String cut = this.inputBox.hasSelection() ? this.inputBox.getSelectedText() : this.inputBox.getText();
                 if (!cut.isEmpty()) this.mc.keyboardHandler.setClipboard(cut);
@@ -728,7 +729,7 @@ public class ChatWindow extends LiveWindow {
             if (!this.inputBox.deleteSelection()) {
                 this.inputBox.clear();
             }
-        } else if (keyCode == GLFW.GLFW_KEY_V && ctrl) {
+        } else if (keyCode == InputConstants.KEY_V && ctrl) {
             if (this.mc.keyboardHandler != null) {
                 String clipboard = this.mc.keyboardHandler.getClipboard();
                 if (clipboard != null && !clipboard.isEmpty()) {
@@ -776,7 +777,7 @@ public class ChatWindow extends LiveWindow {
     @Override
     public void mouseWheel(int mWheelState) {
         this.markAsRead();
-        boolean shift = GLFW.glfwGetKey(this.mc.getWindow().handle(), 340) == 1;
+        boolean shift = InputUtil.isDown(InputConstants.KEY_LSHIFT);
         int scrollAmount = shift ? 10 : 1;
 
         // Wheel over the input box scrolls the input's wrapped text (so the top
@@ -953,8 +954,8 @@ public class ChatWindow extends LiveWindow {
     }
 
     private boolean isShiftHeld() {
-        return GLFW.glfwGetKey(this.mc.getWindow().handle(), GLFW.GLFW_KEY_LEFT_SHIFT) == 1
-            || GLFW.glfwGetKey(this.mc.getWindow().handle(), GLFW.GLFW_KEY_RIGHT_SHIFT) == 1;
+        return InputUtil.isDown(InputConstants.KEY_LSHIFT)
+            || InputUtil.isDown(InputConstants.KEY_RSHIFT);
     }
 
     private void placeCursorFromMouse(int mouseX, int mouseY, boolean selecting) {
@@ -969,8 +970,8 @@ public class ChatWindow extends LiveWindow {
     }
 
     private boolean isCtrlHeld() {
-        return GLFW.glfwGetKey(this.mc.getWindow().handle(), GLFW.GLFW_KEY_LEFT_CONTROL) == 1
-            || GLFW.glfwGetKey(this.mc.getWindow().handle(), GLFW.GLFW_KEY_RIGHT_CONTROL) == 1;
+        return InputUtil.isDown(InputConstants.KEY_LCONTROL)
+            || InputUtil.isDown(InputConstants.KEY_RCONTROL);
     }
 
     private static String encodeUrl(String url) {
@@ -1004,7 +1005,11 @@ public class ChatWindow extends LiveWindow {
                 return;
             }
 
+//? if >=26.3 {
+            /*com.mojang.blaze3d.Blaze3D.openUri(URI.create(encodeUrl(candidate)));
+*///?} else {
             Util.getPlatform().openUri(URI.create(encodeUrl(candidate)));
+//?}
             LiveMessage.LOG.info("Opening URL: {}", candidate);
         } catch (Exception e) {
             LiveMessage.logError("Failed to open URL: {}", url, e);

@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.mixin;
 
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.modules.livemessage.LiveMessage;
 import com.AutoBookshelf.addon.modules.livemessage.gui.LivemessageGui;
 import meteordevelopment.meteorclient.systems.modules.movement.GUIMove;
@@ -28,7 +29,7 @@ public abstract class GUIMoveMixin {
         Minecraft mc = Minecraft.getInstance();
         LiveMessage message = LiveMessage.INSTANCE;
         if (message == null || mc.gui == null) return;
-        if (!(mc.gui.screen() instanceof LivemessageGui)) return;
+        if (!(ScreenUtil.current() instanceof LivemessageGui)) return;
         if (message.guiMoveSkip()) cir.setReturnValue(true);
     }
 }

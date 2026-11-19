@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.EntityUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.AreaSelector;
 import com.AutoBookshelf.addon.utils.BookUtils;
@@ -464,7 +465,15 @@ public class BookshelfFiller extends Module {
             Items.TOTEM_OF_UNDYING,
             Items.ENCHANTED_GOLDEN_APPLE,
             Items.SHULKER_BOX));
+//? if >=26.2 {
         items.addAll(Items.DYED_SHULKER_BOX.asList());
+//?} else {
+        /*items.addAll(List.of(
+            Items.WHITE_SHULKER_BOX, Items.ORANGE_SHULKER_BOX, Items.MAGENTA_SHULKER_BOX, Items.LIGHT_BLUE_SHULKER_BOX,
+            Items.YELLOW_SHULKER_BOX, Items.LIME_SHULKER_BOX, Items.PINK_SHULKER_BOX, Items.GRAY_SHULKER_BOX,
+            Items.LIGHT_GRAY_SHULKER_BOX, Items.CYAN_SHULKER_BOX, Items.PURPLE_SHULKER_BOX, Items.BLUE_SHULKER_BOX,
+            Items.BROWN_SHULKER_BOX, Items.GREEN_SHULKER_BOX, Items.RED_SHULKER_BOX, Items.BLACK_SHULKER_BOX));*/
+//?}
         return items;
     }
 
@@ -1053,7 +1062,11 @@ public class BookshelfFiller extends Module {
                 }
 
                 mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hitResult);
-                mc.player.swing(InteractionHand.MAIN_HAND);
+                //? if >=26.3 {
+                /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                *///?} else {
+                EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                //?}
 
                 if (previousSlot != mc.player.getInventory().getSelectedSlot()) {
                     mc.player.getInventory().setSelectedSlot(previousSlot);
@@ -1592,7 +1605,11 @@ public class BookshelfFiller extends Module {
             }
 
             mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hitResult);
-            mc.player.swing(InteractionHand.MAIN_HAND);
+            //? if >=26.3 {
+            /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+            *///?} else {
+            EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+            //?}
 
             logBookRemoved(pos, slot);
             extractCount++;
@@ -2032,7 +2049,11 @@ public class BookshelfFiller extends Module {
                     }
 
                     mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hitResult);
-                    mc.player.swing(InteractionHand.MAIN_HAND);
+                    //? if >=26.3 {
+                    /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                    *///?} else {
+                    EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                    //?}
 
                     if (previousSlot != mc.player.getInventory().getSelectedSlot()) {
                         mc.player.getInventory().setSelectedSlot(previousSlot);

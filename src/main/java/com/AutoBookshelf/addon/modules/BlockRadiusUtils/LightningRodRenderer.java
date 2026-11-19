@@ -54,7 +54,18 @@ LightningRodRenderer {
 
     private static Set<Block> buildRodVariants() {
         Set<Block> variants = new HashSet<>();
+//? if >=26.2 {
         Blocks.LIGHTNING_ROD.forEach(variants::add);
+//?} else {
+        /*variants.add(Blocks.LIGHTNING_ROD);
+        variants.add(Blocks.EXPOSED_LIGHTNING_ROD);
+        variants.add(Blocks.WEATHERED_LIGHTNING_ROD);
+        variants.add(Blocks.OXIDIZED_LIGHTNING_ROD);
+        variants.add(Blocks.WAXED_LIGHTNING_ROD);
+        variants.add(Blocks.WAXED_EXPOSED_LIGHTNING_ROD);
+        variants.add(Blocks.WAXED_WEATHERED_LIGHTNING_ROD);
+        variants.add(Blocks.WAXED_OXIDIZED_LIGHTNING_ROD);*/
+//?}
         return variants;
     }
 

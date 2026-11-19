@@ -215,7 +215,11 @@ public class TntFuseEsp extends Module {
 
             // to2D already applied textScale, so the renderer itself draws at scale 1.
             TextRenderer fuseRenderer = TextRenderer.get();
+            //? if >=26.2 {
             fuseRenderer.begin(event.graphics, 1, false, true);
+//?} else {
+            /*fuseRenderer.begin(1, false, true);
+*///?}
 
             String text = fuseText(tntEntity.getFuse());
             Color color = computeColorFromFuse.get() ? fuseColor(tntEntity.getFuse()) : textColor.get();

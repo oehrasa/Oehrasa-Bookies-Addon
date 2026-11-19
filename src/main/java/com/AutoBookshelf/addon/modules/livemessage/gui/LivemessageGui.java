@@ -376,7 +376,11 @@ public class LivemessageGui extends Screen {
                     unreadMessages.put(uuid, unreadMessages.getOrDefault(uuid, 0) + 1);
                     if ((Boolean) LiveMessage.INSTANCE.toastsEnabled.get()) {
                         Minecraft mc = Minecraft.getInstance();
+                        //? if >=26.2 {
                         ToastManager toastManager = mc.gui.toastManager();
+                        //?} else {
+                        /*ToastManager toastManager = mc.getToastManager();*/
+                        //?}
                         toastManager.addToast(new SystemToast(SystemToastId.NARRATOR_TOGGLE, Component.literal("DM from " + username), Component.literal(message)));
                     }
 

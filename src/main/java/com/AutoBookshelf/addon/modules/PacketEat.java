@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.entity.player.ItemUseCrosshairTargetEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
@@ -697,7 +698,7 @@ public class PacketEat extends Module {
         // leaves the client on the original slot, so the two cannot be combined -> the click would
         // use the wrong item while the server already believes we switched. Silent is therefore
         // only available for the direct-packet path (no screen open).
-        eatingViaScreenClick = mc.gui.screen() != null;
+        eatingViaScreenClick = ScreenUtil.current() != null;
 
         if (eatSlot == SlotUtils.OFFHAND) {
             // Offhand: item stays equipped; noRelease + packet intercept carry the rest.

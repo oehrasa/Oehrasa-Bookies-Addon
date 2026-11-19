@@ -26,6 +26,9 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.HangingSignBlockEntity;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.entity.SignText;
+//? if >=26.3 {
+/*import net.minecraft.world.level.block.entity.SignTextSlot;
+*///?}
 import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3d;
 
@@ -471,7 +474,11 @@ public class SignRender extends Module {
             if (currentSign.onScreen) {
                 this.renderSignAtPosition(currentSign, textRenderer, currentSign.screenX, currentSign.screenY);
                 if ((Boolean) this.showClusterCount.get() && this.allSigns.size() > 1) {
-                    textRenderer.begin(this.graphics, currentSign.scale, false, true);
+                    //? if >=26.2 {
+            textRenderer.begin(this.graphics, currentSign.scale, false, true);
+//?} else {
+            /*textRenderer.begin(currentSign.scale, false, true);
+*///?}
                     double lineHeight = textRenderer.getHeight();
                     textRenderer.end();
                     double signHeight = this.multilineDisplay.get() && !currentSign.lines.isEmpty() ? currentSign.lines.size() * lineHeight + 8.0 : lineHeight + 8.0;
@@ -503,7 +510,11 @@ public class SignRender extends Module {
 
             this.renderSignAtPosition(sign, textRenderer, baseX, baseY + offsetY);
             rendered.add(sign);
+            //? if >=26.2 {
             textRenderer.begin(this.graphics, sign.scale, false, true);
+//?} else {
+            /*textRenderer.begin(sign.scale, false, true);
+*///?}
             double lineHeight = textRenderer.getHeight();
             textRenderer.end();
             double signHeight = this.multilineDisplay.get() && !sign.lines.isEmpty() ? sign.lines.size() * lineHeight + 8.0 : lineHeight + 8.0;
@@ -523,7 +534,11 @@ public class SignRender extends Module {
             this.renderSignAtPosition(currentSign, textRenderer, cluster.centerX, cluster.centerY);
             rendered.addAll(cluster.signs);
             if ((Boolean) this.showClusterCount.get() && cluster.signs.size() > 1) {
-                textRenderer.begin(this.graphics, currentSign.scale, false, true);
+                //? if >=26.2 {
+            textRenderer.begin(this.graphics, currentSign.scale, false, true);
+//?} else {
+            /*textRenderer.begin(currentSign.scale, false, true);
+*///?}
                 double lineHeight = textRenderer.getHeight();
                 textRenderer.end();
                 double signHeight = this.multilineDisplay.get() && !currentSign.lines.isEmpty() ? currentSign.lines.size() * lineHeight + 8.0 : lineHeight + 8.0;
@@ -540,7 +555,11 @@ public class SignRender extends Module {
         this.renderSignAtPosition(primary, textRenderer, cluster.centerX, cluster.centerY);
         rendered.addAll(cluster.signs);
         if (cluster.signs.size() > 1) {
+            //? if >=26.2 {
             textRenderer.begin(this.graphics, primary.scale, false, true);
+//?} else {
+            /*textRenderer.begin(primary.scale, false, true);
+*///?}
             double lineHeight = textRenderer.getHeight();
             textRenderer.end();
             double signHeight = this.multilineDisplay.get() && !primary.lines.isEmpty() ? primary.lines.size() * lineHeight + 8.0 : lineHeight + 8.0;
@@ -585,7 +604,11 @@ public class SignRender extends Module {
     }
 
     private void renderMultilineSign(SignRender.SignRenderData sign, TextRenderer textRenderer, double centerX, double centerY) {
-        textRenderer.begin(this.graphics, sign.scale, false, true);
+        //? if >=26.2 {
+            textRenderer.begin(this.graphics, sign.scale, false, true);
+//?} else {
+            /*textRenderer.begin(sign.scale, false, true);
+*///?}
         double lineHeight = textRenderer.getHeight();
         List<Double> lineWidths = new ArrayList<>();
         double maxWidth = 0.0;
@@ -615,7 +638,11 @@ public class SignRender extends Module {
             Renderer2D.COLOR.render();
         }
 
-        textRenderer.begin(this.graphics, sign.scale, false, true);
+        //? if >=26.2 {
+            textRenderer.begin(this.graphics, sign.scale, false, true);
+//?} else {
+            /*textRenderer.begin(sign.scale, false, true);
+*///?}
         for (int i = 0; i < sign.lines.size(); i++) {
             String line = sign.lines.get(i);
             if (!line.isEmpty()) {
@@ -634,7 +661,11 @@ public class SignRender extends Module {
     }
 
     private void renderTextAtScreenPos(String text, double screenX, double screenY, double scale, Color color, TextRenderer textRenderer) {
-        textRenderer.begin(this.graphics, scale, false, true);
+        //? if >=26.2 {
+            textRenderer.begin(this.graphics, scale, false, true);
+//?} else {
+            /*textRenderer.begin(scale, false, true);
+*///?}
         double textWidth = textRenderer.getWidth(text);
         double textHeight = textRenderer.getHeight();
         double bgPadding = 4.0;
@@ -655,7 +686,11 @@ public class SignRender extends Module {
             Renderer2D.COLOR.render();
         }
 
-        textRenderer.begin(this.graphics, scale, false, true);
+        //? if >=26.2 {
+            textRenderer.begin(this.graphics, scale, false, true);
+//?} else {
+            /*textRenderer.begin(scale, false, true);
+*///?}
         textRenderer.render(text, elementLeft + bgPadding, elementTop + bgPadding, color);
         textRenderer.end();
     }
@@ -666,6 +701,15 @@ public class SignRender extends Module {
         try {
             SignText frontText = null;
             SignText backText = null;
+            //? if >=26.3 {
+            /*if (blockEntity instanceof SignBlockEntity sign) {
+                frontText = sign.getText(SignTextSlot.FRONT);
+                backText = sign.getText(SignTextSlot.BACK);
+            } else if (blockEntity instanceof HangingSignBlockEntity sign) {
+                frontText = sign.getText(SignTextSlot.FRONT);
+                backText = sign.getText(SignTextSlot.BACK);
+            }
+            *///?} else {
             if (blockEntity instanceof SignBlockEntity sign) {
                 frontText = sign.getFrontText();
                 backText = sign.getBackText();
@@ -673,6 +717,7 @@ public class SignRender extends Module {
                 frontText = sign.getFrontText();
                 backText = sign.getBackText();
             }
+            //?}
 
             if (frontText != null) {
                 List<String> frontLines = this.extractTextLines(frontText);
@@ -697,7 +742,11 @@ public class SignRender extends Module {
         List<String> lines = new ArrayList<>();
 
         try {
+            //? if >=26.3 {
+            /*List<Component> messages = signText.getMessages(false);
+            *///?} else {
             Component[] messages = signText.getMessages(false);
+            //?}
             if (messages != null) {
                 for (Component message : messages) {
                     if (message != null) {

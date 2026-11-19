@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.events.ScreenRenderEvent;
 import com.AutoBookshelf.addon.mixin.accessor.AbstractContainerScreenAccessor;
@@ -112,7 +113,7 @@ public class MapartSort extends Module {
         .description("Sort the map art frame in the opened GUI by using this button.")
         .defaultValue(Keybind.none())
         .action(() -> {
-            if (mc.gui.screen() instanceof AbstractContainerScreen) startSort(true);
+            if (ScreenUtil.current() instanceof AbstractContainerScreen) startSort(true);
         })
         .build()
     );
@@ -285,12 +286,12 @@ public class MapartSort extends Module {
             prevSortKeyPressed = now;
             // The keybind action handles the release edge in a GUI; this poll is a fallback for a
             // press that starts before the GUI is fully up, so either edge can start the sort.
-            if (pressed && mc.gui.screen() instanceof AbstractContainerScreen) startSort(true);
+            if (pressed && ScreenUtil.current() instanceof AbstractContainerScreen) startSort(true);
             updateAutoSort();
             return;
         }
 
-        if (!(mc.gui.screen() instanceof AbstractContainerScreen) || mc.player.containerMenu != menu) {
+        if (!(ScreenUtil.current() instanceof AbstractContainerScreen) || mc.player.containerMenu != menu) {
             error("The container closed before the sort finished.");
             reset();
             return;
@@ -408,7 +409,7 @@ public class MapartSort extends Module {
     public boolean handleSortKey(KeyEvent input) {
         if (!isActive() || state != State.IDLE) return false;
         if (!sortKey.get().matches(input)) return false;
-        if (!(mc.gui.screen() instanceof AbstractContainerScreen)) return false;
+        if (!(ScreenUtil.current() instanceof AbstractContainerScreen)) return false;
         startSort(true);
         return true;
     }
@@ -416,7 +417,7 @@ public class MapartSort extends Module {
     @EventHandler
     private void onRenderHint(ScreenRenderEvent event) {
         if (!isActive() || state != State.IDLE) return;
-        if (!(mc.gui.screen() instanceof AbstractContainerScreen screen)) return;
+        if (!(ScreenUtil.current() instanceof AbstractContainerScreen screen)) return;
         if (!sortKey.get().isSet()) return;
         if (event.graphics == lastHintGraphics) return;
 
@@ -624,7 +625,7 @@ public class MapartSort extends Module {
 
     private void updateAutoSort() {
         if (!autoSort.get()
-            || !(mc.gui.screen() instanceof AbstractContainerScreen screen)
+            || !(ScreenUtil.current() instanceof AbstractContainerScreen screen)
             || screen.getMenu() instanceof InventoryMenu) {
             autoSortMenu = null;
             autoSortTicks = 0;
@@ -681,7 +682,7 @@ public class MapartSort extends Module {
             if (debug.get()) info("Enable Mapart-Sort first.");
             return;
         }
-        if (!(mc.gui.screen() instanceof AbstractContainerScreen screen)) {
+        if (!(ScreenUtil.current() instanceof AbstractContainerScreen screen)) {
             if (debug.get()) info("Open an inventory or container GUI first.");
             return;
         }

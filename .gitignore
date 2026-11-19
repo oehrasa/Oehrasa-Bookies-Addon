@@ -5,6 +5,10 @@ build/
 out/
 classes/
 
+# stonecutter
+
+versions/
+
 # eclipse
 
 *.launch

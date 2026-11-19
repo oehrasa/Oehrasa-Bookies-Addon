@@ -5,6 +5,7 @@
 // the rest of this addon remains under GPL-3.0.
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.EntityUtil;
 import baritone.api.BaritoneAPI;
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -23,6 +24,9 @@ import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.BonemealableBlock;
+//? if >=26.3 {
+/*import net.minecraft.world.level.block.BonemealSource;
+*///?}
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
@@ -353,8 +357,13 @@ public class AutoMoss extends Module {
                 continue;
             }
 
+//? if >=26.3 {
+            /*boolean applied = block instanceof BonemealableBlock bonemealable
+                && bonemealable.isValidBonemealTarget(mc.level, blockPos, state, BonemealSource.INTERACTION);
+*///?} else {
             boolean applied = block instanceof BonemealableBlock bonemealable
                 && bonemealable.isValidBonemealTarget(mc.level, blockPos, state);
+//?}
             if (applied) {
                 Vec3 hitPos = new Vec3(blockPos.getX() + 0.5, blockPos.getY() + 0.5, blockPos.getZ() + 0.5);
                 BlockHitResult hit = new BlockHitResult(hitPos, Direction.UP, blockPos, false);
@@ -368,7 +377,7 @@ public class AutoMoss extends Module {
 
                 // Add moss blocks to cooldown map
                 if (isMoss) {
-                    recentlyUsedMoss.put(new BlockPos(blockPos), mossSpreadCooldown.get());
+                    recentlyUsedMoss.put(blockPos.immutable(), mossSpreadCooldown.get());
                 }
 
                 uses++;
@@ -759,7 +768,11 @@ public class AutoMoss extends Module {
         Rotations.rotate(Rotations.getYaw(finalHit), Rotations.getPitch(finalHit), -100, () -> {
             BlockHitResult hit = new BlockHitResult(finalHit, Direction.UP, finalFloor, false);
             mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-            mc.player.swing(InteractionHand.MAIN_HAND);
+            //? if >=26.3 {
+            /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+            *///?} else {
+            EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+            //?}
         });
 
         mc.player.getInventory().setSelectedSlot(prevSlot);

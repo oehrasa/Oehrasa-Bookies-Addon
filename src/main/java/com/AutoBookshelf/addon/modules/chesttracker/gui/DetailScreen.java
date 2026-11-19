@@ -26,7 +26,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.BundleContents;
 import net.minecraft.world.item.component.ItemContainerContents;
 import org.jetbrains.annotations.Nullable;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.*;
 
@@ -146,7 +146,11 @@ public final class DetailScreen extends Screen {
         }
         BundleContents bundle = stack.get(DataComponents.BUNDLE_CONTENTS);
         if (bundle != null && !bundle.isEmpty()) {
+//? if >=26.3 {
+            /*return new ArrayList<>(bundle.itemCopies().toList());
+*///?} else {
             return new ArrayList<>(bundle.itemCopyStream().toList());
+//?}
         }
         return null;
     }
@@ -176,7 +180,7 @@ public final class DetailScreen extends Screen {
     @Override
     public boolean keyPressed(KeyEvent input) {
         input = CloseKey.asEscape(this, minecraft, input);
-        if (input.key() == GLFW.GLFW_KEY_ESCAPE && !path.isEmpty()) {
+        if (input.key() == InputConstants.KEY_ESCAPE && !path.isEmpty()) {
             path.removeLast(); // like a file explorer: Esc goes up one folder first
             selected = -1;
             return true;

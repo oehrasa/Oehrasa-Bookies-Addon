@@ -5,6 +5,9 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.BlockPosUtil;
+import com.AutoBookshelf.addon.utils.EntityUtil;
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -26,7 +29,9 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.WeatheringCopper;
+//? if >=26.2 {
 import net.minecraft.world.level.block.WeatheringCopperCollection;
+//?}
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
@@ -56,29 +61,76 @@ public class UnwaxAura extends Module {
         @Override public String toString() { return title; }
     }
 
+    // 26.2 registers each WeatheringCopper family as a WeatheringCopperCollection<Block> record;
+    // 26.1.2 registers flat Block constants instead, so the same families are spelled out there.
+    // Family members are listed in WeatherState order (UNAFFECTED, EXPOSED, WEATHERED, OXIDIZED).
+//? if >=26.2 {
     private static final List<WeatheringCopperCollection<Block>> COPPER_FAMILIES = List.of(
         Blocks.COPPER_BLOCK, Blocks.CUT_COPPER, Blocks.CUT_COPPER_STAIRS, Blocks.CUT_COPPER_SLAB,
         Blocks.CHISELED_COPPER, Blocks.COPPER_DOOR, Blocks.COPPER_TRAPDOOR, Blocks.COPPER_GRATE, Blocks.COPPER_BULB,
         Blocks.COPPER_GOLEM_STATUE
     );
+//?} else {
+    /*private static final List<Block[]> COPPER_WEATHERING = List.of(
+        new Block[]{Blocks.COPPER_BLOCK, Blocks.EXPOSED_COPPER, Blocks.WEATHERED_COPPER, Blocks.OXIDIZED_COPPER},
+        new Block[]{Blocks.CUT_COPPER, Blocks.EXPOSED_CUT_COPPER, Blocks.WEATHERED_CUT_COPPER, Blocks.OXIDIZED_CUT_COPPER},
+        new Block[]{Blocks.CUT_COPPER_STAIRS, Blocks.EXPOSED_CUT_COPPER_STAIRS, Blocks.WEATHERED_CUT_COPPER_STAIRS, Blocks.OXIDIZED_CUT_COPPER_STAIRS},
+        new Block[]{Blocks.CUT_COPPER_SLAB, Blocks.EXPOSED_CUT_COPPER_SLAB, Blocks.WEATHERED_CUT_COPPER_SLAB, Blocks.OXIDIZED_CUT_COPPER_SLAB},
+        new Block[]{Blocks.CHISELED_COPPER, Blocks.EXPOSED_CHISELED_COPPER, Blocks.WEATHERED_CHISELED_COPPER, Blocks.OXIDIZED_CHISELED_COPPER},
+        new Block[]{Blocks.COPPER_DOOR, Blocks.EXPOSED_COPPER_DOOR, Blocks.WEATHERED_COPPER_DOOR, Blocks.OXIDIZED_COPPER_DOOR},
+        new Block[]{Blocks.COPPER_TRAPDOOR, Blocks.EXPOSED_COPPER_TRAPDOOR, Blocks.WEATHERED_COPPER_TRAPDOOR, Blocks.OXIDIZED_COPPER_TRAPDOOR},
+        new Block[]{Blocks.COPPER_GRATE, Blocks.EXPOSED_COPPER_GRATE, Blocks.WEATHERED_COPPER_GRATE, Blocks.OXIDIZED_COPPER_GRATE},
+        new Block[]{Blocks.COPPER_BULB, Blocks.EXPOSED_COPPER_BULB, Blocks.WEATHERED_COPPER_BULB, Blocks.OXIDIZED_COPPER_BULB},
+        new Block[]{Blocks.COPPER_GOLEM_STATUE, Blocks.EXPOSED_COPPER_GOLEM_STATUE, Blocks.WEATHERED_COPPER_GOLEM_STATUE, Blocks.OXIDIZED_COPPER_GOLEM_STATUE}
+    );
+
+    private static final List<Block[]> COPPER_WAXED = List.of(
+        new Block[]{Blocks.WAXED_COPPER_BLOCK, Blocks.WAXED_EXPOSED_COPPER, Blocks.WAXED_WEATHERED_COPPER, Blocks.WAXED_OXIDIZED_COPPER},
+        new Block[]{Blocks.WAXED_CUT_COPPER, Blocks.WAXED_EXPOSED_CUT_COPPER, Blocks.WAXED_WEATHERED_CUT_COPPER, Blocks.WAXED_OXIDIZED_CUT_COPPER},
+        new Block[]{Blocks.WAXED_CUT_COPPER_STAIRS, Blocks.WAXED_EXPOSED_CUT_COPPER_STAIRS, Blocks.WAXED_WEATHERED_CUT_COPPER_STAIRS, Blocks.WAXED_OXIDIZED_CUT_COPPER_STAIRS},
+        new Block[]{Blocks.WAXED_CUT_COPPER_SLAB, Blocks.WAXED_EXPOSED_CUT_COPPER_SLAB, Blocks.WAXED_WEATHERED_CUT_COPPER_SLAB, Blocks.WAXED_OXIDIZED_CUT_COPPER_SLAB},
+        new Block[]{Blocks.WAXED_CHISELED_COPPER, Blocks.WAXED_EXPOSED_CHISELED_COPPER, Blocks.WAXED_WEATHERED_CHISELED_COPPER, Blocks.WAXED_OXIDIZED_CHISELED_COPPER},
+        new Block[]{Blocks.WAXED_COPPER_DOOR, Blocks.WAXED_EXPOSED_COPPER_DOOR, Blocks.WAXED_WEATHERED_COPPER_DOOR, Blocks.WAXED_OXIDIZED_COPPER_DOOR},
+        new Block[]{Blocks.WAXED_COPPER_TRAPDOOR, Blocks.WAXED_EXPOSED_COPPER_TRAPDOOR, Blocks.WAXED_WEATHERED_COPPER_TRAPDOOR, Blocks.WAXED_OXIDIZED_COPPER_TRAPDOOR},
+        new Block[]{Blocks.WAXED_COPPER_GRATE, Blocks.WAXED_EXPOSED_COPPER_GRATE, Blocks.WAXED_WEATHERED_COPPER_GRATE, Blocks.WAXED_OXIDIZED_COPPER_GRATE},
+        new Block[]{Blocks.WAXED_COPPER_BULB, Blocks.WAXED_EXPOSED_COPPER_BULB, Blocks.WAXED_WEATHERED_COPPER_BULB, Blocks.WAXED_OXIDIZED_COPPER_BULB},
+        new Block[]{Blocks.WAXED_COPPER_GOLEM_STATUE, Blocks.WAXED_EXPOSED_COPPER_GOLEM_STATUE, Blocks.WAXED_WEATHERED_COPPER_GOLEM_STATUE, Blocks.WAXED_OXIDIZED_COPPER_GOLEM_STATUE}
+    );*/
+//?}
 
     private static Set<Block> waxedBlocks(WeatheringCopper.WeatherState... states) {
         Set<Block> set = new HashSet<>();
+//? if >=26.2 {
         for (WeatheringCopperCollection<Block> family : COPPER_FAMILIES) {
             for (WeatheringCopper.WeatherState state : states) {
                 set.add(family.waxed().pick(state));
             }
         }
+//?} else {
+        /*for (Block[] family : COPPER_WAXED) {
+            for (WeatheringCopper.WeatherState state : states) {
+                set.add(family[state.ordinal()]);
+            }
+        }*/
+//?}
         return Set.copyOf(set);
     }
 
     private static Set<Block> unwaxedBlocks(WeatheringCopper.WeatherState... states) {
         Set<Block> set = new HashSet<>();
+//? if >=26.2 {
         for (WeatheringCopperCollection<Block> family : COPPER_FAMILIES) {
             for (WeatheringCopper.WeatherState state : states) {
                 set.add(family.weathering().pick(state));
             }
         }
+//?} else {
+        /*for (Block[] family : COPPER_WEATHERING) {
+            for (WeatheringCopper.WeatherState state : states) {
+                set.add(family[state.ordinal()]);
+            }
+        }*/
+//?}
         return Set.copyOf(set);
     }
 
@@ -351,7 +403,7 @@ public class UnwaxAura extends Module {
     @EventHandler
     private void onTick(TickEvent.Pre event) {
         if (mc.player == null || mc.gameMode == null) return;
-        if (mc.gui.screen() != null) return;
+        if (ScreenUtil.current() != null) return;
 
         if (rotTimer > 0) {
             if (rotate.get()) {
@@ -404,7 +456,7 @@ public class UnwaxAura extends Module {
         BlockPos closest = null;
         int r = range.get();
         BlockPos playerPos = mc.player.blockPosition();
-        for (BlockPos pos : BlockPos.withinManhattan(playerPos, r, r, r)) {
+        for (BlockPos pos : BlockPosUtil.withinManhattan(playerPos, r, r, r)) {
             BlockState state = mc.level.getBlockState(pos);
             if (!isBlockTarget(state)) continue;
             double dist = pos.distSqr(playerPos);
@@ -464,7 +516,11 @@ public class UnwaxAura extends Module {
         Vec3 hitVec = Vec3.atCenterOf(currentTarget);
         BlockHitResult hit = new BlockHitResult(hitVec, Direction.UP, currentTarget, false);
         mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        //? if >=26.3 {
+        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        *///?} else {
+        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+        //?}
         mc.options.keyShift.setDown(false);
         stage = Stage.WAIT_UNWAX;
         actionTimer = unwaxDelay.get();
@@ -485,7 +541,11 @@ public class UnwaxAura extends Module {
             }
         }
         mc.gameMode.interact(mc.player, golem, new EntityHitResult(golem), InteractionHand.MAIN_HAND);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        //? if >=26.3 {
+        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        *///?} else {
+        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+        //?}
         stage = Stage.WAIT_UNWAX;
         actionTimer = unwaxDelay.get();
     }
@@ -554,7 +614,11 @@ public class UnwaxAura extends Module {
         } else {
             mc.gameMode.continueDestroyBlock(currentTarget, Direction.UP);
         }
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        //? if >=26.3 {
+        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        *///?} else {
+        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+        //?}
         stage = Stage.BREAKING;
         actionTimer = 1;
     }
@@ -568,7 +632,11 @@ public class UnwaxAura extends Module {
             breakingStarted = false;
         } else {
             mc.gameMode.continueDestroyBlock(currentTarget, Direction.UP);
-            mc.player.swing(InteractionHand.MAIN_HAND);
+            //? if >=26.3 {
+            /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+            *///?} else {
+            EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+            //?}
             actionTimer = 1;
         }
     }
@@ -655,7 +723,7 @@ public class UnwaxAura extends Module {
         espGolems.clear();
         int r = range.get();
         BlockPos playerPos = mc.player.blockPosition();
-        for (BlockPos pos : BlockPos.withinManhattan(playerPos, r, r, r)) {
+        for (BlockPos pos : BlockPosUtil.withinManhattan(playerPos, r, r, r)) {
             if (isBlockTarget(mc.level.getBlockState(pos))) {
                 espBlocks.add(pos.immutable());
             }

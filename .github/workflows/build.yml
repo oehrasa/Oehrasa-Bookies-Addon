@@ -1,7 +1,6 @@
-# Automatically build the project and run any configured tests for every push
-# and submitted pull request. This can help catch issues that only occur on
-# certain platforms or Java versions, and provides a first line of defence
-# against bad commits.
+# Builds the stonecutter matrix (26.1.2 / 26.2 / 26.3) on every push and pull
+# request. The stonecutter node set itself lives in stonecutter.properties.toml;
+# this workflow only builds it.
 
 name: build
 on: [ pull_request, push ]
@@ -17,12 +16,12 @@ jobs:
       - name: setup jdk
         uses: actions/setup-java@v4
         with:
-          java-version: '21'
+          java-version: '25'
           distribution: 'microsoft'
       - name: make gradle wrapper executable
         run: chmod +x ./gradlew
-      - name: build
-        run: ./gradlew build
+      - name: build the stonecutter matrix
+        run: ./gradlew buildAndCollect
       - name: capture build artifacts
         uses: actions/upload-artifact@v4
         with:

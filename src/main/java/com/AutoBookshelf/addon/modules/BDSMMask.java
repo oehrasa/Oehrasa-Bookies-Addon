@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import baritone.api.BaritoneAPI;
 import baritone.api.pathing.goals.GoalBlock;
 import com.AutoBookshelf.addon.Addon;
@@ -47,7 +48,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
-import org.lwjgl.glfw.GLFW;
+import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.Set;
 import java.util.function.Predicate;
@@ -469,7 +470,7 @@ public class BDSMMask extends Module {
             }
             prevKeybindPressed = now;
         } else if (targetMode.get() == TargetMode.MiddleClick) {
-            boolean pressed = GLFW.glfwGetMouseButton(GLFW.glfwGetCurrentContext(), GLFW.GLFW_MOUSE_BUTTON_MIDDLE) == GLFW.GLFW_PRESS;
+            boolean pressed = mc.mouseHandler.isMiddlePressed();
             if (mc.crosshairPickEntity instanceof LivingEntity living && isEntityAllowed(living)) {
                 if (pressed && !prevMiddlePressed && state == State.IDLE) {
                     targetEntity = living;
@@ -944,7 +945,7 @@ public class BDSMMask extends Module {
     }
 
     private boolean stuffDispenser() {
-        if (!(mc.gui.screen() instanceof AbstractContainerScreen<?> screen)) return false;
+        if (!(ScreenUtil.current() instanceof AbstractContainerScreen<?> screen)) return false;
 
         // Must be our dispenser's menu, not merely *any* container screen: the player can open
         // something else in the tick between the GUI opening and STUFF running, and the slot
@@ -1308,7 +1309,7 @@ public class BDSMMask extends Module {
         // open keeps the module's clicks being predicted locally while the server ignores them.
         // Only our own dispenser menu is closed, never a container the player opened.
         if (mc.player != null
-            && mc.gui.screen() instanceof AbstractContainerScreen<?> screen
+            && ScreenUtil.current() instanceof AbstractContainerScreen<?> screen
             && screen.getMenu() instanceof DispenserMenu) {
             mc.player.closeContainer();
         }

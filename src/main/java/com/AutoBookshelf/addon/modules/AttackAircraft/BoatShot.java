@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules.AttackAircraft;
 
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.mixin.accessor.PlayerMoveC2SPacketAccessor;
 import com.AutoBookshelf.addon.modules.AircraftPhase.BoatPhase;
@@ -40,7 +41,11 @@ import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.game.*;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
+//? if >=26.2 {
 import net.minecraft.world.entity.EntityTypes;
+//?} else {
+/*import net.minecraft.world.entity.EntityType;*/
+//?}
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.player.Player;
@@ -503,7 +508,7 @@ public final class BoatShot extends Module {
     public boolean retainAutomaticDraw(Player owner) {
         return BoatShotAutomation.retainDraw(ownedAutoDraw, owner == player && player != null && player.isUsingItem()
                 && player.getUsedItemHand() == InteractionHand.MAIN_HAND && player.getUseItem().getItem() instanceof BowItem,
-            driving() && automaticFiring() && mc.gui.screen() == null && !manualMovement() && !web.busy()
+            driving() && automaticFiring() && ScreenUtil.current() == null && !manualMovement() && !web.busy()
                 && !Double.isFinite(escapeY) && validTarget(target), automaticReleasing || sendingRelease);
     }
 
@@ -697,15 +702,15 @@ public final class BoatShot extends Module {
         updateCover();
         pauseConflicts();
         if (cycle.stage() != BoatShotCycle.Stage.IDLE && (phase == null || !phase.shotReady(boat))) abort("Boat Phase paused", true);
-        if (pending != null && (!sameBow() || cycle.expired(tick) || mc.gui.screen() != null
+        if (pending != null && (!sameBow() || cycle.expired(tick) || ScreenUtil.current() != null
             || Input.isPressed(mc.options.keyShift) || queuedAutomatic && manualMovement() || phase == null || !phase.shotReady(boat)))
             abort("shot interrupted", true);
-        if (cycle.stage() == BoatShotCycle.Stage.RETURNING && (manualMovement() || mc.gui.screen() != null)) abort("return canceled", false);
+        if (cycle.stage() == BoatShotCycle.Stage.RETURNING && (manualMovement() || ScreenUtil.current() != null)) abort("return canceled", false);
         if (cycle.stage() == BoatShotCycle.Stage.IDLE) status = phase == null || !phase.isActive()
             ? "enable Boat Phase" : mount.ready() ? target == null ? "ready" : "locked: " + target.getName().getString() : "reboard with Boat Shot enabled";
         String capturePause = Double.isFinite(escapeY) ? "retreating from height limit" : !follows() ? "follow is off" : !aimEnabled() ? "auto aim is off"
                                                                                                                          : !(player.getMainHandItem().getItem() instanceof BowItem) ? "select the bow"
-                                                                                                                           : manualMovement() ? "manual steering" : mc.gui.screen() != null ? "screen open"
+                                                                                                                           : manualMovement() ? "manual steering" : ScreenUtil.current() != null ? "screen open"
                                                                                                                                                                     : cycle.stage() != BoatShotCycle.Stage.IDLE ? "shot in progress"
                                                                                                                                                                       : phase == null || !phase.shotReady(boat) ? "Boat Phase paused" : !mount.ready() ? "reboard to prime"
                                                                                                                                                                                                                                         : tick < nextAutoTick ? "shot delay" : null;
@@ -732,12 +737,12 @@ public final class BoatShot extends Module {
     }
 
     public boolean inventoryFollowAllowed() {
-        return followInventory.get() && mc.gui.screen() instanceof InventoryScreen
+        return followInventory.get() && ScreenUtil.current() instanceof InventoryScreen
             && follows() && aimEnabled() && driving() && validTarget(target);
     }
 
     private void checkCeiling() {
-        if (!follows() || !validTarget(target) || phase == null || !phase.shotReady(boat) || manualMovement() || mc.gui.screen() != null) return;
+        if (!follows() || !validTarget(target) || phase == null || !phase.shotReady(boat) || manualMovement() || ScreenUtil.current() != null) return;
         AABB body = observedTargetBox();
         if (!BoatShotAutomation.ceilingDanger(boat.getY(), body.minY, body.maxY, phase.captureCeiling(boat), shotBurst() + 6)) return;
         stopAutomaticDraw();
@@ -819,7 +824,7 @@ public final class BoatShot extends Module {
             reject(event, "reboard with Boat Shot enabled");
             return;
         }
-        if (phase == null || !phase.shotReady(boat) || lastWire == null || corrected.get() || mc.gui.screen() != null) {
+        if (phase == null || !phase.shotReady(boat) || lastWire == null || corrected.get() || ScreenUtil.current() != null) {
             reject(event, "wait for Boat Phase to be ready");
             return;
         }
@@ -952,7 +957,11 @@ public final class BoatShot extends Module {
         if (!(event.packet instanceof ServerboundMoveVehiclePacket packet) || !driving()) return;
         if (!eventGate.vehicle(packet)) return;
         Vec3 previous = lastWire;
+//? if >=26.3 {
+        /*lastWire = packet.movingTo().position();
+*///?} else {
         lastWire = packet.position();
+//?}
         if (pending == null || previous == null || cycle.stage() != BoatShotCycle.Stage.MOVED) return;
         Vec3 actual = lastWire.subtract(previous);
         if (corrected.get() || !sameBow() || !cycle.sent(tick, previous.y, lastWire.y, actual.horizontalDistance())
@@ -1030,7 +1039,11 @@ public final class BoatShot extends Module {
     }
 
     private LivingEntity chooseCrosshairTarget() {
+        //? if >=26.2 {
         var camera = mc.gameRenderer.mainCamera();
+        //?} else {
+        /*var camera = mc.gameRenderer.getMainCamera();
+        *///?}
         Vec3 eye = camera.position(), view = Vec3.directionFromRotation(camera.xRot(), camera.yRot());
         LivingEntity best = null;
         BoatShotCrosshair.Score bestScore = null;
@@ -1059,8 +1072,12 @@ public final class BoatShot extends Module {
     }
 
     private static Vec3 observedPosition(LivingEntity entity) {
+//? if >=26.3 {
+        /*return entity.getPosition(1.0F);
+*///?} else {
         var interpolation = entity.getInterpolation();
         return interpolation == null ? entity.position() : interpolation.position();
+//?}
     }
 
     private AABB observedTargetBox() {
@@ -1121,7 +1138,11 @@ public final class BoatShot extends Module {
         TextRenderer text = TextRenderer.get();
         if (text.isBuilding()) return;
         String label = "BoatShot | " + status;
+        //? if >=26.2 {
         text.begin(event.graphics, 1.2);
+//?} else {
+        /*text.begin(1.2);
+*///?}
         double width = text.getWidth(label, true), height = text.getHeight();
         double x = Math.max(4, (event.screenWidth - width) / 2), y = Math.max(4, event.screenHeight - 100 - height);
         Renderer2D.COLOR.begin();
@@ -1151,7 +1172,7 @@ public final class BoatShot extends Module {
             resetCover();
             return;
         }
-        if (manualMovement() || mc.gui.screen() != null || pending != null || cycle.stage() != BoatShotCycle.Stage.IDLE
+        if (manualMovement() || ScreenUtil.current() != null || pending != null || cycle.stage() != BoatShotCycle.Stage.IDLE
             || !phase.shotReady(boat) || !(player.getMainHandItem().getItem() instanceof BowItem) || tick < nextCoverSearch) return;
         nextCoverSearch = tick + 20;
         AABB body = observedTargetBox();
@@ -1219,7 +1240,7 @@ public final class BoatShot extends Module {
     public Vec3 followMovement(AbstractBoat candidate, double speed, double vertical) {
         if (!follows() || !aimEnabled() || candidate != boat || !driving() || !validTarget(target)
             || !inventoryFollowAllowed() && !(player.getMainHandItem().getItem() instanceof BowItem)
-            || manualMovement() || mc.gui.screen() != null && !inventoryFollowAllowed()
+            || manualMovement() || ScreenUtil.current() != null && !inventoryFollowAllowed()
             || pending != null) return null;
         if (coverMode) {
             if (coverRoute == null) return Vec3.ZERO;
@@ -1259,7 +1280,7 @@ public final class BoatShot extends Module {
     private void automaticDraw() {
         boolean autonomous = automaticFiring();
         boolean rapid = autonomous || rapidFire.get();
-        String pause = Double.isFinite(escapeY) ? "disengaging" : !validTarget(target) ? "lock a target to begin" : mc.gui.screen() != null ? "paused: screen open"
+        String pause = Double.isFinite(escapeY) ? "disengaging" : !validTarget(target) ? "lock a target to begin" : ScreenUtil.current() != null ? "paused: screen open"
                                                                                                                     : manualMovement() ? "paused: manual steering" : !mount.ready() ? "reboard to prime bow" : phase == null || !phase.shotReady(boat) ? "waiting for BoatPhase"
                                                                                                                                                                                                                : !(player.getMainHandItem().getItem() instanceof BowItem) ? "paused: select a bow" : null;
         if (pause != null || (!autonomous && (!autoRelease.get() || !Input.isPressed(mc.options.keyUse))) || !aimEnabled() || mc.gameMode == null) {
@@ -1377,7 +1398,11 @@ public final class BoatShot extends Module {
         if (connection != null && event.connection == connection && !event.isCancelled()) feedback.offer(event.packet);
         if (connection != null && event.connection == connection && !event.isCancelled()
             && event.packet instanceof ClientboundAddEntityPacket spawn && spawn.getData() == playerId
+//? if >=26.2 {
             && (spawn.getType() == EntityTypes.ARROW || spawn.getType() == EntityTypes.SPECTRAL_ARROW)) {
+//?} else {
+            /*&& (spawn.getType() == EntityType.ARROW || spawn.getType() == EntityType.SPECTRAL_ARROW)) {*/
+//?}
             if (spawns.size() >= 32) spawns.poll();
             spawns.offer(spawn);
         }

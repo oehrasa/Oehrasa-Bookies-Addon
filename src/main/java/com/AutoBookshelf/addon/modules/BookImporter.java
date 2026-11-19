@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.mixin.accessor.AbstractSignEditScreenAccessor;
 import com.AutoBookshelf.addon.modules.remote.BookEntry;
@@ -29,12 +30,19 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ServerboundEditBookPacket;
 import net.minecraft.network.protocol.game.ServerboundSignUpdatePacket;
+//? if >=26.3 {
+/*import net.minecraft.world.level.block.entity.SignTextSlot;
+*///?}
 import net.minecraft.server.network.Filterable;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
+//? if >=26.3 {
+/*import com.AutoBookshelf.addon.utils.FileDialogs;
+*///?} else {
 import org.lwjgl.util.tinyfd.TinyFileDialogs;
+//?}
 
 import java.io.File;
 import java.io.IOException;
@@ -364,7 +372,7 @@ public class BookImporter extends Module {
                 // it's cleared either by onRemoteSelectionConfirmed()
                 // finishing its download phase, or by the cancel callback
                 // below if the player closes the screen without picking anything.
-                mc.gui.setScreen(new RemoteBookSelectScreen(entries, this::onRemoteSelectionConfirmed, () -> remoteBusy = false, pagesPerBook.get(), screenWidth.get()));
+                ScreenUtil.set(new RemoteBookSelectScreen(entries, this::onRemoteSelectionConfirmed, () -> remoteBusy = false, pagesPerBook.get(), screenWidth.get()));
             }));
     }
 
@@ -681,6 +689,12 @@ public class BookImporter extends Module {
 
         WButton selectBtn = row.add(theme.button("Select File")).widget();
         selectBtn.action = () -> {
+            //? if >=26.3 {
+            /*String path = FileDialogs.chooseFile(
+                "Select a .txt file",
+                new File(mc.gameDirectory, importFolder.get()).getAbsolutePath()
+            );
+            *///?} else {
             String path = TinyFileDialogs.tinyfd_openFileDialog(
                 "Select a .txt file",
                 new File(mc.gameDirectory, importFolder.get()).getAbsolutePath(),
@@ -688,6 +702,7 @@ public class BookImporter extends Module {
                 null,
                 false
             );
+            //?}
             if (path != null) {
                 cancelActiveImport();
                 selectedFilePath.set(path);
@@ -841,7 +856,11 @@ public class BookImporter extends Module {
         event.cancel();
         String[] lines = getNextGroupSignLines();
         if (signPacketQueue.isEmpty()) signPacketTimer = 0;
+//? if >=26.3 {
+        /*signPacketQueue.addLast(new ServerboundSignUpdatePacket(sign.getBlockPos(), java.util.List.of(lines), SignTextSlot.FRONT));
+*///?} else {
         signPacketQueue.addLast(new ServerboundSignUpdatePacket(sign.getBlockPos(), true, lines[0], lines[1], lines[2], lines[3]));
+//?}
     }
 
     private boolean refillCurrentSignWords() {

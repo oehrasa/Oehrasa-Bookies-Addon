@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.commands;
 
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.modules.InventoryTracker;
 import com.AutoBookshelf.addon.utils.InventoryTrackerScreen;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -82,7 +83,7 @@ public class InvseeCommand extends Command {
                 }
 
                 Player finalTarget = target;
-                mc.execute(() -> mc.gui.setScreen(new InventoryTrackerScreen(finalTarget, tracked)));
+                mc.execute(() -> ScreenUtil.set(new InventoryTrackerScreen(finalTarget, tracked)));
                 return SINGLE_SUCCESS;
             })
             .then(literal("gui")
@@ -104,7 +105,7 @@ public class InvseeCommand extends Command {
                     }
 
                     mod.startPredicting(target.getUUID());
-                    mc.execute(() -> mc.gui.setScreen(new BookViewScreen(BookViewScreen.BookAccess.fromItem(book))));
+                    mc.execute(() -> ScreenUtil.set(new BookViewScreen(BookViewScreen.BookAccess.fromItem(book))));
                     return SINGLE_SUCCESS;
                 })
             )

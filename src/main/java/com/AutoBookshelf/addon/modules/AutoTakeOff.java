@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.EntityUtil;
 import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
@@ -258,14 +259,14 @@ public class AutoTakeOff extends Module {
         if (rocketSlot == -1) {
             if (mc.player.getOffhandItem().getItem() instanceof FireworkRocketItem) {
                 mc.gameMode.useItem(mc.player, InteractionHand.OFF_HAND);
-                if (!silentRockets.get()) mc.player.swing(InteractionHand.OFF_HAND);
+                if (!silentRockets.get()) EntityUtil.swing(mc.player, InteractionHand.OFF_HAND);
             }
             return;
         }
 
         InvUtils.swap(rocketSlot, true);
         mc.gameMode.useItem(mc.player, InteractionHand.MAIN_HAND);
-        if (!silentRockets.get()) mc.player.swing(InteractionHand.MAIN_HAND);
+        if (!silentRockets.get()) EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
         InvUtils.swapBack();
     }
 

@@ -5,6 +5,7 @@
 // the rest of this addon remains under GPL-3.0 as before (AGPL-3.0 section 13 permits the combined work).
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.EntityUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.HotbarSwap;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -253,7 +254,11 @@ public class B36 extends Module {
                     } else {
                         // Light TNT
                         useFlintAndSteel(blockPos);
-                        mc.player.swing(InteractionHand.MAIN_HAND);
+                        //? if >=26.3 {
+                        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                        *///?} else {
+                        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+                        //?}
                     }
 
                     placed = true;
@@ -301,7 +306,11 @@ public class B36 extends Module {
             ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ZERO, Direction.DOWN));
 
         // Visual feedback
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        //? if >=26.3 {
+        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        *///?} else {
+        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+        //?}
     }
 
     /**
@@ -325,7 +334,11 @@ public class B36 extends Module {
         Vec3 hitPos = new Vec3(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
         BlockHitResult hit = new BlockHitResult(hitPos, Direction.UP, pos, false);
         mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hit);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        //? if >=26.3 {
+        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        *///?} else {
+        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+        //?}
     }
 
     /**

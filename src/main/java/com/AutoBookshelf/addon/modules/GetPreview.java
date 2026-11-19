@@ -215,10 +215,16 @@ public class GetPreview extends Module {
     public void renderBundleOverlay(GuiGraphicsExtractor context, int x, int y, ItemStack stack) {
         // When HUD is hidden (F1), don't render hotbar overlays
         if (mc.gameRenderer != null) {
+//? if >=26.2 {
             var grs = mc.gameRenderer.gameRenderState();
             if (grs != null && grs.guiRenderState != null && grs.guiRenderState.isHudHidden) {
                 return;
             }
+//?} else {
+            /*if (mc.options.hideGui) {
+                return;
+            }*/
+//?}
         }
         if (isRenderingPreview) return;
         if (stack.isEmpty()) return;
@@ -454,7 +460,11 @@ public class GetPreview extends Module {
             } else {
                 BundleContents contents = stack.get(DataComponents.BUNDLE_CONTENTS);
                 if (contents == null || contents.isEmpty()) return;
+//? if >=26.3 {
+                /*items = contents.itemCopies().toList();
+*///?} else {
                 items = contents.itemCopyStream().toList();
+//?}
             }
 
             if (items.isEmpty()) return;

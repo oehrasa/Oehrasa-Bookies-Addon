@@ -1,95 +1,86 @@
 plugins {
-    alias(libs.plugins.fabric.loom)
+    id("dev.kikugie.loom-back-compat")
 }
 
-val archivesBaseName = providers.gradleProperty("archives_base_name").get()
-val mavenGroup = providers.gradleProperty("maven_group").get()
+val modId = property("mod.id") as String
+val modName = property("mod.name") as String
+val modGroup = property("mod.group") as String
+val modVersion = property("mod.version") as String
+val mcCompat = property("mod.mc_compat") as String
 
-base {
-    archivesName = archivesBaseName
-    version = libs.versions.mod.version.get()
-    group = mavenGroup
+version = "$modVersion+${sc.current.version}"
+base.archivesName = modId
+group = modGroup
+
+val requiredJava: JavaVersion = when {
+    sc.current.parsed >= "26.1" -> JavaVersion.VERSION_25
+    else -> JavaVersion.VERSION_21
 }
 
 repositories {
-    maven {
-        name = "meteor-maven"
-        url = uri("https://maven.meteordev.org/releases")
-    }
-    maven {
-        name = "meteor-maven-snapshots"
-        url = uri("https://maven.meteordev.org/snapshots")
-    }
-}
-
-loom {
-    accessWidenerPath = file("src/main/resources/oehrasa.accesswidener")
+    maven("https://maven.meteordev.org/releases") { name = "meteor-maven" }
+    maven("https://maven.meteordev.org/snapshots") { name = "meteor-maven-snapshots" }
+    mavenCentral()
 }
 
 dependencies {
     // Fabric
-    minecraft(libs.minecraft)
-    implementation(libs.fabric.loader)
-    implementation(libs.fabric.api)
+    minecraft("com.mojang:minecraft:${sc.current.version}")
+    // Applies Mojang mappings on the obfuscated (1.21.x) versions; no-op on 26.1+.
+    loomx.applyMojangMappings()
+
+    modImplementation("net.fabricmc:fabric-loader:${property("deps.fabric_loader")}")
+    modImplementation("net.fabricmc.fabric-api:fabric-api:${property("deps.fabric_api")}")
 
     // Meteor
-    implementation(libs.meteor.client)
-    // Baritone
-    compileOnly(libs.baritone)
+    modImplementation("meteordevelopment:meteor-client:${sc.current.version}-SNAPSHOT")
+
+    // Baritone is a compile-only dependency: the addon integrates the shared
+    // `baritone.api` surface but does not bundle it; any API provider works.
+    compileOnly("meteordevelopment:baritone:${property("deps.baritone")}")
 
     // Gson
     implementation("com.google.code.gson:gson:2.10.1")
-    
 }
 
 java {
+    withSourcesJar()
+    targetCompatibility = requiredJava
+    sourceCompatibility = requiredJava
+
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(libs.versions.jdk.get().toInt()))
+        languageVersion = JavaLanguageVersion.of(requiredJava.majorVersion)
     }
 }
 
-fun toMinecraftCompat(version: String): String {
-    val stable = Regex("""^(\d{2})\.([1-9]\d*)(?:\.(\d+))?$""")
-
-    stable.matchEntire(version)?.let {
-        val (year, drop, _) = it.destructured
-        return "~$year.$drop"
-    }
-
-    val pre = Regex("""^(\d{2})\.([1-9]\d*)-pre[-.](\d+)$""")
-    pre.matchEntire(version)?.let {
-        return version.replace("-pre-", "-pre.")
-    }
-
-    val rc = Regex("""^(\d{2})\.([1-9]\d*)-rc[-.](\d+)$""")
-    rc.matchEntire(version)?.let {
-        return version.replace("-rc-", "-rc.")
-    }
-
-    return version
+loom {
+    // Stonecutter nests each non-active node as a subproject, so paths must
+    // be resolved against the root project that owns src/main/resources.
+    accessWidenerPath = rootProject.layout.projectDirectory.file("src/main/resources/oehrasa.accesswidener")
 }
 
 tasks {
     processResources {
-        val propertyMap = mapOf(
-            "version" to project.version,
-            "minecraft_version" to toMinecraftCompat(libs.versions.minecraft.get()),
-            "jdk_version" to libs.versions.jdk.get(),
+        val props = mapOf(
+            "version" to modVersion,
+            "minecraft" to mcCompat,
+            "java" to requiredJava.majorVersion,
+            "mod_name" to modName,
         )
 
-        inputs.properties(propertyMap)
-        filesMatching("fabric.mod.json") {
-            expand(propertyMap)
-        }
+        inputs.properties(props)
+        filesMatching("fabric.mod.json") { expand(props) }
     }
 
     jar {
-        val baseName = archivesBaseName   // local capture
-
-        inputs.property("archivesName", baseName)
+        // Local capture: config-cache can't serialize closures that reach back into the
+        // script object graph (the `modId` val above), so give the renamed file a plain
+        // local val instead.
+        val baseNameForJar = modId
+        inputs.property("archivesName", baseNameForJar)
 
         from("LICENSE") {
-            rename { "${it}_$baseName" }
+            rename { "${it}_${baseNameForJar}" }
         }
         // The vendored AGPL, Apache and MIT texts for the portions under those terms, plus
         // the notice that attributes them. All ship inside the jar.
@@ -98,7 +89,7 @@ tasks {
         }
         from("THIRD_PARTY_NOTICES.md") {
             into("META-INF")
-            rename { "THIRD_PARTY_NOTICES_$baseName.md" }
+            rename { "THIRD_PARTY_NOTICES_${baseNameForJar}.md" }
         }
     }
 
@@ -109,5 +100,15 @@ tasks {
                 "-Xlint:unchecked"
             )
         )
+    }
+
+    register<Copy>("buildAndCollect") {
+        group = "build"
+        description = "Builds this version's jars and copies them to build/libs/{mod version}/ at the root"
+
+        inputs.property("version", modVersion)
+        from(loomx.modJar.flatMap { it.archiveFile }, loomx.modSourcesJar.flatMap { it.archiveFile })
+        into(rootProject.layout.buildDirectory.file("libs/$modVersion"))
+        dependsOn("build")
     }
 }

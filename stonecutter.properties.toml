@@ -1,0 +1,34 @@
+# Per-node toolchain and API knobs. The Minecraft / meteor-client dep versions
+# derive from the stonecutter node itself ("<node>" and "<node>-SNAPSHOT").
+
+mod.id = "autobookshelf-addon"
+mod.name = "AutoBookshelf Addon"
+mod.group = "com.AutoBookshelf"
+mod.version = "1.2.4-Erusea"
+
+# Defaults (overridden per node below where different)
+loomx.loom_version = "1.17-SNAPSHOT"
+deps.fabric_loader = "0.19.3"
+deps.fabric_api = "0.157.0+26.2"
+deps.baritone = "26.2-SNAPSHOT"
+
+["26.1.2"]
+mod.mc_compat = "~26.1"
+loomx.loom_version = "1.16-SNAPSHOT"
+deps.fabric_loader = "0.19.2"
+deps.fabric_api = "0.146.1+26.1.2"
+deps.baritone = "26.1-SNAPSHOT"
+
+["26.2"]
+mod.mc_compat = "~26.2"
+loomx.loom_version = "1.17-SNAPSHOT"
+deps.fabric_loader = "0.19.3"
+deps.fabric_api = "0.157.0+26.2"
+deps.baritone = "26.2-SNAPSHOT"
+
+["26.3"]
+mod.mc_compat = "~26.3"
+loomx.loom_version = "1.18-SNAPSHOT"
+deps.fabric_loader = "0.19.5"
+deps.fabric_api = "0.163.0+26.3"
+deps.baritone = "26.3-SNAPSHOT"

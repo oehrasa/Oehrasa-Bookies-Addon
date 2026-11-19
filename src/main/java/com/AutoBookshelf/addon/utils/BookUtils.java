@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.utils;
 
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
@@ -449,7 +450,7 @@ public class BookUtils {
         int targetIndex = Math.max(0, Math.min(startPage - 1, Math.max(0, getPageCount(item) - 1)));
         mc.execute(() -> {
             BookViewScreen screen = new BookViewScreen(BookViewScreen.BookAccess.fromItem(item));
-            mc.gui.setScreen(screen);
+            ScreenUtil.set(screen);
             if (targetIndex != 0) screen.setPage(targetIndex);
         });
     }
@@ -857,7 +858,11 @@ public class BookUtils {
         if (!NametagUtils.to2D(vec3, scale)) return false;
 
         NametagUtils.begin(vec3, event.graphics);
+        //? if >=26.2 {
         TextRenderer.get().begin(event.graphics, 1, false, true);
+//?} else {
+        /*TextRenderer.get().begin(1, false, true);
+*///?}
 
         double lineHeight = TextRenderer.get().getHeight();
         double titleWidth = TextRenderer.get().getWidth(safeTitle);

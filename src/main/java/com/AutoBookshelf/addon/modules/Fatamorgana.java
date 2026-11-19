@@ -5,6 +5,7 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.utils.EntityUtil;
 import com.AutoBookshelf.addon.Addon;
 import it.unimi.dsi.fastutil.ints.*;
 import it.unimi.dsi.fastutil.objects.Object2LongOpenHashMap;
@@ -420,7 +421,11 @@ public class Fatamorgana extends Module {
         if (mc.player == null || mc.gameMode == null || !target.isAlive()) return;
         EntityHitResult hit = new EntityHitResult(target, target.position());
         mc.gameMode.interact(mc.player, target, hit, InteractionHand.MAIN_HAND);
-        mc.player.swing(InteractionHand.MAIN_HAND);
+        //? if >=26.3 {
+        /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+        *///?} else {
+        EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
+        //?}
     }
 
     private void interactBarrelTarget(BlockPos pos) {
@@ -428,7 +433,7 @@ public class Fatamorgana extends Module {
 
         BlockHitResult hitResult = new BlockHitResult(Vec3.atCenterOf(pos), Direction.UP, pos, false);
         InteractionResult result = mc.gameMode.useItemOn(mc.player, InteractionHand.MAIN_HAND, hitResult);
-        if (result.consumesAction()) mc.player.swing(InteractionHand.MAIN_HAND);
+        if (result.consumesAction()) EntityUtil.swing(mc.player, InteractionHand.MAIN_HAND);
     }
 
     private void doDepositing() {
