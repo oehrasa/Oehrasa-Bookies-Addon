@@ -3,7 +3,9 @@
     "26.3",
     "26.2",
     "26.1.2",
-    "1.21.11"
+    "1.21.11",
+    "1.21.8",
+    "1.21.4"
   ],
   "description": "Meteor Addon for Timid bookkeeper and Yuri Enjoyers <3",
   "tags": [
@@ -11,6 +13,7 @@
     "Render",
     "Movement",
     "Building",
+    "Exploit",
     "Misc",
     "QoL",
     "Automation"
