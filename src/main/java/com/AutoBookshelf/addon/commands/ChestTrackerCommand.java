@@ -6,6 +6,7 @@
 package com.AutoBookshelf.addon.commands;
 
 import com.AutoBookshelf.addon.modules.chesttracker.ChestTrackerModule;
+import com.AutoBookshelf.addon.modules.chesttracker.data.BankStorage;
 import com.AutoBookshelf.addon.modules.chesttracker.data.BlockRecord;
 import com.AutoBookshelf.addon.modules.chesttracker.data.ChestTrackerImport;
 import com.AutoBookshelf.addon.modules.chesttracker.data.ContainerRecord;
@@ -190,7 +191,11 @@ public class ChestTrackerCommand extends Command {
             ChestTrackerModule module = getModule();
             if (module == null) return SINGLE_SUCCESS;
             return bankInfo(module);
-        }).then(literal("merge").then(argument("address", StringArgumentType.string()).executes(context -> {
+        }).then(literal("path").executes(context -> {
+            ChestTrackerModule module = getModule();
+            if (module == null) return SINGLE_SUCCESS;
+            return bankPath(module);
+        })).then(literal("merge").then(argument("address", StringArgumentType.string()).executes(context -> {
             ChestTrackerModule module = getModule();
             if (module == null) return SINGLE_SUCCESS;
             String address = StringArgumentType.getString(context, "address");
@@ -242,6 +247,20 @@ public class ChestTrackerCommand extends Command {
         }
         info("Bank (highlight)%s(default) of server (highlight)%s(default): (highlight)%d(default) containers, dirty (highlight)%s(default), loading (highlight)%s(default).",
             bank.key, bank.server, bank.size(), bank.isDirty(), module.getBankManager().isLoading());
+        return SINGLE_SUCCESS;
+    }
+    private int bankPath(ChestTrackerModule module) {
+        if (module == null) return SINGLE_SUCCESS;
+        MemoryBank bank = module.getBank();
+        BankStorage storage = module.getBankManager() != null ? module.getBankManager().storage() : null;
+        if (storage == null) {
+            error("No storage open.");
+            return SINGLE_SUCCESS;
+        }
+        info("ChestTracker root: (highlight)%s(default)", storage.root().toAbsolutePath());
+        info("Banks folder:     (highlight)%s(default)", storage.root().resolve("banks").toAbsolutePath());
+        info("Journal folder:   (highlight)%s(default)", storage.root().resolve("journal").toAbsolutePath());
+        if (bank != null) info("Current bank:     (highlight)%s(default)", storage.bankFile(bank.key).toAbsolutePath());
         return SINGLE_SUCCESS;
     }
 

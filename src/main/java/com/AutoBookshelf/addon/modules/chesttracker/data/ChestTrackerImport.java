@@ -43,7 +43,25 @@ public final class ChestTrackerImport {
      */
     public static List<Path> findFiles(Path gameDir, Path root) {
         List<Path> out = new ArrayList<>();
-        for (Path dir : List.of(importDir(root), gameDir.resolve("chesttracker"))) {
+        List<Path> dirs = new ArrayList<>();
+        dirs.add(importDir(root));
+        dirs.add(gameDir.resolve("chesttracker"));
+        Path instances = gameDir.getParent() != null ? gameDir.getParent().getParent() : null;
+        if (instances != null && Files.isDirectory(instances)) {
+            try (Stream<Path> s = Files.list(instances)) {
+                s.forEach(inst -> {
+                    Path r = inst.resolve("minecraft/meteor-client/ChestTracker");
+                    if (Files.isDirectory(r) && !r.equals(root)) {
+                        dirs.add(r.resolve("import"));
+                        dirs.add(r.resolve("banks"));
+                    }
+                    Path r2 = inst.resolve("minecraft/chesttracker");
+                    if (Files.isDirectory(r2) && !r2.equals(root)) dirs.add(r2);
+                });
+            } catch (IOException ignored) {
+            }
+        }
+        for (Path dir : dirs) {
             if (!Files.isDirectory(dir) || dir.equals(root)) continue;
             try (Stream<Path> files = Files.walk(dir, 4)) {
                 files.filter(p -> p.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".nbt"))
@@ -53,7 +71,9 @@ public final class ChestTrackerImport {
                 // An unreadable folder just offers nothing.
             }
         }
-        return out;
+        // de-dupe
+        LinkedHashSet<Path> dedup = new LinkedHashSet<>(out);
+        return new ArrayList<>(dedup);
     }
 
     public static Path importDir(Path root) {

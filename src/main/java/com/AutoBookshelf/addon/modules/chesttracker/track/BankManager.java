@@ -5,6 +5,7 @@ package com.AutoBookshelf.addon.modules.chesttracker.track;
 import com.AutoBookshelf.addon.modules.chesttracker.TrackerConfig;
 import com.AutoBookshelf.addon.modules.chesttracker.TrackerLog;
 import com.AutoBookshelf.addon.modules.chesttracker.data.*;
+import com.AutoBookshelf.addon.modules.chesttracker.data.ChestTrackerImport;
 import com.AutoBookshelf.addon.modules.chesttracker.search.Tally;
 import meteordevelopment.meteorclient.utils.player.ChatUtils;
 import net.minecraft.client.Minecraft;
@@ -138,6 +139,21 @@ public final class BankManager {
             }
         }
         pendingWarning = result.warning();
+        // Auto-discovery hint: an empty bank on a server that has data in another instance (or a
+        // legacy tracked_containers.json) is the most common "where did my data go" case. Surface
+        // it as a warning instead of staying silent.
+        if (bank.size() == 0 && client.player != null) {
+            try {
+                java.nio.file.Path gameDir = storage.root().getParent().getParent();
+                java.util.List<java.nio.file.Path> candidates = ChestTrackerImport.findFiles(gameDir, storage.root());
+                if (!candidates.isEmpty()) {
+                    pendingWarning = (pendingWarning == null ? "" : pendingWarning + " ")
+                        + "Found " + candidates.size() + " Chest Tracker file(s) in this or other instances. "
+                        + "Use .ct import to list them, .ct import all to merge them in.";
+                }
+            } catch (Exception ignored) {
+            }
+        }
         // Deliberately no auto-purge: the trash is a manual, restorable list, and a player who
         // trashes a container must keep it until they choose to delete it permanently.
         // (Trash.trashGoneBlock is also gated off by the autoTrashGoneBlocks setting, default false.)
