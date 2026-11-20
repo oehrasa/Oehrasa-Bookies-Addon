@@ -36,7 +36,11 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
+//? if <26.3 {
 import org.lwjgl.util.tinyfd.TinyFileDialogs;
+//?} else {
+/*import com.AutoBookshelf.addon.utils.FileDialogs;*/
+//?}
 
 import java.io.File;
 import java.io.IOException;
@@ -53,8 +57,6 @@ import java.util.regex.Pattern;
  */
 //?}
 //? if >=26.3 {
-/*import com.AutoBookshelf.addon.utils.FileDialogs;
- */
 //?} else {
 //?}
 
