@@ -5,7 +5,6 @@
  */
 package com.AutoBookshelf.addon.modules.livemessage;
 
-import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.modules.livemessage.gui.ChatWindow;
 import com.AutoBookshelf.addon.modules.livemessage.gui.LiveWindow;
@@ -13,6 +12,7 @@ import com.AutoBookshelf.addon.modules.livemessage.gui.LivemessageGui;
 import com.AutoBookshelf.addon.modules.livemessage.gui.ManeWindow;
 import com.AutoBookshelf.addon.modules.livemessage.util.*;
 import com.AutoBookshelf.addon.utils.QueueUtil;
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.mojang.blaze3d.platform.InputConstants;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
@@ -41,6 +41,12 @@ import org.slf4j.LoggerFactory;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
+//? if >=26.1 {
+//?} else {
+/*import meteordevelopment.meteorclient.events.meteor.KeyEvent;
+ */
+//?}
+
 public class LiveMessage extends Module {
     public static final Logger LOG = LoggerFactory.getLogger("Livemessage");
     private final Set<UUID> warnedUnsafeRecipients = new HashSet<>();
@@ -53,7 +59,7 @@ public class LiveMessage extends Module {
     public final Setting<Keybind> openGuiKey = this.sgGeneral
         .add(
             new Builder().name("open-gui-key").description("Keybind to open Livemessage GUI.")
-                .defaultValue(Keybind.fromKey(85))
+                .defaultValue(Keybind.fromKey(InputConstants.KEY_U))
                 .action(this::openGui)
                 .build()
         );
@@ -494,7 +500,11 @@ public class LiveMessage extends Module {
     // being typed in is never disturbed.
 
     @EventHandler
+        //? if >=26.1 {
     private void onGuiMoveKey(KeyInputEvent event) {
+        //?} else {
+        /*private void onGuiMoveKey(KeyEvent event) {
+         *///?}
         if (this.guiMoveSkip()) return;
         this.passGuiMove(mc.options.keyUp, event.key(), event.action);
         this.passGuiMove(mc.options.keyDown, event.key(), event.action);

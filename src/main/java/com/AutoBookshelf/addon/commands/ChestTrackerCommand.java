@@ -17,7 +17,11 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import meteordevelopment.meteorclient.commands.Command;
 import meteordevelopment.meteorclient.systems.modules.Modules;
+//? if >=26.1 {
 import net.minecraft.client.multiplayer.ClientSuggestionProvider;
+//?} else {
+/*import net.minecraft.commands.SharedSuggestionProvider;
+ *///?}
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -41,7 +45,11 @@ public class ChestTrackerCommand extends Command {
     }
 
     @Override
+        //? if >=26.1 {
     public void build(LiteralArgumentBuilder<ClientSuggestionProvider> builder) {
+        //?} else {
+        /*public void build(LiteralArgumentBuilder<SharedSuggestionProvider> builder) {
+         *///?}
         builder.then(literal("search").then(literal("hand").executes(context -> {
             ChestTrackerModule module = getModule();
             if (module == null) return SINGLE_SUCCESS;
@@ -214,7 +222,11 @@ public class ChestTrackerCommand extends Command {
             info("Saved.");
             return SINGLE_SUCCESS;
         }));
+        //? if >=26.1 {
         LiteralArgumentBuilder<ClientSuggestionProvider> importCmd = literal("import");
+        //?} else {
+        /*LiteralArgumentBuilder<SharedSuggestionProvider> importCmd = literal("import");
+         *///?}
         importCmd.executes(context -> listImports(getModule()));
         importCmd.then(literal("all").executes(context -> importAll(getModule())));
         importCmd.then(argument("file", StringArgumentType.string()).executes(context -> importFile(getModule(), StringArgumentType.getString(context, "file"), false)).then(literal("confirm").executes(context -> importFile(getModule(), StringArgumentType.getString(context, "file"), true))));

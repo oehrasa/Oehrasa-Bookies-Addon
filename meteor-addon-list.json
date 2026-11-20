@@ -2,7 +2,8 @@
   "supported_versions": [
     "26.3",
     "26.2",
-    "26.1.2"
+    "26.1.2",
+    "1.21.11"
   ],
   "description": "Meteor Addon for Timid bookkeeper and Yuri Enjoyers <3",
   "tags": [

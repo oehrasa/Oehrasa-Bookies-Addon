@@ -13,7 +13,11 @@ import com.AutoBookshelf.addon.utils.QueueUtil;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import meteordevelopment.meteorclient.commands.Command;
+//? if >=26.1 {
 import net.minecraft.client.multiplayer.ClientSuggestionProvider;
+//?} else {
+/*import net.minecraft.commands.SharedSuggestionProvider;
+ *///?}
 
 import java.util.List;
 import java.util.Map;
@@ -25,7 +29,11 @@ public class QueueCommand extends Command {
     }
 
     @Override
+        //? if >=26.1 {
     public void build(LiteralArgumentBuilder<ClientSuggestionProvider> builder) {
+        //?} else {
+        /*public void build(LiteralArgumentBuilder<SharedSuggestionProvider> builder) {
+         *///?}
         // .queue del <name> [match text]
         builder.then(literal("del")
             .then(argument("name", QueueTargetArgumentType.create())

@@ -330,7 +330,11 @@ public class PortalCave extends Module {
             }
         }
         chunksToProcess.stream().forEach(chunkPos -> {
+            //? if >=26.1 {
             LevelChunk chunk = mc.level.getChunk(chunkPos.x(), chunkPos.z());
+            //?} else {
+            /*LevelChunk chunk = mc.level.getChunk(chunkPos.x, chunkPos.z);
+             *///?}
             if (chunk != null && !chunk.isEmpty() && !scannedChunks.contains(chunk.getPos())) {
                 processChunk(chunk);
                 scannedChunks.add(chunk.getPos());
@@ -459,8 +463,13 @@ public class PortalCave extends Module {
     private void processPendingChunks() {
         if (pendingChunks.isEmpty() || scanExecutor == null || scanExecutor.isShutdown()) return;
         if (mc.player == null) return;
+        //? if >=26.1 {
         int playerChunkX = mc.player.chunkPosition().x();
         int playerChunkZ = mc.player.chunkPosition().z();
+        //?} else {
+        /*int playerChunkX = mc.player.chunkPosition().x;
+        int playerChunkZ = mc.player.chunkPosition().z;
+        *///?}
         List<Long> sorted = new ArrayList<>(pendingChunks);
         sorted.sort((a, b) -> {
             int ax = ChunkPos.getX(a) - playerChunkX, az = ChunkPos.getZ(a) - playerChunkZ;
@@ -487,8 +496,13 @@ public class PortalCave extends Module {
 
     private void evictDistantChunks() {
         if (mc.player == null) return;
+        //? if >=26.1 {
         int px = mc.player.chunkPosition().x();
         int pz = mc.player.chunkPosition().z();
+        //?} else {
+        /*int px = mc.player.chunkPosition().x;
+        int pz = mc.player.chunkPosition().z;
+        *///?}
         int wanted = Math.max(renderDistance.get(), showAllCaveAir.get() ? caveAirRenderDist.get() : renderDistance.get());
         int radius = wanted / 16 + 2;
         if (mc.options != null) radius = Math.min(radius, mc.options.renderDistance().get() + 1);
@@ -1335,7 +1349,11 @@ public class PortalCave extends Module {
     private void removechunksOutsideRenderDistance(Set<ChunkPos> chunkSet, Set<LevelChunk> worldChunks) {
         chunkSet.removeIf(c -> {
             assert mc.level != null;
+            //? if >=26.1 {
             return !worldChunks.contains(mc.level.getChunk(c.x(), c.z()));
+            //?} else {
+            /*return !worldChunks.contains(mc.level.getChunk(c.x, c.z));
+             *///?}
         });
     }
 

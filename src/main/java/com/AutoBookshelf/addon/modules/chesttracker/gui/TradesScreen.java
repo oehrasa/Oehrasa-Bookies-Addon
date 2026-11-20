@@ -9,6 +9,7 @@ import com.AutoBookshelf.addon.modules.chesttracker.data.MemoryBank;
 import com.AutoBookshelf.addon.modules.chesttracker.data.TradeData;
 import com.AutoBookshelf.addon.modules.chesttracker.search.Fuzzy;
 import com.AutoBookshelf.addon.modules.chesttracker.track.Trash;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
@@ -21,7 +22,6 @@ import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 import org.jetbrains.annotations.Nullable;
-import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -209,7 +209,7 @@ public final class TradesScreen extends Screen {
             closeMenu(); // a click anywhere else just closes the menu
             return true;
         }
-        if (click.button() == 1) {
+        if (click.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
             ResultList.Entry entry = list.entryAt(click.x(), click.y());
             if (entry != null) {
                 openMenu(entry.row.record(), click.x(), click.y());

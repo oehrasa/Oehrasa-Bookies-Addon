@@ -11,6 +11,7 @@ package com.AutoBookshelf.addon.mixin;
 import com.AutoBookshelf.addon.events.ScreenRenderEvent;
 import com.AutoBookshelf.addon.modules.InventoryInfo;
 import com.AutoBookshelf.addon.modules.MapartSort;
+import com.mojang.blaze3d.platform.InputConstants;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -40,7 +41,7 @@ public abstract class MixinHandledScreen extends Screen {
 
     @Inject(method = "mouseClicked", at = @At("HEAD"))
     private void onClick(MouseButtonEvent event, boolean doubled, CallbackInfoReturnable<Boolean> cir) {
-        if (event.button() != 0) return;
+        if (event.button() != InputConstants.MOUSE_BUTTON_LEFT) return;
         InventoryInfo m = Modules.get().get(InventoryInfo.class);
         if (m == null || !m.isActive()) return;
         m.setClicked(new Vector2f((float) event.x(), (float) event.y()));

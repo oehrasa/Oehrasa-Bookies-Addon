@@ -5,8 +5,6 @@
  */
 package com.AutoBookshelf.addon.modules.chesttracker;
 
-import com.AutoBookshelf.addon.utils.EntityUtil;
-import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.modules.chesttracker.data.BankStorage;
 import com.AutoBookshelf.addon.modules.chesttracker.data.BlockRecord;
@@ -16,6 +14,9 @@ import com.AutoBookshelf.addon.modules.chesttracker.gui.TrackerScreen;
 import com.AutoBookshelf.addon.modules.chesttracker.search.ItemIndex;
 import com.AutoBookshelf.addon.modules.chesttracker.search.ItemQuery;
 import com.AutoBookshelf.addon.modules.chesttracker.track.*;
+import com.AutoBookshelf.addon.utils.EntityUtil;
+import com.AutoBookshelf.addon.utils.ScreenUtil;
+import com.mojang.blaze3d.platform.InputConstants;
 import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
 import meteordevelopment.meteorclient.events.entity.player.InteractEntityEvent;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
@@ -50,7 +51,6 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3d;
-import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.*;
 
@@ -861,10 +861,14 @@ public class ChestTrackerModule extends Module {
         // Frustum (best-effort; fall back to chunk-distance only if unavailable).
         net.minecraft.client.renderer.culling.Frustum frustum = null;
         try {
+            //? if >=26.1 {
             //? if >=26.2 {
             frustum = mc.gameRenderer.mainCamera().getCullFrustum();
             //?} else {
             /*frustum = mc.gameRenderer.getMainCamera().getCullFrustum();
+             *///?}
+            //?} else {
+            /*frustum = null; // 1.21.11 exposes no public cull frustum; chunk-distance fallback
             *///?}
         } catch (Throwable ignored) {
             frustum = null;
@@ -1234,7 +1238,7 @@ public class ChestTrackerModule extends Module {
         if (showOnScreen.get()) {
             this.displayText = text;
             this.displayTimer = onScreenDuration.get();
-            if (mc.player != null) mc.player.sendOverlayMessage(Component.literal(text));
+            if (mc.player != null) com.AutoBookshelf.addon.utils.PlayerMessages.actionBar(Component.literal(text));
         }
     }
 

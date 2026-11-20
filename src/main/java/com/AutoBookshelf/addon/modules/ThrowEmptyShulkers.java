@@ -17,7 +17,9 @@ import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+//? if >=26.1 {
 import net.minecraft.world.item.ItemStackTemplate;
+//?}
 import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
 import java.util.ArrayList;
@@ -335,9 +337,15 @@ public class ThrowEmptyShulkers extends Module {
     private boolean shulkerContainsAny(ItemStack shulker, Set<Item> items) {
         ItemContainerContents container = shulker.get(DataComponents.CONTAINER);
         if (container == null) return false;
+        //? if >=26.1 {
         for (ItemStackTemplate stored : container.nonEmptyItems()) {
-            if (items.contains(stored.item())) return true;
+            if (items.contains(stored.item().value())) return true;
         }
+        //?} else {
+        /*for (ItemStack stored : container.nonEmptyItems()) {
+            if (items.contains(stored.getItem())) return true;
+        }
+        *///?}
         return false;
     }
 

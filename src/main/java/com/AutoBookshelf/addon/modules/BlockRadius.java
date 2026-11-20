@@ -181,8 +181,13 @@ public class BlockRadius extends Module {
         // A full chunk resend (on re-join or data refresh) doesn't raise a
         // BlockUpdateEvent, so drop the cached rod list of that chunk to avoid
         // keeping stale entries until the chunk next leaves the search radius.
+        //? if >=26.1 {
         int chunkX = event.chunk().getPos().x();
         int chunkZ = event.chunk().getPos().z();
+        //?} else {
+        /*int chunkX = event.chunk().getPos().x;
+        int chunkZ = event.chunk().getPos().z;
+        *///?}
         lightningRods.invalidateChunk(chunkX, chunkZ);
 
         // Same for a cached beacon shell overlapping the resent chunk.

@@ -11,7 +11,11 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import meteordevelopment.meteorclient.commands.Command;
 import meteordevelopment.meteorclient.systems.modules.Modules;
+//? if >=26.1 {
 import net.minecraft.client.multiplayer.ClientSuggestionProvider;
+//?} else {
+/*import net.minecraft.commands.SharedSuggestionProvider;
+ *///?}
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.TamableAnimal;
 import net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl;
@@ -28,7 +32,11 @@ public class AssignOwnerCommand extends Command {
     }
 
     @Override
+        //? if >=26.1 {
     public void build(LiteralArgumentBuilder<ClientSuggestionProvider> builder) {
+        //?} else {
+        /*public void build(LiteralArgumentBuilder<SharedSuggestionProvider> builder) {
+         *///?}
         // Optional radius argument
         builder.then(argument("playerName", OnlinePlayerNameArgumentType.create())
             .executes(context -> {

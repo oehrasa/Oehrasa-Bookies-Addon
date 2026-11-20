@@ -5,13 +5,13 @@
  */
 package com.AutoBookshelf.addon.modules.AircraftPhase;
 
-import com.AutoBookshelf.addon.utils.EntityUtil;
-import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.events.PlayerPositionLookEvent;
 import com.AutoBookshelf.addon.modules.AttackAircraft.BoatShot;
 import com.AutoBookshelf.addon.modules.AttackAircraft.BoatShotCycle;
 import com.AutoBookshelf.addon.modules.AttackAircraft.BoatShotEvents;
+import com.AutoBookshelf.addon.utils.EntityUtil;
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
@@ -1180,7 +1180,11 @@ public final class BoatPhase extends Module {
         EntityUtil.swing(mc.player, net.minecraft.world.InteractionHand.MAIN_HAND);
         //?}
         net.minecraft.world.phys.EntityHitResult location = new net.minecraft.world.phys.EntityHitResult(boat, boat.position());
+        //? if >=26.1 {
         mc.gameMode.interact(mc.player, boat, location, net.minecraft.world.InteractionHand.MAIN_HAND);
+        //?} else {
+        /*mc.gameMode.interactAt(mc.player, boat, location, net.minecraft.world.InteractionHand.MAIN_HAND);
+         *///?}
     }
 
     private void attach(AbstractBoat current, boolean controlling) {
@@ -1412,7 +1416,7 @@ public final class BoatPhase extends Module {
             && !mc.player.isPassenger() && event.packet instanceof ServerboundInteractPacket interaction
             && lastBoardInteraction != interaction) {
             lastBoardInteraction = interaction;
-            if (mc.level.getEntity(interaction.entityId()) instanceof AbstractBoat candidate) {
+            if (mc.level.getEntity(((com.AutoBookshelf.addon.mixin.accessor.ServerboundInteractPacketAccessor) (Object) interaction).oehrasa$getEntityId()) instanceof AbstractBoat candidate) {
 
                 boolean grounded = supported(candidate, .35);
                 boolean armed = remount.intent(candidate.getId(), mc.player.tickCount, grounded || remountRetry.get(), true,
@@ -1749,8 +1753,10 @@ public final class BoatPhase extends Module {
 *///?}
         double width = 0, lineHeight = text.getHeight() + 4;
         for (String line : lines) width = Math.max(width, text.getWidth(line, true));
-        double x = Math.max(0, event.screenWidth - width - 16) * meterX.get() / 100.0;
-        double y = Math.max(0, event.screenHeight - lines.length * lineHeight - 16) * meterY.get() / 100.0;
+        double guiW = mc.getWindow().getGuiScaledWidth();
+        double guiH = mc.getWindow().getGuiScaledHeight();
+        double x = Math.max(0, guiW - width - 16) * meterX.get() / 100.0;
+        double y = Math.max(0, guiH - lines.length * lineHeight - 16) * meterY.get() / 100.0;
         Renderer2D.COLOR.begin();
         Renderer2D.COLOR.quad(x, y, width + 16, lines.length * lineHeight + 16, new Color(10, 14, 20, 210));
         Renderer2D.COLOR.render();

@@ -14,7 +14,13 @@ import org.spongepowered.asm.mixin.injection.ModifyArg;
 
 @Mixin(TntRenderer.class)
 public class TntEntityRendererMixin {
+    // The render-state layout differs: 1.21.x passes a raw BlockState and puts CameraRenderState in
+    // client.renderer.state, 26.x passes a BlockModelRenderState and nests CameraRenderState one level deeper.
+    //? if >=26.1 {
     @ModifyArg(method = "submit(Lnet/minecraft/client/renderer/entity/state/TntRenderState;Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;Lnet/minecraft/client/renderer/state/level/CameraRenderState;)V", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/entity/TntMinecartRenderer;submitWhiteSolidBlock(Lnet/minecraft/client/renderer/block/BlockModelRenderState;Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;IZI)V"), index = 4)
+        //?} else {
+    /*@ModifyArg(method = "submit(Lnet/minecraft/client/renderer/entity/state/TntRenderState;Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;Lnet/minecraft/client/renderer/state/CameraRenderState;)V", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/entity/TntMinecartRenderer;submitWhiteSolidBlock(Lnet/minecraft/world/level/block/state/BlockState;Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;IZI)V"), index = 4)
+     *///?}
     private boolean numbyhack$disableTntFlash(boolean flashing) {
         TntFuseEsp tntFuseEsp = Modules.get().get(TntFuseEsp.class);
         if (tntFuseEsp != null && tntFuseEsp.shouldHideFlashing()) {

@@ -106,14 +106,14 @@ public class PlatformBuilder extends Module {
     private final Setting<Keybind> moveUpKey = sgGeneral.add(new KeybindSetting.Builder()
         .name("move-up-key")
         .description("Moves the current selection/build level up by one step.")
-        .defaultValue(Keybind.fromKey(-1))
+        .defaultValue(Keybind.none())
         .build()
     );
 
     private final Setting<Keybind> moveDownKey = sgGeneral.add(new KeybindSetting.Builder()
         .name("move-down-key")
         .description("Moves the current selection/build level down by one step.")
-        .defaultValue(Keybind.fromKey(-1))
+        .defaultValue(Keybind.none())
         .build()
     );
 
@@ -171,14 +171,14 @@ public class PlatformBuilder extends Module {
     private final Setting<Keybind> startBuildKey = sgGeneral.add(new KeybindSetting.Builder()
         .name("start-build-key")
         .description("Press once your selection is complete to confirm and actually start building. Nothing gets placed before this.")
-        .defaultValue(Keybind.fromKey(-1))
+        .defaultValue(Keybind.none())
         .build()
     );
 
     private final Setting<Keybind> resetSelectionKey = sgSelection.add(new KeybindSetting.Builder()
         .name("reset-selection-key")
         .description("Press to reset the selected area.")
-        .defaultValue(Keybind.fromKey(-1))
+        .defaultValue(Keybind.none())
         .build()
     );
 
@@ -668,19 +668,19 @@ public class PlatformBuilder extends Module {
 
         if (baritoneGoalCooldown > 0) baritoneGoalCooldown--;
 
-        if (moveUpKey.get().isPressed()) {
+        if (moveUpKey.get().isSet() && moveUpKey.get().isPressed()) {
             yLevel.set(Math.min(yLevel.get() + moveStep.get(), 319));
             if (buildStarted && yLevelAffectsBuild()) cancelBuild("§cBuild cancelled as the Y-level changed.");
             if (debug.get()) info("Platform level moved up to Y=" + yLevel.get());
         }
 
-        if (moveDownKey.get().isPressed()) {
+        if (moveDownKey.get().isSet() && moveDownKey.get().isPressed()) {
             yLevel.set(Math.max(yLevel.get() - moveStep.get(), -64));
             if (buildStarted && yLevelAffectsBuild()) cancelBuild("§cBuild cancelled as the Y-level changed.");
             if (debug.get()) info("Platform level moved down to Y=" + yLevel.get());
         }
 
-        if (resetSelectionKey.get().isPressed()) {
+        if (resetSelectionKey.get().isSet() && resetSelectionKey.get().isPressed()) {
             areaSelector.reset();
             invalidateFlatArea();
             if (buildStarted) {
@@ -708,7 +708,7 @@ public class PlatformBuilder extends Module {
         if (!areaSelector.hasCompleteSelection()) return;
 
         if (!buildStarted) {
-            if (startBuildKey.get().isPressed()) {
+            if (startBuildKey.get().isSet() && startBuildKey.get().isPressed()) {
                 buildStarted = true;
                 completionScanIndex = 0;
                 layerIndex = 0;

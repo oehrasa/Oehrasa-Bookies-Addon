@@ -5,11 +5,11 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.mixin.accessor.MultiPlayerGameModeAccessor;
 import com.AutoBookshelf.addon.utils.BlockPosUtil;
 import com.AutoBookshelf.addon.utils.EntityUtil;
 import com.AutoBookshelf.addon.utils.ScreenUtil;
-import com.AutoBookshelf.addon.Addon;
-import com.AutoBookshelf.addon.mixin.accessor.MultiPlayerGameModeAccessor;
 import meteordevelopment.meteorclient.events.entity.player.DoItemUseEvent;
 import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
 import meteordevelopment.meteorclient.events.entity.player.InteractEntityEvent;
@@ -28,9 +28,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.network.protocol.game.ServerboundInteractPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
-//? if <26.3 {
 import net.minecraft.network.protocol.game.ServerboundSwingPacket;
-//?}
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.tags.TagKey;
@@ -55,6 +53,9 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 
 import java.util.*;
 import java.util.function.Predicate;
+
+//? if <26.3 {
+//?}
 
 /**
  * Force-Access rewrite.
@@ -662,7 +663,10 @@ public class ForceAccess extends Module {
             || block instanceof TrapDoorBlock
             || block instanceof FenceGateBlock
             || block instanceof SignBlock
+//? if >=26.1 {
+            // On 1.21.x the hanging signs extend SignBlock and there is no base interface.
             || block instanceof HangingSignBlock
+//?}
             || block instanceof WallHangingSignBlock
             || block instanceof NoteBlock
             || block instanceof JukeboxBlock
@@ -1234,7 +1238,11 @@ public class ForceAccess extends Module {
         // interactionManager.interactEntity, which posts InteractEntityEvent and
         // gets cancelled here by the phase != IDLE guard on our own handler.
         boolean sneak = e instanceof AbstractChestedHorse || e instanceof ContainerEntity;
+        //? if >=26.1 {
         mc.player.connection.send(new ServerboundInteractPacket(e.getId(), InteractionHand.MAIN_HAND, e.position(), sneak));
+        //?} else {
+        /*mc.player.connection.send(ServerboundInteractPacket.createInteractionPacket(e, sneak, InteractionHand.MAIN_HAND, e.position()));
+         *///?}
         //? if >=26.3 {
         /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
         *///?} else {

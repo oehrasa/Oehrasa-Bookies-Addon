@@ -376,7 +376,7 @@ public class AutoLogin extends Module {
     private void sendMessage(String msg) {
         if (debug.get()) info(msg);
         if (mc.player != null) {
-            mc.player.sendOverlayMessage(Component.literal(msg));
+            com.AutoBookshelf.addon.utils.PlayerMessages.actionBar(Component.literal(msg));
         }
     }
 

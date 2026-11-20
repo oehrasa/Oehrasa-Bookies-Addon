@@ -5,14 +5,15 @@
  */
 package com.AutoBookshelf.addon.modules;
 
-import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.mixin.accessor.AbstractSignEditScreenAccessor;
 import com.AutoBookshelf.addon.modules.remote.BookEntry;
 import com.AutoBookshelf.addon.modules.remote.RemoteBookSelectScreen;
 import com.AutoBookshelf.addon.modules.remote.RemoteLibrary;
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.mojang.blaze3d.platform.InputConstants;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.game.OpenScreenEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -30,19 +31,12 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ServerboundEditBookPacket;
 import net.minecraft.network.protocol.game.ServerboundSignUpdatePacket;
-//? if >=26.3 {
-/*import net.minecraft.world.level.block.entity.SignTextSlot;
-*///?}
 import net.minecraft.server.network.Filterable;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
-//? if >=26.3 {
-/*import com.AutoBookshelf.addon.utils.FileDialogs;
-*///?} else {
 import org.lwjgl.util.tinyfd.TinyFileDialogs;
-//?}
 
 import java.io.File;
 import java.io.IOException;
@@ -53,6 +47,16 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+//? if >=26.3 {
+/*import net.minecraft.world.level.block.entity.SignTextSlot;
+ */
+//?}
+//? if >=26.3 {
+/*import com.AutoBookshelf.addon.utils.FileDialogs;
+ */
+//?} else {
+//?}
 
 /**
  * Imports .txt files into signed books, either from a local folder/file,
@@ -169,7 +173,7 @@ public class BookImporter extends Module {
     private final Setting<Keybind> confirmKey = sgResume.add(new KeybindSetting.Builder()
         .name("confirm-key")
         .description("Key to press to confirm moving to next file")
-        .defaultValue(Keybind.fromKey(84))
+        .defaultValue(Keybind.fromKey(InputConstants.KEY_T))
         .visible(requireConfirmNextFile::get)
         .build()
     );
@@ -981,7 +985,7 @@ public class BookImporter extends Module {
     private void sendMessage(String msg) {
         if (debug.get()) info(msg);
         if (mc.player != null) {
-            mc.player.sendSystemMessage(Component.literal(msg));
+            com.AutoBookshelf.addon.utils.PlayerMessages.chat(Component.literal(msg));
         }
     }
 }

@@ -11,6 +11,7 @@ import com.AutoBookshelf.addon.modules.livemessage.util.LiveProfileCache;
 import com.AutoBookshelf.addon.modules.livemessage.util.LivemessageUtil;
 import com.AutoBookshelf.addon.utils.FadeAnimator;
 import com.google.gson.Gson;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.EditBox;
@@ -323,7 +324,7 @@ public class LivemessageGui extends Screen {
         }
 
         if (this.isAnyTextFieldFocused()) {
-            return input.key() == 256 ? super.keyPressed(input) : true;
+            return input.key() == InputConstants.KEY_ESCAPE ? super.keyPressed(input) : true;
         } else {
             return super.keyPressed(input);
         }

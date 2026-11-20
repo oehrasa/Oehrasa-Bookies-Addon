@@ -36,8 +36,13 @@ public class Addon extends MeteorAddon {
     public static final Logger LOG = LogUtils.getLogger();
     public static final HudGroup HUD_GROUP = new HudGroup("MayaChan");
 
+    //? if >=26.1 {
     public static final Category CATEGORY = new Category("Bookshelf", Items.WRITTEN_BOOK::getDefaultInstance);
     public static final Category CATEGORY2 = new Category("Aurelius", Items.WRITABLE_BOOK::getDefaultInstance);
+    //?} else {
+    /*public static final Category CATEGORY = new Category("Bookshelf", Items.WRITTEN_BOOK.getDefaultInstance());
+    public static final Category CATEGORY2 = new Category("Aurelius", Items.WRITABLE_BOOK.getDefaultInstance());
+    *///?}
     // Cocceius Fulvius Ulpius
 
     @Override

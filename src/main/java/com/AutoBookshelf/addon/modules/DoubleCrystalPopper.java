@@ -5,8 +5,8 @@
  */
 package com.AutoBookshelf.addon.modules;
 
-import com.AutoBookshelf.addon.utils.EntityUtil;
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.EntityUtil;
 import meteordevelopment.meteorclient.events.entity.EntityAddedEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
@@ -36,6 +36,12 @@ import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.List;
+
+//? if >=26.1 {
+//?} else {
+/*import net.minecraft.network.protocol.game.ServerboundInteractPacket;
+ */
+//?}
 
 /// Locks onto a nearby player and runs Attack -> wait N1 -> pop crystal -> wait N2 -> pop crystal -> repeat.
 /// "Pop" = place an end crystal on the closest obsidian/bedrock and break it again as soon as it spawns.
@@ -257,7 +263,11 @@ public class DoubleCrystalPopper extends Module {
     }
 
     private void attackEntity(Entity entity) {
+        //? if >=26.1 {
         mc.player.connection.send(new ServerboundAttackPacket(entity.getId()));
+        //?} else {
+        /*mc.player.connection.send(ServerboundInteractPacket.createAttackPacket(entity, mc.player.isShiftKeyDown()));
+         *///?}
         //? if >=26.3 {
         /*mc.player.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
         *///?} else {

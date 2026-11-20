@@ -2,14 +2,13 @@ plugins {
     id("dev.kikugie.loom-back-compat")
 }
 
-val modId = property("mod.id") as String
 val modName = property("mod.name") as String
 val modGroup = property("mod.group") as String
 val modVersion = property("mod.version") as String
 val mcCompat = property("mod.mc_compat") as String
 
-version = "$modVersion+${sc.current.version}"
-base.archivesName = modId
+version = "${sc.current.version}-${modVersion}"
+base.archivesName = "AutoBookshelf"
 group = modGroup
 
 val requiredJava: JavaVersion = when {
@@ -37,7 +36,9 @@ dependencies {
 
     // Baritone is a compile-only dependency: the addon integrates the shared
     // `baritone.api` surface but does not bundle it; any API provider works.
-    compileOnly("meteordevelopment:baritone:${property("deps.baritone")}")
+    // On obfuscated (1.21.x) nodes loom must remap it like a mod dependency;
+    // the 26.x nodes are already Mojang-mapped so this is an identity remap there.
+    modCompileOnly("meteordevelopment:baritone:${property("deps.baritone")}")
 
     // Gson
     implementation("com.google.code.gson:gson:2.10.1")
@@ -54,33 +55,39 @@ java {
 }
 
 loom {
-    // Stonecutter nests each non-active node as a subproject, so paths must
-    // be resolved against the root project that owns src/main/resources.
-    accessWidenerPath = rootProject.layout.projectDirectory.file("src/main/resources/oehrasa.accesswidener")
+    // Obfuscated nodes (1.21.x) need the remapped-named access widener; the
+    // unobfuscated 26.x nodes keep the official-namespace one.
+    accessWidenerPath =
+        rootProject.layout.projectDirectory.file(if (sc.current.parsed < "26.1") "src/main/resources/oehrasa.named.accesswidener" else "src/main/resources/oehrasa.accesswidener")
 }
 
 tasks {
     processResources {
+        val artifactVersion = "${sc.current.version}-$modVersion"
+        // Obfuscated nodes must declare the named-namespace widener.
+        val namedNode = sc.current.parsed < "26.1"
         val props = mapOf(
-            "version" to modVersion,
+            "version" to artifactVersion,
             "minecraft" to mcCompat,
             "java" to requiredJava.majorVersion,
             "mod_name" to modName,
+            "accessWidener" to if (namedNode) "oehrasa.named.accesswidener" else "oehrasa.accesswidener",
         )
 
         inputs.properties(props)
         filesMatching("fabric.mod.json") { expand(props) }
+
+        // Ship exactly one access widener: the one matching this node's mappings.
+        exclude(if (namedNode) "oehrasa.accesswidener" else "oehrasa.named.accesswidener")
     }
 
     jar {
         // Local capture: config-cache can't serialize closures that reach back into the
-        // script object graph (the `modId` val above), so give the renamed file a plain
-        // local val instead.
-        val baseNameForJar = modId
-        inputs.property("archivesName", baseNameForJar)
+        // script object graph, so give the renamed file a plain local val instead.
+        inputs.property("archivesName", "AutoBookshelf")
 
         from("LICENSE") {
-            rename { "${it}_${baseNameForJar}" }
+            rename { "${it}_AutoBookshelf" }
         }
         // The vendored AGPL, Apache and MIT texts for the portions under those terms, plus
         // the notice that attributes them. All ship inside the jar.
@@ -89,7 +96,7 @@ tasks {
         }
         from("THIRD_PARTY_NOTICES.md") {
             into("META-INF")
-            rename { "THIRD_PARTY_NOTICES_${baseNameForJar}.md" }
+            rename { "THIRD_PARTY_NOTICES_AutoBookshelf.md" }
         }
     }
 

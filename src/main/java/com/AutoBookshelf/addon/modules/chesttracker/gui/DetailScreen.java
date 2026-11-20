@@ -7,6 +7,7 @@ import com.AutoBookshelf.addon.modules.chesttracker.TrackerServices;
 import com.AutoBookshelf.addon.modules.chesttracker.data.*;
 import com.AutoBookshelf.addon.modules.chesttracker.search.ItemIndex;
 import com.AutoBookshelf.addon.modules.chesttracker.track.Trash;
+import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.serialization.JsonOps;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -26,7 +27,6 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.BundleContents;
 import net.minecraft.world.item.component.ItemContainerContents;
 import org.jetbrains.annotations.Nullable;
-import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.*;
 
@@ -200,7 +200,7 @@ public final class DetailScreen extends Screen {
      */
     @Override
     public boolean mouseDragged(MouseButtonEvent click, double offsetX, double offsetY) {
-        if (maxScroll > 0 && click.button() == 0 && click.y() < viewBottom) {
+        if (maxScroll > 0 && click.button() == InputConstants.MOUSE_BUTTON_LEFT && click.y() < viewBottom) {
             scroll = Math.clamp(scroll - (int) Math.round(offsetY), 0, maxScroll);
             return true;
         }
@@ -219,7 +219,7 @@ public final class DetailScreen extends Screen {
             }
         }
         int slot = slotAt(click.x(), click.y());
-        if (slot >= 0 && (click.button() == 1 || click.button() == 2)) {
+        if (slot >= 0 && (click.button() == InputConstants.MOUSE_BUTTON_RIGHT || click.button() == InputConstants.MOUSE_BUTTON_MIDDLE)) {
             // Secondary click (right or middle) on an item: search the world for nearby containers
             // holding it (the same search the grid tap runs), then close so the matches are visible.
             // Empty slots do nothing; left click keeps the content behaviour below.
@@ -235,7 +235,7 @@ public final class DetailScreen extends Screen {
             }
             return true;
         }
-        if (slot >= 0 && click.button() == 0) {
+        if (slot >= 0 && click.button() == InputConstants.MOUSE_BUTTON_LEFT) {
             ItemStack stack = current().slots().get(slot);
             List<ItemStack> inner = stack.isEmpty() ? null : inside(stack);
             BookViewScreen.BookAccess book = isBook(stack) ? BookViewScreen.BookAccess.fromItem(stack) : null;

@@ -14,7 +14,9 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.util.ARGB;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
+//? if >=26.1 {
 import net.minecraft.world.item.ItemStackTemplate;
+//?}
 import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
 
@@ -38,9 +40,15 @@ public record ShulkerInfo(String name, Type type, int color, int slot, List<Item
 
         // Collect all items from the container – nonEmptyItems() returns List<ItemStackTemplate>
         List<ItemStack> items = new ArrayList<>();
+        //? if >=26.1 {
         for (ItemStackTemplate template : container.nonEmptyItems()) {
             items.add(template.create());
         }
+        //?} else {
+        /*for (ItemStack stored : container.nonEmptyItemsCopy()) {
+            items.add(stored);
+        }
+        *///?}
 
         Type type = Modules.get().get(InventoryInfo.class).compact.get() ? Type.COMPACT : Type.FULL;
 

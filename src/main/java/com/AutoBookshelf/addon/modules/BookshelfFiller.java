@@ -5,10 +5,10 @@
  */
 package com.AutoBookshelf.addon.modules;
 
-import com.AutoBookshelf.addon.utils.EntityUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.AreaSelector;
 import com.AutoBookshelf.addon.utils.BookUtils;
+import com.AutoBookshelf.addon.utils.EntityUtil;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
@@ -2108,8 +2108,10 @@ public class BookshelfFiller extends Module {
         if (!showOnScreen.get()) return;
         if (displayText.isEmpty()) return;
 
-        int screenWidth = event.screenWidth;
-        int screenHeight = event.screenHeight;
+        // Read the GUI-scaled dimensions directly: meteor 1.21.11's mixin passes
+        // getScaledWindowWidth() for both of event's width/height, so the event y is wrong there.
+        int screenWidth = mc.getWindow().getGuiScaledWidth();
+        int screenHeight = mc.getWindow().getGuiScaledHeight();
         double scale = 1.2;
 
         int x = (int) (screenWidth / 2 - (mc.font.width(displayText) * scale) / 2);
@@ -2428,7 +2430,7 @@ public class BookshelfFiller extends Module {
 
     private void sendMessage(String msg) {
         if (debug.get()) info(msg);
-        if (mc.player != null) mc.player.sendOverlayMessage(Component.literal(msg));
+        if (mc.player != null) com.AutoBookshelf.addon.utils.PlayerMessages.actionBar(Component.literal(msg));
     }
 
     public void resetSelection() {

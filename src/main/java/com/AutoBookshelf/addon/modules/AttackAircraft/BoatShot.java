@@ -5,10 +5,10 @@
  */
 package com.AutoBookshelf.addon.modules.AttackAircraft;
 
-import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.mixin.accessor.PlayerMoveC2SPacketAccessor;
 import com.AutoBookshelf.addon.modules.AircraftPhase.BoatPhase;
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
@@ -41,11 +41,7 @@ import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.game.*;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
-//? if >=26.2 {
 import net.minecraft.world.entity.EntityTypes;
-//?} else {
-/*import net.minecraft.world.entity.EntityType;*/
-//?}
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.player.Player;
@@ -68,6 +64,11 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+//? if >=26.2 {
+//?} else {
+/*import net.minecraft.world.entity.EntityType;*/
+//?}
 
 public final class BoatShot extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
@@ -779,7 +780,7 @@ public final class BoatShot extends Module {
         if (!mc.isSameThread() || !sameSession() || event.connection != connection || event.isCancelled()) return;
 
         if (!player.isPassenger() && event.packet instanceof ServerboundInteractPacket interaction) {
-            if (mc.level.getEntity(interaction.entityId()) instanceof AbstractBoat target) {
+            if (mc.level.getEntity(((com.AutoBookshelf.addon.mixin.accessor.ServerboundInteractPacketAccessor) (Object) interaction).oehrasa$getEntityId()) instanceof AbstractBoat target) {
                 mount.begin(target.getId(), tick);
                 primePacket = new ServerboundMovePlayerPacket.StatusOnly(false, player.horizontalCollision);
                 network.send(primePacket);
@@ -1143,8 +1144,10 @@ public final class BoatShot extends Module {
 //?} else {
         /*text.begin(1.2);
 *///?}
+        double guiW = mc.getWindow().getGuiScaledWidth();
+        double guiH = mc.getWindow().getGuiScaledHeight();
         double width = text.getWidth(label, true), height = text.getHeight();
-        double x = Math.max(4, (event.screenWidth - width) / 2), y = Math.max(4, event.screenHeight - 100 - height);
+        double x = Math.max(4, (guiW - width) / 2), y = Math.max(4, guiH - 100 - height);
         Renderer2D.COLOR.begin();
         Renderer2D.COLOR.quad(x - 8, y - 5, width + 16, height + 10, new Color(10, 14, 20, 215));
         Renderer2D.COLOR.render();

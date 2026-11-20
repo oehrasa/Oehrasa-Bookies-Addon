@@ -5,16 +5,17 @@
  */
 package com.AutoBookshelf.addon.modules;
 
-import com.AutoBookshelf.addon.utils.EntityUtil;
-import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.mixin.accessor.AbstractContainerScreenAccessor;
+import com.AutoBookshelf.addon.utils.EntityUtil;
 import com.AutoBookshelf.addon.utils.PlacementEngine;
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.utils.ShulkerRestockEngine;
+import com.mojang.blaze3d.platform.InputConstants;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import meteordevelopment.meteorclient.events.meteor.MouseClickEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.mixin.AbstractContainerScreenAccessor;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.misc.input.KeyAction;
@@ -39,7 +40,6 @@ import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
-import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -393,7 +393,7 @@ public class AutoLoader extends Module {
         if (event.button() != InputConstants.MOUSE_BUTTON_RIGHT) return;
         if (!(ScreenUtil.current() instanceof AbstractContainerScreen<?> screen)) return;
 
-        Slot focusedSlot = ((AbstractContainerScreenAccessor) screen).meteor$getHoveredSlot();
+        Slot focusedSlot = ((AbstractContainerScreenAccessor) screen).getHoveredSlot();
         if (focusedSlot == null || focusedSlot.container != mc.player.getInventory()) return;
 
         ItemStack stack = focusedSlot.getItem();

@@ -5,7 +5,6 @@
  */
 package com.AutoBookshelf.addon.utils;
 
-import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
@@ -57,6 +56,12 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 import static meteordevelopment.meteorclient.MeteorClient.mc;
+
+//? if >=26.1 {
+//?} else {
+/*import net.minecraft.commands.SharedSuggestionProvider;
+ */
+//?}
 
 /**
  * Shared book read/format/display logic for books utilities.
@@ -1048,7 +1053,11 @@ public class BookUtils {
         return code;
     }
 
+    //? if >=26.1 {
     public static CompletableFuture<Suggestions> suggestLanguages(CommandContext<ClientSuggestionProvider> context, SuggestionsBuilder builder) {
+        //?} else {
+        /*public static CompletableFuture<Suggestions> suggestLanguages(CommandContext<SharedSuggestionProvider> context, SuggestionsBuilder builder) {
+         *///?}
         for (Language language : LANGUAGES) {
             builder.suggest(language.code(), new LiteralMessage(language.name()));
         }

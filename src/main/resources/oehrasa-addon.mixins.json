@@ -25,9 +25,11 @@
     "accessor.AbstractSignEditScreenAccessor",
     "accessor.BlockAttachedEntityAccessor",
     "accessor.LivingEntityAccessor",
+    "accessor.LocalPlayerAccessor",
     "accessor.MountScreenHandlerAccessor",
     "accessor.MultiPlayerGameModeAccessor",
-    "accessor.PlayerMoveC2SPacketAccessor"
+    "accessor.PlayerMoveC2SPacketAccessor",
+    "accessor.ServerboundInteractPacketAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

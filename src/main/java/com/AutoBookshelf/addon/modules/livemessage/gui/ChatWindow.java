@@ -11,8 +11,10 @@ import com.AutoBookshelf.addon.modules.livemessage.util.LiveSkinUtil;
 import com.AutoBookshelf.addon.modules.livemessage.util.LivemessageUtil;
 import com.AutoBookshelf.addon.modules.livemessage.util.WhisperRateLimiter;
 import com.AutoBookshelf.addon.utils.EnemyManager;
+import com.AutoBookshelf.addon.utils.InputUtil;
 import com.AutoBookshelf.addon.utils.QueueUtil;
 import com.google.gson.Gson;
+import com.mojang.blaze3d.platform.InputConstants;
 import meteordevelopment.meteorclient.systems.friends.Friend;
 import meteordevelopment.meteorclient.systems.friends.Friends;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -23,7 +25,6 @@ import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
 import net.minecraft.util.Mth;
 import net.minecraft.util.Util;
-import com.mojang.blaze3d.platform.InputConstants;
 
 import java.io.*;
 import java.net.URI;
@@ -32,7 +33,6 @@ import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.regex.Matcher;
-import com.AutoBookshelf.addon.utils.InputUtil;
 import java.util.regex.Pattern;
 
 public class ChatWindow extends LiveWindow {
@@ -707,7 +707,7 @@ public class ChatWindow extends LiveWindow {
         boolean ctrl = this.isCtrlHeld();
         this.inputBox.setSelecting(shift);
 
-        if (keyCode == 257 || keyCode == 335) { // Enter / numpad Enter
+        if (keyCode == InputConstants.KEY_RETURN || keyCode == InputConstants.KEY_NUMPADENTER) { // Enter / numpad Enter
             if (shift) {
                 this.inputBox.newline();
             } else {
@@ -736,31 +736,31 @@ public class ChatWindow extends LiveWindow {
                     this.inputBox.insertText(clipboard);
                 }
             }
-        } else if (keyCode == 259) { // Backspace
+        } else if (keyCode == InputConstants.KEY_BACKSPACE) { // Backspace
             this.inputBox.backspace();
-        } else if (keyCode == 261) { // Delete
+        } else if (keyCode == InputConstants.KEY_DELETE) { // Delete
             this.inputBox.delete();
-        } else if (keyCode == 263) { // Left
+        } else if (keyCode == InputConstants.KEY_LEFT) { // Left
             if (ctrl) this.inputBox.moveLeftWord();
             else this.inputBox.moveLeft();
-        } else if (keyCode == 262) { // Right
+        } else if (keyCode == InputConstants.KEY_RIGHT) { // Right
             if (ctrl) this.inputBox.moveRightWord();
             else this.inputBox.moveRight();
-        } else if (keyCode == 268) { // Home
+        } else if (keyCode == InputConstants.KEY_HOME) { // Home
             this.inputBox.moveHome();
-        } else if (keyCode == 269) { // End
+        } else if (keyCode == InputConstants.KEY_END) { // End
             this.inputBox.moveEnd();
-        } else if (keyCode == 265) { // Up
+        } else if (keyCode == InputConstants.KEY_UP) { // Up
             this.inputBox.moveUp(this.fontRenderer, inputWidth);
-        } else if (keyCode == 264) { // Down
+        } else if (keyCode == InputConstants.KEY_DOWN) { // Down
             this.inputBox.moveDown(this.fontRenderer, inputWidth);
-        } else if (keyCode == 266) { // Page Up chat history scroll
+        } else if (keyCode == InputConstants.KEY_PAGEUP) { // Page Up chat history scroll
             this.chatScrollPosition = Mth.clamp(this.chatScrollPosition - 10, 0, this.getMaxScrollPosition());
             this.chatScrolledToBottom = this.isAtBottom();
-        } else if (keyCode == 267) { // Page Down
+        } else if (keyCode == InputConstants.KEY_PAGEDOWN) { // Page Down
             this.chatScrollPosition = Mth.clamp(this.chatScrollPosition + 10, 0, this.getMaxScrollPosition());
             this.chatScrolledToBottom = this.isAtBottom();
-        } else if (keyCode == 258) { // Tab
+        } else if (keyCode == InputConstants.KEY_TAB) { // Tab
             if (!ctrl && this.autocompletePlayerName()) {
                 this.inputBox.ensureCaretVisible(this.fontRenderer, inputWidth);
                 return; // consumed by autocomplete

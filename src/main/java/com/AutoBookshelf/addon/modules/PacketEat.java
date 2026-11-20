@@ -5,8 +5,9 @@
  */
 package com.AutoBookshelf.addon.modules;
 
-import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.Addon;
+import com.AutoBookshelf.addon.utils.PacketUtils;
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import meteordevelopment.meteorclient.events.entity.player.ItemUseCrosshairTargetEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -467,7 +468,7 @@ public class PacketEat extends Module {
             case START_DESTROY_BLOCK, DROP_ITEM, DROP_ALL_ITEMS, SWAP_ITEM_WITH_OFFHAND, STAB -> true;
             default -> false;
         };
-        boolean attack = event.packet instanceof ServerboundAttackPacket;
+        boolean attack = PacketUtils.isAttack(event.packet);
         boolean useItem = event.packet instanceof ServerboundUseItemPacket;
         boolean interact = event.packet instanceof ServerboundInteractPacket;
         boolean blockUse = event.packet instanceof ServerboundUseItemOnPacket;

@@ -5,8 +5,6 @@
  */
 package com.AutoBookshelf.addon.utils;
 
-import com.AutoBookshelf.addon.utils.EntityUtil;
-import com.AutoBookshelf.addon.utils.ScreenUtil;
 import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
 import baritone.api.pathing.goals.GoalBlock;
@@ -35,6 +33,9 @@ import net.minecraft.world.phys.Vec3;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
+
+//? if >=26.1 {
+//?}
 
 public class ShulkerRestockEngine {
 
@@ -253,8 +254,13 @@ public class ShulkerRestockEngine {
             if (config.onlySingleItem()) {
                 Item first = null;
                 boolean mixed = false;
+                //? if >=26.1 {
                 for (ItemStackTemplate c : container.nonEmptyItems()) {
                     Item it = c.item().value();
+                    //?} else {
+                /*for (ItemStack c : container.nonEmptyItems()) {
+                    Item it = c.getItem();
+                *///?}
                     if (first == null) first = it;
                     else if (first != it) {
                         mixed = true;
@@ -263,8 +269,13 @@ public class ShulkerRestockEngine {
                 }
                 if (mixed) continue;
             }
+            //? if >=26.1 {
             for (ItemStackTemplate content : container.nonEmptyItems()) {
                 if (content.item().value() == currentTargetItem) {
+                    //?} else {
+            /*for (ItemStack content : container.nonEmptyItems()) {
+                if (content.getItem() == currentTargetItem) {
+            *///?}
                     shulkerSlot = i;
                     break;
                 }
@@ -826,9 +837,15 @@ public class ShulkerRestockEngine {
     public static boolean shulkerContains(ItemStack stack, Item item) {
         ItemContainerContents container = stack.get(DataComponents.CONTAINER);
         if (container == null) return false;
+        //? if >=26.1 {
         for (ItemStackTemplate content : container.nonEmptyItems()) {
             if (content.item().value() == item) return true;
         }
+        //?} else {
+        /*for (ItemStack content : container.nonEmptyItems()) {
+            if (content.getItem() == item) return true;
+        }
+        *///?}
         return false;
     }
 

@@ -21,7 +21,7 @@
       "com.AutoBookshelf.addon.Addon"
     ]
   },
-  "accessWidener": "oehrasa.accesswidener",
+  "accessWidener": "${accessWidener}",
   "mixins": [
     "oehrasa-addon.mixins.json"
   ],

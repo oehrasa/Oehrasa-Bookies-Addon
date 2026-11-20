@@ -8,6 +8,7 @@ package com.AutoBookshelf.addon.modules.LOSAT;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.events.PlayerPositionLookEvent;
 import com.AutoBookshelf.addon.mixin.accessor.LivingEntityAccessor;
+import com.AutoBookshelf.addon.mixin.accessor.LocalPlayerAccessor;
 import com.AutoBookshelf.addon.mixin.accessor.PlayerMoveC2SPacketAccessor;
 import meteordevelopment.meteorclient.MeteorClient;
 import meteordevelopment.meteorclient.events.entity.player.PlayerMoveEvent;
@@ -15,8 +16,6 @@ import meteordevelopment.meteorclient.events.entity.player.SendMovementPacketsEv
 import meteordevelopment.meteorclient.events.game.GameLeftEvent;
 import meteordevelopment.meteorclient.events.packets.PacketEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
-import meteordevelopment.meteorclient.mixin.LocalPlayerAccessor;
-import meteordevelopment.meteorclient.mixininterface.IServerboundMovePlayerPacket;
 import meteordevelopment.meteorclient.mixininterface.IVec3;
 import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.friends.Friends;
@@ -74,7 +73,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class Lance extends Module {
-    private static final int TAG = 1337;
+    private boolean sentOwnPositionPacket;
     private static final double MAX_H = 2.8;
     private static final double MAX_V = 1.4;
     private static final double EYE = 0.4;
@@ -430,6 +429,20 @@ public class Lance extends Module {
     private String volleyReason = "continuation";
     private Tier weavingTier;
     private AttackRange weavingRange;
+
+    /**
+     * The range of the attack the player is carrying out right now, falling back to the
+     * default when no weapon profile is attached. The 1.21.x builds expose this as
+     * EntityAttackRange() (active item, ATTACK_RANGE component, default); the 26.x builds
+     * take the stack explicitly via getAttackRangeWith(ItemStack).
+     */
+    private AttackRange currentAttackRange() {
+        //? if >=26.1 {
+        return mc.player.getAttackRangeWith(mc.player.isUsingItem() ? mc.player.getUseItem() : mc.player.getMainHandItem());
+        //?} else {
+        /*return mc.player.entityAttackRange();
+         *///?}
+    }
     private int weavingSlot = -1, weavingOriginalSlot = -1, weavingStartedAt, weavingAttempts;
     private Vec3 shellCenter;
     private boolean shellAttempted;
@@ -998,7 +1011,7 @@ public class Lance extends Module {
         if (FORK_SYNC || !ownsCurrentBody() || correcting || srvGliding != Boolean.FALSE || !mc.player.isFallFlying()) return;
         if (mc.player.onGround() || mc.player.isInWater() || !usableElytra()) return;
         relightArmed = true;
-        ((LocalPlayerAccessor) mc.player).meteor$setPositionReminder(20);
+        ((LocalPlayerAccessor) mc.player).oehrasa$setPositionReminder(20);
     }
 
     private void relightPost() {
@@ -1083,7 +1096,7 @@ public class Lance extends Module {
         double lead = couchTiming.predictionTicks(PlayerUtils.getPing());
         AABB b = target.getBoundingBox().move(vPos.subtract(target.position())).move(vVel.scale(lead));
         double cx = (b.minX + b.maxX) * 0.5, cz = (b.minZ + b.maxZ) * 0.5, head = b.maxY;
-        AttackRange ar = weavingTier != null ? weavingRange : mc.player.getAttackRangeWith(mc.player.isUsingItem() ? mc.player.getUseItem() : mc.player.getMainHandItem());
+        AttackRange ar = weavingTier != null ? weavingRange : currentAttackRange();
         double effMax = ar != null ? ar.effectiveMaxRange(mc.player) : 4.5;
         double effMin = ar != null ? ar.effectiveMinRange(mc.player) : 2.0;
 
@@ -1319,7 +1332,7 @@ public class Lance extends Module {
         double verticalDamage = laneDamage(vertical);
         double possibleDamage = potentialLaneDamage(vertical);
         if (crystalPolicy.get() == CrystalPolicy.EstimatedDamage && (verticalDamage > preferred || possibleDamage > preferred)) {
-            AttackRange range = weavingTier != null ? weavingRange : mc.player.getAttackRangeWith(mc.player.isUsingItem() ? mc.player.getUseItem() : mc.player.getMainHandItem());
+            AttackRange range = weavingTier != null ? weavingRange : currentAttackRange();
             double outerGap = range != null ? range.effectiveMaxRange(mc.player) - 0.3 : strikeGap;
             if (outerGap > strikeGap + 0.05) {
                 candidates.add(LanceAttackMath.vertical(targetBox, outerGap, dip.get(), Math.max(restGap, outerGap + dip.get())));
@@ -1649,8 +1662,8 @@ public class Lance extends Module {
     private void recordWire(ServerboundMovePlayerPacket p) {
         Vec3 position = new Vec3(p.getX(mc.player.getX()), p.getY(mc.player.getY()), p.getZ(mc.player.getZ()));
         if (lastClaim != null && position.distanceToSqr(lastClaim) < 1e-6) lastClaimWireTick = tickCounter;
-        else if (lastClaim != null) dbg("WIRE claim mismatch error=%.3f tag=%d intended=%s sent=%s", position.distanceTo(lastClaim),
-            ((IServerboundMovePlayerPacket) p).meteor$getTag(), lastClaim, position);
+        else if (lastClaim != null) dbg("WIRE claim mismatch error=%.3f ownPacket=%b intended=%s sent=%s", position.distanceTo(lastClaim),
+            sentOwnPositionPacket, lastClaim, position);
         if (lastWire != null) {
             Vec3 delta = position.subtract(lastWire);
             wireTrace.addLast(String.format("t%d h%.2f v%+.2f g%b%s", tickCounter, Math.hypot(delta.x, delta.z), delta.y, p.isOnGround(), posSentThisTick ? " extra" : ""));
@@ -1661,6 +1674,7 @@ public class Lance extends Module {
         rememberWire(position);
         lastWire = position;
         lastWireTick = tickCounter;
+        sentOwnPositionPacket = false;
     }
 
     @EventHandler
@@ -1680,7 +1694,7 @@ public class Lance extends Module {
         ServerboundMovePlayerPacket p = new ServerboundMovePlayerPacket.PosRot(mc.player.getX() + ox, mc.player.getY() + oy, mc.player.getZ() + oz,
             plannedAimTick == tickCounter ? plannedYaw : Rotations.serverYaw,
             plannedAimTick == tickCounter ? plannedPitch : Rotations.serverPitch, false, mc.player.horizontalCollision);
-        ((IServerboundMovePlayerPacket) p).meteor$setTag(TAG);
+        sentOwnPositionPacket = true;
         mc.getConnection().send(p);
     }
 
@@ -2125,7 +2139,7 @@ public class Lance extends Module {
 
         if (!continuing) {
             weavingTier = heldTier();
-            weavingRange = mc.player.getAttackRangeWith(mc.player.isUsingItem() ? mc.player.getUseItem() : mc.player.getMainHandItem());
+            weavingRange = currentAttackRange();
             weavingOriginalSlot = mc.player.getInventory().getSelectedSlot();
             weavingSlot = webSlot;
             weavingStartedAt = lastWebVolleyTick = tickCounter;

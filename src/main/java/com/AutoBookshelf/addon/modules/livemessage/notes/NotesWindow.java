@@ -9,13 +9,13 @@ import com.AutoBookshelf.addon.modules.livemessage.gui.GuiUtil;
 import com.AutoBookshelf.addon.modules.livemessage.gui.LiveWindow;
 import com.AutoBookshelf.addon.modules.livemessage.gui.LivemessageGui;
 import com.AutoBookshelf.addon.modules.livemessage.util.LivemessageUtil;
+import com.AutoBookshelf.addon.utils.InputUtil;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
-import com.mojang.blaze3d.platform.InputConstants;
 
-import com.AutoBookshelf.addon.utils.InputUtil;
 import java.util.*;
 
 public class NotesWindow extends LiveWindow {
@@ -315,7 +315,7 @@ public class NotesWindow extends LiveWindow {
             return;
         }
 
-        if (keyCode == 257 || keyCode == 335) {
+        if (keyCode == InputConstants.KEY_RETURN || keyCode == InputConstants.KEY_NUMPADENTER) {
             if (this.inputField.isFocused()) {
                 String text = this.inputField.getValue().trim();
                 if (!text.isEmpty()) {
@@ -323,9 +323,9 @@ public class NotesWindow extends LiveWindow {
                 }
                 this.inputField.setValue("");
             }
-        } else if (keyCode == 266) {
+        } else if (keyCode == InputConstants.KEY_PAGEUP) {
             this.scrollPosition = Math.max(0, this.scrollPosition - 5);
-        } else if (keyCode == 267) {
+        } else if (keyCode == InputConstants.KEY_PAGEDOWN) {
             this.scrollPosition = Math.min(this.getMaxScroll(), this.scrollPosition + 5);
         } else {
             if (keyCode != 0 && this.lastKeyInput != null) {

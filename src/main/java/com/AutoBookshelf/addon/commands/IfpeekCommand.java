@@ -10,7 +10,11 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import meteordevelopment.meteorclient.commands.Command;
+//? if >=26.1 {
 import net.minecraft.client.multiplayer.ClientSuggestionProvider;
+//?} else {
+/*import net.minecraft.commands.SharedSuggestionProvider;
+ *///?}
 import net.minecraft.world.entity.decoration.ItemFrame;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -23,7 +27,11 @@ public class IfpeekCommand extends Command {
     }
 
     @Override
+        //? if >=26.1 {
     public void build(LiteralArgumentBuilder<ClientSuggestionProvider> builder) {
+        //?} else {
+        /*public void build(LiteralArgumentBuilder<SharedSuggestionProvider> builder) {
+         *///?}
         builder.executes(ctx -> {
             ItemStack item = getTargetedBookStack();
             if (item == null) return SINGLE_SUCCESS;
@@ -131,7 +139,11 @@ public class IfpeekCommand extends Command {
      * {@code <language> <page> <endPage>}. Shared by the chat and GUI variants, which differ
      * only in the output.
      */
+    //? if >=26.1 {
     private void addTranslation(LiteralArgumentBuilder<ClientSuggestionProvider> builder,
+                                //?} else {
+        /*private void addTranslation(LiteralArgumentBuilder<SharedSuggestionProvider> builder,
+         *///?}
                                 BookUtils.TranslateOutput output, String name) {
         builder.then(literal(name)
             .executes(ctx -> runTranslate("en", 1, -1, output))

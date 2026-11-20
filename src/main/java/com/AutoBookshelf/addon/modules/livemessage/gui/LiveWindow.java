@@ -6,6 +6,8 @@
 package com.AutoBookshelf.addon.modules.livemessage.gui;
 
 import com.AutoBookshelf.addon.modules.livemessage.LiveMessage;
+import com.AutoBookshelf.addon.utils.InputUtil;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -15,10 +17,8 @@ import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
-import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.ArrayList;
-import com.AutoBookshelf.addon.utils.InputUtil;
 import java.util.List;
 
 public class LiveWindow {
@@ -104,7 +104,7 @@ public class LiveWindow {
     }
 
     public void keyTyped(char typedChar, int keyCode) {
-        if (keyCode == 258 && LivemessageGui.liveWindows.size() > 1) {
+        if (keyCode == InputConstants.KEY_TAB && LivemessageGui.liveWindows.size() > 1) {
             if (InputUtil.isDown(InputConstants.KEY_LSHIFT)) {
                 LiveWindow tempWindow = LivemessageGui.liveWindows.get(0);
                 LivemessageGui.liveWindows.remove(0);
@@ -197,7 +197,7 @@ public class LiveWindow {
 
     public void deactivateWindow() {
         this.active = false;
-        this.mouseReleased(this.lastMouseX, this.lastMouseY, 0);
+        this.mouseReleased(this.lastMouseX, this.lastMouseY, InputConstants.MOUSE_BUTTON_LEFT);
     }
 
     public void preDrawWindow(GuiGraphicsExtractor context) {

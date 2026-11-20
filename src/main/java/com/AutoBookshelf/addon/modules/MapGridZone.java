@@ -54,7 +54,7 @@ public class MapGridZone extends Module {
     private final Setting<Keybind> setYKey = sgDefault.add(new KeybindSetting.Builder()
         .name("set-y-key")
         .description("Press to set map-zone-y-start to your current Y position.")
-        .defaultValue(Keybind.fromKey(-1))
+        .defaultValue(Keybind.none())
         .build());
 
     private final Setting<Integer> mapZoneYOffset = sgDefault.add(new IntSetting.Builder()
@@ -97,7 +97,7 @@ public class MapGridZone extends Module {
     @EventHandler
     public void onTickPre(TickEvent.Pre event) {
         // Keybind to set the map grid Y start to current player Y
-        if (setYKey.get().isPressed()) {
+        if (setYKey.get().isSet() && setYKey.get().isPressed()) {
             mapZoneYStart.set(mc.player.getBlockY());
             if (debug.get()) info("Map zone Y start set to " + mc.player.getBlockY());
         }

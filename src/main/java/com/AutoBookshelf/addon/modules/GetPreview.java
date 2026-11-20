@@ -335,10 +335,17 @@ public class GetPreview extends Module {
         double filled = 0;
         // Templates, not copies: nonEmptyItemCopyStream() would allocate one ItemStack per
         // contained item per call - once per frame per shulker - to sum a single fraction.
+        //? if >=26.1 {
         for (ItemStackTemplate template : container.nonEmptyItems()) {
             int maxStack = Math.max(1, template.item().value().getDefaultMaxStackSize());
             filled += (double) template.count() * 64.0 / maxStack;
         }
+        //?} else {
+        /*for (ItemStack stored : container.nonEmptyItems()) {
+            int maxStack = Math.max(1, stored.getItem().getDefaultMaxStackSize());
+            filled += (double) stored.getCount() * 64.0 / maxStack;
+        }
+        *///?}
         double fraction = filled / maxItems;
         if (this.fillCache.size() > 512) {
             this.fillCache.clear();

@@ -9,6 +9,7 @@ import com.AutoBookshelf.addon.modules.chesttracker.TrackerServices;
 import com.AutoBookshelf.addon.modules.chesttracker.data.*;
 import com.AutoBookshelf.addon.modules.chesttracker.search.*;
 import com.AutoBookshelf.addon.modules.chesttracker.track.Trash;
+import com.mojang.blaze3d.platform.InputConstants;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -28,7 +29,6 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.WrittenBookContent;
 import org.jetbrains.annotations.Nullable;
-import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.*;
 import java.util.stream.Stream;
@@ -670,18 +670,18 @@ public final class TrackerScreen extends Screen {
             closeMenu(); // a click anywhere else just closes the menu
             return true;
         }
-        if (showingGrid() && click.button() == 0 && gridCellAt(click.x(), click.y()) >= 0) {
+        if (showingGrid() && click.button() == InputConstants.MOUSE_BUTTON_LEFT && gridCellAt(click.x(), click.y()) >= 0) {
             // Acted on at release, so a drag (scrolling on a touch screen) doesn't open anything.
             gridPressed = gridCellAt(click.x(), click.y());
             gridDragged = false;
             return true;
         }
         // Middle-click a grid cell: highlight the nearest container holding that item.
-        if (showingGrid() && click.button() == 2 && gridCellAt(click.x(), click.y()) >= 0) {
+        if (showingGrid() && click.button() == InputConstants.MOUSE_BUTTON_MIDDLE && gridCellAt(click.x(), click.y()) >= 0) {
             locateNearest(grid.get(gridCellAt(click.x(), click.y())).stack().getItem());
             return true;
         }
-        if (click.button() == 1 && !showingGrid()) {
+        if (click.button() == InputConstants.MOUSE_BUTTON_RIGHT && !showingGrid()) {
             ResultList.Entry entry = list.entryAt(click.x(), click.y());
             if (entry != null && entry.row != null) {
                 list.setSelected(entry);
@@ -727,7 +727,7 @@ public final class TrackerScreen extends Screen {
      */
     @Override
     public boolean mouseDragged(MouseButtonEvent click, double offsetX, double offsetY) {
-        if (showingGrid() && click.button() == 0 && click.y() >= LIST_Y && click.y() < gridBottom) {
+        if (showingGrid() && click.button() == InputConstants.MOUSE_BUTTON_LEFT && click.y() >= LIST_Y && click.y() < gridBottom) {
             gridDragged |= Math.abs(offsetY) > 0.5;
             gridScroll = Math.max(0, Math.min(gridMaxScroll, gridScroll - (int) Math.round(offsetY)));
             return true;
@@ -1476,7 +1476,7 @@ public final class TrackerScreen extends Screen {
                 boolean selecting = selectMode || !selection.isEmpty() || ctrl || shift;
                 // Middle-click locates the container in the world (same as Detail's Done);
                 // a single left-click opens Detail instantly, so double-click can't be used here.
-                if (click.button() == 2 && !selecting && !(row.record() instanceof InventoryRecord)) {
+                if (click.button() == InputConstants.MOUSE_BUTTON_MIDDLE && !selecting && !(row.record() instanceof InventoryRecord)) {
                     TrackerScreen.this.locate(row.record());
                     return true;
                 }

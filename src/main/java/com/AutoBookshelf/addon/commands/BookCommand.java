@@ -10,7 +10,11 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import meteordevelopment.meteorclient.commands.Command;
+//? if >=26.1 {
 import net.minecraft.client.multiplayer.ClientSuggestionProvider;
+//?} else {
+/*import net.minecraft.commands.SharedSuggestionProvider;
+ *///?}
 import net.minecraft.world.item.ItemStack;
 
 public class BookCommand extends Command {
@@ -20,7 +24,11 @@ public class BookCommand extends Command {
     }
 
     @Override
+        //? if >=26.1 {
     public void build(LiteralArgumentBuilder<ClientSuggestionProvider> builder) {
+        //?} else {
+        /*public void build(LiteralArgumentBuilder<SharedSuggestionProvider> builder) {
+         *///?}
         builder.executes(ctx -> {
             ItemStack item = requireHeldBook();
             if (item == null) return SINGLE_SUCCESS;

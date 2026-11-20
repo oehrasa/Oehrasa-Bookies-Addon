@@ -5,9 +5,9 @@
  */
 package com.AutoBookshelf.addon.modules;
 
+import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.EntityUtil;
 import com.AutoBookshelf.addon.utils.ScreenUtil;
-import com.AutoBookshelf.addon.Addon;
 import meteordevelopment.meteorclient.events.entity.player.InteractBlockEvent;
 import meteordevelopment.meteorclient.events.entity.player.ItemUseCrosshairTargetEvent;
 import meteordevelopment.meteorclient.events.entity.player.SendMovementPacketsEvent;
@@ -771,8 +771,10 @@ public class HandyPlace extends Module {
         String text = directionSummary();
 
         float scale = onScreenScale.get().floatValue();
-        int screenWidth = event.screenWidth;
-        int screenHeight = event.screenHeight;
+        // Read the GUI-scaled dimensions directly: meteor 1.21.11's mixin passes
+        // getScaledWindowWidth() for both of event's width/height, so the event y is wrong there.
+        int screenWidth = mc.getWindow().getGuiScaledWidth();
+        int screenHeight = mc.getWindow().getGuiScaledHeight();
 
         int x = (int) (screenWidth / 2 - (mc.font.width(text) * scale) / 2);
         int y = screenHeight - (int) onScreenOffset.get();

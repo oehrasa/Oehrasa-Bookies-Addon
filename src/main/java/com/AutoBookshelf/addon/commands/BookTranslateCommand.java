@@ -10,7 +10,11 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import meteordevelopment.meteorclient.commands.Command;
+//? if >=26.1 {
 import net.minecraft.client.multiplayer.ClientSuggestionProvider;
+//?} else {
+/*import net.minecraft.commands.SharedSuggestionProvider;
+ *///?}
 import net.minecraft.world.item.ItemStack;
 
 public class BookTranslateCommand extends Command {
@@ -20,7 +24,11 @@ public class BookTranslateCommand extends Command {
     }
 
     @Override
+        //? if >=26.1 {
     public void build(LiteralArgumentBuilder<ClientSuggestionProvider> builder) {
+        //?} else {
+        /*public void build(LiteralArgumentBuilder<SharedSuggestionProvider> builder) {
+         *///?}
         // 1. Display in chat (default)
         builder.executes(ctx -> {
             runTranslation("en", 1, -1, BookUtils.TranslateOutput.CHAT);

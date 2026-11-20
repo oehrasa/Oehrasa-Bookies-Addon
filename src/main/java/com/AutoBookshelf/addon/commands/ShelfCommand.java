@@ -16,7 +16,11 @@ import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.systems.modules.Modules;
 import meteordevelopment.meteorclient.utils.render.color.Color;
 import meteordevelopment.orbit.EventHandler;
+//? if >=26.1 {
 import net.minecraft.client.multiplayer.ClientSuggestionProvider;
+//?} else {
+/*import net.minecraft.commands.SharedSuggestionProvider;
+ *///?}
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -53,7 +57,11 @@ public class ShelfCommand extends Command {
     }
 
     @Override
+        //? if >=26.1 {
     public void build(LiteralArgumentBuilder<ClientSuggestionProvider> builder) {
+        //?} else {
+        /*public void build(LiteralArgumentBuilder<SharedSuggestionProvider> builder) {
+         *///?}
         builder.executes(ctx -> {
             AutoLogin autoLogin = Modules.get().get(AutoLogin.class);
             if (autoLogin == null) {
@@ -214,7 +222,15 @@ public class ShelfCommand extends Command {
         addTranslation(builder, BookUtils.TranslateOutput.GUI, "gui-translate");
     }
 
+    //? if >=26.1 {
+
     private void addTranslation(LiteralArgumentBuilder<ClientSuggestionProvider> builder,
+
+                                //?} else {
+
+        /*private void addTranslation(LiteralArgumentBuilder<SharedSuggestionProvider> builder,
+
+         *///?}
                                 BookUtils.TranslateOutput output, String name) {
         builder.then(literal(name)
             .executes(ctx -> runTranslate("en", 1, -1, output))

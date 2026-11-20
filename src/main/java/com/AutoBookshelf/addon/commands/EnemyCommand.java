@@ -13,7 +13,11 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import meteordevelopment.meteorclient.commands.Command;
 import meteordevelopment.meteorclient.commands.arguments.PlayerListEntryArgumentType;
+//? if >=26.1 {
 import net.minecraft.client.multiplayer.ClientSuggestionProvider;
+//?} else {
+/*import net.minecraft.commands.SharedSuggestionProvider;
+ *///?}
 
 public class EnemyCommand extends Command {
     public EnemyCommand() {
@@ -21,7 +25,11 @@ public class EnemyCommand extends Command {
     }
 
     @Override
+        //? if >=26.1 {
     public void build(LiteralArgumentBuilder<ClientSuggestionProvider> builder) {
+        //?} else {
+        /*public void build(LiteralArgumentBuilder<SharedSuggestionProvider> builder) {
+         *///?}
         builder.then(literal("add")
             .then(argument("player", PlayerListEntryArgumentType.create())
                 .executes(context -> {

@@ -5,12 +5,12 @@
  */
 package com.AutoBookshelf.addon.modules;
 
-import com.AutoBookshelf.addon.utils.ScreenUtil;
 import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
 import baritone.api.pathing.goals.GoalBlock;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.DistanceUtil;
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import meteordevelopment.meteorclient.events.meteor.MouseClickEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
 import meteordevelopment.meteorclient.settings.*;
@@ -95,7 +95,7 @@ public class AutoSex extends Module {
     private final Setting<Keybind> keybind = sgGeneral.add(new KeybindSetting.Builder()
         .name("keybind")
         .description("What key to press to start following someone.")
-        .defaultValue(Keybind.fromKey(-1))
+        .defaultValue(Keybind.none())
         .visible(() -> targetMode.get() == Mode.BindClick)
         .build()
     );
@@ -570,7 +570,7 @@ public class AutoSex extends Module {
 
         // Handle bind click mode
         if (targetMode.get() == Mode.BindClick && keybind != null) {
-            if (keybind.get().isPressed() && !pressed && !alternate) {
+            if (keybind.get().isSet() && keybind.get().isPressed() && !pressed && !alternate) {
                 if (isFollowing) {
                     if (message.get() && targetEntity instanceof Player) {
                         endMsg();
@@ -584,11 +584,11 @@ public class AutoSex extends Module {
                 }
             }
 
-            if (!keybind.get().isPressed()) {
+            if (!keybind.get().isSet() || !keybind.get().isPressed()) {
                 pressed = false;
             }
 
-            if (keybind.get().isPressed() && !pressed && alternate && ScreenUtil.current() == null && mc.crosshairPickEntity != null && mc.crosshairPickEntity instanceof LivingEntity living) {
+            if (keybind.get().isSet() && keybind.get().isPressed() && !pressed && alternate && ScreenUtil.current() == null && mc.crosshairPickEntity != null && mc.crosshairPickEntity instanceof LivingEntity living) {
                 if (!isEntityAllowed(living)) {
                     if (living instanceof Player) {
                         if (friendFilter.get() == FriendFilter.ONLY_FRIENDS) error("§cThat player is not your friend!");

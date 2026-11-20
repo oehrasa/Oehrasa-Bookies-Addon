@@ -5,9 +5,9 @@
  */
 package com.AutoBookshelf.addon.commands;
 
-import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.AutoBookshelf.addon.modules.InventoryTracker;
 import com.AutoBookshelf.addon.utils.InventoryTrackerScreen;
+import com.AutoBookshelf.addon.utils.ScreenUtil;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import meteordevelopment.meteorclient.commands.Command;
@@ -17,6 +17,12 @@ import net.minecraft.client.multiplayer.ClientSuggestionProvider;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 
+//? if >=26.1 {
+//?} else {
+/*import net.minecraft.commands.SharedSuggestionProvider;
+ */
+//?}
+
 public class InvseeCommand extends Command {
 
     public InvseeCommand() {
@@ -24,7 +30,11 @@ public class InvseeCommand extends Command {
     }
 
     @Override
+        //? if >=26.1 {
     public void build(LiteralArgumentBuilder<ClientSuggestionProvider> builder) {
+        //?} else {
+        /*public void build(LiteralArgumentBuilder<SharedSuggestionProvider> builder) {
+         *///?}
         // .invsee list that show all currently tracked players
         builder.then(literal("list")
             .executes(ctx -> {

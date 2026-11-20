@@ -2,8 +2,6 @@
 // Ported from liangforstudy's Entity Tracker (MIT). See THIRD_PARTY_NOTICES.md.
 package com.AutoBookshelf.addon.modules.chesttracker.gui;
 
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.chat.Component;
 
 /**
@@ -14,17 +12,13 @@ public final class Messages {
     }
 
     public static void chat(Component message) {
-        LocalPlayer player = Minecraft.getInstance().player;
-        if (player == null) return;
-        player.sendSystemMessage(message);
+        com.AutoBookshelf.addon.utils.PlayerMessages.chat(message);
     }
 
     /**
      * Above the hotbar, briefly.
      */
     public static void actionBar(Component message) {
-        LocalPlayer player = Minecraft.getInstance().player;
-        if (player == null) return;
-        player.sendOverlayMessage(message);
+        com.AutoBookshelf.addon.utils.PlayerMessages.actionBar(message);
     }
 }

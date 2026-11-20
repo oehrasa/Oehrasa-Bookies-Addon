@@ -5,12 +5,12 @@
  */
 package com.AutoBookshelf.addon.modules;
 
-import com.AutoBookshelf.addon.utils.EntityUtil;
 import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
 import baritone.api.pathing.goals.GoalXZ;
 import com.AutoBookshelf.addon.Addon;
 import com.AutoBookshelf.addon.utils.DistanceUtil;
+import com.AutoBookshelf.addon.utils.EntityUtil;
 import meteordevelopment.meteorclient.events.render.Render3DEvent;
 import meteordevelopment.meteorclient.events.world.BlockUpdateEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -71,14 +71,14 @@ public class AutoBeacon extends Module {
     private final Setting<Keybind> setOriginKey = sgControls.add(new KeybindSetting.Builder()
         .name("set-origin-key")
         .description("Key to set the build origin to the block you are looking at.")
-        .defaultValue(Keybind.fromKey(-1))
+        .defaultValue(Keybind.none())
         .visible(() -> originMode.get() == OriginMode.SelectedBlock)
         .build());
 
     private final Setting<Keybind> buildKey = sgControls.add(new KeybindSetting.Builder()
         .name("build-key")
         .description("Key to start building the pyramid after origin is set.")
-        .defaultValue(Keybind.fromKey(-1))
+        .defaultValue(Keybind.none())
         .visible(() -> originMode.get() == OriginMode.SelectedBlock)
         .build());
 
@@ -448,7 +448,7 @@ public class AutoBeacon extends Module {
         if (blockedWarnCooldown > 0) blockedWarnCooldown--;
 
         if (originMode.get() == OriginMode.SelectedBlock) {
-            if (!originSet && setOriginKey.get().isPressed()) {
+            if (!originSet && setOriginKey.get().isSet() && setOriginKey.get().isPressed()) {
                 if (mc.hitResult != null && mc.hitResult.getType() == HitResult.Type.BLOCK) {
                     BlockHitResult hit = (BlockHitResult) mc.hitResult;
                     origin = hit.getBlockPos();
@@ -463,7 +463,7 @@ public class AutoBeacon extends Module {
                 }
                 return;
             }
-            if (originSet && !building && buildKey.get().isPressed()) {
+            if (originSet && !building && buildKey.get().isSet() && buildKey.get().isPressed()) {
                 initBuild();
                 return;
             }

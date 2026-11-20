@@ -6,6 +6,7 @@
 package com.AutoBookshelf.addon.modules;
 
 import com.AutoBookshelf.addon.Addon;
+import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.text2speech.Narrator;
 import meteordevelopment.meteorclient.events.render.Render2DEvent;
 import meteordevelopment.meteorclient.events.world.TickEvent;
@@ -20,7 +21,6 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.WritableBookContent;
 import net.minecraft.world.item.component.WrittenBookContent;
-import com.mojang.blaze3d.platform.InputConstants;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -184,8 +184,10 @@ public class AudiobookReader extends Module {
     private void onRender2D(Render2DEvent event) {
         if (displayMode.get() == DisplayMode.NONE) return;
 
-        int screenWidth = event.screenWidth;
-        int screenHeight = event.screenHeight;
+        // Read the GUI-scaled dimensions directly: meteor 1.21.11's mixin passes
+        // getScaledWindowWidth() for both of event's width/height, so the event y is wrong there.
+        int screenWidth = mc.getWindow().getGuiScaledWidth();
+        int screenHeight = mc.getWindow().getGuiScaledHeight();
         double scale = screenScale.get();
 
         int x = (int) (screenWidth / 2 - (mc.font.width(displayText) * scale) / 2);
